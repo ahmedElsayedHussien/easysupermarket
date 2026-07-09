@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}الفروع{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-lime">فروع الشركة</h2>
+        <button class="btn btn-neon-lime">+ إضافة فرع</button>
+    </div>
+
+    <div class="module-grid module-grid-3">
+        {% for branch in branches %}
+        <div class="card p-3">
+            <h3 class="text-neon-lime">{{ branch.name }}</h3>
+            <p class="text-muted mb-2">كود: {{ branch.code }}</p>
+            <p class="text-secondary">{{ branch.address }}</p>
+            <p class="text-secondary">{{ branch.phone }}</p>
+            <hr class="divider">
+            <div class="d-flex justify-between align-center mt-2">
+                {% if branch.is_active %}
+                <span class="badge badge-success">نشط</span>
+                {% else %}
+                <span class="badge badge-danger">غير نشط</span>
+                {% endif %}
+                <button class="btn btn-sm btn-ghost">إدارة الفرع</button>
+            </div>
+        </div>
+        {% empty %}
+        <p class="text-center">لا توجد فروع مضافة</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

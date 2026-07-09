@@ -1,0 +1,171 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-between align-center mb-4">
+    <h2 class="text-neon-blue mb-0">{{ title }}</h2>
+    <div class="d-flex gap-2">
+        {% if invoice.status == 'DRAFT' %}
+        <button class="btn btn-neon-red" onclick="confirmInvoice({{ invoice.id }})">ترحيل الفاتورة</button>
+        {% endif %}
+        <a href="javascript:history.back()" class="btn btn-ghost">العودة للقائمة</a>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Invoice Details -->
+    <div class="col-md-4 mb-4">
+        <div class="card p-4 h-100">
+            <h4 class="text-neon-gold mb-4">معلومات الفاتورة</h4>
+            
+            <div class="mb-3">
+                <span class="text-muted d-block text-sm">نوع الفاتورة</span>
+                <span class="font-bold">
+                    {% if invoice.invoice_type == 'SALE' %}مبيعات
+                    {% elif invoice.invoice_type == 'RETURN_SALE' %}مرتجع مبيعات
+                    {% elif invoice.invoice_type == 'PURCHASE' %}مشتريات
+                    {% elif invoice.invoice_type == 'RETURN_PURCHASE' %}مرتجع مشتريات
+                    {% endif %}
+                </span>
+            </div>
+            
+            <div class="mb-3">
+                <span class="text-muted d-block text-sm">الحالة</span>
+                {% if invoice.status == 'POSTED' %}
+                <span class="badge badge-success">مرحلة</span>
+                {% elif invoice.status == 'DRAFT' %}
+                <span class="badge badge-draft">مسودة</span>
+                {% else %}
+                <span class="badge badge-danger">ملغاة</span>
+                {% endif %}
+            </div>
+
+            <div class="mb-3">
+                <span class="text-muted d-block text-sm">الجهة (عميل/مورد)</span>
+                <span class="font-bold">{{ invoice.partner.name|default:"غير محدد" }}</span>
+            </div>
+
+            <div class="mb-3">
+                <span class="text-muted d-block text-sm">الفرع / المستودع</span>
+                <span class="font-bold">{{ invoice.branch.name }} / {{ invoice.warehouse.name }}</span>
+            </div>
+            
+            <div class="mb-3">
+                <span class="text-muted d-block text-sm">التاريخ</span>
+                <span class="font-bold">{{ invoice.date }}</span>
+            </div>
+            
+            <div class="mb-3">
+                <span class="text-muted d-block text-sm">طريقة الدفع</span>
+                <span class="font-bold">
+                    {% if invoice.payment_type == 'CASH' %}كاش
+                    {% elif invoice.payment_type == 'CARD' %}بطاقة بنكية
+                    {% elif invoice.payment_type == 'CREDIT' %}آجل
+                    {% endif %}
+                </span>
+            </div>
+            
+            <hr class="border-secondary my-3">
+            
+            {% if invoice.journal_entry %}
+            <div class="mb-3">
+                <span class="text-muted d-block text-sm">القيد المحاسبي المربوط</span>
+                <span class="font-bold text-neon-blue">{{ invoice.journal_entry.reference }}</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Invoice Lines & Totals -->
+    <div class="col-md-8 mb-4">
+        <div class="card p-4">
+            <h4 class="text-neon-gold mb-4">الأصناف</h4>
+            
+            <div class="table-responsive mb-4">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>المنتج</th>
+                            <th>الكمية</th>
+                            <th>سعر الوحدة</th>
+                            <th>الإجمالي</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for line in lines %}
+                        <tr>
+                            <td>{{ line.product.name }}</td>
+                            <td>{{ line.quantity }}</td>
+                            <td>{{ line.unit_price }} ج.م</td>
+                            <td>{{ line.subtotal }} ج.م</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center">لا توجد أصناف</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 offset-md-6">
+                    <div class="card bg-dark p-3 border-0">
+                        <div class="d-flex justify-between mb-2">
+                            <span class="text-muted">الإجمالي قبل الخصم والضريبة:</span>
+                            <span class="font-bold">{{ invoice.subtotal }} ج.م</span>
+                        </div>
+                        
+                        <div class="d-flex justify-between mb-2">
+                            <span class="text-muted">قيمة الخصم:</span>
+                            <span class="font-bold text-neon-red">- {{ invoice.discount_amount }} ج.م</span>
+                        </div>
+                        
+                        <div class="d-flex justify-between mb-2">
+                            <span class="text-muted">ضريبة القيمة المضافة ({{ invoice.vat_percentage }}%):</span>
+                            <span class="font-bold text-success">+ {{ invoice.tax_amount }} ج.م</span>
+                        </div>
+                        
+                        <div class="d-flex justify-between mb-2">
+                            <span class="text-muted">ضريبة الخصم والإضافة ({{ invoice.wht_percentage }}%):</span>
+                            <span class="font-bold text-neon-red">- {{ invoice.wht_amount }} ج.م</span>
+                        </div>
+                        
+                        <hr class="border-secondary my-2">
+                        
+                        <div class="d-flex justify-between">
+                            <h4 class="text-neon-gold mb-0">الإجمالي النهائي:</h4>
+                            <h4 class="text-neon-gold mb-0">{{ invoice.total_amount }} ج.م</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</div>
+
+<script>
+function confirmInvoice(invoiceId) {
+    if (confirm('هل أنت متأكد من ترحيل هذه الفاتورة؟ لن تتمكن من تعديلها لاحقاً وسوف يتم إنشاء القيود المحاسبية وحركة المخازن.')) {
+        fetch(`/invoicing/confirm/${invoiceId}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                window.location.reload();
+            } else {
+                alert('حدث خطأ: ' + data.message);
+            }
+        });
+    }
+}
+</script>
+{% endblock %}

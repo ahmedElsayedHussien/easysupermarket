@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 600px; margin: 0 auto;">
+    <div class="card p-4">
+        <h2 class="text-neon-cyan mb-4 text-center">{{ title }}</h2>
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            {% for field in form %}
+            <div class="mb-3">
+                <label for="{{ field.id_for_label }}" class="form-label text-neon-blue">{{ field.label }}</label>
+                {{ field }}
+                {% if field.help_text %}
+                <div class="form-text text-muted">{{ field.help_text }}</div>
+                {% endif %}
+                {% for error in field.errors %}
+                <div class="text-danger small">{{ error }}</div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+            <div class="d-flex justify-between align-center mt-4">
+                <a href="{{ cancel_url }}" class="btn btn-ghost">إلغاء</a>
+                <button type="submit" class="btn btn-neon-cyan">حفظ</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,97 @@
+{% extends 'base.html' %}
+{% block title %}تتبع المخزون (FIFO){% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-cyan">تتبع المخزون (FIFO)</h2>
+        <div>
+            <a href="{% url 'inventory:transfer_stock' %}" class="btn btn-neon-cyan">🔄 تحويل مخزني</a>
+            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-neon-cyan" style="margin-right: 8px;">تسوية وإعدام</a>
+            <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost" style="margin-right: 8px;">المنتجات</a>
+        </div>
+    </div>
+
+    <div class="card mb-4 p-3">
+        <div class="d-flex gap-3">
+            <select class="form-select" id="warehouseFilter">
+                <option value="">كل المستودعات</option>
+                {% for wh in warehouses %}
+                <option value="{{ wh.name }}">{{ wh.name }}</option>
+                {% endfor %}
+            </select>
+            <input type="text" id="productSearch" class="form-control" placeholder="بحث باسم المنتج...">
+        </div>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>المنتج</th>
+                <th>المستودع</th>
+                <th>الكمية المتبقية</th>
+                <th>تاريخ الإنشاء (Batch)</th>
+                <th>تاريخ الصلاحية</th>
+                <th>تكلفة الوحدة</th>
+                <th>حالة FIFO</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for batch in batches %}
+            <tr>
+                <td>{{ batch.product.name }}</td>
+                <td>{{ batch.warehouse.name }}</td>
+                <td>{{ batch.quantity_remaining|floatformat:0 }}</td>
+                <td>{{ batch.created_at|date:"Y-m-d H:i" }}</td>
+                <td>{{ batch.expiry_date|default:"-" }}</td>
+                <td>{{ batch.unit_cost|floatformat:2 }} ج.م</td>
+                <td>
+                    <span class="badge" data-fifo-days="{{ batch.fifo_age_days }}">
+                        {{ batch.fifo_age_days }} يوم
+                    </span>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" class="text-center">لا توجد دفعات مخزون</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const warehouseFilter = document.getElementById('warehouseFilter');
+    const productSearch = document.getElementById('productSearch');
+    const tableRows = document.querySelectorAll('.data-table tbody tr');
+
+    function filterTable() {
+        const whValue = warehouseFilter.value.toLowerCase();
+        const searchValue = productSearch.value.toLowerCase();
+
+        tableRows.forEach(row => {
+            // Ignore the empty state row
+            if (row.querySelector('td[colspan]')) return;
+
+            const productName = row.cells[0].textContent.toLowerCase();
+            const warehouseName = row.cells[1].textContent.toLowerCase();
+
+            const matchesWarehouse = whValue === "" || warehouseName.includes(whValue);
+            const matchesSearch = searchValue === "" || productName.includes(searchValue);
+
+            if (matchesWarehouse && matchesSearch) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+    }
+
+    warehouseFilter.addEventListener('change', filterTable);
+    if (productSearch) {
+        productSearch.addEventListener('keyup', filterTable);
+    }
+});
+</script>
+{% endblock %}

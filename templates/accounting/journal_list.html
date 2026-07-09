@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block title %}قيود اليومية{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold">قيود اليومية</h2>
+        <a href="{% url 'accounting:chart_of_accounts' %}" class="btn btn-ghost">دليل الحسابات</a>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>رقم القيد</th>
+                <th>التاريخ</th>
+                <th>البيان</th>
+                <th>إجمالي المدين</th>
+                <th>إجمالي الدائن</th>
+                <th>الحالة</th>
+                <th>إجراءات</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in entries %}
+            <tr>
+                <td class="en">{{ entry.reference }}</td>
+                <td>{{ entry.date }}</td>
+                <td>{{ entry.description|truncatechars:50 }}</td>
+                <td class="en text-neon-green">{{ entry.get_total_debit }}</td>
+                <td class="en text-neon-red">{{ entry.get_total_credit }}</td>
+                <td>
+                    {% if entry.status == 'POSTED' %}
+                    <span class="badge badge-success">مرحّل</span>
+                    {% else %}
+                    <span class="badge badge-draft">مسودة</span>
+                    {% endif %}
+                </td>
+                <td class="table-actions">
+                    <a href="{% url 'accounting:journal_detail' entry.id %}" class="btn btn-sm btn-ghost">تفاصيل</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" class="text-center">لا توجد قيود يومية</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

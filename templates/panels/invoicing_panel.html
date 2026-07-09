@@ -1,0 +1,106 @@
+{% load i18n %}
+<aside class="user-context-panel">
+
+    <p class="context-panel-title">{% trans 'سياق المستخدم' %}</p>
+
+    <!-- Branch Selector -->
+    <div class="context-info-group">
+        <label class="context-info-label">{% trans 'الفرع' %}</label>
+        <select class="context-info-select" id="contextBranch">
+            {% if current_branch %}
+                <option value="{{ current_branch.id }}" selected>{{ current_branch.name }}</option>
+            {% endif %}
+            {% for branch in branches %}
+                {% if branch.id != current_branch.id %}
+                <option value="{{ branch.id }}">{{ branch.name }}</option>
+                {% endif %}
+            {% endfor %}
+        </select>
+    </div>
+
+    <!-- Warehouse Selector -->
+    <div class="context-info-group">
+        <label class="context-info-label">{% trans 'المخزن' %}</label>
+        <select class="context-info-select" id="contextWarehouse">
+            {% if current_warehouse %}
+                <option value="{{ current_warehouse.id }}" selected>{{ current_warehouse.name }}</option>
+            {% endif %}
+            {% for wh in warehouses %}
+                {% if wh.id != current_warehouse.id %}
+                <option value="{{ wh.id }}">{{ wh.name }}</option>
+                {% endif %}
+            {% endfor %}
+        </select>
+    </div>
+
+    <!-- Role -->
+    <div class="context-info-group">
+        <label class="context-info-label">{% trans 'الدور' %}</label>
+        <div class="context-info-value" style="color:var(--neon-cyan);">
+            {% if request.user.is_superuser %}مدير النظام{% elif request.user.is_staff %}مشرف{% else %}كاشير{% endif %}
+        </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Revenue Chart -->
+    <div class="context-panel-title">{% trans 'إيرادات اليوم' %}</div>
+    <div class="chart-wrapper">
+        <div class="chart-canvas-container">
+            <canvas id="revenueChart"></canvas>
+            <div class="chart-label-overlay">
+                <div class="chart-label-value">{{ today_revenue|default:"0"|floatformat:0 }}</div>
+                <div class="chart-label-sub">{% trans 'ج.م' %}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Payment Method Buttons -->
+    <div class="context-payment-btns">
+        <button class="context-pay-btn cash">{% trans 'نقدي' %}</button>
+        <button class="context-pay-btn card">{% trans 'بطاقة' %}</button>
+        <button class="context-pay-btn wallet">{% trans 'محفظة' %}</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Quick Stats -->
+    <div class="context-panel-title">{% trans 'إحصاء سريع' %}</div>
+    <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        <div style="display:flex;justify-content:space-between;font-size:0.78rem;">
+            <span style="color:var(--text-muted);">{% trans 'فواتير اليوم' %}</span>
+            <span style="color:var(--neon-green);font-weight:700;font-family:var(--font-english);">{{ today_invoices|default:"0" }}</span>
+        </div>
+    </div>
+
+</aside>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof Chart !== 'undefined' && document.getElementById('revenueChart')) {
+            if (typeof setChartDefaults === 'function') {
+                setChartDefaults();
+            }
+            new Chart(document.getElementById('revenueChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: ["{% trans 'نقدي' %}", "{% trans 'بطاقة' %}", "{% trans 'محفظة' %}"],
+                    datasets: [{
+                        data: [
+                            {{ cash_revenue|default:"0" }},
+                            {{ card_revenue|default:"0" }},
+                            {{ wallet_revenue|default:"0" }}
+                        ],
+                        backgroundColor: ['rgba(46,213,115,0.7)', 'rgba(59,130,246,0.7)', 'rgba(168,85,247,0.7)'],
+                        borderColor: ['#2ed573', '#3b82f6', '#a855f7'],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, cutout: '72%',
+                    plugins: { legend: { display: false }, tooltip: { enabled: true } }
+                }
+            });
+        }
+    });
+</script>

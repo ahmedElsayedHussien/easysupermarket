@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold">{{ title }} (Income Statement)</h2>
+        <button class="btn btn-ghost" onclick="window.print()">طباعة</button>
+    </div>
+
+    <div class="card p-4">
+        <h3 class="text-neon-blue mb-3">الإيرادات (Revenues)</h3>
+        <table class="data-table mb-4">
+            <thead>
+                <tr>
+                    <th>رقم الحساب</th>
+                    <th>اسم الحساب</th>
+                    <th>المبلغ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for account in revenue_accounts %}
+                {% if not account.has_children and account.current_balance != 0 %}
+                <tr>
+                    <td class="en">{{ account.code }}</td>
+                    <td>{{ account.name }}</td>
+                    <td class="en">{{ account.current_balance }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="2" class="text-right text-bold">إجمالي الإيرادات</td>
+                    <td class="en text-bold text-neon-green">{{ total_revenue }}</td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <h3 class="text-neon-pink mb-3">المصروفات (Expenses)</h3>
+        <table class="data-table mb-4">
+            <thead>
+                <tr>
+                    <th>رقم الحساب</th>
+                    <th>اسم الحساب</th>
+                    <th>المبلغ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for account in expense_accounts %}
+                {% if not account.has_children and account.current_balance != 0 %}
+                <tr>
+                    <td class="en">{{ account.code }}</td>
+                    <td>{{ account.name }}</td>
+                    <td class="en">{{ account.current_balance }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="2" class="text-right text-bold">إجمالي المصروفات</td>
+                    <td class="en text-bold text-neon-pink">{{ total_expense }}</td>
+                </tr>
+            </tfoot>
+        </table>
+
+        <div class="d-flex justify-between align-center p-3" style="background-color: var(--color-surface-hover); border-radius: 8px;">
+            <h3 class="mb-0">صافي الدخل (Net Income)</h3>
+            <h3 class="en mb-0 {% if net_income >= 0 %}text-neon-green{% else %}text-neon-pink{% endif %}">{{ net_income }}</h3>
+        </div>
+    </div>
+</div>
+{% endblock %}

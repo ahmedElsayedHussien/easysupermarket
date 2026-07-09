@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% load mptt_tags %}
+{% block title %}شجرة الحسابات{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold">شجرة الحسابات (Chart of Accounts)</h2>
+        {% if not has_accounts %}
+        <form method="post" action="{% url 'accounting:setup_default_accounts' %}" style="display:inline;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary" onclick="return confirm('هل أنت متأكد من رغبتك في توليد شجرة الحسابات الافتراضية؟ هذه العملية لا يمكن التراجع عنها.')">
+                توليد شجرة الحسابات الافتراضية
+            </button>
+        </form>
+        {% endif %}
+    </div>
+
+    <div class="card p-4">
+        <ul class="tree-view" style="list-style:none; padding:0;">
+            {% recursetree accounts %}
+                <li style="margin-bottom: 0.5rem;">
+                    <div class="d-flex align-center gap-2 p-2 border-bottom" style="border-color: var(--border-default);">
+                        <span class="en text-neon-gold">{{ node.code }}</span>
+                        <strong>{{ node.name }}</strong>
+                        <span class="badge badge-info">{{ node.get_account_type_display }}</span>
+                        {% if not node.is_leaf_node %}
+                        <span class="text-muted text-sm">({{ node.get_descendant_count }} حساب فرعي)</span>
+                        {% else %}
+                        <span class="badge badge-success" style="margin-right:auto;">رصيد: {{ node.current_balance }} ج.م</span>
+                        {% endif %}
+                    </div>
+                    {% if not node.is_leaf_node %}
+                        <ul class="children" style="list-style:none; margin-right: 3rem; padding-right: 1rem; border-right: 2px dashed var(--border-default); margin-top: 0.5rem;">
+                            {{ children }}
+                        </ul>
+                    {% endif %}
+                </li>
+            {% endrecursetree %}
+        </ul>
+    </div>
+</div>
+{% endblock %}

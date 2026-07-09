@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2 class="text-neon-gold mb-4">{{ title }}</h2>
+    
+    <div class="card p-4">
+        <div class="d-flex justify-between mb-4">
+            <div>
+                <strong>التاريخ:</strong> {{ entry.date }}<br>
+                <strong>البيان:</strong> {{ entry.description }}<br>
+                <strong>المنشئ:</strong> {% if entry.created_by %}{{ entry.created_by.get_full_name|default:entry.created_by.username }}{% else %}النظام{% endif %}
+            </div>
+            <div class="text-left">
+                <strong>الحالة:</strong> 
+                {% if entry.status == 'POSTED' %}
+                <span class="badge badge-success">مرحّل</span>
+                {% else %}
+                <span class="badge badge-draft">مسودة</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>الحساب</th>
+                    <th>البيان</th>
+                    <th class="text-center">مدين</th>
+                    <th class="text-center">دائن</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in entry.items.all %}
+                <tr>
+                    <td>{{ item.account.name }} ({{ item.account.code }})</td>
+                    <td>{{ item.description|default:"-" }}</td>
+                    <td class="text-center {% if item.debit > 0 %}text-neon-green{% endif %}" dir="ltr">{{ item.debit|floatformat:2 }}</td>
+                    <td class="text-center {% if item.credit > 0 %}text-neon-red{% endif %}" dir="ltr">{{ item.credit|floatformat:2 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr style="background: var(--bg-tertiary); font-weight: bold;">
+                    <td colspan="2" class="text-left">الإجمالي:</td>
+                    <td class="text-center text-neon-green" dir="ltr">{{ entry.get_total_debit|floatformat:2 }}</td>
+                    <td class="text-center text-neon-red" dir="ltr">{{ entry.get_total_credit|floatformat:2 }}</td>
+                </tr>
+            </tfoot>
+        </table>
+        
+        <div class="mt-4">
+            <a href="{% url 'accounting:journal_list' %}" class="btn btn-ghost">العودة للقيود</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

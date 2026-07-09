@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-blue">{{ title }}</h2>
+        <a href="{% url 'partners:partner_create' %}?type={{ type }}" class="btn btn-neon-blue">+ إضافة</a>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>الاسم</th>
+                <th>رقم الهاتف</th>
+                <th>حد الائتمان</th>
+                <th>الرصيد المحاسبي</th>
+                <th>فترة السداد</th>
+                <th>نشط</th>
+                <th>إجراءات</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for partner in partners %}
+            <tr>
+                <td>{{ partner.name }}</td>
+                <td class="en">{{ partner.phone|default:"-" }}</td>
+                <td class="en">{{ partner.credit_limit }} ج.م</td>
+                <td class="en font-bold {% if type == 'customer' %}{% if partner.balance > 0 %}text-neon-green{% elif partner.balance < 0 %}text-neon-red{% endif %}{% else %}{% if partner.balance > 0 %}text-neon-red{% elif partner.balance < 0 %}text-neon-green{% endif %}{% endif %}">
+                    {{ partner.balance|default:"0.0000" }} ج.م
+                </td>
+                <td>{{ partner.payment_terms_days }} يوم</td>
+                <td>
+                    {% if partner.is_active %}
+                    <span class="badge badge-success">نعم</span>
+                    {% else %}
+                    <span class="badge badge-danger">لا</span>
+                    {% endif %}
+                </td>
+                <td class="table-actions">
+                    <a href="{% url 'partners:partner_edit' partner.id %}" class="btn btn-sm btn-ghost">تعديل</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" class="text-center">لا يوجد بيانات</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

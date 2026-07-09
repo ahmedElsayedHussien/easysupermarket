@@ -1,0 +1,55 @@
+{% load i18n %}
+<aside class="user-context-panel">
+
+    <p class="context-panel-title">{% trans 'سياق المستخدم' %}</p>
+
+    <!-- Branch Selector -->
+    <div class="context-info-group">
+        <label class="context-info-label">{% trans 'الفرع' %}</label>
+        <select class="context-info-select" id="contextBranch">
+            {% if current_branch %}
+                <option value="{{ current_branch.id }}" selected>{{ current_branch.name }}</option>
+            {% endif %}
+            {% for branch in branches %}
+                {% if branch.id != current_branch.id %}
+                <option value="{{ branch.id }}">{{ branch.name }}</option>
+                {% endif %}
+            {% endfor %}
+        </select>
+    </div>
+
+    <!-- Warehouse Selector -->
+    <div class="context-info-group">
+        <label class="context-info-label">{% trans 'المخزن' %}</label>
+        <select class="context-info-select" id="contextWarehouse">
+            {% if current_warehouse %}
+                <option value="{{ current_warehouse.id }}" selected>{{ current_warehouse.name }}</option>
+            {% endif %}
+            {% for wh in warehouses %}
+                {% if wh.id != current_warehouse.id %}
+                <option value="{{ wh.id }}">{{ wh.name }}</option>
+                {% endif %}
+            {% endfor %}
+        </select>
+    </div>
+
+    <!-- Role -->
+    <div class="context-info-group">
+        <label class="context-info-label">{% trans 'الدور' %}</label>
+        <div class="context-info-value" style="color:var(--neon-cyan);">
+            {% if request.user.is_superuser %}مدير النظام{% elif request.user.is_staff %}مشرف{% else %}كاشير{% endif %}
+        </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Quick Stats -->
+    <div class="context-panel-title">{% trans 'إحصاءات المخزون' %}</div>
+    <div style="display:flex;flex-direction:column;gap:0.5rem;">
+        <div style="display:flex;justify-content:space-between;font-size:0.78rem;">
+            <span style="color:var(--text-muted);">{% trans 'المخزون المنخفض' %}</span>
+            <span style="color:var(--neon-red);font-weight:700;font-family:var(--font-english);">{{ low_stock_count|default:"0" }}</span>
+        </div>
+    </div>
+
+</aside>
