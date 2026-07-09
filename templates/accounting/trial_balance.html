@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+{% block title %}ميزان المراجعة{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold">ميزان المراجعة (Trial Balance)</h2>
+        <button class="btn btn-ghost">طباعة</button>
+    </div>
+
+    <div class="card p-4">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم الحساب</th>
+                    <th>اسم الحساب</th>
+                    <th>مدين</th>
+                    <th>دائن</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Placeholder for actual trial balance data calculation -->
+                {% for account in accounts %}
+                {% if account.current_balance != 0 %}
+                <tr>
+                    <td class="en">{{ account.code }}</td>
+                    <td>{{ account.name }}</td>
+                    <td class="en">
+                        {% if account.normal_balance == 'DEBIT' and account.current_balance > 0 %}
+                            {{ account.current_balance }}
+                        {% elif account.normal_balance == 'CREDIT' and account.current_balance < 0 %}
+                            {{ account.current_balance|stringformat:"f"|slice:"1:" }}
+                        {% else %}
+                            0.00
+                        {% endif %}
+                    </td>
+                    <td class="en">
+                        {% if account.normal_balance == 'CREDIT' and account.current_balance > 0 %}
+                            {{ account.current_balance }}
+                        {% elif account.normal_balance == 'DEBIT' and account.current_balance < 0 %}
+                            {{ account.current_balance|stringformat:"f"|slice:"1:" }}
+                        {% else %}
+                            0.00
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

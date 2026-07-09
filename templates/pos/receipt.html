@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>فاتورة مبيعات - {{ invoice.invoice_number }}</title>
+    <style>
+        /* 
+         * Thermal Printer Styles (80mm) 
+         * 80mm paper is ~3.15 inches. 
+         * Width usually maxes out around 72mm printable area (~270px at 96dpi).
+         */
+        @page {
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Courier New', Courier, monospace; /* Monospace is best for thermal */
+            font-size: 12px;
+            line-height: 1.4;
+            color: #000;
+            background: #fff;
+            margin: 0;
+            padding: 10px;
+            width: 270px; /* ~72mm */
+        }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-left { text-align: left; }
+        
+        .header { margin-bottom: 15px; }
+        .header h2 { margin: 0; font-size: 16px; font-weight: bold; }
+        .header p { margin: 2px 0; font-size: 12px; }
+        
+        .divider {
+            border-top: 1px dashed #000;
+            margin: 10px 0;
+        }
+        
+        .info-table {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        .info-table td {
+            font-size: 11px;
+            padding: 2px 0;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 10px;
+        }
+        .items-table th {
+            border-bottom: 1px dashed #000;
+            padding-bottom: 4px;
+            font-size: 11px;
+            text-align: right;
+        }
+        .items-table td {
+            padding: 4px 0;
+            font-size: 11px;
+        }
+        .items-table .amount-col {
+            text-align: left;
+        }
+        
+        .totals {
+            width: 100%;
+            margin-top: 10px;
+        }
+        .totals td {
+            font-size: 12px;
+            padding: 2px 0;
+        }
+        .totals .bold {
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        .footer {
+            margin-top: 15px;
+            font-size: 11px;
+        }
+        
+        /* Auto-print and close script will run on load */
+        @media print {
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body onload="window.print(); window.onafterprint = function(){ window.close(); }">
+
+    <div class="header text-center">
+        <h2>{{ request.tenant.name|default:"سوبر ماركت" }}</h2>
+        <p>{{ request.tenant.domain_set.first.domain|default:"" }}</p>
+        <p>الرقم الضريبي: {{ tax_id|default:"---" }}</p>
+        <p>هاتف: {{ request.tenant.owner_phone|default:"---" }}</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <table class="info-table">
+        <tr>
+            <td>رقم الفاتورة:</td>
+            <td class="text-left">{{ invoice.invoice_number }}</td>
+        </tr>
+        <tr>
+            <td>التاريخ:</td>
+            <td class="text-left">{{ invoice.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+        <tr>
+            <td>الكاشير:</td>
+            <td class="text-left">{{ invoice.cashier.username }}</td>
+        </tr>
+        <tr>
+            <td>العميل:</td>
+            <td class="text-left">{{ invoice.partner.name }}</td>
+        </tr>
+    </table>
+
+    <div class="divider"></div>
+
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th width="45%">الصنف</th>
+                <th width="20%">الكمية</th>
+                <th width="35%" class="amount-col">السعر</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in invoice.lines.all %}
+            <tr>
+                <td>{{ line.product.name }}</td>
+                <td>{{ line.quantity }}</td>
+                <td class="amount-col">{{ line.subtotal }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="3" class="text-center">لا توجد أصناف</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="divider"></div>
+
+    <table class="totals">
+        <tr>
+            <td>الإجمالي قبل الضريبة:</td>
+            <td class="text-left">{{ invoice.subtotal }}</td>
+        </tr>
+        <tr>
+            <td>الخصم:</td>
+            <td class="text-left">{{ invoice.discount_amount }}</td>
+        </tr>
+        <tr>
+            <td>الضريبة:</td>
+            <td class="text-left">{{ invoice.tax_amount }}</td>
+        </tr>
+        <tr>
+            <td class="bold">الصافي:</td>
+            <td class="text-left bold">{{ invoice.total_amount }}</td>
+        </tr>
+        <tr>
+            <td>طريقة الدفع:</td>
+            <td class="text-left">{{ invoice.get_payment_type_display }}</td>
+        </tr>
+    </table>
+
+    <div class="divider"></div>
+
+    <div class="footer text-center">
+        <p>شكراً لزيارتكم!</p>
+        <p>Powered by EasySupermarket ERP</p>
+    </div>
+
+</body>
+</html>

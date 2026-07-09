@@ -1,0 +1,253 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .form-group { margin-bottom: 1.5rem; }
+    .form-group label {
+        color: var(--neon-cyan);
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+    }
+    .form-control, .form-select {
+        background: rgba(10, 10, 20, 0.6);
+        border: 1px solid rgba(0, 255, 255, 0.2);
+        color: #fff;
+    }
+    .form-control:focus, .form-select:focus {
+        background: rgba(10, 10, 20, 0.8);
+        border-color: var(--neon-cyan);
+        box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+        color: #fff;
+    }
+    .help-text { font-size: 0.85em; color: #888; margin-top: 0.25rem; }
+    
+    .formset-row {
+        background: rgba(20, 20, 30, 0.5);
+        border: 1px solid rgba(255, 0, 255, 0.2);
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+        position: relative;
+    }
+    .formset-row:hover {
+        border-color: var(--neon-pink);
+        box-shadow: 0 0 15px rgba(255, 0, 255, 0.1);
+    }
+    .delete-row-btn {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        color: var(--neon-pink);
+        cursor: pointer;
+        background: none;
+        border: none;
+        font-size: 1.2rem;
+    }
+    .delete-row-btn:hover { color: #ff4444; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-11 col-lg-10">
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            
+            <div class="card glass-panel border-neon mb-4">
+                <div class="card-header border-bottom border-secondary">
+                    <h4 class="mb-0 text-neon"><i class="fas fa-box me-2"></i> {{ title }}</h4>
+                </div>
+                <div class="card-body">
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger">
+                        {% for error in form.non_field_errors %}
+                            {{ error }}
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    <div class="row">
+                        {% for field in form %}
+                        <div class="col-md-4 form-group">
+                            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                            
+                            {% if field.name == 'barcode' %}
+                            <div class="d-flex" style="gap: 5px;">
+                                <div style="flex-grow: 1;">
+                                    {{ field }}
+                                </div>
+                                <button type="button" class="btn" onclick="generateBarcode()" title="توليد باركود تلقائي فريد" style="padding: 0 15px; background-color: #ffffff; color: #000000; font-weight: bold;">
+                                    <i class="fas fa-barcode"></i>
+                                </button>
+                            </div>
+                            {% else %}
+                            {{ field }}
+                            {% endif %}
+
+                            {% if field.help_text %}
+                            <div class="help-text">{{ field.help_text|safe }}</div>
+                            {% endif %}
+                            {% if field.errors %}
+                            <div class="text-danger mt-1 small">
+                                {% for error in field.errors %}
+                                    {{ error }}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- UoM Formset -->
+            <div class="card glass-panel border-neon mb-4">
+                <div class="card-header border-bottom border-secondary d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 text-neon-pink"><i class="fas fa-balance-scale me-2"></i> وحدات القياس المتعددة (Product UoM)</h5>
+                    <button type="button" class="btn btn-sm" id="add-uom-row" style="background-color: #ff8800; color: #ffffff; font-weight: bold; border: none; box-shadow: 0 0 8px rgba(255, 136, 0, 0.6); padding: 5px 15px;">
+                        <i class="fas fa-plus"></i> إضافة وحدة
+                    </button>
+                </div>
+                <div class="card-body" id="uom-formset-container">
+                    {{ uom_formset.management_form }}
+                    
+                    {% if uom_formset.non_form_errors %}
+                    <div class="alert alert-danger">{{ uom_formset.non_form_errors }}</div>
+                    {% endif %}
+
+                    {% for uom_form in uom_formset %}
+                    <div class="formset-row uom-row">
+                        {{ uom_form.id }}
+                        <div class="row align-items-end">
+                            {% for field in uom_form.visible_fields %}
+                                {% if field.name != 'DELETE' %}
+                                <div class="col-md-3 form-group mb-0">
+                                    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                                    {{ field }}
+                                    {% if field.errors %}
+                                    <div class="text-danger mt-1 small">{{ field.errors.0 }}</div>
+                                    {% endif %}
+                                </div>
+                                {% else %}
+                                <div class="col-md-2 form-group mb-0 d-none delete-container">
+                                    {{ field }}
+                                </div>
+                                {% endif %}
+                            {% endfor %}
+                            
+                            <button type="button" class="delete-row-btn" title="حذف الوحدة"><i class="fas fa-times"></i></button>
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                    <!-- Empty Form Template -->
+                    <div id="empty-form-template" style="display:none;">
+                        <div class="formset-row uom-row">
+                            {{ uom_formset.empty_form.id }}
+                            <div class="row align-items-end">
+                                {% for field in uom_formset.empty_form.visible_fields %}
+                                    {% if field.name != 'DELETE' %}
+                                    <div class="col-md-3 form-group mb-0">
+                                        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                                        {{ field }}
+                                    </div>
+                                    {% else %}
+                                    <div class="col-md-2 form-group mb-0 d-none delete-container">
+                                        {{ field }}
+                                    </div>
+                                    {% endif %}
+                                {% endfor %}
+                                
+                                <button type="button" class="delete-row-btn" title="حذف الوحدة"><i class="fas fa-times"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between mb-5 pt-3 border-top border-secondary">
+                <button type="submit" class="btn btn-neon-cyan px-5 py-2 fs-5">
+                    <i class="fas fa-save me-2"></i> حفظ المنتج
+                </button>
+                {% if cancel_url %}
+                <a href="{{ cancel_url }}" class="btn btn-ghost px-5 py-2 fs-5">
+                    <i class="fas fa-times me-2"></i> إلغاء
+                </a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const container = document.getElementById('uom-formset-container');
+        const addButton = document.getElementById('add-uom-row');
+        const totalFormsInput = document.getElementById('id_uoms-TOTAL_FORMS');
+        const template = document.getElementById('empty-form-template');
+
+        addButton.addEventListener('click', function() {
+            const formCount = parseInt(totalFormsInput.value);
+            const newFormHtml = template.innerHTML.replace(/__prefix__/g, formCount);
+            template.insertAdjacentHTML('beforebegin', newFormHtml);
+            totalFormsInput.value = formCount + 1;
+        });
+
+        container.addEventListener('click', function(e) {
+            const deleteBtn = e.target.closest('.delete-row-btn');
+            if (deleteBtn) {
+                const row = deleteBtn.closest('.formset-row');
+                const idInput = row.querySelector('input[name$="-id"]');
+                if (idInput && idInput.value) {
+                    // Existing form, check the hidden delete box and hide row
+                    const deleteInput = row.querySelector('input[name$="-DELETE"]');
+                    if (deleteInput) deleteInput.checked = true;
+                    row.style.display = 'none';
+                } else {
+                    // New form, safe to remove
+                    row.remove();
+                    reindexForms();
+                }
+            }
+        });
+
+        function reindexForms() {
+            const rows = container.querySelectorAll('.uom-row:not(#empty-form-template .uom-row)');
+            totalFormsInput.value = rows.length;
+            rows.forEach((row, index) => {
+                const inputs = row.querySelectorAll('input, select, textarea, label');
+                inputs.forEach(input => {
+                    if (input.name) input.name = input.name.replace(/-\d+-/, `-${index}-`);
+                    if (input.id) input.id = input.id.replace(/-\d+-/, `-${index}-`);
+                    if (input.htmlFor) input.htmlFor = input.htmlFor.replace(/-\d+-/, `-${index}-`);
+                });
+            });
+        }
+    });
+    function generateBarcode() {
+        // Generate a random 12-digit barcode starting with 200 (common for local store barcodes)
+        // Format: 200 + 9 random digits
+        let randomNum = Math.floor(Math.random() * 1000000000).toString().padStart(9, '0');
+        let barcode = '200' + randomNum;
+        
+        // Calculate EAN-13 check digit
+        let sum = 0;
+        for (let i = 0; i < 12; i++) {
+            sum += parseInt(barcode[i]) * (i % 2 === 0 ? 1 : 3);
+        }
+        let checkDigit = (10 - (sum % 10)) % 10;
+        
+        let finalBarcode = barcode + checkDigit;
+        
+        document.getElementById('id_barcode').value = finalBarcode;
+        // Also fire change event in case of other listeners
+        document.getElementById('id_barcode').dispatchEvent(new Event('change'));
+    }
+</script>
+{% endblock %}

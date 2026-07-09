@@ -1,0 +1,384 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}لوحة المدير - ميزا ERP{% endblock %}
+
+{% block extra_css %}
+<style>
+.admin-dash { display: flex; flex-direction: column; gap: 1.25rem; }
+.dash-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-default); margin-bottom: 1.25rem; }
+.dash-tab {
+    padding: 0.6rem 1.1rem; font-size: 0.78rem; font-weight: 600; cursor: pointer;
+    border-bottom: 2px solid transparent; color: var(--text-muted); background: none; border-top: none; border-left: none; border-right: none;
+    font-family: var(--font-arabic); transition: var(--transition-fast); white-space: nowrap;
+}
+.dash-tab:hover { color: var(--text-secondary); }
+.dash-tab.active { color: var(--neon-cyan); border-bottom-color: var(--neon-cyan); }
+.chart-card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 1rem; }
+.chart-card-title { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.75rem; font-family: var(--font-english); }
+.chart-card canvas { max-height: 180px; }
+.big-stat { text-align:center; padding: 0.75rem; }
+.big-stat .num { font-family: var(--font-english); font-size: 2.5rem; font-weight: 800; }
+.big-stat .lbl { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
+.user-badge { display:inline-flex; align-items:center; gap:0.3rem; padding:0.15rem 0.5rem; border-radius:20px; font-size:0.68rem; font-weight:600; }
+.user-badge.online { background:rgba(46,213,115,0.15); color:var(--neon-green); }
+.user-badge.offline { background:rgba(100,116,139,0.15); color:var(--neon-gray); }
+.fifo-row td { font-size: 0.78rem; }
+.branch-rank { font-family:var(--font-english); font-weight:800; font-size:1.1rem; color:var(--neon-gold); min-width:30px; }
+.filter-section { display: flex; flex-direction: column; gap: 0.75rem; }
+.branch-progress { height: 4px; border-radius: 2px; background: var(--border-default); margin-top: 0.2rem; }
+.branch-progress-bar { height: 100%; border-radius: 2px; background: var(--neon-green); transition: width 0.5s ease; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-dash">
+
+    <!-- Navigation Tabs -->
+    <div class="dash-tabs">
+        <button class="dash-tab" onclick="location.href='{% url 'core:branch_list' %}'">🏪 الفروع</button>
+        <button class="dash-tab">🏭 المخازن</button>
+        <button class="dash-tab">👥 المستخدمون والصلاحيات</button>
+        <button class="dash-tab" onclick="location.href='{% url 'partners:supplier_list' %}'">🚚 الموردون</button>
+        <button class="dash-tab">⚙ إعدادات النظام</button>
+        <button class="dash-tab active">📈 لوحة المدير</button>
+    </div>
+
+    <!-- Page Header -->
+    <div class="page-header">
+        <div>
+            <h1 class="page-title" style="color:var(--neon-cyan);">📈 لوحة تحكم المدير</h1>
+            <p class="page-subtitle">نظرة شاملة على أداء الشبكة — Admin Analytics Dashboard</p>
+        </div>
+        <div class="d-flex gap-3">
+            <button class="btn btn-ghost btn-sm" onclick="exportTableToCSV('branchTable','branches.csv')">📥 تصدير CSV</button>
+            <button class="btn btn-neon-cyan btn-sm" onclick="location.reload()">🔄 تحديث</button>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         ROW 1: 3 Chart Cards
+         ============================================================ -->
+    <div class="grid-3">
+
+        <!-- Total Network Sales -->
+        <div class="chart-card">
+            <div class="chart-card-title">📊 إجمالي مبيعات الشبكة</div>
+            <div style="height:170px;position:relative;">
+                <canvas id="salesChart"></canvas>
+            </div>
+            <div class="d-flex justify-between mt-2">
+                <div class="big-stat" style="padding:0.4rem;">
+                    <div class="num" style="font-size:1.3rem;color:var(--neon-green);">
+                        {{ total_sales|default:"0"|floatformat:0 }}
+                    </div>
+                    <div class="lbl">ج.م إجمالي</div>
+                </div>
+                <div class="big-stat" style="padding:0.4rem;">
+                    <div class="num" style="font-size:1.3rem;color:var(--neon-cyan);">
+                        {{ total_invoices|default:"0" }}
+                    </div>
+                    <div class="lbl">فاتورة</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Profit Margin -->
+        <div class="chart-card">
+            <div class="chart-card-title">💰 هامش الربح</div>
+            <div style="height:170px;position:relative;">
+                <canvas id="profitChart"></canvas>
+            </div>
+            <div class="d-flex justify-between mt-2">
+                <div class="big-stat" style="padding:0.4rem;">
+                    <div class="num" style="font-size:1.3rem;color:var(--neon-gold);">
+                        {{ avg_profit_margin|default:"27.3" }}%
+                    </div>
+                    <div class="lbl">متوسط الهامش</div>
+                </div>
+                <div class="stat-change up" style="align-self:center;">↑ +2.1%</div>
+            </div>
+        </div>
+
+        <!-- Branch Status Donut -->
+        <div class="chart-card" style="display:flex;flex-direction:column;align-items:center;">
+            <div class="chart-card-title" style="width:100%;">🏪 حالة الفروع</div>
+            <div style="height:160px;position:relative;width:160px;">
+                <canvas id="branchStatusChart"></canvas>
+                <div class="chart-label-overlay" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;">
+                    <div style="font-family:var(--font-english);font-size:1.6rem;font-weight:800;color:var(--neon-green);" id="activeBranchCount">
+                        {{ active_branches|default:"12" }}
+                    </div>
+                    <div style="font-size:0.65rem;color:var(--text-muted);">/ {{ total_branches|default:"15" }} نشطة</div>
+                </div>
+            </div>
+            <div class="d-flex gap-3 mt-2">
+                <div style="font-size:0.72rem;color:var(--neon-green);">● نشطة: {{ active_branches|default:"12" }}</div>
+                <div style="font-size:0.72rem;color:var(--neon-red);">● متوقفة: {{ inactive_branches|default:"3" }}</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ============================================================
+         ROW 2: Middle Row (3 sections)
+         ============================================================ -->
+    <div class="grid-3">
+
+        <!-- Active Users Table -->
+        <div class="card" style="grid-column:1/2;">
+            <div class="card-header">
+                <span class="card-header-title">👥 المستخدمون النشطون</span>
+                <span class="badge badge-success">{{ active_users|default:"5" }} متصل</span>
+            </div>
+            <div class="table-container" style="border:none;">
+                <table class="data-table" style="font-size:0.75rem;">
+                    <thead>
+                        <tr>
+                            <th>المستخدم</th>
+                            <th>الفرع</th>
+                            <th>الدور</th>
+                            <th>الحالة</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in active_users_list %}
+                        <tr>
+                            <td>
+                                <div style="font-weight:600;color:var(--text-primary);font-size:0.78rem;">{{ user.get_full_name }}</div>
+                                <div style="font-size:0.65rem;color:var(--text-muted);">{{ user.username }}</div>
+                            </td>
+                            <td>{{ user.branch.name|default:"-" }}</td>
+                            <td>{% if user.is_superuser %}مدير{% elif user.is_staff %}مشرف{% else %}كاشير{% endif %}</td>
+                            <td><span class="user-badge online">● متصل</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" style="text-align:center;color:var(--text-muted);padding:1rem;">لا يوجد بيانات</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- FIFO Stock Valuation -->
+        <div class="card" style="grid-column:2/4;">
+            <div class="card-header">
+                <span class="card-header-title">📦 تقييم المخزون FIFO</span>
+                <div class="d-flex gap-2">
+                    <span class="badge badge-info">FIFO Costing</span>
+                    <button class="btn btn-ghost btn-sm" onclick="location.href='{% url 'inventory:stock_list' %}'">عرض الكل</button>
+                </div>
+            </div>
+            <div class="table-container" style="border:none;">
+                <table class="data-table" id="fifoTable" style="font-size:0.75rem;">
+                    <thead>
+                        <tr>
+                            <th>المنتج</th>
+                            <th>الفئة</th>
+                            <th>الكمية</th>
+                            <th>تكلفة FIFO</th>
+                            <th>القيمة الإجمالية</th>
+                            <th>حالة التقادم</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in fifo_valuation %}
+                        <tr class="fifo-row">
+                            <td>
+                                <div style="font-weight:600;color:var(--text-primary);">{{ item.product.name }}</div>
+                                <div style="font-size:0.65rem;color:var(--text-muted);font-family:var(--font-english);">{{ item.product.barcode }}</div>
+                            </td>
+                            <td>{{ item.product.category.name|default:"-" }}</td>
+                            <td class="en">{{ item.total_quantity }}</td>
+                            <td class="en">{{ item.fifo_cost|floatformat:2 }}</td>
+                            <td class="en" style="color:var(--neon-gold);font-weight:700;">{{ item.total_value|floatformat:2 }}</td>
+                            <td>
+                                <span class="badge fifo-badge-{{ item.aging_class|default:'ok' }}">
+                                    {{ item.days_in_stock|default:"0" }} يوم
+                                </span>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:1rem;">لا توجد بيانات FIFO</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ============================================================
+         ROW 3: Bottom Tables
+         ============================================================ -->
+    <div class="grid-2">
+
+        <!-- Top Performing Branches -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-header-title">🏆 أعلى الفروع أداءً</span>
+                <span class="badge badge-warning">Top Branches</span>
+            </div>
+            <div class="table-container" style="border:none;">
+                <table class="data-table" id="branchTable" style="font-size:0.77rem;">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>الفرع</th>
+                            <th>المبيعات</th>
+                            <th>عدد الفواتير</th>
+                            <th>النسبة</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for branch in top_branches %}
+                        <tr>
+                            <td>
+                                <span class="branch-rank">
+                                    {% if forloop.counter == 1 %}🥇{% elif forloop.counter == 2 %}🥈{% elif forloop.counter == 3 %}🥉{% else %}{{ forloop.counter }}{% endif %}
+                                </span>
+                            </td>
+                            <td>
+                                <div style="font-weight:600;color:var(--text-primary);">{{ branch.name }}</div>
+                                <div style="font-size:0.65rem;color:var(--text-muted);">{{ branch.city|default:'' }}</div>
+                            </td>
+                            <td class="en" style="color:var(--neon-green);font-weight:700;">
+                                {{ branch.total_sales|default:"0"|floatformat:0 }} ج.م
+                            </td>
+                            <td class="en">{{ branch.invoice_count|default:"0" }}</td>
+                            <td>
+                                <div style="font-size:0.72rem;color:var(--text-muted);">{{ branch.sales_pct|default:"0" }}%</div>
+                                <div class="branch-progress">
+                                    <div class="branch-progress-bar" style="width:{{ branch.sales_pct|default:'0' }}%;"></div>
+                                </div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:1rem;">لا توجد بيانات</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- FIFO Inventory Alerts -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-header-title">⚠ تنبيهات المخزون FIFO</span>
+                <span class="badge badge-danger">{{ expiry_alerts_count|default:"0" }} تنبيه</span>
+            </div>
+            <div class="table-container" style="border:none;">
+                <table class="data-table" style="font-size:0.75rem;">
+                    <thead>
+                        <tr>
+                            <th>المنتج</th>
+                            <th>المخزن</th>
+                            <th>الكمية</th>
+                            <th>انتهاء الصلاحية</th>
+                            <th>حالة FIFO</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for alert in fifo_alerts %}
+                        <tr>
+                            <td>
+                                <div style="font-weight:600;color:var(--text-primary);">{{ alert.product.name }}</div>
+                                <div style="font-size:0.65rem;color:var(--text-muted);">{{ alert.lot_number|default:"دفعة #" }}{{ alert.id }}</div>
+                            </td>
+                            <td>{{ alert.warehouse.name|default:"-" }}</td>
+                            <td class="en">{{ alert.quantity }}</td>
+                            <td class="en" data-expiry-date="{{ alert.expiry_date|date:'Y-m-d' }}">
+                                {{ alert.expiry_date|date:"d/m/Y"|default:"N/A" }}
+                            </td>
+                            <td>
+                                <span class="badge fifo-badge-{{ alert.fifo_status|default:'warning' }}">
+                                    {{ alert.days_remaining|default:"?" }} يوم
+                                </span>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" style="text-align:center;color:var(--neon-green);padding:1rem;">✓ لا توجد تنبيهات</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ============================================================
+         RECENT FINANCIAL TRANSACTIONS (Full Width)
+         ============================================================ -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-header-title">💳 آخر المعاملات المالية</span>
+            <a href="{% url 'invoicing:sales_invoice_list' %}" class="btn btn-ghost btn-sm">عرض الكل ←</a>
+        </div>
+        <div id="recentTransactions" style="max-height:200px;overflow-y:auto;">
+            {% for invoice in recent_invoices %}
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0.75rem;border-bottom:1px solid var(--border-default);">
+                <div>
+                    <div style="font-size:0.8rem;font-weight:600;color:var(--text-primary);font-family:var(--font-english);">
+                        {{ invoice.invoice_number }}
+                    </div>
+                    <div style="font-size:0.68rem;color:var(--text-muted);">
+                        {{ invoice.branch.name|default:"-" }} &bull; {{ invoice.created_at|date:"d/m/Y H:i" }}
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:0.75rem;">
+                    <span class="badge {% if invoice.payment_type == 'CASH' %}badge-success{% elif invoice.payment_type == 'CARD' %}badge-info{% else %}badge-purple{% endif %}">
+                        {{ invoice.get_payment_type_display|default:invoice.payment_type }}
+                    </span>
+                    <div style="font-family:var(--font-english);font-weight:700;color:var(--neon-green);">
+                        {{ invoice.total_amount|floatformat:2 }} ج.م
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div style="text-align:center;padding:2rem;color:var(--text-muted);">لا توجد معاملات حديثة</div>
+            {% endfor %}
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize all admin dashboard charts with context data
+    const salesData = {{ sales_chart_data|default:"[120000, 145000, 138000, 162000, 155000, 180000, 195000]"|safe }};
+    const salesLabels = {{ sales_chart_labels|default:"['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul']"|safe }};
+    const profitData = {{ profit_chart_data|default:"[22, 25, 23, 28, 26, 31, 29]"|safe }};
+    const branchData = {
+        active: {{ active_branches|default:"12" }},
+        total: {{ total_branches|default:"15" }}
+    };
+
+    initDashboardCharts(salesData, salesLabels, profitData, branchData);
+
+    // FIFO Badge color coding
+    document.querySelectorAll('[data-fifo-days]').forEach(el => {
+        const days = parseInt(el.dataset.fifoDays);
+        el.classList.remove('fifo-badge-critical','fifo-badge-warning','fifo-badge-moderate','fifo-badge-ok');
+        if (days <= 7) el.classList.add('fifo-badge-critical');
+        else if (days <= 30) el.classList.add('fifo-badge-warning');
+        else if (days <= 180) el.classList.add('fifo-badge-moderate');
+        else el.classList.add('fifo-badge-ok');
+    });
+
+    // Color expiry dates
+    document.querySelectorAll('[data-expiry-date]').forEach(el => {
+        const d = new Date(el.dataset.expiryDate);
+        if (isNaN(d.getTime())) return;
+        const days = Math.ceil((d - new Date()) / 86400000);
+        if (days <= 0) { el.style.color = '#ff4757'; el.style.fontWeight = '700'; }
+        else if (days <= 7) el.style.color = '#ff4757';
+        else if (days <= 30) el.style.color = '#fbbf24';
+        else el.style.color = '#2ed573';
+    });
+});
+</script>
+{% endblock %}

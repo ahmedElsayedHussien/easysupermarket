@@ -1,0 +1,491 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-29 16:54+0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=6; plural=n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 "
+"&& n%100<=10 ? 3 : n%100>=11 && n%100<=99 ? 4 : 5;\n"
+#: .\apps\tenant\core\models.py:13
+msgid "اسم الفرع"
+msgstr ""
+
+#: .\apps\tenant\core\models.py:14
+msgid "كود الفرع"
+msgstr ""
+
+#: .\apps\tenant\core\models.py:15
+msgid "العنوان"
+msgstr ""
+
+#: .\apps\tenant\core\models.py:16
+msgid "التليفون"
+msgstr ""
+
+#: .\apps\tenant\core\models.py:17 .\apps\tenant\inventory\models.py:37
+#: .\apps\tenant\inventory\models.py:144
+msgid "نشط"
+msgstr ""
+
+#: .\apps\tenant\core\models.py:22
+msgid "فرع"
+msgstr ""
+
+#: .\apps\tenant\core\models.py:23 .\templates\dashboard\main.html:124
+msgid "الفروع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:32 .\templates\base.html:255
+msgid "الفرع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:34
+msgid "اسم المستودع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:35
+msgid "كود المستودع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:36
+msgid "تبريد"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:38 .\apps\tenant\inventory\models.py:69
+#: .\apps\tenant\inventory\models.py:148
+msgid "وصف"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:42
+msgid "مستودع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:43
+msgid "المستودعات"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:59
+msgid "اسم الفئة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:66
+msgid "الفئة الأم"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:68
+msgid "نشطة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:76
+msgid "فئة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:77
+msgid "الفئات"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:103
+msgid "اسم المنتج"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:104
+msgid "الاسم بالإنجليزية"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:106
+msgid "باركود"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:109
+msgid "كود المنتج"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:115
+msgid "الفئة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:118
+msgid "وحدة القياس"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:122
+msgid "سعر البيع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:126
+msgid "أدنى سعر بيع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:130
+msgid "آخر سعر شراء"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:134
+msgid "نسبة الضريبة %"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:138
+msgid "حد أدنى للمخزون"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:142
+msgid "حد أقصى للمخزون"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:146
+msgid "السماح بمخزون سالب"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:150
+msgid "صورة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:156
+msgid "منتج"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:157
+msgid "المنتجات"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:222 .\apps\tenant\inventory\models.py:345
+msgid "المنتج"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:228 .\apps\tenant\inventory\models.py:351
+msgid "المستودع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:231
+msgid "الكمية الأصلية"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:234
+msgid "الكمية المتبقية"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:237 .\apps\tenant\inventory\models.py:369
+msgid "تكلفة الوحدة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:240
+msgid "تاريخ انتهاء الصلاحية"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:243
+msgid "رقم الدفعة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:252
+msgid "بند الفاتورة المصدر"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:258
+msgid "دفعة مخزون"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:259
+msgid "دفعات المخزون"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:359
+msgid "الدفعة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:362
+msgid "نوع الحركة"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:365
+msgid "الكمية"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:372
+msgid "المرجع"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:374
+msgid "ملاحظات"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:378
+msgid "حركة مخزون"
+msgstr ""
+
+#: .\apps\tenant\inventory\models.py:379
+msgid "حركات المخزون"
+msgstr ""
+
+#: .\templates\base.html:50
+msgid "القائمة"
+msgstr ""
+
+#: .\templates\base.html:56 .\templates\pos\index.html:6
+msgid "ميزا"
+msgstr ""
+
+#: .\templates\base.html:75
+msgid "اختر الفرع"
+msgstr ""
+
+#: .\templates\base.html:84
+msgid "كل الفروع"
+msgstr ""
+
+#: .\templates\base.html:140
+msgid "التنقل السريع"
+msgstr ""
+
+#: .\templates\base.html:144
+msgid "لوحة التحكم"
+msgstr ""
+
+#: .\templates\base.html:149 .\templates\dashboard\main.html:41
+#: .\templates\pos\index.html:6
+msgid "نقطة البيع"
+msgstr ""
+
+#: .\templates\base.html:152
+msgid "المبيعات"
+msgstr ""
+
+#: .\templates\base.html:156
+msgid "فواتير المبيعات"
+msgstr ""
+
+#: .\templates\base.html:159
+msgid "المشتريات"
+msgstr ""
+
+#: .\templates\base.html:163
+msgid "فاتورة شراء"
+msgstr ""
+
+#: .\templates\base.html:166
+msgid "المخزون"
+msgstr ""
+
+#: .\templates\base.html:170
+msgid "تتبع المخزون FIFO"
+msgstr ""
+
+#: .\templates\base.html:175
+msgid "الأصناف"
+msgstr ""
+
+#: .\templates\base.html:178
+msgid "الشركاء"
+msgstr ""
+
+#: .\templates\base.html:182 .\templates\dashboard\main.html:137
+msgid "الموردون"
+msgstr ""
+
+#: .\templates\base.html:187
+msgid "العملاء"
+msgstr ""
+
+#: .\templates\base.html:190
+msgid "المحاسبة"
+msgstr ""
+
+#: .\templates\base.html:194
+msgid "قيود اليومية"
+msgstr ""
+
+#: .\templates\base.html:199
+msgid "دليل الحسابات"
+msgstr ""
+
+#: .\templates\base.html:202
+msgid "الإدارة"
+msgstr ""
+
+#: .\templates\base.html:207
+msgid "لوحة المدير"
+msgstr ""
+
+#: .\templates\base.html:212
+msgid "الفروع والكيانات"
+msgstr ""
+
+#: .\templates\base.html:251
+msgid "سياق المستخدم"
+msgstr ""
+
+#: .\templates\base.html:270
+msgid "المخزن"
+msgstr ""
+
+#: .\templates\base.html:285
+msgid "الدور"
+msgstr ""
+
+#: .\templates\base.html:294
+msgid "إيرادات اليوم"
+msgstr ""
+
+#: .\templates\base.html:300 .\templates\pos\index.html:145
+#: .\templates\pos\index.html:184 .\templates\pos\index.html:192
+msgid "ج.م"
+msgstr ""
+
+#: .\templates\base.html:307 .\templates\base.html:352
+msgid "نقدي"
+msgstr ""
+
+#: .\templates\base.html:308 .\templates\base.html:352
+msgid "بطاقة"
+msgstr ""
+
+#: .\templates\base.html:309 .\templates\base.html:352
+msgid "محفظة"
+msgstr ""
+
+#: .\templates\base.html:315
+msgid "إحصاء سريع"
+msgstr ""
+
+#: .\templates\base.html:318 .\templates\dashboard\main.html:203
+msgid "فواتير اليوم"
+msgstr ""
+
+#: .\templates\base.html:322
+msgid "المخزون المنخفض"
+msgstr ""
+
+#: .\templates\base.html:326
+msgid "مستخدمون نشطون"
+msgstr ""
+
+#: .\templates\dashboard\main.html:55
+msgid "إدارة المبيعات"
+msgstr ""
+
+#: .\templates\dashboard\main.html:68
+msgid "إدارة المشتريات"
+msgstr ""
+
+#: .\templates\dashboard\main.html:81
+msgid "إدارة المخزون"
+msgstr ""
+
+#: .\templates\dashboard\main.html:94
+msgid "المرتجعات"
+msgstr ""
+
+#: .\templates\dashboard\main.html:106
+msgid "Search modules... ابحث عن وحدة"
+msgstr ""
+
+#: .\templates\dashboard\main.html:150
+msgid "الحسابات والمالية"
+msgstr ""
+
+#: .\templates\dashboard\main.html:163
+msgid "التقارير"
+msgstr ""
+
+#: .\templates\dashboard\main.html:176
+msgid "إعدادات النظام"
+msgstr ""
+
+#: .\templates\dashboard\main.html:188
+msgid "مبيعات اليوم"
+msgstr ""
+
+#: .\templates\dashboard\main.html:190
+msgid "عن أمس"
+msgstr ""
+
+#: .\templates\dashboard\main.html:193
+msgid "الأصناف في المخزون"
+msgstr ""
+
+#: .\templates\dashboard\main.html:195
+msgid "فعال"
+msgstr ""
+
+#: .\templates\dashboard\main.html:200
+msgid "يحتاج مراجعة"
+msgstr ""
+
+#: .\templates\dashboard\main.html:205
+msgid "مكتملة"
+msgstr ""
+
+#: .\templates\pos\index.html:72
+msgid "السعر"
+msgstr ""
+
+#: .\templates\pos\index.html:73
+msgid "الخصم"
+msgstr ""
+
+#: .\templates\pos\index.html:75
+msgid "وحدة"
+msgstr ""
+
+#: .\templates\pos\index.html:107
+msgid "لا توجد منتجات"
+msgstr ""
+
+#: .\templates\pos\index.html:127
+msgid "أضف منتجات للسلة"
+msgstr ""
+
+#: .\templates\pos\index.html:167
+msgid "سداد"
+msgstr ""
+
+#: .\templates\pos\index.html:168
+msgid "طباعة الباركود"
+msgstr ""
+
+#: .\templates\pos\index.html:169 .\templates\pos\index.html:196
+msgid "إلغاء"
+msgstr ""
+
+#: .\templates\pos\index.html:170
+msgid "حفظ"
+msgstr ""
+
+#: .\templates\pos\index.html:181
+msgid "الدفع النقدي"
+msgstr ""
+
+#: .\templates\pos\index.html:183
+msgid "الإجمالي المطلوب:"
+msgstr ""
+
+#: .\templates\pos\index.html:187
+msgid "المبلغ المدفوع:"
+msgstr ""
+
+#: .\templates\pos\index.html:195
+msgid "تأكيد"
+msgstr ""
+
+#: .\templates\pos\index.html:204
+msgid "تمت العملية بنجاح"
+msgstr ""
+
+#: .\templates\pos\index.html:207
+msgid "طباعة الإيصال"
+msgstr ""
+
+#: .\templates\pos\index.html:208
+msgid "بيع جديد"
+msgstr ""

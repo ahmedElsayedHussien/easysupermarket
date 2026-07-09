@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-orange">{{ title }}</h2>
+        {% if list_type == 'purchases' %}
+        <a href="{% url 'invoicing:purchase_invoice' %}" class="btn btn-neon-red">+ فاتورة مشتريات</a>
+        {% elif list_type == 'sales' %}
+        <a href="{% url 'invoicing:pos' %}" class="btn btn-neon-green">+ فاتورة مبيعات (نقطة البيع)</a>
+        {% else %}
+        <!-- No button by default -->
+        {% endif %}
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>رقم الفاتورة</th>
+                <th>النوع</th>
+                <th>التاريخ</th>
+                <th>الفرع</th>
+                <th>الإجمالي</th>
+                <th>الحالة</th>
+                <th>إجراءات</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for invoice in invoices %}
+            <tr>
+                <td>{{ invoice.invoice_number }}</td>
+                <td>
+                    {% if invoice.invoice_type == 'SALE' %}
+                    <span class="text-neon-green">مبيعات</span>
+                    {% elif invoice.invoice_type == 'PURCHASE' %}
+                    <span class="text-neon-red">مشتريات</span>
+                    {% else %}
+                    {{ invoice.get_invoice_type_display }}
+                    {% endif %}
+                </td>
+                <td>{{ invoice.date }}</td>
+                <td>{{ invoice.branch.name }}</td>
+                <td>{{ invoice.total_amount }} ج.م</td>
+                <td>
+                    {% if invoice.status == 'POSTED' %}
+                    <span class="badge badge-success">مرحلة</span>
+                    {% elif invoice.status == 'DRAFT' %}
+                    <span class="badge badge-draft">مسودة</span>
+                    {% else %}
+                    <span class="badge badge-danger">ملغاة</span>
+                    {% endif %}
+                </td>
+                <td class="table-actions">
+                    <a href="{% url 'invoicing:invoice_detail' invoice.id %}" class="btn btn-sm btn-ghost">عرض</a>
+                    {% if invoice.status == 'DRAFT' %}
+                    <button class="btn btn-sm btn-success" onclick="confirmInvoice({{ invoice.id }})">ترحيل</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" class="text-center">لا توجد فواتير</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+function confirmInvoice(id) {
+    if(confirm('تأكيد وترحيل الفاتورة؟')) {
+        fetch(`/invoicing/confirm/${id}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                               document.cookie.split(';').find(c => c.trim().startsWith('csrftoken='))?.split('=')[1]
+            }
+        }).then(res => res.json())
+          .then(data => {
+              if(data.success) location.reload();
+              else alert('خطأ: ' + data.error);
+          });
+    }
+}
+</script>
+{% csrf_token %}
+{% endblock %}

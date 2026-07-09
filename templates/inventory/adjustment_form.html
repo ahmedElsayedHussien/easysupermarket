@@ -1,0 +1,115 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h2 class="text-neon-cyan mb-4">{{ title }}</h2>
+
+    <form method="post" class="card p-4">
+        {% csrf_token %}
+        <div class="grid grid-cols-4 gap-4 mb-4">
+            <div class="form-group">
+                <label>نوع العملية</label>
+                <select name="adjustment_type" id="adjustment_type" class="form-select" required onchange="toggleCostField()">
+                    <option value="OUT" selected>إعدام / تسوية نقص</option>
+                    <option value="IN">تسوية بالزيادة</option>
+                    <option value="OPENING">رصيد افتتاحي</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>المستودع</label>
+                <select name="warehouse" class="form-select" required>
+                    <option value="">-- اختر المستودع --</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}">{{ wh.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>التاريخ</label>
+                <input type="date" name="date" class="form-control" required value="{% now 'Y-m-d' %}">
+            </div>
+            <div class="form-group">
+                <label>السبب / البيان</label>
+                <input type="text" name="reason" class="form-control" required placeholder="مثال: بضاعة تالفة، رصيد افتتاحي">
+            </div>
+        </div>
+
+        <h3 class="mb-3">المنتجات المراد تسويتها (عجز/إعدام)</h3>
+        <table class="data-table mb-4" id="linesTable">
+            <thead>
+                <tr>
+                    <th>المنتج</th>
+                    <th>الكمية</th>
+                    <th class="cost-column" style="display: none;">تكلفة الوحدة (تقديرية)</th>
+                    <th>إجراء</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>
+                        <select name="product_id[]" class="form-select" required>
+                            <option value="">-- اختر المنتج --</option>
+                            {% for prod in products %}
+                            <option value="{{ prod.id }}">{{ prod.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td>
+                        <input type="number" step="0.01" name="quantity[]" class="form-control" required min="0.01" placeholder="الكمية">
+                    </td>
+                    <td class="cost-column" style="display: none;">
+                        <input type="number" step="0.0001" name="unit_cost[]" class="form-control cost-input" min="0" placeholder="اتركه فارغاً للتكلفة الآلية">
+                        <small class="text-muted" style="font-size: 10px;">إجباري للزيادة والافتتاحي</small>
+                    </td>
+                    <td>
+                        <button type="button" class="btn btn-sm btn-ghost" onclick="this.closest('tr').remove()">حذف</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <div class="mb-4">
+            <button type="button" class="btn btn-ghost" onclick="addLine()">+ إضافة منتج آخر</button>
+        </div>
+
+        <div class="d-flex gap-3">
+            <button type="submit" class="btn btn-neon-cyan">حفظ كمسودة</button>
+            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-ghost">إلغاء</a>
+        </div>
+    </form>
+</div>
+
+<script>
+function addLine() {
+    const tbody = document.querySelector('#linesTable tbody');
+    const tr = tbody.querySelector('tr').cloneNode(true);
+    tr.querySelectorAll('input').forEach(i => i.value = '');
+    tr.querySelectorAll('select').forEach(s => s.value = '');
+    tbody.appendChild(tr);
+    toggleCostField(); // Apply current display state to the new row
+}
+
+function toggleCostField() {
+    const type = document.getElementById('adjustment_type').value;
+    const isIncrease = (type === 'IN' || type === 'OPENING');
+    
+    // Toggle column header
+    document.querySelectorAll('th.cost-column').forEach(th => {
+        th.style.display = isIncrease ? 'table-cell' : 'none';
+    });
+    
+    // Toggle column cells and input required status
+    document.querySelectorAll('td.cost-column').forEach(td => {
+        td.style.display = isIncrease ? 'table-cell' : 'none';
+        const input = td.querySelector('input');
+        if(input) {
+            input.required = isIncrease;
+        }
+    });
+}
+
+// Initial call on page load
+document.addEventListener('DOMContentLoaded', toggleCostField);
+</script>
+{% endblock %}

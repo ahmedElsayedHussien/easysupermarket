@@ -1,0 +1,264 @@
+{% load static i18n %}
+<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}" dir="{{ LANGUAGE_BIDI|yesno:'rtl,ltr' }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{% trans 'نقطة البيع' %} - {% trans 'إيزي ستور' %}</title>
+    {% load i18n static %}
+    <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
+    <link rel="stylesheet" href="{% static 'css/pos.css' %}">
+</head>
+<body class="pos-page">
+    <!-- POS Navbar -->
+    <nav class="pos-navbar">
+        <div class="pos-nav-left" style="display:flex; align-items:center; gap:10px;">
+            <span>☰ EASYSTORE - HYBRID SALES POINT</span>
+            {% if request.user.is_superuser or request.user.is_staff %}
+            <a href="/" style="background:#ff8c42; color:#fff; padding:4px 12px; border-radius:6px; font-size:0.75rem; font-weight:700; text-decoration:none; display:flex; align-items:center; gap:4px;" title="{% trans 'الصفحة الرئيسية' %}">🏠 {% trans 'لوحة التحكم' %}</a>
+            {% endif %}
+        </div>
+        <div class="pos-nav-center"></div>
+        <div class="pos-nav-right" style="display:flex; align-items:center; gap:10px;">
+            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;" title="{% trans 'تطبيق ضريبة القيمة المضافة (14%)' %}">
+                <input type="checkbox" id="posApplyTax">
+                <span>{% trans 'ضريبة' %}</span>
+            </label>
+            <select id="posTreasury" class="form-select" style="width:120px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);" title="{% trans 'الخزينة' %}">
+                {% for t in treasuries %}
+                <option value="{{ t.id }}">{{ t.name }}</option>
+                {% empty %}
+                <option value="">{% trans 'لا يوجد خزينة' %}</option>
+                {% endfor %}
+            </select>
+            <select id="posBank" class="form-select" style="width:120px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);" title="{% trans 'البنك' %}">
+                <option value="">{% trans 'اختر البنك' %}</option>
+                {% for b in bank_accounts %}
+                <option value="{{ b.id }}">{{ b.name }}</option>
+                {% endfor %}
+            </select>
+            <select id="posEwallet" class="form-select" style="width:120px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);" title="{% trans 'المحفظة' %}">
+                <option value="">{% trans 'اختر المحفظة' %}</option>
+                {% for ew in ewallets %}
+                <option value="{{ ew.id }}">{{ ew.name }}</option>
+                {% endfor %}
+            </select>
+            <select id="posCustomer" class="form-select select2" style="width:150px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);">
+                <option value="">{% trans 'عميل نقدي' %}</option>
+                {% for customer in customers %}
+                <option value="{{ customer.id }}">{{ customer.name }}</option>
+                {% endfor %}
+            </select>
+            <button id="returnModeToggle" onclick="POS.toggleReturnMode()" style="background-color: transparent; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; padding: 4px 8px; cursor: pointer;">🔄 {% trans 'مرتجع' %}</button>
+            <span>👤 {{ request.user.get_full_name|default:request.user.username }}</span>
+            <select id="posBranchSelect" class="form-select" style="width:120px; background-color: #ffffff; color: #000000; font-weight: bold; border: 1px solid #ff8c42; padding: 4px; font-size: 0.85rem; border-radius: 4px; cursor: pointer;" onchange="window.location.href='?branch_id=' + this.value">
+                {% for branch in branches %}
+                <option value="{{ branch.id }}" {% if current_branch.id == branch.id %}selected{% endif %}>{{ branch.name }}</option>
+                {% endfor %}
+            </select>
+            <select id="posWarehouseSelect" class="form-select" style="width:160px; background-color: #ffffff; color: #000000; font-weight: bold; border: 1px solid #ff8c42; padding: 4px; font-size: 0.85rem; border-radius: 4px; cursor: pointer;" onchange="window.location.href='?branch_id={{ current_branch.id }}&warehouse_id=' + this.value">
+                {% for warehouse in warehouses %}
+                <option value="{{ warehouse.id }}" {% if current_warehouse.id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>
+                {% empty %}
+                <option value="">{% trans 'لا يوجد مستودع' %}</option>
+                {% endfor %}
+            </select>
+            <span id="posDateTime"></span>
+            <span class="connected-dot">● CONNECTED</span>
+        </div>
+    </nav>
+    
+    <div class="pos-layout">
+        <!-- LEFT PANEL (products + search) -->
+        <div class="pos-left">
+            <!-- Search Bar -->
+            <div class="pos-search-bar" style="display:flex; gap:10px; padding:10px; background:var(--bg-card); border-bottom:1px solid var(--border-default);">
+                <div class="barcode-input-wrapper">
+                    <input type="text" id="barcodeInput" placeholder="{% trans 'إدخال الباركود' %}" autofocus>
+                </div>
+                <div class="search-input-wrapper">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="productSearch" placeholder="{% trans 'بحث باسم المنتج' %}">
+                </div>
+            </div>
+            
+            <!-- Products Table -->
+            <div class="pos-products-wrapper">
+                <table class="pos-products-table">
+                    <thead>
+                        <tr>
+                            <th>{% trans 'الصنف' %}</th>
+                            <th>{% trans 'اسم الصنف' %}</th>
+                            <th>{% trans 'رقم الصنف' %}</th>
+                            <th>{% trans 'الكمية' %}</th>
+                            <th>{% trans 'المخزون المتاح' %}</th>
+                            <th>{% trans 'السعر' %}</th>
+                            <th>{% trans 'الخصم' %}</th>
+                            <th>{% trans 'المتاحة' %}</th>
+                            <th>{% trans 'وحدة' %}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="productsTableBody">
+                        {% for product in products %}
+                        <tr class="product-row" 
+                            data-product-id="{{ product.id }}"
+                            data-product-name="{{ product.name }}"
+                            data-product-barcode="{{ product.barcode }}"
+                            data-sale-price="{{ product.sale_price }}"
+                            data-available-stock="{{ product.pos_stock }}"
+                            data-tax-rate="{{ product.tax_rate }}"
+                            data-uoms='[{"id":"base", "name":"{{ product.get_unit_display|escapejs }}"}{% for puom in product.uoms.all %}, {"id":{{ puom.id }}, "name":"{{ puom.uom.name|escapejs }}"}{% endfor %}]'
+                            onclick="POS.addToCart({id:{{ product.id }}, name:'{{ product.name|escapejs }}', barcode:'{{ product.barcode|escapejs }}', sale_price:'{{ product.sale_price }}', tax_rate:{{ product.tax_rate|default:14 }}, available_stock:{{ product.pos_stock|default:0 }}, uoms:[{id:'base', name:'{{ product.get_unit_display|escapejs }}'}{% for puom in product.uoms.all %}, {id:{{ puom.id }}, name:'{{ puom.uom.name|escapejs }}'}{% endfor %}]})">
+                            <td>
+                                <div class="product-thumb-placeholder">📦</div>
+                            </td>
+                            <td>{{ product.name }}</td>
+                            <td class="en">{{ product.barcode }}</td>
+                            <td>
+                                <div class="qty-control">
+                                    <button class="qty-btn" onclick="event.stopPropagation();POS.updateQuantityForProduct({{ product.id }}, -1)">−</button>
+                                    <span class="qty-value">1</span>
+                                    <button class="qty-btn" onclick="event.stopPropagation();POS.updateQuantityForProduct({{ product.id }}, 1)">+</button>
+                                </div>
+                            </td>
+                            <td>{{ product.pos_stock }}</td>
+                            <td class="en price-col">{{ product.sale_price }} EGP</td>
+                            <td>-</td>
+                            <td class="en">{{ product.sale_price }} EGP</td>
+                            <td>{{ product.get_unit_display }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="9" style="text-align:center;padding:2rem;">{% trans 'لا توجد منتجات' %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- RIGHT PANEL (cart) -->
+        <div class="pos-right">
+            <div id="posTabs" class="pos-tabs"></div>
+            <div class="cart-header">
+                <span>{% trans 'الفاتورة الحالية' %}: #<span id="txNumber">001</span></span>
+                <span id="cartDate"></span>
+            </div>
+            
+            <div class="cart-columns-header" style="display:grid; grid-template-columns: 2fr 1fr 1.5fr 1fr 1fr; gap: 5px; padding: 10px; background: var(--surface); border-bottom: 1px solid var(--border);">
+                <span>{% trans 'الصنف' %}</span>
+                <span>{% trans 'الكمية' %}</span>
+                <span>{% trans 'السعر / الضريبة' %}</span>
+                <span>{% trans 'الوحدة' %}</span>
+                <span style="text-align:left;">{% trans 'الإجمالي' %}</span>
+            </div>
+            
+            <div class="cart-items" id="cartItems">
+                <!-- Cart items rendered by POS.js -->
+                <div class="cart-empty-msg">{% trans 'أضف منتجات للسلة' %}</div>
+            </div>
+            
+            <div class="cart-totals">
+                <div class="total-row">
+                    <span>{% trans 'الإجمالي الفرعي' %}:</span>
+                    <span id="cartSubtotal">0.00</span>
+                </div>
+                <div class="total-row discount-row">
+                    <span>{% trans 'الخصم' %}:</span>
+                    <span id="cartDiscount">(0.00)</span>
+                </div>
+                <div class="total-row">
+                    <span>{% trans 'الضريبة' %}:</span>
+                    <span id="cartTax">0.00</span>
+                </div>
+                <div class="total-row total-final">
+                    <span>{% trans 'الصافي المطلوب' %}:</span>
+                    <span id="cartTotal">0.00 {% trans 'ج.م' %}</span>
+                </div>
+            </div>
+            
+            <!-- Payment Quick Actions -->
+            <div class="payment-quick-btns">
+                <button class="pay-quick-btn" onclick="POS.processCashPayment()">
+                    <div>💵 {% trans 'كاش' %}</div>
+                    <small style="font-size:0.65rem; font-weight:normal;">(Enter)</small>
+                </button>
+                <button class="pay-quick-btn pay-card" onclick="POS.processCardPayment()">
+                    <div>💳 {% trans 'بطاقة' %}</div>
+                    <small style="font-size:0.65rem; font-weight:normal;">(F12)</small>
+                </button>
+                <button class="pay-quick-btn pay-credit" onclick="POS.processCreditPayment()">
+                    <div>⏳ {% trans 'آجل' %}</div>
+                    <small style="font-size:0.65rem; font-weight:normal;">(F10)</small>
+                </button>
+                <button class="pay-quick-btn pay-ewallet" onclick="POS.processEWalletPayment()" style="background:#f3e8ff; border-color:#9333ea; color:#9333ea;">
+                    <div>📱 {% trans 'محفظة' %}</div>
+                    <small style="font-size:0.65rem; font-weight:normal;">(F8)</small>
+                </button>
+                <button class="pay-quick-btn pay-bank" onclick="POS.processBankPayment()" style="background:#ccfbf1; border-color:#14b8a6; color:#14b8a6;">
+                    <div>🏦 {% trans 'بنك' %}</div>
+                    <small style="font-size:0.65rem; font-weight:normal;">(F9)</small>
+                </button>
+            </div>
+            
+        </div>
+    </div>
+    
+    <!-- Bottom Action Bar -->
+    <div class="pos-action-bar">
+        <div class="pos-actions-left">
+            <button class="action-btn action-void" onclick="POS.voidTransaction()">✖ VOID<br><small>(F1)</small></button>
+            <button class="action-btn action-hold" onclick="POS.holdTransaction()">⏸ HOLD<br><small>(F2)</small></button>
+            <button class="action-btn action-reprint" onclick="POS.reprintLast()">🖨 REPRINT LAST<br><small>(F3)</small></button>
+            <button class="action-btn">{% trans 'سداد' %}</button>
+            <button class="action-btn">{% trans 'طباعة الباركود' %}</button>
+            <button class="action-btn action-cancel" onclick="POS.clearCart()">{% trans 'إلغاء' %}</button>
+            <button class="action-btn">{% trans 'حفظ' %}</button>
+        </div>
+        <div class="pos-actions-right">
+            <button class="action-btn action-cash-pay" onclick="POS.processCashPayment()">💵 CASH PAYMENT<br><small>(F11)</small></button>
+            <button class="action-btn action-card-pay" onclick="POS.processCardPayment()">💳 CARD PAYMENT<br><small>(F12)</small></button>
+            <button class="action-btn" style="background:var(--accent);color:#fff;" onclick="POS.processCreditPayment()">💳 CREDIT PAYMENT<br><small>(F10)</small></button>
+        </div>
+    </div>
+    
+    <!-- Cash Payment Modal -->
+    <div class="modal" id="cashModal" style="display:none">
+        <div class="modal-content">
+            <h3>💵 {% trans 'الدفع النقدي' %}</h3>
+            <div class="modal-amount">
+                <label>{% trans 'الإجمالي المطلوب:' %}</label>
+                <div class="amount-display" id="modalTotal">0.00 {% trans 'ج.م' %}</div>
+            </div>
+            <div class="modal-input">
+                <label>{% trans 'المبلغ المدفوع:' %}</label>
+                <input type="number" id="cashReceived" class="cash-input" step="0.01">
+            </div>
+            <div class="modal-change">
+                <label>الباقي:</label>
+                <div class="change-display" id="changeAmount">0.00 {% trans 'ج.م' %}</div>
+            </div>
+            <div class="modal-actions">
+                <button onclick="POS.confirmCashPayment()" class="btn-confirm">✅ {% trans 'تأكيد' %}</button>
+                <button onclick="document.getElementById('cashModal').style.display='none'" class="btn-cancel-modal">{% trans 'إلغاء' %}</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Receipt Modal -->
+    <div class="modal" id="receiptModal" style="display:none">
+        <div class="modal-content receipt-modal">
+            <h3>✓ {% trans 'تمت العملية بنجاح' %}</h3>
+            <div id="receiptContent"></div>
+            <div class="modal-actions">
+                <button onclick="if(POS.lastInvoiceId) POS.printReceipt(POS.lastInvoiceId); else window.print();" class="btn-print">🖨 {% trans 'طباعة الإيصال' %}</button>
+                <button onclick="document.getElementById('receiptModal').style.display='none'; POS.clearCart();" class="btn-new-sale">🛒 {% trans 'بيع جديد' %}</button>
+            </div>
+        </div>
+    </div>
+    
+    {% csrf_token %}
+    <script src="{% static 'js/pos.js' %}"></script>
+    <script>
+        POS.currentWarehouseId = {{ current_warehouse.id|default:'null' }};
+        POS.currentBranchId = {{ current_branch.id|default:'null' }};
+    </script>
+</body>
+</html>

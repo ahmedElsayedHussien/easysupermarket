@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-cyan">{{ title }}</h2>
+    </div>
+
+    <div class="card mb-4 p-4 text-center">
+        <h3>إجمالي قيمة المخزون</h3>
+        <h2 class="text-neon-cyan">{{ total_value }} ج.م</h2>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>المنتج</th>
+                <th>المستودع</th>
+                <th>الكمية المتبقية</th>
+                <th>تكلفة الوحدة</th>
+                <th>القيمة الإجمالية</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for batch in batches %}
+            <tr>
+                <td>{{ batch.product.name }}</td>
+                <td>{{ batch.warehouse.name }}</td>
+                <td>{{ batch.quantity_remaining }}</td>
+                <td>{{ batch.unit_cost }} ج.م</td>
+                <td>{{ batch.total_value }} ج.م</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5" class="text-center">لا توجد بيانات</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

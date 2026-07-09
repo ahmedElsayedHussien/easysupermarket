@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+{% block title %}المنتجات{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-cyan">المنتجات</h2>
+        <div class="d-flex" style="gap: 10px;">
+            <a href="{% url 'inventory:uom_create' %}" class="btn btn-neon-purple" style="opacity: 0.8;">+ إضافة وحدة</a>
+            <a href="{% url 'inventory:category_create' %}" class="btn btn-neon-purple" style="opacity: 0.8;">+ إضافة قسم</a>
+            <a href="{% url 'inventory:product_create' %}" class="btn btn-neon-cyan">+ إضافة منتج</a>
+        </div>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>الباركود</th>
+                <th>اسم المنتج</th>
+                <th>القسم</th>
+                <th>سعر البيع</th>
+                <th>المخزون الكلي</th>
+                <th>نشط</th>
+                <th>إجراءات</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for product in products %}
+            <tr>
+                <td>{{ product.barcode }}</td>
+                <td>{{ product.name }}</td>
+                <td>{{ product.category.name|default:"-" }}</td>
+                <td>{{ product.sale_price|floatformat:2 }} ج.م</td>
+                <td>{{ product.get_stock|floatformat:0 }}</td>
+                <td>
+                    {% if product.is_active %}
+                    <span class="badge badge-success">نعم</span>
+                    {% else %}
+                    <span class="badge badge-danger">لا</span>
+                    {% endif %}
+                </td>
+                <td class="table-actions">
+                    <a href="{% url 'inventory:product_update' product.id %}" class="btn btn-sm btn-ghost">تعديل</a>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="7" class="text-center">لا توجد منتجات</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

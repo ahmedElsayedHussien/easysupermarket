@@ -1,0 +1,331 @@
+{% load i18n static panel_tags %}
+<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}" dir="{{ LANGUAGE_BIDI|yesno:'rtl,ltr' }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>{% block title %}EASYSTORE ERP{% endblock %}</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Design System CSS -->
+    <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
+
+    <!-- Page-Specific CSS -->
+    {% block extra_css %}{% endblock %}
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <style>
+        /* Additional base styles */
+        .sidebar-nav-logo {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-default);
+            margin-bottom: 0.5rem;
+        }
+        .sidebar-version {
+            font-family: var(--font-english);
+            font-size: 0.6rem;
+            color: var(--text-muted);
+            letter-spacing: 1px;
+            padding: 0.25rem 1rem;
+            margin-top: auto;
+        }
+    </style>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+<div class="app-wrapper">
+
+    <!-- ============================================================
+         TOP NAVBAR
+         ============================================================ -->
+    <nav class="navbar">
+
+        <!-- Hamburger / Sidebar Toggle -->
+        <button onclick="toggleSidebar()" style="background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer;padding:0.25rem;flex-shrink:0;" title="{% trans 'القائمة' %}">
+            ☰
+        </button>
+
+        <!-- Logo -->
+        <div class="navbar-logo">
+            <span class="logo-arabic">{% trans 'إيزي ستور' %}</span>
+            <span class="logo-english">EASYSTORE</span>
+        </div>
+
+        <div class="navbar-divider"></div>
+
+        <!-- Server Time (center) -->
+        <div class="navbar-time">
+            <div id="navServerTime" style="font-family:var(--font-english);font-size:0.75rem;color:var(--text-secondary);">
+                Loading...
+            </div>
+        </div>
+
+        <!-- Right Side: User + Branch + Status -->
+        <div class="navbar-right">
+
+            <!-- Branch Selector -->
+            <div class="branch-selector">
+                <span style="font-size:0.75rem;color:var(--text-muted);">🏪</span>
+                <select id="branchSelector" title="{% trans 'اختر الفرع' %}">
+                    {% if current_branch %}
+                        <option value="{{ current_branch.id }}" selected>{{ current_branch.name }}</option>
+                    {% endif %}
+                    {% for branch in nav_branches %}
+                        {% if branch.id != current_branch.id %}
+                        <option value="{{ branch.id }}">{{ branch.name }}</option>
+                        {% endif %}
+                    {% empty %}
+                        <option value="">{% trans 'كل الفروع' %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="navbar-divider"></div>
+
+            <!-- User Info -->
+            <div class="navbar-user" title="{{ request.user.get_full_name }}" onclick="toggleUserMenu()" style="position:relative; cursor:pointer;">
+                <div class="user-avatar">
+                    {{ request.user.first_name|first|upper }}{{ request.user.last_name|first|upper|default:"A" }}
+                </div>
+                <div class="user-info-text">
+                    <span class="user-name">{{ request.user.get_full_name|default:request.user.username }}</span>
+                    <span class="user-role">
+                        {% if request.user.is_superuser %}مدير النظام{% elif request.user.is_staff %}مشرف{% else %}كاشير{% endif %}
+                    </span>
+                </div>
+                
+                <!-- Dropdown Menu -->
+                <div id="userDropdown" style="display:none; position:absolute; top:calc(100% + 5px); right:0; background:var(--bg-card); border:1px solid var(--border-default); border-radius:8px; padding:0.5rem; min-width:180px; z-index:1000; box-shadow:0 8px 24px rgba(0,0,0,0.2);">
+                    <div style="padding: 0.5rem; border-bottom: 1px solid var(--border-default); margin-bottom: 0.5rem;">
+                        <div style="font-size: 0.85rem; color: var(--text-primary); font-weight: bold;">{{ request.user.username }}</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted);">{{ request.user.email }}</div>
+                    </div>
+                    <form action="{% url 'logout' %}" method="post" style="margin:0;">
+                        {% csrf_token %}
+                        <button type="submit" style="width:100%; text-align:right; background:none; border:none; color:#ef4444; font-family:var(--font-arabic); font-size:0.9rem; cursor:pointer; padding:0.5rem; border-radius:4px; display:flex; align-items:center; gap:8px; transition: background 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.1)'" onmouseout="this.style.background='none'">
+                            <span style="font-size:1.1rem;">🚪</span> {% trans 'تسجيل الخروج' %}
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Language Switcher -->
+            <form action="{% url 'set_language' %}" method="post" class="lang-switcher" style="display:inline-flex; align-items:center;">
+                {% csrf_token %}
+                <input name="next" type="hidden" value="{{ request.path }}">
+                <span style="font-size:0.75rem; color:var(--text-muted); margin-inline-end: 0.2rem;">🌐</span>
+                <select name="language" onchange="this.form.submit()" style="background:var(--bg-card); color:var(--text-primary); border:1px solid var(--border-default); padding:2px; border-radius:4px; font-size:0.75rem;">
+                    {% get_current_language as CURRENT_LANGUAGE_CODE %}
+                    {% get_available_languages as AVAILABLE_LANGUAGES %}
+                    {% get_language_info_list for AVAILABLE_LANGUAGES as langs %}
+                    {% for lang in langs %}
+                        <option value="{{ lang.code }}"{% if lang.code == CURRENT_LANGUAGE_CODE %} selected{% endif %}>
+                            {{ lang.name_local }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+
+            <!-- Connection Status -->
+            <div class="connected-indicator" style="margin-inline-start: 0.75rem;">
+                <div class="connected-dot"></div>
+                <span style="font-family:var(--font-english);font-size:0.68rem;letter-spacing:0.5px;">CONNECTED</span>
+            </div>
+
+        </div>
+    </nav>
+
+    <!-- ============================================================
+         APP BODY
+         ============================================================ -->
+    <div class="app-body">
+
+        <!-- ============================================================
+             RIGHT SIDEBAR (Navigation)
+             ============================================================ -->
+        <aside class="sidebar {% block sidebar_class %}{% endblock %}">
+
+            <p class="nav-section-title">{% trans 'التنقل السريع' %}</p>
+
+            <a href="{% url 'core:main_screen' %}" class="nav-link nav-orange {% if request.resolver_match.url_name == 'main_screen' %}active{% endif %}">
+                <span class="nav-icon">⚡</span>
+                <span class="nav-text">{% trans 'لوحة التحكم' %}</span>
+            </a>
+
+            <a href="{% url 'invoicing:pos' %}" class="nav-link nav-orange {% if request.resolver_match.app_name == 'invoicing' and request.resolver_match.url_name == 'pos' %}active{% endif %}">
+                <span class="nav-icon">🖥️</span>
+                <span class="nav-text">{% trans 'نقطة البيع' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'المبيعات' %}</p>
+
+            <a href="{% url 'invoicing:sales_invoice_list' %}" class="nav-link nav-green {% if request.resolver_match.url_name == 'sales_invoice_list' %}active{% endif %}">
+                <span class="nav-icon">📄</span>
+                <span class="nav-text">{% trans 'فواتير المبيعات' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'المشتريات' %}</p>
+
+            <a href="{% url 'invoicing:purchase_invoice_list' %}" class="nav-link nav-red {% if request.resolver_match.url_name == 'purchase_invoice_list' %}active{% endif %}">
+                <span class="nav-icon">🛒</span>
+                <span class="nav-text">{% trans 'فواتير المشتريات' %}</span>
+            </a>
+            
+            <a href="{% url 'invoicing:purchase_invoice' %}" class="nav-link nav-red {% if request.resolver_match.url_name == 'purchase_invoice' %}active{% endif %}">
+                <span class="nav-icon">➕</span>
+                <span class="nav-text">{% trans 'إنشاء فاتورة مشتريات' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'المخزون' %}</p>
+
+            <a href="{% url 'inventory:stock_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'stock_list' %}active{% endif %}">
+                <span class="nav-icon">📦</span>
+                <span class="nav-text">{% trans 'تتبع المخزون FIFO' %}</span>
+            </a>
+
+            <a href="{% url 'inventory:product_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'product_list' %}active{% endif %}">
+                <span class="nav-icon">🏷️</span>
+                <span class="nav-text">{% trans 'الأصناف' %}</span>
+            </a>
+
+            <a href="{% url 'inventory:uom_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'uom_list' %}active{% endif %}">
+                <span class="nav-icon">⚖️</span>
+                <span class="nav-text">{% trans 'وحدات القياس' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'الشركاء' %}</p>
+
+            <a href="{% url 'partners:supplier_list' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'supplier_list' %}active{% endif %}">
+                <span class="nav-icon">🚚</span>
+                <span class="nav-text">{% trans 'الموردون' %}</span>
+            </a>
+
+            <a href="{% url 'partners:customer_list' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'customer_list' %}active{% endif %}">
+                <span class="nav-icon">👥</span>
+                <span class="nav-text">{% trans 'العملاء' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'المحاسبة' %}</p>
+
+            <a href="{% url 'accounting:journal_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'journal_list' %}active{% endif %}">
+                <span class="nav-icon">📒</span>
+                <span class="nav-text">{% trans 'قيود اليومية' %}</span>
+            </a>
+
+            <a href="{% url 'accounting:chart_of_accounts' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'chart_of_accounts' %}active{% endif %}">
+                <span class="nav-icon">📊</span>
+                <span class="nav-text">{% trans 'دليل الحسابات' %}</span>
+            </a>
+
+            <a href="{% url 'accounting:tax_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'tax_list' %}active{% endif %}">
+                <span class="nav-icon">💸</span>
+                <span class="nav-text">{% trans 'الضرائب' %}</span>
+            </a>
+
+            <a href="{% url 'accounting:treasury_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'treasury_list' %}active{% endif %}">
+                <span class="nav-icon">💰</span>
+                <span class="nav-text">{% trans 'الخزائن' %}</span>
+            </a>
+            <a href="{% url 'accounting:bank_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'bank_list' %}active{% endif %}">
+                <span class="nav-icon">🏦</span>
+                <span class="nav-text">{% trans 'حسابات البنوك' %}</span>
+            </a>
+            <a href="{% url 'accounting:ewallet_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'ewallet_list' %}active{% endif %}">
+                <span class="nav-icon">📱</span>
+                <span class="nav-text">{% trans 'المحافظ الإلكترونية' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'الإدارة' %}</p>
+
+            {% if request.user.is_staff %}
+            <a href="{% url 'core:admin_dashboard' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'admin_dashboard' %}active{% endif %}">
+                <span class="nav-icon">📈</span>
+                <span class="nav-text">{% trans 'لوحة المدير' %}</span>
+            </a>
+
+            <a href="{% url 'core:branch_list' %}" class="nav-link nav-lime {% if request.resolver_match.url_name == 'branch_list' %}active{% endif %}">
+                <span class="nav-icon">🏪</span>
+                <span class="nav-text">{% trans 'الفروع والكيانات' %}</span>
+            </a>
+
+            <a href="{% url 'core:user_list' %}" class="nav-link nav-lime {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
+                <span class="nav-icon">👤</span>
+                <span class="nav-text">{% trans 'المستخدمين' %}</span>
+            </a>
+            {% endif %}
+
+            <div style="margin-top:auto;padding-top:1rem;">
+                <div class="sidebar-version">EasySupermarket ERP v1.0</div>
+            </div>
+
+        </aside>
+
+        <!-- ============================================================
+             MAIN CONTENT AREA
+             ============================================================ -->
+        <main class="main-content {% block content_class %}{% endblock %}">
+
+            <!-- Django Messages as Toasts -->
+            {% if messages %}
+            <div class="messages-container">
+                {% for message in messages %}
+                <div class="alert alert-{{ message.tags|default:'info' }}">
+                    {% if message.tags == 'success' %}✓{% elif message.tags == 'error' or message.tags == 'danger' %}✕{% elif message.tags == 'warning' %}⚠{% else %}ℹ{% endif %}
+                    {{ message }}
+                    <button class="alert-close" onclick="this.parentElement.remove()">×</button>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Page Content -->
+            {% block content %}{% endblock %}
+
+        </main>
+
+        <!-- ============================================================
+             LEFT USER CONTEXT PANEL
+             ============================================================ -->
+        {% block right_panel %}
+        {% render_right_panel %}
+        {% endblock %}
+
+    </div><!-- /.app-body -->
+</div><!-- /.app-wrapper -->
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script src="{% static 'js/dashboard.js' %}"></script>
+
+<script>
+    // User Menu Toggle
+    function toggleUserMenu() {
+        var dropdown = document.getElementById('userDropdown');
+        if (dropdown) {
+            dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+        }
+    }
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(event) {
+        var userMenu = document.querySelector('.navbar-user');
+        if (userMenu && !userMenu.contains(event.target)) {
+            var dropdown = document.getElementById('userDropdown');
+            if (dropdown) dropdown.style.display = 'none';
+        }
+    });
+</script>
+
+{% block extra_js %}{% endblock %}
+
+
+
+</body>
+</html>

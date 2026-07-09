@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold">{{ title }} (Balance Sheet)</h2>
+        <button class="btn btn-ghost" onclick="window.print()">طباعة</button>
+    </div>
+
+    <div class="row">
+        <!-- Assets Column -->
+        <div class="col-md-6 mb-4">
+            <div class="card p-4 h-100">
+                <h3 class="text-neon-green mb-3">الأصول (Assets)</h3>
+                <table class="data-table mb-4">
+                    <thead>
+                        <tr>
+                            <th>رقم الحساب</th>
+                            <th>اسم الحساب</th>
+                            <th>المبلغ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for account in asset_accounts %}
+                        {% if not account.has_children and account.current_balance != 0 %}
+                        <tr>
+                            <td class="en">{{ account.code }}</td>
+                            <td>{{ account.name }}</td>
+                            <td class="en">{{ account.current_balance }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="d-flex justify-between align-center p-3 mt-auto" style="background-color: var(--color-surface-hover); border-radius: 8px;">
+                    <h4 class="mb-0">إجمالي الأصول</h4>
+                    <h4 class="en mb-0 text-neon-green">{{ total_assets }}</h4>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liabilities & Equity Column -->
+        <div class="col-md-6 mb-4">
+            <div class="card p-4 h-100">
+                <h3 class="text-neon-pink mb-3">الخصوم (Liabilities)</h3>
+                <table class="data-table mb-4">
+                    <thead>
+                        <tr>
+                            <th>رقم الحساب</th>
+                            <th>اسم الحساب</th>
+                            <th>المبلغ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for account in liability_accounts %}
+                        {% if not account.has_children and account.current_balance != 0 %}
+                        <tr>
+                            <td class="en">{{ account.code }}</td>
+                            <td>{{ account.name }}</td>
+                            <td class="en">{{ account.current_balance }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="d-flex justify-between align-center p-2 mb-4">
+                    <span class="text-bold">إجمالي الخصوم</span>
+                    <span class="en text-bold text-neon-pink">{{ total_liabilities }}</span>
+                </div>
+
+                <h3 class="text-neon-purple mb-3">حقوق الملكية (Equity)</h3>
+                <table class="data-table mb-4">
+                    <thead>
+                        <tr>
+                            <th>رقم الحساب</th>
+                            <th>اسم الحساب</th>
+                            <th>المبلغ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for account in equity_accounts %}
+                        {% if not account.has_children and account.current_balance != 0 %}
+                        <tr>
+                            <td class="en">{{ account.code }}</td>
+                            <td>{{ account.name }}</td>
+                            <td class="en">{{ account.current_balance }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                        <tr>
+                            <td class="en">-</td>
+                            <td>صافي الدخل (الفترة الحالية)</td>
+                            <td class="en">{{ net_income }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="d-flex justify-between align-center p-3 mt-auto" style="background-color: var(--color-surface-hover); border-radius: 8px;">
+                    <h4 class="mb-0">إجمالي الخصوم وحقوق الملكية</h4>
+                    <h4 class="en mb-0 text-neon-purple">{{ total_liabilities_and_equity }}</h4>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-cyan">{{ title }}</h2>
+    </div>
+
+    <div class="card p-3 mb-4">
+        <h4>معلومات الشريك</h4>
+        <p>الاسم: {{ partner.name }}</p>
+        <p>الرصيد الحالي: <span class="text-neon-pink">{{ partner.outstanding_balance }} ج.م</span></p>
+        <p>حد الائتمان: {{ partner.credit_limit }} ج.م</p>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>التاريخ</th>
+                <th>رقم القيد</th>
+                <th>الوصف</th>
+                <th>مدين</th>
+                <th>دائن</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.entry.date|date:"Y-m-d" }}</td>
+                <td>{{ item.entry.reference }}</td>
+                <td>{{ item.entry.description }}</td>
+                <td>{{ item.debit }}</td>
+                <td>{{ item.credit }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5" class="text-center">لا توجد حركات مسجلة</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
