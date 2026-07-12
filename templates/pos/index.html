@@ -20,8 +20,12 @@
         <div class="pos-nav-center"></div>
         <div class="pos-nav-right" style="display:flex; align-items:center; gap:10px;">
             <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;" title="{% trans 'تطبيق ضريبة القيمة المضافة (14%)' %}">
-                <input type="checkbox" id="posApplyTax">
+                <input type="checkbox" id="posApplyTax" onchange="POS.updateCartDisplay()">
                 <span>{% trans 'ضريبة' %}</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;" title="{% trans 'تطبيق ضريبة الخصم والإضافة' %}">
+                <input type="checkbox" id="posApplyWht" onchange="POS.updateCartDisplay()">
+                <span>{% trans 'ض.خصم' %}</span>
             </label>
             <select id="posTreasury" class="form-select" style="width:120px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);" title="{% trans 'الخزينة' %}">
                 {% for t in treasuries %}
@@ -45,10 +49,11 @@
             <select id="posCustomer" class="form-select select2" style="width:150px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);">
                 <option value="">{% trans 'عميل نقدي' %}</option>
                 {% for customer in customers %}
-                <option value="{{ customer.id }}">{{ customer.name }}</option>
+                <option value="{{ customer.id }}" data-wht-subject="{{ customer.subject_to_withholding_tax|yesno:'true,false' }}">{{ customer.name }}</option>
                 {% endfor %}
             </select>
             <button id="returnModeToggle" onclick="POS.toggleReturnMode()" style="background-color: transparent; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; padding: 4px 8px; cursor: pointer;">🔄 {% trans 'مرتجع' %}</button>
+            <a href="{% url 'invoicing:pos_close_shift' %}" style="background-color: transparent; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; padding: 4px 8px; cursor: pointer; text-decoration: none;">🔒 {% trans 'إغلاق الوردية' %}</a>
             <span>👤 {{ request.user.get_full_name|default:request.user.username }}</span>
             <select id="posBranchSelect" class="form-select" style="width:120px; background-color: #ffffff; color: #000000; font-weight: bold; border: 1px solid #ff8c42; padding: 4px; font-size: 0.85rem; border-radius: 4px; cursor: pointer;" onchange="window.location.href='?branch_id=' + this.value">
                 {% for branch in branches %}
@@ -72,8 +77,9 @@
         <div class="pos-left">
             <!-- Search Bar -->
             <div class="pos-search-bar" style="display:flex; gap:10px; padding:10px; background:var(--bg-card); border-bottom:1px solid var(--border-default);">
-                <div class="barcode-input-wrapper">
-                    <input type="text" id="barcodeInput" placeholder="{% trans 'إدخال الباركود' %}" autofocus>
+                <div class="barcode-input-wrapper" style="display:flex; gap:5px; align-items:center;">
+                    <input type="text" id="barcodeInput" placeholder="{% trans 'إدخال الباركود' %}" autofocus style="flex:1;">
+                    <button type="button" id="startScannerBtn" onclick="startCameraScanner()" class="btn btn-outline-cyan" style="padding:0.4rem 0.6rem; border-radius:4px;" title="مسح بالكاميرا">📷</button>
                 </div>
                 <div class="search-input-wrapper">
                     <span class="search-icon">🔍</span>
@@ -102,29 +108,37 @@
                         <tr class="product-row" 
                             data-product-id="{{ product.id }}"
                             data-product-name="{{ product.name }}"
+                            data-product-type="{{ product.product_type }}"
+                            data-is-open-price="{{ product.is_open_price|yesno:'true,false' }}"
                             data-product-barcode="{{ product.barcode }}"
-                            data-sale-price="{{ product.sale_price }}"
-                            data-available-stock="{{ product.pos_stock }}"
-                            data-tax-rate="{{ product.tax_rate }}"
-                            data-uoms='[{"id":"base", "name":"{{ product.get_unit_display|escapejs }}"}{% for puom in product.uoms.all %}, {"id":{{ puom.id }}, "name":"{{ puom.uom.name|escapejs }}"}{% endfor %}]'
-                            onclick="POS.addToCart({id:{{ product.id }}, name:'{{ product.name|escapejs }}', barcode:'{{ product.barcode|escapejs }}', sale_price:'{{ product.sale_price }}', tax_rate:{{ product.tax_rate|default:14 }}, available_stock:{{ product.pos_stock|default:0 }}, uoms:[{id:'base', name:'{{ product.get_unit_display|escapejs }}'}{% for puom in product.uoms.all %}, {id:{{ puom.id }}, name:'{{ puom.uom.name|escapejs }}'}{% endfor %}]})">
+                            data-sale-price="{{ product.sale_price|stringformat:'f' }}"
+                            data-available-stock="{{ product.pos_stock|stringformat:'f' }}"
+                            data-tax-rate="{{ product.tax_rate|stringformat:'f' }}"
+                            data-wht-rate="{{ product.withholding_tax_rate|default:0|stringformat:'f' }}"
+                            data-uoms='[{"id":"base", "name":"{{ product.pos_unit_name|escapejs }}", "factor": 1.0}{% for puom in product.uoms.all %}{% if not puom.is_base %}, {"id":{{ puom.id }}, "name":"{{ puom.uom.name|escapejs }}", "factor": {{ puom.conversion_factor|stringformat:"f" }}}{% endif %}{% endfor %}]'>
                             <td>
-                                <div class="product-thumb-placeholder">📦</div>
+                                <div class="product-thumb-placeholder">{% if product.product_type == 'SERVICE' %}🛠️{% else %}📦{% endif %}</div>
                             </td>
                             <td>{{ product.name }}</td>
                             <td class="en">{{ product.barcode }}</td>
                             <td>
                                 <div class="qty-control">
-                                    <button class="qty-btn" onclick="event.stopPropagation();POS.updateQuantityForProduct({{ product.id }}, -1)">−</button>
+                                    <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, {{ product.id }}, -1)">−</button>
                                     <span class="qty-value">1</span>
-                                    <button class="qty-btn" onclick="event.stopPropagation();POS.updateQuantityForProduct({{ product.id }}, 1)">+</button>
+                                    <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, {{ product.id }}, 1)">+</button>
                                 </div>
                             </td>
-                            <td>{{ product.pos_stock }}</td>
-                            <td class="en price-col">{{ product.sale_price }} EGP</td>
+                            <td class="stock-cell">
+                                {% if product.product_type == 'SERVICE' %}
+                                    <span class="badge bg-secondary">خدمة</span>
+                                {% else %}
+                                    {{ product.pos_stock|floatformat:"-2" }}
+                                {% endif %}
+                            </td>
+                            <td class="en price-col">{{ product.sale_price|floatformat:2 }} EGP</td>
                             <td>-</td>
-                            <td class="en">{{ product.sale_price }} EGP</td>
-                            <td>{{ product.get_unit_display }}</td>
+                            <td class="en">{{ product.sale_price|floatformat:2 }} EGP</td>
+                            <td>{{ product.pos_unit_name }}</td>
                         </tr>
                         {% empty %}
                         <tr><td colspan="9" style="text-align:center;padding:2rem;">{% trans 'لا توجد منتجات' %}</td></tr>
@@ -160,13 +174,18 @@
                     <span>{% trans 'الإجمالي الفرعي' %}:</span>
                     <span id="cartSubtotal">0.00</span>
                 </div>
-                <div class="total-row discount-row">
-                    <span>{% trans 'الخصم' %}:</span>
+                <div class="total-row discount-row" style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>{% trans 'الخصم الكلي (%)' %}:</span>
+                    <input type="number" id="globalDiscountPct" value="0" min="0" max="100" step="0.01" style="width:60px; text-align:center; margin:0 5px;" onchange="POS.updateCartDisplay()" onkeyup="POS.updateCartDisplay()">
                     <span id="cartDiscount">(0.00)</span>
                 </div>
                 <div class="total-row">
-                    <span>{% trans 'الضريبة' %}:</span>
+                    <span>{% trans 'الضريبة (VAT)' %}:</span>
                     <span id="cartTax">0.00</span>
+                </div>
+                <div class="total-row wht-row" style="color: var(--danger);">
+                    <span>{% trans 'الخصم والإضافة (WHT)' %}:</span>
+                    <span id="cartWht">(0.00)</span>
                 </div>
                 <div class="total-row total-final">
                     <span>{% trans 'الصافي المطلوب' %}:</span>
@@ -176,9 +195,9 @@
             
             <!-- Payment Quick Actions -->
             <div class="payment-quick-btns">
-                <button class="pay-quick-btn" onclick="POS.processCashPayment()">
+                <button type="button" class="pay-quick-btn" onclick="POS.processCashPayment()">
                     <div>💵 {% trans 'كاش' %}</div>
-                    <small style="font-size:0.65rem; font-weight:normal;">(Enter)</small>
+                    <small style="font-size:0.65rem; font-weight:normal;">(Ctrl+Enter)</small>
                 </button>
                 <button class="pay-quick-btn pay-card" onclick="POS.processCardPayment()">
                     <div>💳 {% trans 'بطاقة' %}</div>
@@ -204,13 +223,8 @@
     <!-- Bottom Action Bar -->
     <div class="pos-action-bar">
         <div class="pos-actions-left">
-            <button class="action-btn action-void" onclick="POS.voidTransaction()">✖ VOID<br><small>(F1)</small></button>
-            <button class="action-btn action-hold" onclick="POS.holdTransaction()">⏸ HOLD<br><small>(F2)</small></button>
-            <button class="action-btn action-reprint" onclick="POS.reprintLast()">🖨 REPRINT LAST<br><small>(F3)</small></button>
-            <button class="action-btn">{% trans 'سداد' %}</button>
-            <button class="action-btn">{% trans 'طباعة الباركود' %}</button>
-            <button class="action-btn action-cancel" onclick="POS.clearCart()">{% trans 'إلغاء' %}</button>
-            <button class="action-btn">{% trans 'حفظ' %}</button>
+            <button type="button" class="action-btn action-reprint" onclick="POS.reprintLast()">🖨 إعادة طباعة الأخير<br><small>(F3)</small></button>
+            <button type="button" class="action-btn action-cancel" onclick="POS.clearCart()">🗑️ {% trans 'إلغاء الفاتورة' %}</button>
         </div>
         <div class="pos-actions-right">
             <button class="action-btn action-cash-pay" onclick="POS.processCashPayment()">💵 CASH PAYMENT<br><small>(F11)</small></button>
@@ -248,17 +262,76 @@
             <h3>✓ {% trans 'تمت العملية بنجاح' %}</h3>
             <div id="receiptContent"></div>
             <div class="modal-actions">
-                <button onclick="if(POS.lastInvoiceId) POS.printReceipt(POS.lastInvoiceId); else window.print();" class="btn-print">🖨 {% trans 'طباعة الإيصال' %}</button>
-                <button onclick="document.getElementById('receiptModal').style.display='none'; POS.clearCart();" class="btn-new-sale">🛒 {% trans 'بيع جديد' %}</button>
+                <button type="button" onclick="if(POS.lastInvoiceId) POS.printReceipt(POS.lastInvoiceId); else window.print();" class="btn-print">🖨 {% trans 'طباعة الإيصال' %}</button>
+                <button type="button" onclick="document.getElementById('receiptModal').style.display='none';" class="btn-new-sale">🛒 {% trans 'بيع جديد' %}</button>
             </div>
         </div>
     </div>
     
+    <!-- Camera Scanner Modal -->
+    <div class="modal" id="scannerModal" style="display:none; z-index: 3000;">
+        <div class="modal-content" style="max-width: 500px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <h3 style="margin:0;">📷 مسح الباركود بالكاميرا</h3>
+                <button type="button" onclick="stopCameraScanner()" class="btn-cancel-modal" style="padding: 5px 10px; margin:0;">✕</button>
+            </div>
+            <div id="qr-reader" style="width:100%; border:1px solid rgba(255,255,255,0.1); border-radius:8px; overflow:hidden;"></div>
+        </div>
+    </div>
+    
     {% csrf_token %}
-    <script src="{% static 'js/pos.js' %}"></script>
+    <script src="{% static 'js/pos.js' %}?v={% now 'U' %}"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <script>
         POS.currentWarehouseId = {{ current_warehouse.id|default:'null' }};
         POS.currentBranchId = {{ current_branch.id|default:'null' }};
+        POS.allowPriceEdit = {% if settings.allow_pos_price_modification %}true{% else %}false{% endif %};
+        POS.priceMarginPercent = {{ settings.pos_price_margin_percent|default:0 }};
+        
+        // --- Camera Barcode Scanner Logic ---
+        let html5QrcodeScanner = null;
+
+        function startCameraScanner() {
+            document.getElementById('scannerModal').style.display = 'flex';
+            
+            if (!html5QrcodeScanner) {
+                html5QrcodeScanner = new Html5QrcodeScanner(
+                    "qr-reader", { fps: 10, qrbox: {width: 250, height: 150} });
+            }
+            
+            html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+        }
+
+        function stopCameraScanner() {
+            if (html5QrcodeScanner) {
+                try {
+                    html5QrcodeScanner.clear();
+                } catch(err) {
+                    console.log("Scanner clear error", err);
+                }
+            }
+            document.getElementById('scannerModal').style.display = 'none';
+        }
+
+        function onScanSuccess(decodedText, decodedResult) {
+            // Stop scanner once we get a code
+            stopCameraScanner();
+            
+            // Add barcode to input and trigger search
+            const barcodeInput = document.getElementById('barcodeInput');
+            if (barcodeInput) {
+                barcodeInput.value = decodedText;
+                if (window.POS && typeof window.POS.addProductByBarcode === 'function') {
+                    window.POS.addProductByBarcode(decodedText);
+                    barcodeInput.value = '';
+                }
+            }
+        }
+
+        function onScanFailure(error) {
+            // handle scan failure, usually better to ignore and keep scanning
+            // console.warn(`Code scan error = ${error}`);
+        }
     </script>
 </body>
 </html>

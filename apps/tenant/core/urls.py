@@ -9,7 +9,10 @@ urlpatterns = [
     path('settings/branches/', views.BranchListView.as_view(), name='branch_list'),
     path('settings/branches/create/', views.BranchCreateView.as_view(), name='branch_create'),
     path('settings/branches/<int:pk>/update/', views.BranchUpdateView.as_view(), name='branch_update'),
+    path('settings/branches/<int:pk>/delete/', views.branch_delete, name='branch_delete'),
     path('settings/users/', views.UserListView.as_view(), name='user_list'),
     path('settings/users/create/', views.UserCreateView.as_view(), name='user_create'),
     path('settings/users/<int:pk>/update/', views.UserUpdateView.as_view(), name='user_update'),
+    path('settings/reports/', views.ReportsIndexView.as_view(), name='reports_index'),
+    path('settings/system/', views.SystemSettingUpdateView.as_view(), name='system_settings'),
 ]

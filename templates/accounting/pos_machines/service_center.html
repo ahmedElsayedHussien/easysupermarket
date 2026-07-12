@@ -1,0 +1,240 @@
+{% extends 'base.html' %}
+{% block title %}مركز خدمات الدفع الإلكتروني{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding:2rem;">
+    <div class="top-header">
+        <h2 style="margin:0;color:#fff;">
+            <i class="fas fa-exchange-alt" style="color:#ff7300;margin-left:0.5rem;"></i>
+            مركز خدمات الدفع الإلكتروني
+        </h2>
+        <div style="display:flex;gap:0.75rem;">
+            <a href="{% url 'accounting:eservice_history' %}" class="btn-action"><i class="fas fa-history"></i> السجل</a>
+            <a href="{% url 'accounting:pos_machine_list' %}" class="btn-action"><i class="fas fa-cash-register"></i> الماكينات</a>
+        </div>
+    </div>
+
+    {% if messages %}
+    {% for message in messages %}
+    <div style="margin:1rem 0;padding:1rem;border-radius:8px;
+        {% if 'error' in message.tags %}background:rgba(255,59,48,0.1);border:1px solid #ff3b30;color:#ff3b30;
+        {% else %}background:rgba(46,213,115,0.1);border:1px solid #2ed573;color:#2ed573;{% endif %}
+        font-size:1rem;font-weight:600;">{{ message }}</div>
+    {% endfor %}
+    {% endif %}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin-top:1.5rem;">
+        <!-- Left: Transaction Form -->
+        <div class="card p-4">
+            <h4 style="color:#ff7300;margin-bottom:1.5rem;border-bottom:1px solid rgba(255,115,0,0.3);padding-bottom:0.75rem;">
+                <i class="fas fa-plus-circle"></i> تسجيل عملية جديدة
+            </h4>
+            <form method="post" id="eserviceForm">
+                {% csrf_token %}
+
+                <!-- Transaction Type -->
+                <div class="form-group">
+                    <label class="form-label">نوع العملية *</label>
+                    <select name="transaction_type" class="form-control" id="txnType" onchange="updateForm()">
+                        {% for val, label in transaction_types %}
+                        <option value="{{ val }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Source Type Toggle -->
+                <div class="form-group">
+                    <label class="form-label">مصدر الحركة</label>
+                    <div style="display:flex;gap:0.5rem;">
+                        <button type="button" id="btnMachine" onclick="setSource('MACHINE')"
+                            style="flex:1;padding:0.6rem;border-radius:6px;border:2px solid #ff7300;background:#ff7300;color:#fff;cursor:pointer;font-weight:700;">
+                            ⚙️ ماكينة دفع
+                        </button>
+                        <button type="button" id="btnEwallet" onclick="setSource('EWALLET')"
+                            style="flex:1;padding:0.6rem;border-radius:6px;border:2px solid #475569;background:transparent;color:#94a3b8;cursor:pointer;font-weight:700;">
+                            📱 محفظة إلكترونية
+                        </button>
+                    </div>
+                    <input type="hidden" name="source_type" id="sourceType" value="MACHINE">
+                </div>
+
+                <!-- Machine Select -->
+                <div class="form-group" id="machineDiv">
+                    <label class="form-label">الماكينة</label>
+                    <select name="pos_machine_id" class="form-control">
+                        <option value="">— اختر الماكينة —</option>
+                        {% for m in machines %}
+                        <option value="{{ m.id }}">{{ m.name }} ({{ m.get_machine_type_display }}) | رصيد: {{ m.current_balance|floatformat:2 }} ج.م</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Ewallet Select -->
+                <div class="form-group" id="ewalletDiv" style="display:none;">
+                    <label class="form-label">المحفظة الإلكترونية</label>
+                    <select name="ewallet_id" class="form-control">
+                        <option value="">— اختر المحفظة —</option>
+                        {% for ew in ewallets %}
+                        <option value="{{ ew.id }}">{{ ew.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Treasury -->
+                <div class="form-group">
+                    <label class="form-label">الخزينة / الدرج *</label>
+                    <select name="treasury_id" class="form-control" required>
+                        <option value="">— اختر الخزينة —</option>
+                        {% for t in treasuries %}
+                        <option value="{{ t.id }}">{{ t.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Principal Amount -->
+                <div class="form-group">
+                    <label class="form-label" id="principalLabel">المبلغ الأصلي *</label>
+                    <input type="number" name="principal_amount" class="form-control" step="0.01" min="0.01"
+                        placeholder="0.00" required oninput="calcSummary()">
+                </div>
+
+                <!-- Commission Revenue (hidden for MERCHANT_RECHARGE) -->
+                <div class="form-group" id="commissionRevenueDiv">
+                    <label class="form-label">عمولة المحل (الربح)</label>
+                    <input type="number" name="commission_revenue" id="commissionRevenue" class="form-control"
+                        step="0.01" min="0" value="0" placeholder="0.00" oninput="calcSummary()">
+                </div>
+
+                <!-- Commission Expense (only for MERCHANT_RECHARGE) -->
+                <div class="form-group" id="commissionExpenseDiv" style="display:none;">
+                    <label class="form-label">رسوم المندوب (مصروف)</label>
+                    <input type="number" name="commission_expense" id="commissionExpense" class="form-control"
+                        step="0.01" min="0" value="0" placeholder="0.00" oninput="calcSummary()">
+                </div>
+
+                <!-- Description -->
+                <div class="form-group">
+                    <label class="form-label">البيان / ملاحظات</label>
+                    <input type="text" name="description" class="form-control" placeholder="مثال: شحن رصيد موبايل أحمد...">
+                </div>
+
+                <!-- Live Summary Box -->
+                <div id="summaryBox" style="margin:1rem 0;padding:1rem;border-radius:8px;background:rgba(255,115,0,0.08);border:1px solid rgba(255,115,0,0.3);">
+                    <div style="font-weight:700;color:#ff7300;margin-bottom:0.5rem;"><i class="fas fa-calculator"></i> ملخص العملية</div>
+                    <div id="summaryContent" style="color:#cbd5e1;font-size:0.9rem;line-height:1.8;">
+                        أدخل البيانات لعرض ملخص العملية...
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-orange" style="width:100%;padding:1rem;font-size:1.05rem;margin-top:0.5rem;">
+                    <i class="fas fa-check-circle"></i> تنفيذ العملية وترحيل القيد
+                </button>
+            </form>
+        </div>
+
+        <!-- Right: Machine Balances -->
+        <div>
+            <div class="card p-4" style="margin-bottom:1rem;">
+                <h4 style="color:#00e5ff;margin-bottom:1rem;"><i class="fas fa-tachometer-alt"></i> أرصدة الماكينات الحالية</h4>
+                {% for m in machines %}
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <div>
+                        <span style="font-weight:600;color:#e2e8f0;">{{ m.name }}</span>
+                        <small style="color:#94a3b8;display:block;">{{ m.get_machine_type_display }}</small>
+                    </div>
+                    <span style="font-weight:900;color:#2ed573;font-size:1.1rem;">{{ m.current_balance|floatformat:2 }} ج.م</span>
+                </div>
+                {% empty %}
+                <p style="color:#94a3b8;text-align:center;">لا توجد ماكينات. <a href="{% url 'accounting:pos_machine_create' %}" style="color:#ff7300;">أضف ماكينة</a></p>
+                {% endfor %}
+            </div>
+
+            <div class="card p-4">
+                <h4 style="color:#fbbf24;margin-bottom:1rem;"><i class="fas fa-info-circle"></i> دليل العمليات</h4>
+                <div style="font-size:0.85rem;color:#94a3b8;line-height:2;">
+                    <div style="padding:0.4rem 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <span style="color:#2ed573;">💰 سحب كاش</span><br>
+                        عميل يحول رصيد لك → أنت تعطيه كاش (المبلغ - العمولة)
+                    </div>
+                    <div style="padding:0.4rem 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <span style="color:#00e5ff;">📲 إيداع / تحويل</span><br>
+                        عميل يدفع كاش → أنت تحول له رصيد (المبلغ + العمولة)
+                    </div>
+                    <div style="padding:0.4rem 0;">
+                        <span style="color:#ff7300;">🔋 شحن الماكينة</span><br>
+                        مندوب يشحن رصيد الماكينة → تدفع له (المبلغ + رسوم المندوب) كاش
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function setSource(type) {
+    document.getElementById('sourceType').value = type;
+    if (type === 'MACHINE') {
+        document.getElementById('machineDiv').style.display = '';
+        document.getElementById('ewalletDiv').style.display = 'none';
+        document.getElementById('btnMachine').style.background = '#ff7300';
+        document.getElementById('btnMachine').style.color = '#fff';
+        document.getElementById('btnMachine').style.borderColor = '#ff7300';
+        document.getElementById('btnEwallet').style.background = 'transparent';
+        document.getElementById('btnEwallet').style.color = '#94a3b8';
+        document.getElementById('btnEwallet').style.borderColor = '#475569';
+    } else {
+        document.getElementById('machineDiv').style.display = 'none';
+        document.getElementById('ewalletDiv').style.display = '';
+        document.getElementById('btnEwallet').style.background = '#ff7300';
+        document.getElementById('btnEwallet').style.color = '#fff';
+        document.getElementById('btnEwallet').style.borderColor = '#ff7300';
+        document.getElementById('btnMachine').style.background = 'transparent';
+        document.getElementById('btnMachine').style.color = '#94a3b8';
+        document.getElementById('btnMachine').style.borderColor = '#475569';
+    }
+    calcSummary();
+}
+
+function updateForm() {
+    const txnType = document.getElementById('txnType').value;
+    const revenueDiv = document.getElementById('commissionRevenueDiv');
+    const expenseDiv = document.getElementById('commissionExpenseDiv');
+    if (txnType === 'MERCHANT_RECHARGE') {
+        revenueDiv.style.display = 'none';
+        expenseDiv.style.display = '';
+    } else {
+        revenueDiv.style.display = '';
+        expenseDiv.style.display = 'none';
+    }
+    calcSummary();
+}
+
+function calcSummary() {
+    const txnType = document.getElementById('txnType').value;
+    const principal = parseFloat(document.querySelector('[name=principal_amount]').value) || 0;
+    const commRev = parseFloat(document.getElementById('commissionRevenue').value) || 0;
+    const commExp = parseFloat(document.getElementById('commissionExpense').value) || 0;
+    let html = '';
+
+    if (txnType === 'CASH_OUT') {
+        const cashOut = principal - commRev;
+        html = `📥 رصيد يدخل للماكينة: <strong style="color:#2ed573">${principal.toFixed(2)} ج.م</strong><br>
+                💵 كاش يخرج من الدرج: <strong style="color:#ff3b30">${cashOut.toFixed(2)} ج.م</strong><br>
+                🏆 ربح المحل: <strong style="color:#fbbf24">${commRev.toFixed(2)} ج.م</strong>`;
+    } else if (txnType === 'CASH_IN') {
+        const cashIn = principal + commRev;
+        html = `💵 كاش يدخل للدرج: <strong style="color:#2ed573">${cashIn.toFixed(2)} ج.م</strong><br>
+                📤 رصيد يخرج من الماكينة: <strong style="color:#ff3b30">${principal.toFixed(2)} ج.م</strong><br>
+                🏆 ربح المحل: <strong style="color:#fbbf24">${commRev.toFixed(2)} ج.م</strong>`;
+    } else if (txnType === 'MERCHANT_RECHARGE') {
+        const totalPaid = principal + commExp;
+        html = `🔋 رصيد يضاف للماكينة: <strong style="color:#2ed573">${principal.toFixed(2)} ج.م</strong><br>
+                💸 رسوم مندوب: <strong style="color:#ff3b30">${commExp.toFixed(2)} ج.م</strong><br>
+                💵 إجمالي كاش يُدفع للمندوب: <strong style="color:#fbbf24">${totalPaid.toFixed(2)} ج.م</strong>`;
+    }
+    document.getElementById('summaryContent').innerHTML = html || 'أدخل البيانات لعرض ملخص العملية...';
+}
+
+updateForm();
+</script>
+{% endblock %}

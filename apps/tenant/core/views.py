@@ -9,6 +9,33 @@ from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
 import json
+from django.urls import reverse_lazy
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin, AccessMixin
+from django.views.generic import UpdateView, ListView, CreateView, View
+from django.contrib.auth.models import User
+from .models import SystemSetting
+from .forms import SystemSettingForm, EmployeeUserCreationForm, EmployeeUserUpdateForm
+
+class AdminRequiredMixin(UserPassesTestMixin):
+    def test_func(self):
+        return hasattr(self.request.user, 'employee_profile') and self.request.user.employee_profile.is_admin()
+
+class SystemSettingUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
+    model = SystemSetting
+    form_class = SystemSettingForm
+    template_name = 'core/settings.html'
+    success_url = reverse_lazy('core:system_settings')
+
+    def get_object(self, queryset=None):
+        return SystemSetting.get_settings()
+
+    def form_valid(self, form):
+        messages.success(self.request, 'تم حفظ إعدادات النظام بنجاح.')
+        return super().form_valid(form)
+
+    def form_invalid(self, form):
+        messages.error(self.request, 'يرجى مراجعة الأخطاء وتصحيحها.')
+        return super().form_invalid(form)
 
 
 @login_required
@@ -117,12 +144,17 @@ def admin_dashboard(request):
         tx_count=Count('id')
     ).order_by('-revenue')[:5]
 
-    # --- FIFO aging alerts (oldest batches with remaining stock) ---
-    fifo_alerts = InventoryBatch.objects.filter(
-        quantity_remaining__gt=0
-    ).order_by('created_at').select_related(
-        'product', 'warehouse'
-    )[:10]
+    # --- Low stock alerts (aggregated across batches) ---
+    stock_alerts = []
+    for product in Product.objects.filter(is_active=True).select_related('category'):
+        stock = product.get_stock()
+        if stock <= product.min_stock_level and product.min_stock_level > 0:
+            stock_alerts.append({
+                'product': product,
+                'stock': stock,
+                'min_stock': product.min_stock_level,
+            })
+    stock_alerts = sorted(stock_alerts, key=lambda x: (x['stock'] - x['min_stock']))[:10]
 
     # --- Summary KPIs ---
     total_revenue_month = Invoice.objects.filter(
@@ -151,7 +183,8 @@ def admin_dashboard(request):
         'sales_chart_labels': json.dumps(labels),
         'sales_chart_data': json.dumps(sales_data),
         'top_branches': list(top_branches),
-        'fifo_alerts': fifo_alerts,
+        'stock_alerts': stock_alerts,
+        'alerts_count': len(stock_alerts),
         'active_branches': active_branches,
         'total_branches': total_branches,
         'total_revenue_month': total_revenue_month,
@@ -202,6 +235,71 @@ def branch_list(request):
     }
     return render(request, 'core/branch_list.html', context)
 
+# ==========================================
+# User Management Views
+# ==========================================
+
+class UserListView(AdminRequiredMixin, ListView):
+    model = User
+    template_name = 'core/user_list.html'
+    context_object_name = 'users'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'المستخدمون والصلاحيات'
+        return context
+
+class UserCreateView(AdminRequiredMixin, CreateView):
+    model = User
+    form_class = EmployeeUserCreationForm
+    template_name = 'core/user_form.html'
+    success_url = reverse_lazy('core:user_list')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'إضافة مستخدم جديد'
+        context['cancel_url'] = self.success_url
+        
+        # Group permissions by app_label for the template
+        from django.contrib.auth.models import Permission
+        from collections import defaultdict
+        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners'])
+        grouped = defaultdict(list)
+        for p in perms:
+            grouped[p.content_type.app_label].append(p)
+        context['grouped_permissions'] = dict(grouped)
+        return context
+
+class UserUpdateView(AdminRequiredMixin, UpdateView):
+    model = User
+    form_class = EmployeeUserUpdateForm
+    template_name = 'core/user_form.html'
+    success_url = reverse_lazy('core:user_list')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'تعديل بيانات وصلاحيات المستخدم'
+        context['cancel_url'] = self.success_url
+        
+        from django.contrib.auth.models import Permission
+        from collections import defaultdict
+        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners'])
+        grouped = defaultdict(list)
+        for p in perms:
+            grouped[p.content_type.app_label].append(p)
+        context['grouped_permissions'] = dict(grouped)
+        return context
+
+class ReportsIndexView(AdminRequiredMixin, View):
+    """
+    Main reports dashboard view. Serves as a structural skeleton for tabs.
+    """
+    def get(self, request, *args, **kwargs):
+        context = {
+            'title': 'التقارير المجمعة',
+        }
+        return render(request, 'core/reports.html', context)
+
 @login_required
 def settings_dashboard(request):
     """
@@ -233,6 +331,7 @@ class BranchListView(LoginRequiredMixin, ListView):
         context['title'] = 'إدارة الفروع'
         context['create_url'] = reverse_lazy('core:branch_create')
         context['update_url_name'] = 'core:branch_update'
+        context['delete_url_name'] = 'core:branch_delete'
         return context
 
 class BranchCreateView(LoginRequiredMixin, CreateView):
@@ -258,6 +357,25 @@ class BranchUpdateView(LoginRequiredMixin, UpdateView):
         context['title'] = 'تعديل الفرع'
         context['cancel_url'] = reverse_lazy('core:branch_list')
         return context
+
+@login_required
+def branch_delete(request, pk):
+    from apps.tenant.core.models import Branch
+    from django.db.models import ProtectedError
+    from django.shortcuts import get_object_or_404, redirect
+    from django.contrib import messages
+    
+    if request.method == 'POST':
+        branch = get_object_or_404(Branch, pk=pk)
+        try:
+            name = branch.name
+            branch.delete()
+            messages.success(request, f'تم حذف الفرع "{name}" بنجاح.')
+        except ProtectedError:
+            messages.error(request, f'لا يمكن حذف الفرع "{branch.name}" لارتباطه ببيانات أخرى (مخازن، فواتير، موظفين...).')
+        except Exception as e:
+            messages.error(request, f'حدث خطأ أثناء الحذف: {str(e)}')
+    return redirect('core:branch_list')
 
 from django.contrib.auth.models import User
 from .forms import EmployeeUserCreationForm, EmployeeUserUpdateForm

@@ -2,9 +2,10 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.utils import timezone
-from .models import Invoice, InvoiceLine
+from django.contrib import messages
+from .models import Invoice, InvoiceLine, POSSession
 from apps.tenant.inventory.models import Product, Warehouse
-from apps.tenant.core.models import Branch
+from apps.tenant.core.models import Branch, SystemSetting
 from apps.tenant.partners.models import Partner
 import json
 from decimal import Decimal
@@ -12,6 +13,13 @@ from decimal import Decimal
 @login_required
 def pos_view(request):
     """Hybrid Sales Point View"""
+    
+    # Check if cashier has an open shift
+    open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+    if not open_session:
+        messages.warning(request, 'يجب فتح وردية أولاً قبل الدخول لنقطة البيع.')
+        return redirect('invoicing:pos_open_shift')
+
     products = Product.objects.filter(is_active=True).select_related('category').prefetch_related('uoms__uom')
     warehouses = Warehouse.objects.filter(is_active=True)
     
@@ -79,11 +87,129 @@ def pos_view(request):
         'current_branch': current_branch,
         'treasuries': treasuries,
         'bank_accounts': bank_accounts,
+        'bank_accounts': bank_accounts,
         'ewallets': ewallets,
         'branches': branches,
         'is_admin': is_admin,
+        'pos_session': open_session,
+        'settings': SystemSetting.get_settings(),
     }
     return render(request, 'pos/index.html', context)
+
+@login_required
+def pos_open_shift(request):
+    """View to open a new cashier shift"""
+    open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+    if open_session:
+        messages.info(request, 'لديك وردية مفتوحة بالفعل.')
+        return redirect('invoicing:pos')
+
+    from apps.tenant.accounting.models import Treasury
+    
+    # Determine branch
+    user_branch = None
+    if hasattr(request.user, 'employee_profile'):
+        user_branch = request.user.employee_profile.branch
+    
+    if not user_branch:
+        user_branch = Branch.objects.filter(is_active=True).first()
+
+    if request.method == 'POST':
+        opening_balance_str = request.POST.get('opening_balance', '0')
+        treasury_id = request.POST.get('treasury_id')
+        if not treasury_id:
+            messages.error(request, 'برجاء اختيار خزينة.')
+        else:
+            try:
+                opening_balance = Decimal(opening_balance_str)
+                treasury = Treasury.objects.get(id=treasury_id)
+                
+                POSSession.objects.create(
+                    branch=user_branch,
+                    treasury=treasury,
+                    user=request.user,
+                    opening_balance=opening_balance,
+                    status=POSSession.OPEN
+                )
+                messages.success(request, 'تم فتح الوردية بنجاح.')
+                return redirect('invoicing:pos')
+            except Exception as e:
+                messages.error(request, f'حدث خطأ: {str(e)}')
+            
+    treasuries = Treasury.objects.all()
+    if user_branch and not (request.user.is_superuser or request.user.is_staff):
+        treasuries = treasuries.filter(branch=user_branch)
+        
+    context = {
+        'title': 'فتح وردية كاشير',
+        'treasuries': treasuries,
+        'current_branch': user_branch
+    }
+    return render(request, 'pos/open_shift.html', context)
+
+
+@login_required
+def pos_close_shift(request):
+    """View to close an active cashier shift"""
+    open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+    if not open_session:
+        messages.warning(request, 'ليس لديك وردية مفتوحة لإغلاقها.')
+        return redirect('invoicing:pos_open_shift')
+
+    # Calculate Expected Closing Balance (Opening + Cash Sales - Cash Refunds)
+    # We sum all CASH invoices linked to this session.
+    cash_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.CASH, status=Invoice.POSTED)
+    total_cash_sales = sum(inv.total_amount for inv in cash_invoices if inv.invoice_type == Invoice.SALE)
+    total_cash_refunds = sum(inv.total_amount for inv in cash_invoices if inv.invoice_type == Invoice.RETURN_SALE)
+    
+    # Calculate non-cash sales for reporting
+    card_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.CARD, status=Invoice.POSTED)
+    total_card_sales = sum(inv.total_amount for inv in card_invoices if inv.invoice_type == Invoice.SALE) - sum(inv.total_amount for inv in card_invoices if inv.invoice_type == Invoice.RETURN_SALE)
+    
+    ewallet_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.EWALLET, status=Invoice.POSTED)
+    total_ewallet_sales = sum(inv.total_amount for inv in ewallet_invoices if inv.invoice_type == Invoice.SALE) - sum(inv.total_amount for inv in ewallet_invoices if inv.invoice_type == Invoice.RETURN_SALE)
+    
+    bank_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.BANK_TRANSFER, status=Invoice.POSTED)
+    total_bank_sales = sum(inv.total_amount for inv in bank_invoices if inv.invoice_type == Invoice.SALE) - sum(inv.total_amount for inv in bank_invoices if inv.invoice_type == Invoice.RETURN_SALE)
+    
+    credit_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.CREDIT, status=Invoice.POSTED)
+    total_credit_sales = sum(inv.total_amount for inv in credit_invoices if inv.invoice_type == Invoice.SALE) - sum(inv.total_amount for inv in credit_invoices if inv.invoice_type == Invoice.RETURN_SALE)
+
+    expected_balance = open_session.opening_balance + total_cash_sales - total_cash_refunds
+
+    if request.method == 'POST':
+        actual_balance_str = request.POST.get('actual_balance', '0')
+        try:
+            actual_balance = Decimal(actual_balance_str)
+            difference = actual_balance - expected_balance
+            
+            open_session.closing_balance_expected = expected_balance
+            open_session.closing_balance_actual = actual_balance
+            open_session.difference = difference
+            open_session.end_time = timezone.now()
+            open_session.status = POSSession.CLOSED
+            open_session.save()
+            
+            # Here we could generate manual GL entries if configured, 
+            # but per user request, it's just a report for the accountant.
+            
+            messages.success(request, f'تم إغلاق الوردية. النقدية الفعلية: {actual_balance}، العجز/الزيادة: {difference}')
+            return redirect('invoicing:shift_report')
+        except Exception as e:
+            messages.error(request, f'حدث خطأ: {str(e)}')
+
+    context = {
+        'title': 'إغلاق الوردية وجرد الدرج',
+        'session': open_session,
+        'expected_balance': expected_balance,
+        'total_cash_sales': total_cash_sales,
+        'total_cash_refunds': total_cash_refunds,
+        'total_card_sales': total_card_sales,
+        'total_ewallet_sales': total_ewallet_sales,
+        'total_bank_sales': total_bank_sales,
+        'total_credit_sales': total_credit_sales,
+    }
+    return render(request, 'pos/close_shift.html', context)
 
 @login_required
 def purchase_invoice_view(request):
@@ -121,9 +247,12 @@ def purchase_invoice_view(request):
             quantities = request.POST.getlist('quantity[]')
             prices = request.POST.getlist('price[]')
             
-            discount_amount = Decimal(request.POST.get('discount_amount') or 0)
-            vat_percentage = Decimal(request.POST.get('vat_percentage') or 0)
-            wht_percentage = Decimal(request.POST.get('wht_percentage') or 0)
+            discount_percentage = Decimal(request.POST.get('discount_percentage') or 0)
+            
+            vat_str = request.POST.get('vat_percentage', '')
+            wht_str = request.POST.get('wht_percentage', '')
+            vat_percentage = Decimal(vat_str) if vat_str != '' else None
+            wht_percentage = Decimal(wht_str) if wht_str != '' else None
             
             with transaction.atomic():
                 supplier = Partner.objects.get(id=supplier_id)
@@ -148,19 +277,27 @@ def purchase_invoice_view(request):
                     treasury_id=treasury_id,
                     status=Invoice.DRAFT,
                     cashier=request.user,
-                    discount_amount=discount_amount,
-                    vat_percentage=vat_percentage,
-                    wht_percentage=wht_percentage,
+                    discount_percentage=discount_percentage,
+                    vat_percentage=vat_percentage if vat_percentage is not None else Decimal('0'),
+                    wht_percentage=wht_percentage if wht_percentage is not None else Decimal('0'),
                 )
                 
                 for pid, qty, price in zip(product_ids, quantities, prices):
                     if pid and qty and price:
                         product = Product.objects.get(id=pid)
+                        
+                        # Apply global taxes if provided, else 0
+                        wht_r = wht_percentage if wht_percentage is not None else Decimal('0')
+                        tax_r = vat_percentage if vat_percentage is not None else Decimal('0')
+                        
                         InvoiceLine.objects.create(
                             invoice=invoice,
                             product=product,
                             quantity=Decimal(qty),
                             unit_price=Decimal(price),
+                            tax_rate=tax_r,
+                            wht_rate=wht_r,
+                            discount_pct=invoice.discount_percentage,
                         )
                 
                 invoice.recalculate_totals()
@@ -169,11 +306,16 @@ def purchase_invoice_view(request):
                 confirm_invoice(invoice.id)
                 
             messages.success(request, 'تم حفظ وترحيل الفاتورة بنجاح!')
-            return redirect('invoicing:invoice_list')
+            return redirect('invoicing:purchase_invoice_list')
         except Exception as e:
             import traceback
             traceback.print_exc()
             messages.error(request, f'حدث خطأ: {str(e)}')
+            
+            import json
+            posted_lines = []
+            for pid, qty, prc in zip(request.POST.getlist('product_id[]'), request.POST.getlist('quantity[]'), request.POST.getlist('price[]')):
+                posted_lines.append({'product_id': pid, 'quantity': qty, 'price': prc})
             
             # Re-pass the posted data back to context to prevent form clearing
             context = {
@@ -184,6 +326,7 @@ def purchase_invoice_view(request):
                 'treasuries': treasuries,
                 'title': 'إنشاء فاتورة مشتريات',
                 'posted_data': request.POST,
+                'posted_lines_json': json.dumps(posted_lines),
             }
             return render(request, 'invoicing/purchase_invoice.html', context)
             
@@ -199,10 +342,21 @@ def purchase_invoice_view(request):
 
 @login_required
 def sales_invoice_list(request):
+    search_query = request.GET.get('q', '')
     invoices = Invoice.objects.filter(invoice_type__in=['SALE', 'RETURN_SALE']).order_by('-date', '-created_at')
     
+    if search_query:
+        invoices = invoices.filter(partner__name__icontains=search_query)
+        
+    from django.core.paginator import Paginator
+    paginator = Paginator(invoices, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+    
     context = {
-        'invoices': invoices,
+        'invoices': page_obj,
+        'page_obj': page_obj,
+        'search_query': search_query,
         'title': 'فواتير المبيعات',
         'list_type': 'sales'
     }
@@ -210,10 +364,21 @@ def sales_invoice_list(request):
 
 @login_required
 def purchase_invoice_list(request):
+    search_query = request.GET.get('q', '')
     invoices = Invoice.objects.filter(invoice_type__in=['PURCHASE', 'RETURN_PURCHASE']).order_by('-date', '-created_at')
     
+    if search_query:
+        invoices = invoices.filter(partner__name__icontains=search_query)
+        
+    from django.core.paginator import Paginator
+    paginator = Paginator(invoices, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+    
     context = {
-        'invoices': invoices,
+        'invoices': page_obj,
+        'page_obj': page_obj,
+        'search_query': search_query,
         'title': 'فواتير المشتريات',
         'list_type': 'purchases'
     }
@@ -318,6 +483,9 @@ def complete_sale(request):
                     defaults={'partner_type': 'CUSTOMER', 'is_active': True}
                 )
             
+            # Check if there is an open POSSession for this cashier
+            open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+
             # Create Invoice
             invoice = Invoice.objects.create(
                 invoice_type=invoice_type,
@@ -331,13 +499,11 @@ def complete_sale(request):
                 bank_account_id=bank_account_id if bank_account_id else None,
                 status='DRAFT',
                 cashier=request.user,
+                pos_session=open_session,
                 subtotal=Decimal(data.get('subtotal', 0)),
                 tax_amount=Decimal(data.get('tax_amount', 0)),
                 total_amount=Decimal(data.get('total_amount', 0)),
             )
-            
-            # Create Lines
-            from apps.tenant.accounting.models import Tax
             
             for item in cart:
                 product = Product.objects.get(id=item['product_id'])
@@ -345,18 +511,12 @@ def complete_sale(request):
                 if uom_id == 'base':
                     uom_id = None
                 
-                tax_rate_val = Decimal(item.get('tax_rate', 0))
-                tax_obj = None
-                if tax_rate_val > 0:
-                    tax_obj = Tax.objects.filter(rate=tax_rate_val).first()
-                    
                 InvoiceLine.objects.create(
                     invoice=invoice,
                     product=product,
                     quantity=Decimal(item['quantity']),
                     unit_price=Decimal(item['unit_price']),
                     discount_pct=Decimal(item.get('discount_percent', 0)),
-                    tax=tax_obj,
                     uom_id=uom_id,
                 )
                 

@@ -40,6 +40,9 @@ class Partner(models.Model):
     tax_id = models.CharField(
         max_length=50, blank=True, verbose_name='الرقم الضريبي'
     )
+    subject_to_withholding_tax = models.BooleanField(
+        default=False, verbose_name='يخضع لضريبة الخصم والإضافة'
+    )
     address = models.TextField(blank=True, verbose_name='العنوان')
 
     # Accounting accounts (optional - if set, used for automated journal entries)
@@ -93,36 +96,33 @@ class Partner(models.Model):
     @property
     def outstanding_balance(self):
         """
-        Calculates net outstanding balance for this partner from journal entries.
-
+        Calculates net outstanding balance for this partner from CREDIT invoices and Payments.
+        
         For customers (receivable): positive means money owed TO us.
         For suppliers (payable): positive means money we OWE them.
-
-        Returns: Decimal
         """
-        from apps.tenant.accounting.models import JournalItem
-
-        # Get all posted journal items related to this partner's accounts
+        from decimal import Decimal
+        from django.db.models import Sum
+        
         balance = Decimal('0')
-
-        if self.receivable_account_id:
-            items = JournalItem.objects.filter(
-                account_id=self.receivable_account_id,
-                entry__status='POSTED'
-            )
-            debit = items.aggregate(s=Sum('debit'))['s'] or Decimal('0')
-            credit = items.aggregate(s=Sum('credit'))['s'] or Decimal('0')
-            balance += debit - credit  # A/R: debit increases balance
-
-        if self.payable_account_id:
-            items = JournalItem.objects.filter(
-                account_id=self.payable_account_id,
-                entry__status='POSTED'
-            )
-            debit = items.aggregate(s=Sum('debit'))['s'] or Decimal('0')
-            credit = items.aggregate(s=Sum('credit'))['s'] or Decimal('0')
-            balance += credit - debit  # A/P: credit increases balance
-
+        
+        # Sales (Customer owes us)
+        sales = self.invoices.filter(invoice_type='SALE', payment_type='CREDIT', status='POSTED').aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+        returns = self.invoices.filter(invoice_type='RETURN_SALE', payment_type='CREDIT', status='POSTED').aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+        balance += (sales - returns)
+        
+        # Purchases (We owe Supplier)
+        purchases = self.invoices.filter(invoice_type='PURCHASE', payment_type='CREDIT', status='POSTED').aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+        pur_returns = self.invoices.filter(invoice_type='RETURN_PURCHASE', payment_type='CREDIT', status='POSTED').aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+        balance -= (purchases - pur_returns)
+        
+        # Payments
+        receipts = self.payments.filter(payment_type='RECEIPT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
+        payments = self.payments.filter(payment_type='PAYMENT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
+        
+        balance -= receipts
+        balance += payments
+        
         return balance
 
     @property

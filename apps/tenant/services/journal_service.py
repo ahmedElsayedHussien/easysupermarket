@@ -168,14 +168,43 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
             description=f'ضريبة القيمة المضافة - {invoice.invoice_number}'
         ))
 
-    # Cr: Revenue (Net of discount, excluding tax)
-    if net_subtotal > 0:
+    # --- Cr: Revenue ---
+    # We must split revenue between normal products and services (Labor).
+    product_revenue_gross = sum(line.subtotal for line in invoice.lines.all() if line.product.product_type == 'PRODUCT')
+    service_revenue_gross = sum(line.subtotal for line in invoice.lines.all() if line.product.product_type == 'SERVICE')
+    total_gross = product_revenue_gross + service_revenue_gross
+
+    product_revenue_net = Decimal('0')
+    service_revenue_net = Decimal('0')
+    if total_gross > 0:
+        product_revenue_net = (product_revenue_gross - (invoice.discount_amount * product_revenue_gross / total_gross)).quantize(Decimal('0.00'))
+        service_revenue_net = (service_revenue_gross - (invoice.discount_amount * service_revenue_gross / total_gross)).quantize(Decimal('0.00'))
+
+    # If rounding causes a tiny discrepancy, adjust the largest one
+    diff = net_subtotal - (product_revenue_net + service_revenue_net)
+    if diff != 0:
+        if product_revenue_net >= service_revenue_net:
+            product_revenue_net += diff
+        else:
+            service_revenue_net += diff
+
+    if product_revenue_net > 0:
         items_to_create.append(JournalItem(
             entry=entry,
             account=revenue_account,
             debit=Decimal('0'),
-            credit=net_subtotal,
+            credit=product_revenue_net,
             description=f'المبيعات - {invoice.invoice_number}'
+        ))
+
+    if service_revenue_net > 0:
+        service_revenue_account = _get_system_account('4110') or revenue_account
+        items_to_create.append(JournalItem(
+            entry=entry,
+            account=service_revenue_account,
+            debit=Decimal('0'),
+            credit=service_revenue_net,
+            description=f'إيرادات المصنعيات والخدمات - {invoice.invoice_number}'
         ))
 
     # COGS entry: Dr COGS / Cr Inventory

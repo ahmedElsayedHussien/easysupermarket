@@ -4,72 +4,79 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="row mb-4">
-    <div class="col-12 d-flex justify-content-between align-items-center">
-        <h2 class="text-neon">
-            <i class="fas fa-list me-2"></i> {{ title }}
-        </h2>
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-list text-gold" style="margin-left: 0.5rem;"></i> {{ title }}</h2>
         {% if create_url %}
-        <a href="{{ create_url }}" class="btn btn-neon-cyan">
-            <i class="fas fa-plus me-1"></i> إضافة
+        <a href="{{ create_url }}" class="btn-orange">
+            <i class="fas fa-plus"></i> إضافة
         </a>
         {% endif %}
     </div>
-</div>
 
-<div class="card glass-panel border-neon">
-    <div class="card-body">
-        <div class="table-responsive">
-            <table class="table table-dark table-hover table-bordered mb-0">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>الاسم / الكود</th>
-                        <th>التفاصيل</th>
-                        <th class="text-center">إجراءات</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for obj in objects %}
-                    <tr>
-                        <td>{{ obj.id }}</td>
-                        <td>
-                            <strong>
-                                {% if obj.name %}{{ obj.name }}
-                                {% elif obj.username %}{{ obj.username }}
-                                {% else %}{{ obj }}{% endif %}
-                            </strong><br>
-                            <small class="text-muted">
-                                {% if obj.code %}{{ obj.code }} {% endif %}
-                                {% if obj.sku %}{{ obj.sku }} {% endif %}
-                                {% if obj.barcode %}{{ obj.barcode }}{% endif %}
-                            </small>
-                        </td>
-                        <td>
-                            {% if obj.is_active is not None %}
-                                {% if obj.is_active %}
-                                    <span class="badge bg-success">نشط</span>
-                                {% else %}
-                                    <span class="badge bg-danger">غير نشط</span>
-                                {% endif %}
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>الاسم / الكود</th>
+                    <th style="text-align: center;">التفاصيل</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for obj in objects %}
+                <tr>
+                    <td class="en" style="color: #00e5ff; font-weight: bold;">{{ obj.id }}</td>
+                    <td>
+                        <strong style="color: #fff;">
+                            {% if obj.name %}{{ obj.name }}
+                            {% elif obj.username %}{{ obj.username }}
+                            {% else %}{{ obj }}{% endif %}
+                        </strong><br>
+                        <small style="color: #94a3b8;">
+                            {% if obj.code %}{{ obj.code }} {% endif %}
+                            {% if obj.sku %}{{ obj.sku }} {% endif %}
+                            {% if obj.barcode %}{{ obj.barcode }}{% endif %}
+                        </small>
+                    </td>
+                    <td style="text-align: center;">
+                        {% if obj.is_active is not None %}
+                            {% if obj.is_active %}
+                                <span class="badge-status badge-success">نشط</span>
+                            {% else %}
+                                <span class="badge-status badge-danger">غير نشط</span>
                             {% endif %}
-                        </td>
-                        <td class="text-center">
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <div style="display:flex; gap:0.5rem; justify-content:center;">
                             {% if update_url_name %}
-                            <a href="{% url update_url_name obj.id %}" class="btn btn-sm btn-neon-blue">
+                            <a href="{% url update_url_name obj.id %}" class="btn-action" title="تعديل">
                                 <i class="fas fa-edit"></i> تعديل
                             </a>
                             {% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="4" class="text-center text-muted py-4">لا توجد بيانات متاحة</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+                            {% if delete_url_name %}
+                            <form method="POST" action="{% url delete_url_name obj.id %}" style="margin:0;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn-action" style="border-color:#ff3b30; color:#ff3b30;" title="حذف" onclick="return confirm('هل أنت متأكد من الحذف؟');">
+                                    <i class="fas fa-trash"></i> حذف
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" style="text-align: center; padding: 2rem; color: #94a3b8;">
+                        <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        لا توجد بيانات متاحة
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

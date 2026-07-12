@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% load static %}
+{% block content %}
+<div class="glass-container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-edit text-gold"></i> {{ title }}</h2>
+        <a href="{{ cancel_url }}" class="btn btn-outline-secondary">
+            <i class="fas fa-times"></i> إلغاء
+        </a>
+    </div>
+
+    <form method="post" class="needs-validation" novalidate>
+        {% csrf_token %}
+        <div class="row g-3">
+            <div class="col-md-6 mb-3">
+                <label class="form-label text-neon-blue">{{ form.date.label }}</label>
+                {{ form.date }}
+                <div class="text-danger small">{{ form.date.errors }}</div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label text-neon-blue">{{ form.amount.label }}</label>
+                {{ form.amount }}
+                <div class="text-danger small">{{ form.amount.errors }}</div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label text-neon-blue">{{ form.partner.label }}</label>
+                {{ form.partner }}
+                <div class="text-danger small">{{ form.partner.errors }}</div>
+            </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label text-neon-blue">{{ form.account.label }}</label>
+                {{ form.account }}
+                <small class="text-muted">اختر الحساب في حالة عدم اختيار شريك.</small>
+                <div class="text-danger small">{{ form.account.errors }}</div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <label class="form-label text-neon-blue">{{ form.payment_method.label }}</label>
+                {{ form.payment_method }}
+                <div class="text-danger small">{{ form.payment_method.errors }}</div>
+            </div>
+            <div class="col-md-4 mb-3" id="treasury-field">
+                <label class="form-label text-neon-blue">{{ form.treasury.label }}</label>
+                {{ form.treasury }}
+                <div class="text-danger small">{{ form.treasury.errors }}</div>
+            </div>
+            <div class="col-md-4 mb-3" id="bank-field" style="display: none;">
+                <label class="form-label text-neon-blue">{{ form.bank_account.label }}</label>
+                {{ form.bank_account }}
+                <div class="text-danger small">{{ form.bank_account.errors }}</div>
+            </div>
+            <div class="col-md-4 mb-3" id="ewallet-field" style="display: none;">
+                <label class="form-label text-neon-blue">{{ form.ewallet.label }}</label>
+                {{ form.ewallet }}
+                <div class="text-danger small">{{ form.ewallet.errors }}</div>
+            </div>
+            <div class="col-12 mb-3">
+                <label class="form-label text-neon-blue">{{ form.description.label }}</label>
+                {{ form.description }}
+                <div class="text-danger small">{{ form.description.errors }}</div>
+            </div>
+        </div>
+
+        <div class="mt-4">
+            <button type="submit" class="btn btn-lg" style="background-color: #ff7300; border-color: #ff7300; color: white; font-weight: bold; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+                <i class="fas fa-save"></i> حفظ المسودة
+            </button>
+        </div>
+    </form>
+</div>
+
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+<style>
+.ts-control {
+    background-color: rgba(15, 23, 42, 0.6) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    color: #fff !important;
+    border-radius: 0.375rem;
+}
+.ts-dropdown, .ts-control, .ts-dropdown.form-control {
+    background-color: rgba(15, 23, 42, 0.95) !important;
+    color: #fff !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+.ts-dropdown .option {
+    color: #fff;
+}
+.ts-dropdown .option:hover, .ts-dropdown .option.active {
+    background-color: rgba(255, 215, 0, 0.2) !important;
+    color: #ffd700 !important;
+}
+.ts-control > input {
+    color: #fff !important;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const paymentMethodSelect = document.getElementById('id_payment_method');
+    const treasuryField = document.getElementById('treasury-field');
+    const bankField = document.getElementById('bank-field');
+    const ewalletField = document.getElementById('ewallet-field');
+
+    const partnerSelect = document.getElementById('id_partner');
+    const accountSelect = document.getElementById('id_account');
+
+    let partnerTs, accountTs;
+
+    if (partnerSelect) {
+        partnerTs = new TomSelect(partnerSelect, {
+            create: false,
+            sortField: { field: "text", direction: "asc" }
+        });
+    }
+
+    if (accountSelect) {
+        accountTs = new TomSelect(accountSelect, {
+            create: false,
+            sortField: { field: "text", direction: "asc" }
+        });
+    }
+
+    function togglePaymentFields() {
+        if (!paymentMethodSelect) return;
+        const val = paymentMethodSelect.value;
+        if(treasuryField) treasuryField.style.display = 'none';
+        if(bankField) bankField.style.display = 'none';
+        if(ewalletField) ewalletField.style.display = 'none';
+
+        if (val === 'CASH' && treasuryField) {
+            treasuryField.style.display = 'block';
+        } else if (val === 'BANK_TRANSFER' && bankField) {
+            bankField.style.display = 'block';
+        } else if (val === 'EWALLET' && ewalletField) {
+            ewalletField.style.display = 'block';
+        }
+    }
+
+    function toggleAccountField() {
+        if (!partnerSelect || !accountSelect) return;
+        if (partnerSelect.value) {
+            if (accountTs) {
+                accountTs.clear();
+                accountTs.disable();
+            } else {
+                accountSelect.disabled = true;
+                accountSelect.value = '';
+            }
+            accountSelect.closest('.mb-3').style.opacity = '0.5';
+        } else {
+            if (accountTs) {
+                accountTs.enable();
+            } else {
+                accountSelect.disabled = false;
+            }
+            accountSelect.closest('.mb-3').style.opacity = '1';
+        }
+    }
+
+    if (paymentMethodSelect) {
+        paymentMethodSelect.addEventListener('change', togglePaymentFields);
+        togglePaymentFields();
+    }
+    
+    if (partnerSelect) {
+        partnerSelect.addEventListener('change', toggleAccountField);
+        toggleAccountField();
+    }
+});
+</script>
+{% endblock %}

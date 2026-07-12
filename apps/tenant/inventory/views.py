@@ -10,16 +10,26 @@ def stock_list(request):
     context = {'batches': batches, 'warehouses': warehouses, 'title': 'تتبع المخزون (FIFO)'}
     return render(request, 'inventory/stock.html', context)
 
+from django.db.models import Q
+
 @login_required
 def product_list(request):
+    query = request.GET.get('q', '').strip()
     products = Product.objects.all()
+    
+    if query:
+        products = products.filter(
+            Q(name__icontains=query) | 
+            Q(barcode__icontains=query)
+        )
+        
     current_branch = getattr(request, 'branch', None)
     
     products_list = list(products)
     for p in products_list:
         p.sale_price = p.get_price_for_branch(current_branch)
         
-    context = {'products': products_list, 'title': 'المنتجات'}
+    context = {'products': products_list, 'title': 'المنتجات', 'search_query': query}
     return render(request, 'inventory/products.html', context)
 
 @login_required
@@ -96,6 +106,7 @@ class WarehouseListView(LoginRequiredMixin, ListView):
         context['title'] = 'إدارة المستودعات'
         context['create_url'] = reverse_lazy('inventory:warehouse_create')
         context['update_url_name'] = 'inventory:warehouse_update'
+        context['delete_url_name'] = 'inventory:warehouse_delete'
         return context
 
 class WarehouseCreateView(LoginRequiredMixin, CreateView):
@@ -121,6 +132,25 @@ class WarehouseUpdateView(LoginRequiredMixin, UpdateView):
         context['title'] = 'تعديل مستودع'
         context['cancel_url'] = reverse_lazy('inventory:warehouse_list')
         return context
+
+from django.contrib import messages
+from django.shortcuts import get_object_or_404, redirect
+from django.db.models import ProtectedError
+
+@login_required
+def warehouse_delete(request, pk):
+    from .models import Warehouse
+    if request.method == 'POST':
+        warehouse = get_object_or_404(Warehouse, pk=pk)
+        try:
+            name = warehouse.name
+            warehouse.delete()
+            messages.success(request, f'تم حذف المستودع "{name}" بنجاح.')
+        except ProtectedError:
+            messages.error(request, f'لا يمكن حذف المستودع "{warehouse.name}" لارتباطه ببيانات أخرى (مثل بضاعة أو فواتير).')
+        except Exception as e:
+            messages.error(request, f'حدث خطأ أثناء الحذف: {str(e)}')
+    return redirect('inventory:warehouse_list')
 
 
 # --- Category Generic Views ---
@@ -420,3 +450,40 @@ class UnitOfMeasureUpdateView(LoginRequiredMixin, UpdateView):
         context['title'] = 'تعديل وحدة قياس'
         context['cancel_url'] = self.success_url
         return context
+
+
+@login_required
+def api_products(request):
+    warehouse_id = request.GET.get('warehouse_id')
+    wh = None
+    if warehouse_id:
+        try:
+            wh = Warehouse.objects.get(id=warehouse_id)
+        except Warehouse.DoesNotExist:
+            pass
+            
+    products = Product.objects.filter(is_active=True).select_related('category').prefetch_related('uoms__uom')
+    current_branch = None
+    branch_id = request.GET.get('branch_id')
+    if branch_id:
+        from apps.tenant.core.models import Branch
+        current_branch = Branch.objects.filter(id=branch_id, is_active=True).first()
+    
+    if not current_branch:
+        current_branch = getattr(request, 'branch', None)
+    
+    products_data = []
+    for p in products:
+        products_data.append({
+            'id': p.id,
+            'name': p.name,
+            'barcode': p.barcode or '',
+            'sale_price': float(p.get_price_for_branch(current_branch)),
+            'available_stock': float(p.get_stock(warehouse=wh)),
+            'tax_rate': float(p.tax_rate) if hasattr(p, 'tax_rate') and p.tax_rate else (float(p.category.tax_rate) if p.category and hasattr(p.category, 'tax_rate') and p.category.tax_rate else 14),
+            'withholding_tax_rate': float(p.withholding_tax_rate) if hasattr(p, 'withholding_tax_rate') and p.withholding_tax_rate else 0,
+            'image': p.image.url if p.image else None,
+            'uoms': [{'id': 'base', 'name': p.pos_unit_name, 'factor': 1.0}] + [{'id': pu.id, 'name': pu.uom.name, 'factor': float(pu.conversion_factor)} for pu in p.uoms.all() if not pu.is_base]
+        })
+        
+    return JsonResponse({'products': products_data})

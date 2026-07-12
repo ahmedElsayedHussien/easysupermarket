@@ -127,6 +127,17 @@ class Product(models.Model):
     unit = models.CharField(
         max_length=10, choices=UNIT_CHOICES, default='PIECE', verbose_name=_('وحدة القياس')
     )
+    PRODUCT_TYPE_CHOICES = [
+        ('PRODUCT', _('منتج مخزني')),
+        ('SERVICE', _('خدمة / مصنعية')),
+    ]
+    product_type = models.CharField(
+        max_length=10, choices=PRODUCT_TYPE_CHOICES, default='PRODUCT',
+        verbose_name=_('نوع المنتج')
+    )
+    is_open_price = models.BooleanField(
+        default=False, verbose_name=_('سعر مفتوح في نقطة البيع')
+    )
     sale_price = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
         verbose_name=_('سعر البيع')
@@ -142,6 +153,10 @@ class Product(models.Model):
     tax_rate = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('14'),
         verbose_name=_('نسبة الضريبة %')
+    )
+    withholding_tax_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0'),
+        verbose_name=_('نسبة ضريبة الخصم والإضافة %')
     )
     min_stock_level = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
@@ -212,6 +227,14 @@ class Product(models.Model):
     @property
     def is_low_stock(self):
         return self.get_stock() <= self.min_stock_level and self.min_stock_level > 0
+
+    @property
+    def pos_unit_name(self):
+        # We loop to utilize prefetch_related cache if available
+        for puom in self.uoms.all():
+            if puom.is_base:
+                return puom.uom.name
+        return self.get_unit_display()
 
     def get_price_for_branch(self, branch):
         """Returns the branch-specific price if it exists, otherwise the global default."""

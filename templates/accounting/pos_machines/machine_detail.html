@@ -1,0 +1,85 @@
+{% extends 'base.html' %}
+{% block title %}تفاصيل الماكينة{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding:2rem;">
+    <div class="top-header">
+        <h2 style="margin:0;color:#fff;">
+            <i class="fas fa-cash-register" style="color:#ff7300;margin-left:0.5rem;"></i>
+            {{ machine.name }}
+        </h2>
+        <a href="{% url 'accounting:pos_machine_list' %}" class="btn-action">
+            <i class="fas fa-arrow-right"></i> العودة
+        </a>
+    </div>
+
+    <!-- Machine Info -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin:1.5rem 0;">
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">النوع</div>
+            <div style="color:#ff7300;font-weight:700;font-size:1.1rem;">{{ machine.get_machine_type_display }}</div>
+        </div>
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">الفرع</div>
+            <div style="color:#e2e8f0;font-weight:700;">{{ machine.branch.name }}</div>
+        </div>
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">الحساب المحاسبي</div>
+            <div style="color:#00e5ff;font-family:monospace;font-weight:700;">{{ machine.account.code|default:"—" }}</div>
+        </div>
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">الرصيد الحالي</div>
+            <div style="color:#2ed573;font-weight:900;font-size:1.5rem;">{{ machine.current_balance|floatformat:2 }} ج.م</div>
+        </div>
+    </div>
+
+    <div class="data-table-container">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+            <h4 style="color:#fbbf24;margin:0;"><i class="fas fa-history"></i> آخر الحركات</h4>
+            <a href="{% url 'accounting:eservice_center' %}" class="btn-orange" style="padding:0.5rem 1rem;font-size:0.85rem;">
+                <i class="fas fa-plus"></i> عملية جديدة
+            </a>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم العملية</th>
+                    <th>التاريخ</th>
+                    <th>نوع العملية</th>
+                    <th>المبلغ الأصلي</th>
+                    <th>العمولة</th>
+                    <th>الحالة</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for txn in transactions %}
+                <tr>
+                    <td style="color:#00e5ff;font-family:monospace;">{{ txn.transaction_number }}</td>
+                    <td>{{ txn.date }}</td>
+                    <td>{{ txn.get_transaction_type_display }}</td>
+                    <td style="font-weight:bold;">{{ txn.principal_amount|floatformat:2 }} ج.م</td>
+                    <td style="color:#fbbf24;">
+                        {% if txn.commission_revenue > 0 %}
+                        +{{ txn.commission_revenue|floatformat:2 }} ج.م
+                        {% elif txn.commission_expense > 0 %}
+                        -{{ txn.commission_expense|floatformat:2 }} ج.م
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if txn.status == 'POSTED' %}
+                        <span class="badge-status badge-success">مرحل</span>
+                        {% else %}
+                        <span class="badge-status badge-warning">مسودة</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align:center;padding:2rem;color:#94a3b8;">لا توجد حركات على هذه الماكينة بعد</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

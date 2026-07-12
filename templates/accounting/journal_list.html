@@ -2,49 +2,98 @@
 {% block title %}قيود اليومية{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-between align-center mb-4">
-        <h2 class="text-neon-gold">قيود اليومية</h2>
-        <a href="{% url 'accounting:chart_of_accounts' %}" class="btn btn-ghost">دليل الحسابات</a>
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-book text-gold" style="margin-left: 0.5rem;"></i> قيود اليومية</h2>
+        <a href="{% url 'accounting:chart_of_accounts' %}" class="btn-action">
+            <i class="fas fa-list"></i> دليل الحسابات
+        </a>
     </div>
 
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>رقم القيد</th>
-                <th>التاريخ</th>
-                <th>البيان</th>
-                <th>إجمالي المدين</th>
-                <th>إجمالي الدائن</th>
-                <th>الحالة</th>
-                <th>إجراءات</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for entry in entries %}
-            <tr>
-                <td class="en">{{ entry.reference }}</td>
-                <td>{{ entry.date }}</td>
-                <td>{{ entry.description|truncatechars:50 }}</td>
-                <td class="en text-neon-green">{{ entry.get_total_debit }}</td>
-                <td class="en text-neon-red">{{ entry.get_total_credit }}</td>
-                <td>
-                    {% if entry.status == 'POSTED' %}
-                    <span class="badge badge-success">مرحّل</span>
-                    {% else %}
-                    <span class="badge badge-draft">مسودة</span>
-                    {% endif %}
-                </td>
-                <td class="table-actions">
-                    <a href="{% url 'accounting:journal_detail' entry.id %}" class="btn btn-sm btn-ghost">تفاصيل</a>
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="7" class="text-center">لا توجد قيود يومية</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <!-- Filters -->
+    <div style="background: rgba(13, 20, 36, 0.6); padding: 1.5rem; border-radius: 12px; margin-bottom: 2rem; border: 1px solid rgba(255,255,255,0.05);">
+        <form method="GET" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+            <div style="flex-grow: 1; min-width: 200px;">
+                <label for="search_query" style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">البحث برقم القيد أو البيان</label>
+                <input type="text" name="search_query" id="search_query" placeholder="أدخل رقم القيد أو جزء من البيان..." value="{{ search_query }}" style="width: 100%; padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+            </div>
+            <div>
+                <label for="start_date" style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">من تاريخ</label>
+                <input type="date" name="start_date" id="start_date" value="{{ start_date }}" style="padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+            </div>
+            <div>
+                <label for="end_date" style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">إلى تاريخ</label>
+                <input type="date" name="end_date" id="end_date" value="{{ end_date }}" style="padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+                <button type="submit" class="btn-action" style="padding: 0.8rem 1.5rem; background: rgba(0, 229, 255, 0.2); color: #fff !important; font-weight: bold; cursor: pointer;"><i class="fas fa-search"></i> بحث</button>
+                <a href="{% url 'accounting:journal_list' %}" class="btn-action" style="padding: 0.8rem 1.5rem; color: #fff !important;"><i class="fas fa-times"></i> إلغاء</a>
+            </div>
+        </form>
+    </div>
+
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم القيد</th>
+                    <th>التاريخ</th>
+                    <th>البيان</th>
+                    <th>إجمالي المدين</th>
+                    <th>إجمالي الدائن</th>
+                    <th style="text-align: center;">الحالة</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in entries %}
+                <tr>
+                    <td class="en" style="color: #00e5ff; font-weight: bold;">{{ entry.reference }}</td>
+                    <td class="en">{{ entry.date|date:"Y-m-d" }}</td>
+                    <td title="{{ entry.description }}" style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ entry.description }}</td>
+                    <td class="en" style="color: #2ed573; font-weight: bold;">{{ entry.get_total_debit }}</td>
+                    <td class="en" style="color: #ff4757; font-weight: bold;">{{ entry.get_total_credit }}</td>
+                    <td style="text-align: center;">
+                        {% if entry.status == 'POSTED' %}
+                        <span class="badge-status badge-success">مرحّل</span>
+                        {% else %}
+                        <span class="badge-status badge-warning">مسودة</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'accounting:journal_detail' entry.id %}" class="btn-action" title="عرض التفاصيل">
+                            <i class="fas fa-eye"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 2rem; color: #94a3b8;">
+                        <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        لا توجد قيود يومية
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination-container">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search_query={{ search_query }}{% endif %}{% if start_date %}&start_date={{ start_date }}{% endif %}{% if end_date %}&end_date={{ end_date }}{% endif %}" class="btn-action">&laquo; السابق</a>
+        {% endif %}
+        
+        <span style="color: #fff; font-weight: bold; background: rgba(255,255,255,0.1); padding: 0.4rem 1rem; border-radius: 6px;">
+            صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+        </span>
+
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search_query={{ search_query }}{% endif %}{% if start_date %}&start_date={{ start_date }}{% endif %}{% if end_date %}&end_date={{ end_date }}{% endif %}" class="btn-action">التالي &raquo;</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
 </div>
 {% endblock %}

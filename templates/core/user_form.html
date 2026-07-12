@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>{{ title }}</h1>
+        <p>إدارة بيانات المستخدم والصلاحيات المخصصة</p>
+    </div>
+</div>
+
+<form method="post" class="form-container">
+    {% csrf_token %}
+    
+    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem; align-items: start;">
+        
+        <!-- User Details Section -->
+        <div class="card dash-card-1">
+            <div class="card-header">
+                <span class="card-header-title">👤 البيانات الأساسية</span>
+            </div>
+            <div style="padding: 1.25rem;">
+                {% for field in form %}
+                    {% if field.name == 'username' or field.name == 'first_name' or field.name == 'last_name' or field.name == 'email' or field.name == 'branch' or field.name == 'role' or field.name == 'is_active' %}
+                    <div class="form-group" style="margin-bottom: 1rem;">
+                        <label class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                        {% if field.help_text %}
+                            <small class="form-text text-muted">{{ field.help_text }}</small>
+                        {% endif %}
+                        {% for error in field.errors %}
+                            <div style="color: var(--neon-red); font-size: 0.8rem; margin-top: 0.25rem;">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Permissions Section -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-header-title">🛡️ الصلاحيات المخصصة</span>
+            </div>
+            <div style="padding: 1.25rem;">
+                {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}
+                    <div class="alert alert-success" style="padding: 1rem; background: rgba(33, 150, 243, 0.1); color: var(--neon-blue); border-radius: 8px; border: 1px solid rgba(33, 150, 243, 0.2); margin-bottom: 1.5rem;">
+                        <strong>ℹ️ مدير نظام عام:</strong> هذا المستخدم لديه كافة الصلاحيات على النظام بشكل تلقائي ولذلك جميع الخيارات مفعلة أدناه.
+                    </div>
+                {% else %}
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+                        اختر الصلاحيات الإضافية التي ترغب بمنحها لهذا المستخدم. (يجب أن يتم تحديدها ليتمكن من الدخول على الشاشات).
+                    </p>
+                {% endif %}
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;">
+                    {% for app_label, perms in grouped_permissions.items %}
+                    <div style="border: 1px solid var(--border-default); border-radius: 8px; padding: 1rem; background: var(--bg-secondary);">
+                        <h4 style="margin-top: 0; margin-bottom: 0.75rem; color: var(--neon-blue); font-size: 0.95rem; text-transform: uppercase;">
+                            {{ app_label }}
+                        </h4>
+                        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                            {% for perm in perms %}
+                            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; cursor: {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}not-allowed{% else %}pointer{% endif %}; {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}opacity: 0.7;{% endif %}">
+                                <input type="checkbox" name="user_permissions" value="{{ perm.id }}"
+                                    {% if perm in form.instance.user_permissions.all or form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}checked{% endif %}
+                                    {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}disabled{% endif %}
+                                    style="accent-color: var(--neon-blue);">
+                                {{ perm.name }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                
+                {% for error in form.user_permissions.errors %}
+                    <div style="color: var(--neon-red); font-size: 0.8rem; margin-top: 0.5rem;">{{ error }}</div>
+                {% endfor %}
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Actions -->
+    <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
+        <button type="submit" class="btn btn-primary" style="padding-left: 2rem; padding-right: 2rem;">💾 حفظ البيانات</button>
+        <a href="{{ cancel_url }}" class="btn btn-secondary">❌ إلغاء</a>
+    </div>
+</form>
+
+<style>
+    .form-group input, .form-group select {
+        width: 100%;
+        padding: 0.5rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-default);
+        color: var(--text-primary);
+        border-radius: 4px;
+        margin-top: 0.25rem;
+    }
+</style>
+{% endblock %}

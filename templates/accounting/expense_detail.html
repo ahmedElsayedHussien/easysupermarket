@@ -1,0 +1,133 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2 class="text-white mb-0">تفاصيل المصروف {{ expense.expense_number }}</h2>
+                <a href="{% url 'accounting:expense_list' %}" class="btn btn-ghost">
+                    <i class="fas fa-arrow-right me-2"></i> رجوع للقائمة
+                </a>
+            </div>
+
+            <div class="card p-0 overflow-hidden mb-4">
+                <div class="card-header bg-dark-glass border-bottom border-secondary p-4 d-flex justify-content-between align-items-center">
+                    <div>
+                        <h4 class="mb-1">
+                            مصروف رقم: {{ expense.expense_number }}
+                            {% if expense.status == 'DRAFT' %}
+                                <span class="badge bg-warning text-dark fs-6 ms-2">مسودة</span>
+                            {% elif expense.status == 'POSTED' %}
+                                <span class="badge bg-success fs-6 ms-2">مرحل</span>
+                            {% else %}
+                                <span class="badge bg-danger fs-6 ms-2">ملغى</span>
+                            {% endif %}
+                        </h4>
+                        <p class="text-white-50 mb-0"><i class="fas fa-calendar-alt me-2"></i> {{ expense.date|date:"d M Y" }}</p>
+                    </div>
+                    {% if expense.status == 'DRAFT' %}
+                    <form method="POST" action="{% url 'accounting:expense_confirm' expense.id %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-success px-4 rounded-pill" onclick="return confirm('هل أنت متأكد من اعتماد المصروف؟ سيتم توليد القيود المحاسبية تلقائياً.');">
+                            <i class="fas fa-check-circle me-2"></i> اعتماد وتوليد القيد
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+                
+                <div class="card-body p-4">
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <h6 class="text-white-50 mb-3">التوجيه المحاسبي</h6>
+                            <table class="table table-borderless table-sm text-white">
+                                <tr>
+                                    <td class="text-white-50" width="40%">حساب المصروف:</td>
+                                    <td class="fw-bold">{{ expense.expense_account.name }}</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white-50">حساب الخزينة/البنك:</td>
+                                    <td class="fw-bold">{{ expense.payment_account.name }}</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white-50">الفرع:</td>
+                                    <td>{{ expense.branch.name }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6 text-end border-start border-secondary">
+                            <h6 class="text-white-50 mb-3">التفاصيل المالية</h6>
+                            <table class="table table-borderless table-sm text-white ms-auto" style="max-width: 300px;">
+                                <tr>
+                                    <td class="text-white-50 text-start">المبلغ:</td>
+                                    <td class="fw-bold">{{ expense.amount|floatformat:2 }}</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white-50 text-start">ضريبة ق.م ({{ expense.vat_percent }}%):</td>
+                                    <td class="text-warning">+ {{ expense.vat_amount|floatformat:2 }}</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white-50 text-start border-bottom border-secondary pb-2">خصم وإضافة ({{ expense.withholding_tax_percent }}%):</td>
+                                    <td class="text-danger border-bottom border-secondary pb-2">- {{ expense.withholding_tax_amount|floatformat:2 }}</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-white-50 text-start pt-2">الإجمالي النهائي:</td>
+                                    <td class="fw-bold text-success fs-5 pt-2">{{ expense.total_amount|floatformat:2 }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <h6 class="text-white-50 mb-3 mt-4 border-bottom border-secondary pb-2">بنود المصروف</h6>
+                    <div class="table-responsive mb-4">
+                        <table class="table table-dark table-sm table-bordered">
+                            <thead class="text-white-50">
+                                <tr>
+                                    <th>#</th>
+                                    <th width="70%">البيان</th>
+                                    <th width="25%">المبلغ</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in expense.items.all %}
+                                <tr>
+                                    <td>{{ forloop.counter }}</td>
+                                    <td>{{ item.description }}</td>
+                                    <td class="text-success fw-bold">{{ item.amount|floatformat:2 }}</td>
+                                </tr>
+                                {% empty %}
+                                <tr>
+                                    <td colspan="3" class="text-center text-white-50 py-3">لا توجد بنود مفصلة.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="bg-dark rounded p-3 border border-secondary mb-4">
+                        <h6 class="text-white-50 mb-2">البيان / الملاحظات</h6>
+                        <p class="mb-0">{{ expense.description|default:"لا يوجد بيان." }}</p>
+                    </div>
+
+                    {% if expense.journal_entry %}
+                    <div class="alert alert-info bg-dark-glass border-info text-white d-flex align-items-center mb-0">
+                        <i class="fas fa-book-open fa-2x text-info me-3"></i>
+                        <div>
+                            <h6 class="mb-1 text-info">قيد يومية رقم: {{ expense.journal_entry.reference }}</h6>
+                            <p class="mb-0 small text-white-50">تم توليد القيد المحاسبي بنجاح. <a href="{% url 'accounting:journal_detail' expense.journal_entry.id %}" class="text-info fw-bold text-decoration-none">عرض القيد</a></p>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <div class="card-footer bg-dark-glass border-top border-secondary text-white-50 small p-3">
+                    <i class="fas fa-user me-1"></i> أُنشئ بواسطة: {{ expense.created_by.get_full_name|default:expense.created_by.username|default:"النظام" }} 
+                    <span class="mx-2">|</span>
+                    <i class="fas fa-clock me-1"></i> {{ expense.created_at|date:"Y-m-d H:i" }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

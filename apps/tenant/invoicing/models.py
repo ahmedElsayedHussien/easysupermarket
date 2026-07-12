@@ -47,6 +47,61 @@ def _generate_invoice_number(invoice_type: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# POS Session (Cashier Shift)
+# ---------------------------------------------------------------------------
+
+class POSSession(models.Model):
+    """
+    Represents a Cashier Shift.
+    A cashier opens a session with an initial cash amount in a specific treasury,
+    does sales, and then closes the session with a final cash count.
+    """
+    OPEN = 'OPEN'
+    CLOSED = 'CLOSED'
+    STATUS_CHOICES = [
+        (OPEN, 'مفتوحة'),
+        (CLOSED, 'مغلقة'),
+    ]
+
+    branch = models.ForeignKey(
+        'core.Branch', on_delete=models.PROTECT, related_name='pos_sessions', verbose_name='الفرع'
+    )
+    treasury = models.ForeignKey(
+        'accounting.Treasury', on_delete=models.PROTECT, related_name='pos_sessions', verbose_name='الخزينة/الدرج'
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name='pos_sessions', verbose_name='الكاشير'
+    )
+    start_time = models.DateTimeField(auto_now_add=True, verbose_name='وقت الفتح')
+    end_time = models.DateTimeField(null=True, blank=True, verbose_name='وقت الإغلاق')
+    
+    opening_balance = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name='رصيد الافتتاح (العهدة)'
+    )
+    closing_balance_expected = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name='الرصيد المتوقع'
+    )
+    closing_balance_actual = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name='الرصيد الفعلي'
+    )
+    difference = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name='العجز / الزيادة'
+    )
+    status = models.CharField(
+        max_length=10, choices=STATUS_CHOICES, default=OPEN, verbose_name='الحالة'
+    )
+    notes = models.TextField(blank=True, verbose_name='ملاحظات')
+
+    class Meta:
+        verbose_name = 'وردية نقاط البيع'
+        verbose_name_plural = 'ورديات نقاط البيع'
+        ordering = ['-start_time']
+
+    def __str__(self):
+        return f"وردية {self.user.username} - {self.get_status_display()} ({self.start_time.strftime('%Y-%m-%d %H:%M')})"
+
+
+# ---------------------------------------------------------------------------
 # Invoice
 # ---------------------------------------------------------------------------
 
@@ -127,6 +182,14 @@ class Invoice(models.Model):
         related_name='invoices',
         verbose_name='الحساب البنكي'
     )
+    pos_machine = models.ForeignKey(
+        'accounting.POSMachine',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name='invoices',
+        verbose_name='ماكينة الدفع الإلكتروني',
+        help_text='تستخدم فقط في فواتير الدفع بالبطاقة'
+    )
     branch = models.ForeignKey(
         'core.Branch',
         on_delete=models.PROTECT,
@@ -156,6 +219,14 @@ class Invoice(models.Model):
         related_name='cashier_invoices',
         verbose_name='الكاشير'
     )
+    pos_session = models.ForeignKey(
+        POSSession,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='invoices',
+        verbose_name='وردية نقطة البيع'
+    )
     eta_uuid = models.CharField(max_length=100, blank=True, null=True)
     eta_status = models.CharField(max_length=50, blank=True, null=True)
 
@@ -163,6 +234,10 @@ class Invoice(models.Model):
     subtotal = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
         verbose_name='إجمالي قبل الضريبة'
+    )
+    discount_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0'),
+        verbose_name='نسبة الخصم الإجمالي (%)'
     )
     discount_amount = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
@@ -228,21 +303,25 @@ class Invoice(models.Model):
 
     def recalculate_totals(self):
         """
-        Recalculates and updates subtotal, tax_amount, wht_amount and total_amount
-        from all lines and header percentages.
+        Recalculates and updates subtotal, discount, tax_amount, wht_amount and total_amount
+        from all lines.
         """
         from django.db.models import Sum
+        
+        # Calculate totals from lines
         agg = self.lines.aggregate(
-            sub=Sum('subtotal'),
+            gross_sum=Sum('subtotal'),
+            discount_sum=Sum('discount_amount'),
+            tax_sum=Sum('tax_amount'),
+            wht_sum=Sum('wht_amount')
         )
-        self.subtotal = agg['sub'] or Decimal('0')
-        net_subtotal = self.subtotal - self.discount_amount
+        self.subtotal = agg['gross_sum'] or Decimal('0')
+        self.discount_amount = agg['discount_sum'] or Decimal('0')
+        self.tax_amount = agg['tax_sum'] or Decimal('0')
+        self.wht_amount = agg['wht_sum'] or Decimal('0')
         
-        self.tax_amount = (net_subtotal * (self.vat_percentage / Decimal('100.0'))).quantize(Decimal('0.0001'))
-        self.wht_amount = (net_subtotal * (self.wht_percentage / Decimal('100.0'))).quantize(Decimal('0.0001'))
-        
-        self.total_amount = net_subtotal + self.tax_amount - self.wht_amount
-        self.save(update_fields=['subtotal', 'tax_amount', 'wht_amount', 'total_amount', 'updated_at'])
+        self.total_amount = self.subtotal + self.tax_amount - self.wht_amount
+        self.save(update_fields=['subtotal', 'discount_amount', 'tax_amount', 'wht_amount', 'total_amount', 'updated_at'])
 
     def clean(self):
         if self.pk:
@@ -312,20 +391,32 @@ class InvoiceLine(models.Model):
         max_digits=15, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
-    tax = models.ForeignKey(
-        'accounting.Tax',
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL
-    )
+
     subtotal = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
         verbose_name='الإجمالي (بعد خصم، قبل ضريبة)'
+    )
+    tax_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0'),
+        verbose_name='نسبة الضريبة %'
     )
     tax_amount = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الضريبة'
     )
+    wht_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0'),
+        verbose_name='نسبة ضريبة الخصم والإضافة %'
+    )
+    wht_amount = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'),
+        verbose_name='قيمة الخصم والإضافة'
+    )
+    total_amount = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'),
+        verbose_name='الإجمالي النهائي'
+    )
+
     # Filled by FIFO engine during invoice confirmation
     cogs_amount = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
@@ -346,16 +437,22 @@ class InvoiceLine(models.Model):
         subtotal = quantity × unit_price × (1 - discount_pct/100)
         discount_amount = quantity × unit_price × (discount_pct/100)
         tax_amount = subtotal × tax_rate/100
+        wht_amount = subtotal × wht_rate/100
+        total_amount = subtotal + tax_amount - wht_amount
         """
         qty = self.quantity or Decimal('0')
         price = self.unit_price or Decimal('0')
         disc_pct = self.discount_pct or Decimal('0')
-        tax_rate = self.tax.rate if self.tax else Decimal('0')
 
         gross = qty * price
         self.discount_amount = (gross * disc_pct / Decimal('100')).quantize(Decimal('0.0001'))
         self.subtotal = (gross - self.discount_amount).quantize(Decimal('0.0001'))
-        self.tax_amount = (self.subtotal * tax_rate / Decimal('100')).quantize(Decimal('0.0001'))
+        
+        # Calculate taxes
+        self.tax_amount = (self.subtotal * (self.tax_rate / Decimal('100.0'))).quantize(Decimal('0.0001'))
+        self.wht_amount = (self.subtotal * (self.wht_rate / Decimal('100.0'))).quantize(Decimal('0.0001'))
+        
+        self.total_amount = self.subtotal + self.tax_amount - self.wht_amount
 
         super().save(*args, **kwargs)
 

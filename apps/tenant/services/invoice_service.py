@@ -117,6 +117,8 @@ def _process_sale_invoice(invoice, lines):
 
     # --- Pre-validate all stock before consuming anything ---
     for line in lines:
+        if line.product.product_type == 'SERVICE':
+            continue  # Services have no stock limits
         base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
         available = line.product.get_stock(warehouse=invoice.warehouse)
         if available < base_quantity and not line.product.allow_negative_stock:
@@ -127,6 +129,11 @@ def _process_sale_invoice(invoice, lines):
 
     # --- Consume stock FIFO and calculate COGS ---
     for line in lines:
+        if line.product.product_type == 'SERVICE':
+            line.cogs_amount = Decimal('0')
+            line.save(update_fields=['cogs_amount'])
+            continue
+
         base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
         consumptions = consume_fifo_batches(
             product=line.product,
