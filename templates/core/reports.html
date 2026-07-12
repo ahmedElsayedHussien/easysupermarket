@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📊 التقارير المجمعة</h1>
+        <p>مركز التقارير الشامل لمتابعة أداء النظام</p>
+    </div>
+</div>
+
+<div class="card" style="padding: 0;">
+    <!-- Tabs Header -->
+    <div class="reports-tabs-header">
+        <button class="reports-tab active" onclick="switchReportTab('sales')">🛒 تقارير المبيعات</button>
+        <button class="reports-tab" onclick="switchReportTab('purchases')">📦 تقارير المشتريات</button>
+        <button class="reports-tab" onclick="switchReportTab('inventory')">🏭 تقارير المخزون</button>
+        <button class="reports-tab" onclick="switchReportTab('accounting')">💰 تقارير المحاسبة</button>
+        <button class="reports-tab" onclick="switchReportTab('partners')">🤝 تقارير الشركاء</button>
+    </div>
+
+    <!-- Tabs Content -->
+    <div class="reports-tabs-content" style="padding: 1.5rem;">
+        
+        <!-- Sales Tab -->
+        <div id="tab-sales" class="report-tab-pane active">
+            <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير المبيعات</h3>
+            <div class="reports-grid">
+                <div class="report-card">
+                    <div class="report-icon">📈</div>
+                    <div class="report-info">
+                        <h4>مبيعات الأصناف</h4>
+                        <p>تقرير تفصيلي بحركة مبيعات كل صنف والكميات المباعة.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📅</div>
+                    <div class="report-info">
+                        <h4>مبيعات فترة (يومي/شهري)</h4>
+                        <p>إجمالي المبيعات مقسمة حسب الفترات الزمنية والأرباح.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Purchases Tab -->
+        <div id="tab-purchases" class="report-tab-pane" style="display: none;">
+            <h3 style="color: var(--neon-red); margin-bottom: 1rem;">تقارير المشتريات</h3>
+            <div class="reports-grid">
+                <div class="report-card">
+                    <div class="report-icon">🧾</div>
+                    <div class="report-info">
+                        <h4>مشتريات الموردين</h4>
+                        <p>حجم المشتريات من كل مورد خلال فترة محددة.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Inventory Tab -->
+        <div id="tab-inventory" class="report-tab-pane" style="display: none;">
+            <h3 style="color: var(--neon-cyan); margin-bottom: 1rem;">تقارير المخزون</h3>
+            <div class="reports-grid">
+                <div class="report-card">
+                    <div class="report-icon">⚠️</div>
+                    <div class="report-info">
+                        <h4>نواقص المخزون</h4>
+                        <p>الأصناف التي وصلت لحد الطلب أو نفدت من المخازن.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">⏳</div>
+                    <div class="report-info">
+                        <h4>صلاحيات المنتجات</h4>
+                        <p>تتبع تواريخ انتهاء الصلاحية للمنتجات الموجودة بالمخازن.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📋</div>
+                    <div class="report-info">
+                        <h4>جرد المخزون الفعلي</h4>
+                        <p>قائمة جرد مفصلة للأصناف وقيمتها المالية الإجمالية.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Accounting Tab -->
+        <div id="tab-accounting" class="report-tab-pane" style="display: none;">
+            <h3 style="color: var(--neon-gold); margin-bottom: 1rem;">تقارير المحاسبة</h3>
+            <div class="reports-grid">
+                <div class="report-card">
+                    <div class="report-icon">💵</div>
+                    <div class="report-info">
+                        <h4>كشف حساب خزانة/بنك</h4>
+                        <p>حركة الصادر والوارد لكل خزانة أو حساب بنكي.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📉</div>
+                    <div class="report-info">
+                        <h4>المصروفات التفصيلية</h4>
+                        <p>تفصيل المصروفات حسب بنود الصرف خلال فترة.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Partners Tab -->
+        <div id="tab-partners" class="report-tab-pane" style="display: none;">
+            <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير الشركاء</h3>
+            <div class="reports-grid">
+                <div class="report-card">
+                    <div class="report-icon">📒</div>
+                    <div class="report-info">
+                        <h4>كشف حساب عميل/مورد</h4>
+                        <p>المديونيات والمستحقات وحركة الدفعات للشركاء التجاريين.</p>
+                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<style>
+    .reports-tabs-header {
+        display: flex;
+        border-bottom: 1px solid var(--border-default);
+        overflow-x: auto;
+        background: var(--bg-tertiary);
+        border-radius: 8px 8px 0 0;
+    }
+    .reports-tab {
+        padding: 1rem 1.5rem;
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        font-family: var(--font-arabic);
+        font-size: 0.95rem;
+        font-weight: 500;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+    }
+    .reports-tab:hover {
+        color: var(--text-primary);
+        background: rgba(255, 255, 255, 0.02);
+    }
+    .reports-tab.active {
+        color: var(--neon-blue);
+        border-bottom-color: var(--neon-blue);
+        background: var(--bg-secondary);
+    }
+    .reports-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1.25rem;
+    }
+    .report-card {
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        padding: 1.25rem;
+        border: 1px solid var(--border-default);
+        border-radius: 8px;
+        background: var(--bg-secondary);
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .report-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        border-color: var(--neon-blue);
+    }
+    .report-icon {
+        font-size: 2rem;
+        background: var(--bg-tertiary);
+        width: 60px;
+        height: 60px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 12px;
+        flex-shrink: 0;
+    }
+    .report-info h4 {
+        margin: 0 0 0.5rem 0;
+        color: var(--text-primary);
+        font-size: 1rem;
+    }
+    .report-info p {
+        margin: 0 0 1rem 0;
+        color: var(--text-muted);
+        font-size: 0.8rem;
+        line-height: 1.4;
+    }
+</style>
+
+<script>
+    function switchReportTab(tabId) {
+        // Hide all panes
+        document.querySelectorAll('.report-tab-pane').forEach(pane => {
+            pane.style.display = 'none';
+        });
+        
+        // Remove active class from all tabs
+        document.querySelectorAll('.reports-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        
+        // Show selected pane
+        document.getElementById('tab-' + tabId).style.display = 'block';
+        
+        // Add active class to clicked tab
+        event.currentTarget.classList.add('active');
+    }
+</script>
+{% endblock %}

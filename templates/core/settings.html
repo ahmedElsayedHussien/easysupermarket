@@ -1,0 +1,160 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}إعدادات النظام{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold">⚙ إعدادات النظام</h2>
+        <a href="{% url 'core:admin_dashboard' %}" class="btn btn-ghost">العودة للوحة التحكم</a>
+    </div>
+
+    <form method="POST" class="needs-validation" novalidate>
+        {% csrf_token %}
+        
+        <div class="row">
+            <!-- اعدادات نقطة البيع -->
+            <div class="col-md-6 mb-4">
+                <div class="card p-4 h-100 border-neon-blue">
+                    <h4 class="text-neon-blue mb-4">🛒 إعدادات نقطة البيع (POS)</h4>
+                    
+                    <div class="form-check form-switch mb-3 custom-switch">
+                        {{ form.allow_negative_stock }}
+                        <label class="form-check-label ms-2" for="{{ form.allow_negative_stock.id_for_label }}">السماح بالبيع بالسالب (بدون رصيد)</label>
+                    </div>
+
+                    <div class="form-check form-switch mb-3 custom-switch">
+                        {{ form.auto_print_receipt }}
+                        <label class="form-check-label ms-2" for="{{ form.auto_print_receipt.id_for_label }}">الطباعة التلقائية للإيصال بعد السداد</label>
+                    </div>
+
+                    <div class="form-check form-switch mb-3 custom-switch">
+                        {{ form.allow_pos_price_modification }}
+                        <label class="form-check-label ms-2" for="{{ form.allow_pos_price_modification.id_for_label }}">السماح بتعديل أسعار المنتجات في نقطة البيع</label>
+                    </div>
+
+                    <div class="form-group mb-3 ms-4" id="marginPercentContainer">
+                        <label class="form-label text-muted">{{ form.pos_price_margin_percent.label }}</label>
+                        {{ form.pos_price_margin_percent }}
+                        <small class="text-muted d-block mt-1">{{ form.pos_price_margin_percent.help_text }}</small>
+                    </div>
+
+                    <div class="form-check form-switch mb-3 custom-switch">
+                        {{ form.apply_vat_by_default }}
+                        <label class="form-check-label ms-2" for="{{ form.apply_vat_by_default.id_for_label }}">تطبيق الضريبة الافتراضي على الفواتير</label>
+                    </div>
+
+                    <div class="form-group mt-4">
+                        <label class="form-label text-muted">{{ form.large_amount_requires_customer.label }}</label>
+                        {{ form.large_amount_requires_customer }}
+                        <small class="text-muted d-block mt-1">{{ form.large_amount_requires_customer.help_text }}</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- إعدادات المخازن والحسابات -->
+            <div class="col-md-6 mb-4">
+                <div class="card p-4 h-100 border-neon-green">
+                    <h4 class="text-neon-green mb-4">📦 إعدادات المخازن والحسابات</h4>
+                    
+                    <div class="form-check form-switch mb-3 custom-switch">
+                        {{ form.enable_expiry_tracking }}
+                        <label class="form-check-label ms-2" for="{{ form.enable_expiry_tracking.id_for_label }}">تتبع تواريخ الصلاحية</label>
+                    </div>
+
+                    <div class="form-group mb-4">
+                        <label class="form-label text-muted">{{ form.low_stock_threshold.label }}</label>
+                        {{ form.low_stock_threshold }}
+                    </div>
+
+                    <hr class="border-secondary my-4">
+
+                    <div class="form-check form-switch mb-3 custom-switch">
+                        {{ form.auto_post_journals }}
+                        <label class="form-check-label ms-2" for="{{ form.auto_post_journals.id_for_label }}">الترحيل التلقائي للقيود المحاسبية</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- الهوية والطباعة -->
+            <div class="col-md-12 mb-4">
+                <div class="card p-4 border-neon-gold">
+                    <h4 class="text-neon-gold mb-4">🖨 الهوية والطباعة</h4>
+                    
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label class="form-label text-muted">{{ form.store_name.label }}</label>
+                                {{ form.store_name }}
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label class="form-label text-muted">{{ form.tax_number.label }}</label>
+                                {{ form.tax_number }}
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-group">
+                                <label class="form-label text-muted">{{ form.commercial_register.label }}</label>
+                                {{ form.commercial_register }}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group mt-3">
+                        <label class="form-label text-muted">{{ form.receipt_footer.label }}</label>
+                        {{ form.receipt_footer }}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- أزرار الحفظ -->
+        <div class="d-flex justify-end gap-3 mt-4">
+            <a href="{% url 'core:admin_dashboard' %}" class="btn btn-ghost px-5">إلغاء</a>
+            <button type="submit" class="btn btn-neon-blue px-5">💾 حفظ الإعدادات</button>
+        </div>
+    </form>
+</div>
+
+<style>
+/* Custom Switches styling to make them larger and fit the neon theme */
+.custom-switch .form-check-input {
+    width: 2.5em;
+    height: 1.25em;
+    cursor: pointer;
+    background-color: #2c3040;
+    border-color: #4a5065;
+}
+.custom-switch .form-check-input:checked {
+    background-color: var(--neon-blue);
+    border-color: var(--neon-blue);
+}
+.custom-switch .form-check-label {
+    cursor: pointer;
+    padding-top: 2px;
+}
+.border-neon-blue { border: 1px solid rgba(0, 243, 255, 0.2); }
+.border-neon-green { border: 1px solid rgba(57, 255, 20, 0.2); }
+.border-neon-gold { border: 1px solid rgba(255, 215, 0, 0.2); }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const allowEditCheckbox = document.getElementById('{{ form.allow_pos_price_modification.id_for_label }}');
+    const marginContainer = document.getElementById('marginPercentContainer');
+    
+    function toggleMargin() {
+        if (allowEditCheckbox && marginContainer) {
+            marginContainer.style.display = allowEditCheckbox.checked ? 'block' : 'none';
+        }
+    }
+    
+    if (allowEditCheckbox) {
+        allowEditCheckbox.addEventListener('change', toggleMargin);
+        toggleMargin();
+    }
+});
+</script>
+{% endblock %}

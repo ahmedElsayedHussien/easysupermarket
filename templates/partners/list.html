@@ -13,7 +13,7 @@
             <tr>
                 <th>الاسم</th>
                 <th>رقم الهاتف</th>
-                <th>حد الائتمان</th>
+                <th>الرقم الضريبي</th>
                 <th>الرصيد المحاسبي</th>
                 <th>فترة السداد</th>
                 <th>نشط</th>
@@ -25,7 +25,7 @@
             <tr>
                 <td>{{ partner.name }}</td>
                 <td class="en">{{ partner.phone|default:"-" }}</td>
-                <td class="en">{{ partner.credit_limit }} ج.م</td>
+                <td class="en">{{ partner.tax_id|default:"-" }}</td>
                 <td class="en font-bold {% if type == 'customer' %}{% if partner.balance > 0 %}text-neon-green{% elif partner.balance < 0 %}text-neon-red{% endif %}{% else %}{% if partner.balance > 0 %}text-neon-red{% elif partner.balance < 0 %}text-neon-green{% endif %}{% endif %}">
                     {{ partner.balance|default:"0.0000" }} ج.م
                 </td>

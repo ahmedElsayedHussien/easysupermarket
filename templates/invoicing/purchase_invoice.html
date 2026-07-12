@@ -15,7 +15,7 @@
                     <select name="branch_id" class="form-select" required>
                         <option value="">اختر الفرع...</option>
                         {% for b in branches %}
-                        <option value="{{ b.id }}">{{ b.name }}</option>
+                        <option value="{{ b.id }}" {% if posted_data.branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -23,16 +23,16 @@
                 <div class="form-group">
                     <label class="form-label">نوع الفاتورة</label>
                     <select name="invoice_type" class="form-select" required>
-                        <option value="PURCHASE">مشتريات</option>
-                        <option value="RETURN_PURCHASE">مرتجع مشتريات</option>
+                        <option value="PURCHASE" {% if posted_data.invoice_type == "PURCHASE" %}selected{% endif %}>مشتريات</option>
+                        <option value="RETURN_PURCHASE" {% if posted_data.invoice_type == "RETURN_PURCHASE" %}selected{% endif %}>مرتجع مشتريات</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">المورد</label>
-                    <select name="supplier_id" class="form-select" required>
+                    <select name="supplier_id" id="supplierSelect" class="form-select" required onchange="calculateTotals()">
                         <option value="">اختر المورد...</option>
                         {% for sup in suppliers %}
-                        <option value="{{ sup.id }}">{{ sup.name }}</option>
+                        <option value="{{ sup.id }}" data-wht-subject="{{ sup.subject_to_withholding_tax|yesno:'true,false' }}" {% if posted_data.supplier_id == sup.id|stringformat:"s" %}selected{% endif %}>{{ sup.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -41,16 +41,16 @@
                     <select name="warehouse_id" class="form-select" required>
                         <option value="">اختر المستودع...</option>
                         {% for wh in warehouses %}
-                        <option value="{{ wh.id }}">{{ wh.name }}</option>
+                        <option value="{{ wh.id }}" {% if posted_data.warehouse_id == wh.id|stringformat:"s" %}selected{% endif %}>{{ wh.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">طريقة الدفع</label>
                     <select name="payment_type" id="paymentType" class="form-select" required onchange="toggleTreasury()">
-                        <option value="CASH">كاش</option>
-                        <option value="CREDIT">آجل</option>
-                        <option value="CARD">بطاقة بنكية</option>
+                        <option value="CASH" {% if posted_data.payment_type == "CASH" %}selected{% endif %}>كاش</option>
+                        <option value="CREDIT" {% if posted_data.payment_type == "CREDIT" %}selected{% endif %}>آجل</option>
+                        <option value="CARD" {% if posted_data.payment_type == "CARD" %}selected{% endif %}>بطاقة بنكية</option>
                     </select>
                 </div>
                 
@@ -58,7 +58,7 @@
                     <label class="form-label text-gray-300">الخزينة/البنك <span class="text-danger">*</span></label>
                     <select name="treasury_id" id="treasurySelect" class="form-select">
                         {% for t in treasuries %}
-                        <option value="{{ t.id }}">{{ t.name }}</option>
+                        <option value="{{ t.id }}" {% if posted_data.treasury_id == t.id|stringformat:"s" %}selected{% endif %}>{{ t.name }}</option>
                         {% empty %}
                         <option value="">لا يوجد خزائن مسجلة</option>
                         {% endfor %}
@@ -67,32 +67,35 @@
             </div>
             
             <h4 class="text-neon-cyan mb-3">الأصناف</h4>
-            <table class="data-table mb-4">
-                <thead>
-                    <tr>
-                        <th>الصنف</th>
-                        <th>الكمية</th>
-                        <th>سعر الوحدة</th>
-                        <th>الإجمالي</th>
-                    </tr>
-                </thead>
-                <tbody id="purchaseLines">
-                    <tr>
-                        <td>
-                            <select name="product_id[]" class="form-select">
-                                <option value="">اختر الصنف...</option>
-                                {% for p in products %}
-                                <option value="{{ p.id }}">{{ p.name }}</option>
-                                {% endfor %}
-                            </select>
-                        </td>
-                        <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
-                        <td><input type="number" name="price[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
-                        <td><input type="text" class="form-control line-total" readonly></td>
-                        <td><button type="button" class="btn btn-sm btn-danger" onclick="this.closest('tr').remove(); calculateTotals()">X</button></td>
-                    </tr>
-                </tbody>
-            </table>
+            <div style="overflow-x: auto;">
+                <table class="data-table mb-4" style="min-width: 600px;">
+                    <thead>
+                        <tr>
+                            <th>الصنف</th>
+                            <th>الكمية</th>
+                            <th>سعر الوحدة</th>
+                            <th>الإجمالي</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="purchaseLines">
+                        <tr>
+                            <td>
+                                <select name="product_id[]" class="form-select" onchange="calculateTotals()">
+                                    <option value="">اختر الصنف...</option>
+                                    {% for p in products %}
+                                    <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{{ p.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+                            <td><input type="number" name="price[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+                            <td><input type="text" class="form-control line-total" readonly></td>
+                            <td><button type="button" class="btn btn-sm btn-danger" onclick="this.closest('tr').remove(); calculateTotals()">X</button></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
             
             <button type="button" class="btn btn-ghost mb-4" onclick="addLine()">+ إضافة صنف</button>
             
@@ -105,22 +108,24 @@
                             <input type="hidden" name="subtotal" id="subtotalInput" value="0">
                         </div>
                         <div class="d-flex justify-between mb-2 align-center">
-                            <span>قيمة الخصم:</span>
-                            <input type="number" name="discount_amount" id="discountInput" class="form-control bg-dark text-white border-secondary w-50" value="0" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()">
+                            <span>نسبة الخصم الإجمالي (%):</span>
+                            <input type="number" name="discount_percentage" id="discountInput" class="form-control bg-dark text-white border-secondary w-50" value="{{ posted_data.discount_percentage|default:'0' }}" step="0.01" min="0" max="100" onchange="calculateTotals()" onkeyup="calculateTotals()">
                         </div>
                         <div class="d-flex justify-between mb-2 align-center">
-                            <span>القيمة المضافة (%):</span>
-                            <div class="d-flex gap-2 w-50">
-                                <input type="number" name="vat_percentage" id="vatPercentage" class="form-control bg-dark text-white border-secondary w-50" value="0" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()">
-                                <input type="text" name="vat_amount" id="vatAmount" class="form-control bg-dark text-white border-secondary w-50" value="0" readonly>
-                            </div>
+                            <span>نسبة ضريبة القيمة المضافة (%):</span>
+                            <input type="number" name="vat_percentage" id="vatPctInput" class="form-control bg-dark text-white border-secondary w-50" value="{{ posted_data.vat_percentage|default:'' }}" step="0.01" min="0" max="100" placeholder="افتراضي الصنف" onchange="calculateTotals()" onkeyup="calculateTotals()">
+                        </div>
+                        <div class="d-flex justify-between mb-2">
+                            <span>إجمالي ضريبة القيمة المضافة:</span>
+                            <span id="vatAmountDisplay" class="text-success">0.00</span>
                         </div>
                         <div class="d-flex justify-between mb-2 align-center">
-                            <span>الخصم والإضافة (%):</span>
-                            <div class="d-flex gap-2 w-50">
-                                <input type="number" name="wht_percentage" id="whtPercentage" class="form-control bg-dark text-white border-secondary w-50" value="0" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()">
-                                <input type="text" name="wht_amount" id="whtAmount" class="form-control bg-dark text-white border-secondary w-50" value="0" readonly>
-                            </div>
+                            <span>نسبة الخصم والإضافة (WHT) (%):</span>
+                            <input type="number" name="wht_percentage" id="whtPctInput" class="form-control bg-dark text-white border-secondary w-50" value="{{ posted_data.wht_percentage|default:'' }}" step="0.01" min="0" max="100" placeholder="افتراضي الصنف" onchange="calculateTotals()" onkeyup="calculateTotals()">
+                        </div>
+                        <div class="d-flex justify-between mb-2">
+                            <span>إجمالي الخصم والإضافة (WHT):</span>
+                            <span id="whtAmountDisplay" class="text-danger">0.00</span>
                         </div>
                         <hr class="border-secondary">
                         <div class="d-flex justify-between">
@@ -157,17 +162,33 @@ function toggleTreasury() {
 }
 
 // Call on load to set initial state
-document.addEventListener('DOMContentLoaded', toggleTreasury);
+document.addEventListener('DOMContentLoaded', function() {
+    toggleTreasury();
+    
+    {% if posted_lines_json %}
+    const postedLines = {{ posted_lines_json|safe }};
+    const tbody = document.getElementById('purchaseLines');
+    
+    // Only process if we have lines, else keep the default blank row
+    if (postedLines.length > 0) {
+        tbody.innerHTML = ''; // clear the default blank line
+        postedLines.forEach(line => {
+            addLineWithData(line.product_id, line.quantity, line.price);
+        });
+        calculateTotals();
+    }
+    {% endif %}
+});
 
 function addLine() {
     const tbody = document.getElementById('purchaseLines');
     const row = document.createElement('tr');
     row.innerHTML = `
         <td>
-            <select name="product_id[]" class="form-select">
+            <select name="product_id[]" class="form-select" onchange="calculateTotals()">
                 <option value="">اختر الصنف...</option>
                 {% for p in products %}
-                <option value="{{ p.id }}">{{ p.name }}</option>
+                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{{ p.name }}</option>
                 {% endfor %}
             </select>
         </td>
@@ -179,33 +200,83 @@ function addLine() {
     tbody.appendChild(row);
 }
 
+function addLineWithData(productId, qty, price) {
+    const tbody = document.getElementById('purchaseLines');
+    const row = document.createElement('tr');
+    row.innerHTML = `
+        <td>
+            <select name="product_id[]" class="form-select" onchange="calculateTotals()">
+                <option value="">اختر الصنف...</option>
+                {% for p in products %}
+                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </td>
+        <td><input type="number" name="quantity[]" class="form-control" step="0.01" value="${qty}" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+        <td><input type="number" name="price[]" class="form-control" step="0.01" value="${price}" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+        <td><input type="text" class="form-control line-total" readonly></td>
+        <td><button type="button" class="btn btn-sm btn-danger" onclick="this.closest('tr').remove(); calculateTotals()">X</button></td>
+    `;
+    
+    if (productId) {
+        const selectElement = row.querySelector('select');
+        selectElement.value = productId;
+    }
+    
+    tbody.appendChild(row);
+}
+
 function calculateTotals() {
     let subtotal = 0;
+    let totalTax = 0;
+    let totalWht = 0;
+    
+    const supplierSelect = document.getElementById('supplierSelect');
+    const supplierOption = supplierSelect ? supplierSelect.options[supplierSelect.selectedIndex] : null;
+    const subjectToWht = supplierOption && supplierOption.dataset.whtSubject === 'true';
+
+    const globalDiscountInput = document.getElementById('discountInput');
+    const globalDiscountPct = globalDiscountInput ? Math.max(0, Math.min(100, parseFloat(globalDiscountInput.value) || 0)) : 0;
+
     const rows = document.querySelectorAll('#purchaseLines tr');
     rows.forEach(row => {
         const qty = parseFloat(row.querySelector('input[name="quantity[]"]')?.value) || 0;
         const price = parseFloat(row.querySelector('input[name="price[]"]')?.value) || 0;
-        const lineTotal = qty * price;
+        const lineGross = qty * price;
+        
+        let lineNet = lineGross - (lineGross * (globalDiscountPct / 100));
+
+        const productSelect = row.querySelector('select[name="product_id[]"]');
+        const productOption = productSelect ? productSelect.options[productSelect.selectedIndex] : null;
+        
+        const vatInputStr = document.getElementById('vatPctInput')?.value;
+        const whtInputStr = document.getElementById('whtPctInput')?.value;
+
+        let taxRate = parseFloat(vatInputStr) || 0;
+        let whtRate = parseFloat(whtInputStr) || 0;
+        
+        const lineTax = lineNet * (taxRate / 100);
+        const lineWht = lineNet * (whtRate / 100);
+
         const lineTotalInput = row.querySelector('.line-total');
-        if (lineTotalInput) lineTotalInput.value = lineTotal.toFixed(2);
-        subtotal += lineTotal;
+        if (lineTotalInput) {
+            lineTotalInput.value = (lineNet + lineTax - lineWht).toFixed(2);
+        }
+        
+        subtotal += lineGross;
+        totalTax += lineTax;
+        totalWht += lineWht;
     });
 
     document.getElementById('subtotalDisplay').innerText = subtotal.toFixed(2);
     document.getElementById('subtotalInput').value = subtotal.toFixed(2);
 
-    const discount = parseFloat(document.getElementById('discountInput').value) || 0;
-    const netSubtotal = subtotal - discount;
+    document.getElementById('vatAmountDisplay').innerText = totalTax.toFixed(2);
+    document.getElementById('whtAmountDisplay').innerText = totalWht.toFixed(2);
 
-    const vatPct = parseFloat(document.getElementById('vatPercentage').value) || 0;
-    const vatAmount = netSubtotal * (vatPct / 100);
-    document.getElementById('vatAmount').value = vatAmount.toFixed(2);
-
-    const whtPct = parseFloat(document.getElementById('whtPercentage').value) || 0;
-    const whtAmount = netSubtotal * (whtPct / 100);
-    document.getElementById('whtAmount').value = whtAmount.toFixed(2);
-
-    const total = netSubtotal + vatAmount - whtAmount;
+    const netSubtotal = subtotal - (subtotal * (globalDiscountPct / 100));
+    const total = netSubtotal + totalTax - totalWht;
+    
     document.getElementById('totalDisplay').innerText = total.toFixed(2);
     document.getElementById('totalInput').value = total.toFixed(2);
 }

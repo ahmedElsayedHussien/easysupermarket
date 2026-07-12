@@ -49,6 +49,7 @@ class Command(BaseCommand):
         # 4000 REVENUE
         rev, _ = Account.objects.get_or_create(code='4000', defaults={'name': 'إيرادات', 'account_type': Account.REVENUE})
         Account.objects.get_or_create(code='4100', defaults={'name': 'المبيعات', 'account_type': Account.REVENUE, 'parent': rev})
+        Account.objects.get_or_create(code='4110', defaults={'name': 'إيرادات المصنعيات والخدمات', 'account_type': Account.REVENUE, 'parent': rev})
         Account.objects.get_or_create(code='4200', defaults={'name': 'إيرادات أخرى', 'account_type': Account.REVENUE, 'parent': rev})
 
         # 5000 EXPENSE
@@ -56,5 +57,6 @@ class Command(BaseCommand):
         Account.objects.get_or_create(code='5100', defaults={'name': 'تكلفة البضاعة المباعة', 'account_type': Account.EXPENSE, 'parent': exp})
         Account.objects.get_or_create(code='5200', defaults={'name': 'مصاريف تشغيلية', 'account_type': Account.EXPENSE, 'parent': exp})
         Account.objects.get_or_create(code='5300', defaults={'name': 'مصاريف إدارية', 'account_type': Account.EXPENSE, 'parent': exp})
+        Account.objects.get_or_create(code='5400', defaults={'name': 'عجز وزيادة الخزينة (الورديات)', 'account_type': Account.EXPENSE, 'parent': exp})
         
         Account.objects.rebuild()

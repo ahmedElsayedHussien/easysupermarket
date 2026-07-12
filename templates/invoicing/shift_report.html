@@ -11,25 +11,25 @@
         <div class="col-md-3">
             <div class="card p-3 text-center mb-4">
                 <h4>إجمالي المبيعات</h4>
-                <h3 class="text-neon-cyan">{{ total_amount }} ج.م</h3>
+                <h3 class="text-neon-cyan">{{ total_amount|floatformat:2 }} ج.م</h3>
             </div>
         </div>
         <div class="col-md-3">
             <div class="card p-3 text-center mb-4">
                 <h4>مبيعات نقدية</h4>
-                <h3 class="text-neon-green">{{ total_cash }} ج.م</h3>
+                <h3 class="text-neon-green">{{ total_cash|floatformat:2 }} ج.م</h3>
             </div>
         </div>
         <div class="col-md-3">
             <div class="card p-3 text-center mb-4">
                 <h4>مبيعات بطاقة</h4>
-                <h3 class="text-neon-purple">{{ total_card }} ج.م</h3>
+                <h3 class="text-neon-purple">{{ total_card|floatformat:2 }} ج.م</h3>
             </div>
         </div>
         <div class="col-md-3">
             <div class="card p-3 text-center mb-4">
                 <h4>مبيعات آجلة</h4>
-                <h3 class="text-neon-pink">{{ total_credit }} ج.م</h3>
+                <h3 class="text-neon-pink">{{ total_credit|floatformat:2 }} ج.م</h3>
             </div>
         </div>
     </div>
@@ -48,7 +48,7 @@
             <tr>
                 <td>{{ inv.invoice_number }}</td>
                 <td>{{ inv.get_payment_type_display }}</td>
-                <td>{{ inv.total_amount }} ج.م</td>
+                <td>{{ inv.total_amount|floatformat:2 }} ج.م</td>
                 <td>{{ inv.created_at|date:"H:i:s" }}</td>
             </tr>
             {% empty %}

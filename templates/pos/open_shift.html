@@ -1,0 +1,64 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="d-flex justify-content-center align-items-center" style="min-height: 80vh;">
+    <div class="glass-container" style="max-width: 600px; width: 100%; padding: 2.5rem; border-top: 3px solid var(--neon-orange);">
+        <div class="text-center mb-4">
+            <h2 class="text-white fw-bold mb-2">
+                <i class="fas fa-cash-register" style="color: var(--neon-orange); text-shadow: 0 0 10px var(--neon-orange-glow);"></i> 
+                فتح وردية كاشير
+            </h2>
+            <p style="color: var(--text-secondary);">يرجى إدخال العهدة النقدية وتأكيد نقطة البيع للبدء</p>
+        </div>
+
+        <form method="post" class="needs-validation" novalidate>
+            {% csrf_token %}
+            
+            <div class="mb-4">
+                <label class="form-label" style="color: var(--text-secondary); font-size: 0.9rem;">الكاشير</label>
+                <div class="p-3 rounded" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-default); color: var(--text-primary); font-weight: 500;">
+                    <i class="fas fa-user-circle me-2" style="color: var(--neon-orange);"></i>
+                    {{ request.user.get_full_name|default:request.user.username }}
+                </div>
+            </div>
+
+            {% if current_branch %}
+            <div class="mb-4">
+                <label class="form-label" style="color: var(--text-secondary); font-size: 0.9rem;">الفرع</label>
+                <div class="p-3 rounded" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-default); color: var(--text-primary); font-weight: 500;">
+                    <i class="fas fa-store me-2" style="color: var(--neon-orange);"></i>
+                    {{ current_branch.name }}
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="mb-4">
+                <label class="form-label text-white" for="treasury_id">الخزينة / الدرج <span class="text-danger">*</span></label>
+                <select name="treasury_id" id="treasury_id" class="form-select" style="background-color: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-bright); padding: 12px; box-shadow: 0 0 10px rgba(0,0,0,0.5) inset;" required>
+                    <option value="">-- اختر الخزينة --</option>
+                    {% for t in treasuries %}
+                    <option value="{{ t.id }}">{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="invalid-feedback">يرجى اختيار الخزينة.</div>
+            </div>
+
+            <div class="mb-5">
+                <label class="form-label text-white" for="opening_balance">رصيد الافتتاح (العهدة) <span class="text-danger">*</span></label>
+                <div class="input-group">
+                    <input type="number" step="0.01" min="0" class="form-control text-center fw-bold fs-4" id="opening_balance" name="opening_balance" value="0.00" required dir="ltr" style="background-color: var(--bg-input); color: var(--neon-orange); border: 1px solid var(--border-bright); padding: 15px; box-shadow: 0 0 15px rgba(255, 140, 66, 0.1) inset;">
+                    <span class="input-group-text fw-bold" style="background-color: rgba(255, 140, 66, 0.2); color: var(--neon-orange); border: 1px solid var(--neon-orange); padding: 0 20px;">ج.م</span>
+                </div>
+                <div class="form-text mt-2" style="color: var(--text-secondary);"><i class="fas fa-info-circle me-1"></i> أدخل المبلغ الموجود حالياً في الدرج للبدء (الفكة).</div>
+            </div>
+
+            <div class="d-grid mt-4">
+                <button type="submit" class="btn btn-orange btn-lg fw-bold" style="padding: 15px; border-radius: 8px; font-size: 1.2rem; box-shadow: 0 0 15px var(--neon-orange-glow);">
+                    <i class="fas fa-lock-open me-2"></i> فتح الوردية والبدء في البيع
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

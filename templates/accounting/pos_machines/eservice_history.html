@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% block title %}سجل حركات خدمات الدفع{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding:2rem;">
+    <div class="top-header">
+        <h2 style="margin:0;color:#fff;"><i class="fas fa-history" style="color:#ff7300;margin-left:0.5rem;"></i>{{ title }}</h2>
+        <a href="{% url 'accounting:eservice_center' %}" class="btn-orange">
+            <i class="fas fa-plus"></i> عملية جديدة
+        </a>
+    </div>
+
+    <div class="data-table-container" style="margin-top:1.5rem;">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم العملية</th>
+                    <th>التاريخ</th>
+                    <th>نوع العملية</th>
+                    <th>المصدر</th>
+                    <th>الخزينة</th>
+                    <th>المبلغ الأصلي</th>
+                    <th>العمولة</th>
+                    <th>الحالة</th>
+                    <th>الفاتورة</th>
+                    <th>الإجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for txn in transactions %}
+                <tr>
+                    <td style="color:#00e5ff;font-family:monospace;font-weight:bold;">{{ txn.transaction_number }}</td>
+                    <td>{{ txn.date }}</td>
+                    <td>
+                        {% if txn.transaction_type == 'CASH_OUT' %}<span style="color:#2ed573;">💰 سحب كاش</span>
+                        {% elif txn.transaction_type == 'CASH_IN' %}<span style="color:#00e5ff;">📲 إيداع</span>
+                        {% else %}<span style="color:#ff7300;">🔋 شحن ماكينة</span>{% endif %}
+                    <td>
+                        {% if txn.source_type == 'MACHINE' and txn.pos_machine %}
+                            {{ txn.pos_machine.name }}
+                        {% elif txn.source_type == 'EWALLET' and txn.ewallet %}
+                            {{ txn.ewallet.name }}
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td>{{ txn.treasury.name }}</td>
+                    <td style="font-weight:bold;color:#e2e8f0;">{{ txn.principal_amount|floatformat:2 }} ج.م</td>
+                    <td>
+                        {% if txn.commission_revenue > 0 %}<span style="color:#2ed573;font-weight:bold;">+{{ txn.commission_revenue|floatformat:2 }}</span>
+                        {% elif txn.commission_expense > 0 %}<span style="color:#ff3b30;font-weight:bold;">-{{ txn.commission_expense|floatformat:2 }}</span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if txn.status == 'POSTED' %}<span class="badge-status badge-success">مرحل</span>
+                        {% else %}<span class="badge-status badge-warning">مسودة</span>{% endif %}
+                    </td>
+                    <td>
+                        {% if txn.invoice %}
+                        <a href="{% url 'invoicing:invoice_detail' txn.invoice.pk %}" style="color:#ff7300;font-size:0.8rem;">
+                            {{ txn.invoice.invoice_number }}
+                        </a>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        <div style="display:flex; gap:0.5rem;">
+                            <a href="{% url 'accounting:eservice_detail' txn.pk %}" class="btn-action" title="تفاصيل الحركة">
+                                👁️
+                            </a>
+                            {% if txn.status == 'DRAFT' %}
+                            <form method="POST" action="{% url 'accounting:eservice_post' txn.pk %}" style="margin:0;">
+                                {% csrf_token %}
+                                <button type="submit" class="btn-action" title="ترحيل الحركة" style="background:#2ed573; color:#fff;" onclick="return confirm('تأكيد ترحيل هذه الحركة؟');">
+                                    <i class="fas fa-check"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="10" style="text-align:center;padding:2rem;color:#94a3b8;">لا توجد حركات بعد</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

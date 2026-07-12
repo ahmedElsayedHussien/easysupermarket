@@ -18,7 +18,32 @@ const POS = {
         const session = this.sessions.find(s => s.id === this.activeSessionId);
         if (session) {
             session.cart = newCart;
+            this.saveSessions();
         }
+    },
+
+    saveSessions() {
+        try {
+            sessionStorage.setItem('pos_sessions', JSON.stringify(this.sessions));
+            sessionStorage.setItem('pos_activeSessionId', this.activeSessionId);
+            sessionStorage.setItem('pos_nextSessionId', this.nextSessionId);
+        } catch(e) { /* ignore */ }
+    },
+
+    restoreSessions() {
+        try {
+            const saved = sessionStorage.getItem('pos_sessions');
+            if (saved) {
+                this.sessions = JSON.parse(saved);
+                this.activeSessionId = parseInt(sessionStorage.getItem('pos_activeSessionId')) || this.sessions[0]?.id || 1;
+                this.nextSessionId = parseInt(sessionStorage.getItem('pos_nextSessionId')) || 2;
+                if (this.sessions.length === 0) {
+                    this.sessions = [{id: 1, name: 'فاتورة 1', cart: []}];
+                    this.activeSessionId = 1;
+                    this.nextSessionId = 2;
+                }
+            }
+        } catch(e) { /* ignore */ }
     },
     
     currentWarehouseId: null,
@@ -33,6 +58,7 @@ const POS = {
     // INIT
     // ============================================================
     init() {
+        this.restoreSessions();
         this.setupBarcodeScanner();
         this.setupProductSearch();
         this.setupKeyboardShortcuts();
@@ -48,6 +74,25 @@ const POS = {
             applyTaxCheckbox.addEventListener('change', () => {
                 this.updateCartDisplay();
             });
+        }
+        
+        const posCustomerSelect = document.getElementById('posCustomer');
+        if (posCustomerSelect) {
+            const handleCustomerChange = () => {
+                const whtCheckbox = document.getElementById('posApplyWht');
+                const opt = posCustomerSelect.options[posCustomerSelect.selectedIndex];
+                if (whtCheckbox && opt) {
+                    whtCheckbox.checked = (opt.dataset.whtSubject === 'true');
+                }
+                this.updateCartDisplay();
+            };
+            
+            // using jQuery if Select2 is used, otherwise native event
+            if (typeof $ !== 'undefined' && $(posCustomerSelect).hasClass('select2-hidden-accessible')) {
+                $(posCustomerSelect).on('change', handleCustomerChange);
+            } else {
+                posCustomerSelect.addEventListener('change', handleCustomerChange);
+            }
         }
         
         console.log('[POS] Initialized. Warehouse:', this.currentWarehouseId, 'Branch:', this.currentBranchId);
@@ -124,13 +169,17 @@ const POS = {
     },
 
     extractProductFromRow(row) {
+        const cleanNumber = (val) => String(val || '0').replace(/,/g, '');
         return {
             id: parseInt(row.dataset.productId),
             name: row.dataset.productName,
+            product_type: row.dataset.productType || 'PRODUCT',
+            is_open_price: row.dataset.isOpenPrice === 'true',
             barcode: row.dataset.productBarcode,
-            sale_price: row.dataset.salePrice,
-            available_stock: parseInt(row.dataset.availableStock) || 0,
-            tax_rate: parseFloat(row.dataset.taxRate) || 0,
+            sale_price: cleanNumber(row.dataset.salePrice),
+            available_stock: parseFloat(cleanNumber(row.dataset.availableStock)) || 0,
+            tax_rate: parseFloat(cleanNumber(row.dataset.taxRate)) || 0,
+            wht_rate: parseFloat(cleanNumber(row.dataset.whtRate)) || 0,
             uoms: JSON.parse(row.dataset.uoms || '[{"id":"base", "name":"Unit"}]')
         };
     },
@@ -194,40 +243,46 @@ const POS = {
     addToCart(product, quantity = 1) {
         // Validate stock
         const stock = parseInt(product.available_stock) || 0;
+        const isService = product.product_type === 'SERVICE';
         const existing = this.cart.find(item => item.id === parseInt(product.id));
 
         if (existing) {
             const newQty = existing.quantity + quantity;
-            if (stock > 0 && newQty > stock) {
+            if (!isService && stock > 0 && newQty > stock) {
                 this.showNotification(`⚠ الكمية المطلوبة (${newQty}) تتجاوز المخزون المتاح (${stock})`, 'warning');
                 return;
             }
             existing.quantity = newQty;
         } else {
-            if (stock === 0) {
+            if (!isService && stock === 0) {
                 this.showNotification(`⚠ الصنف "${product.name}" غير متاح في المخزون`, 'warning');
                 return;
             }
             this.cart.push({
                 id: parseInt(product.id),
                 name: product.name,
+                product_type: product.product_type || 'PRODUCT',
                 barcode: product.barcode || '',
                 price: parseFloat(product.sale_price) || 0,
+                base_price: parseFloat(product.sale_price) || 0,
                 quantity: parseInt(quantity) || 1,
                 discount: 0,
                 tax_rate: parseFloat(product.tax_rate) || 0,
+                wht_rate: parseFloat(product.wht_rate) || 0,
                 available_stock: stock,
                 uoms: product.uoms || [{id:'base', name:'Unit'}],
                 uom_id: 'base'
             });
         }
 
+        this.saveSessions();
         this.updateCartDisplay();
         this.updateSalePriceDisplay(product);
     },
 
     removeFromCart(productId) {
         this.cart = this.cart.filter(item => item.id !== parseInt(productId));
+        this.saveSessions();
         this.updateCartDisplay();
         this.clearSalePriceDisplay();
     },
@@ -243,15 +298,19 @@ const POS = {
             }
             return;
         }
-        if (qty > item.available_stock && item.available_stock > 0) {
+        if (item.product_type !== 'SERVICE' && qty > item.available_stock && item.available_stock > 0) {
             this.showNotification(`⚠ الحد الأقصى للمخزون: ${item.available_stock}`, 'warning');
             return;
         }
         item.quantity = qty;
+        this.saveSessions();
         this.updateCartDisplay();
     },
 
-    updateQuantityForProduct(productId, delta) {
+    updateQuantityForProduct(event, productId, delta) {
+        if (event && event.stopPropagation) {
+            event.stopPropagation();
+        }
         const item = this.cart.find(i => i.id === parseInt(productId));
         if (!item) {
             // Not in cart yet — find in table and add
@@ -282,6 +341,49 @@ const POS = {
         const item = this.cart.find(i => i.id === parseInt(productId));
         if (item) {
             item.uom_id = uomId;
+            const selectedUom = item.uoms.find(u => u.id == uomId);
+            const factor = selectedUom ? parseFloat(selectedUom.factor) || 1.0 : 1.0;
+            item.price = item.base_price * factor;
+            this.saveSessions();
+            this.updateCartDisplay();
+        }
+    },
+
+    updateManualPrice(productId, newPrice) {
+        const item = this.cart.find(i => i.id === parseInt(productId));
+        if (!item) return;
+
+        const isEditable = POS.allowPriceEdit || item.product_type === 'SERVICE';
+        if (!isEditable) {
+            alert('تعديل الأسعار غير مسموح به! يرجى تفعيله من الإعدادات أولاً.');
+            this.updateCartDisplay();
+            return;
+        }
+        
+        if (item) {
+            const price = parseFloat(newPrice);
+            if (!isNaN(price) && price >= 0) {
+                const selectedUom = item.uoms && item.uoms.find(u => u.id == item.uom_id);
+                const factor = selectedUom ? parseFloat(selectedUom.factor) || 1.0 : 1.0;
+                const originalPrice = item.base_price * factor;
+                
+                let isAllowed = true;
+                if (item.product_type !== 'SERVICE' && POS.priceMarginPercent > 0) {
+                    const marginValue = originalPrice * (POS.priceMarginPercent / 100);
+                    const minAllowed = originalPrice - marginValue;
+                    const maxAllowed = originalPrice + marginValue;
+                    
+                    if (price < minAllowed || price > maxAllowed) {
+                        isAllowed = false;
+                        alert(`تجاوز السعر الحد المسموح به! السعر المسموح بين ${minAllowed.toFixed(2)} و ${maxAllowed.toFixed(2)}`);
+                    }
+                }
+                
+                if (isAllowed) {
+                    item.price = price;
+                    this.saveSessions();
+                }
+            }
             this.updateCartDisplay();
         }
     },
@@ -293,27 +395,46 @@ const POS = {
         let grossTotal = 0;
         let totalDiscount = 0;
         let totalTax = 0;
+        let totalWht = 0;
 
         const applyTaxCheckbox = document.getElementById('posApplyTax');
         const applyTax = applyTaxCheckbox ? applyTaxCheckbox.checked : false;
+        
+        const applyWhtCheckbox = document.getElementById('posApplyWht');
+        const applyWht = applyWhtCheckbox ? applyWhtCheckbox.checked : false;
+        
+        const globalDiscountInput = document.getElementById('globalDiscountPct');
+        const globalDiscountPct = globalDiscountInput ? Math.max(0, Math.min(100, parseFloat(globalDiscountInput.value) || 0)) : 0;
 
         this.cart.forEach(item => {
             const lineGross = item.price * item.quantity;
-            const lineDiscount = lineGross * (item.discount / 100);
-            const lineNet = lineGross - lineDiscount;
+            // First apply item specific discount if any
+            const itemDiscount = lineGross * (item.discount / 100);
+            let lineNet = lineGross - itemDiscount;
+            
+            // Then apply global discount pct
+            const lineGlobalDiscount = lineNet * (globalDiscountPct / 100);
+            lineNet = lineNet - lineGlobalDiscount;
+            
+            totalDiscount += (itemDiscount + lineGlobalDiscount);
+
             const effectiveTaxRate = applyTax ? item.tax_rate : 0;
             const lineTax = lineNet * (effectiveTaxRate / 100);
+            
+            const effectiveWhtRate = applyWht ? item.wht_rate : 0;
+            const lineWht = lineNet * (effectiveWhtRate / 100);
 
-            grossTotal += lineNet;
-            totalDiscount += lineDiscount;
+            grossTotal += lineGross; // or track net? usually subtotal is gross
             totalTax += lineTax;
+            totalWht += lineWht;
         });
 
         return {
             subtotal: grossTotal,
             discount: totalDiscount,
             tax: totalTax,
-            total: grossTotal + totalTax
+            wht: totalWht,
+            total: grossTotal - totalDiscount + totalTax - totalWht
         };
     },
 
@@ -331,14 +452,25 @@ const POS = {
         const applyTaxCheckbox = document.getElementById('posApplyTax');
         const applyTax = applyTaxCheckbox ? applyTaxCheckbox.checked : false;
 
+        const applyWhtCheckbox = document.getElementById('posApplyWht');
+        const applyWht = applyWhtCheckbox ? applyWhtCheckbox.checked : false;
+
+        const globalDiscountInput = document.getElementById('globalDiscountPct');
+        const globalDiscountPct = globalDiscountInput ? Math.max(0, Math.min(100, parseFloat(globalDiscountInput.value) || 0)) : 0;
+
         if (this.cart.length === 0) {
             cartItems.innerHTML = '<div class="cart-empty-msg">أضف منتجات للسلة</div>';
         } else {
             cartItems.innerHTML = this.cart.map(item => {
                 const lineGross = item.price * item.quantity;
-                const lineDiscount = lineGross * (item.discount / 100);
+                const itemDiscount = lineGross * (item.discount / 100);
+                let lineNet = lineGross - itemDiscount;
+                const lineGlobalDiscount = lineNet * (globalDiscountPct / 100);
+                lineNet = lineNet - lineGlobalDiscount;
+
                 const effectiveTaxRate = applyTax ? item.tax_rate : 0;
-                const lineTotal = lineGross - lineDiscount + (lineGross - lineDiscount) * (effectiveTaxRate / 100);
+                const effectiveWhtRate = applyWht ? item.wht_rate : 0;
+                const lineTotal = lineNet + (lineNet * (effectiveTaxRate / 100)) - (lineNet * (effectiveWhtRate / 100));
                 return `
                 <div class="cart-item" data-cart-id="${item.id}" style="display:grid; grid-template-columns: 2fr 1fr 1.5fr 1fr 1fr; gap: 5px; align-items:center; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px;">
                     <div>
@@ -351,8 +483,13 @@ const POS = {
                         <button class="qty-btn" onclick="POS.updateQuantity(${item.id}, ${item.quantity + 1})" style="padding:2px 6px;">+</button>
                     </div>
                     <div>
-                        <div class="cart-item-price">${this.formatCurrency(item.price)}</div>
-                        <div style="font-size: 0.8em; color: var(--text-muted);">Tax: ${effectiveTaxRate}%</div>
+                        <input type="number" 
+                               value="${item.price}" 
+                               style="width: 75px; padding: 4px; text-align: center; border: 1px solid ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? '#0ea5e9' : '#ccc'}; border-radius: 4px; font-weight: bold; color: var(--text); background-color: ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? '#fff' : '#f8f9fa'}; cursor: ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? 'text' : 'not-allowed'}; box-shadow: ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? '0 0 5px rgba(14,165,233,0.2)' : 'none'};"
+                               onchange="POS.updateManualPrice(${item.id}, this.value)"
+                               ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? '' : 'readonly'}
+                               step="0.01" min="0" title="${POS.allowPriceEdit || item.product_type === 'SERVICE' ? 'تعديل السعر' : 'تعديل السعر مغلق من الإعدادات'}">
+                        <div style="font-size: 0.8em; color: var(--text-muted);">Tax: ${effectiveTaxRate}% | WHT: ${effectiveWhtRate}%</div>
                     </div>
                     <div>
                         ${item.uoms && item.uoms.length > 1 ? `
@@ -372,12 +509,13 @@ const POS = {
         // Update totals
         const totals = this.calculateTotals();
         const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-
+        
         set('cartSubtotal', this.formatCurrency(totals.subtotal));
-        set('cartDiscount', `(${this.formatCurrency(totals.discount)})`);
+        set('cartDiscount', '(' + this.formatCurrency(totals.discount) + ')');
         set('cartTax', this.formatCurrency(totals.tax));
-        set('cartTotal', `${this.formatCurrency(totals.total)} ج.م`);
-        set('modalTotal', `${this.formatCurrency(totals.total)} ج.م`);
+        set('cartWht', '(' + this.formatCurrency(totals.wht) + ')');
+        set('cartTotal', this.formatCurrency(totals.total) + ' ج.م');
+        set('modalTotal', this.formatCurrency(totals.total) + ' ج.م');
 
         // Cart item count badge
         const countEl = document.getElementById('cartCount');
@@ -386,6 +524,9 @@ const POS = {
             countEl.textContent = total;
             countEl.style.display = total > 0 ? '' : 'none';
         }
+
+        // Update the main product grid stock display dynamically
+        this.updateGridStockDisplay();
     },
 
     // ============================================================
@@ -404,6 +545,33 @@ const POS = {
         if (stockEl) stockEl.textContent = product.available_stock || 0;
     },
 
+    updateGridStockDisplay() {
+        // Build a map of total reserved quantities across ALL open sessions
+        const totalReserved = {};
+        this.sessions.forEach(session => {
+            (session.cart || []).forEach(item => {
+                totalReserved[item.id] = (totalReserved[item.id] || 0) + item.quantity;
+            });
+        });
+
+        const rows = document.querySelectorAll('#productsTableBody .product-row');
+        rows.forEach(row => {
+            const productId = parseInt(row.dataset.productId);
+            const originalStock = parseFloat(row.dataset.availableStock) || 0;
+            const stockCell = row.querySelector('.stock-cell');
+            const qtyValue = row.querySelector('.qty-value');
+            if (stockCell) {
+                const reserved = totalReserved[productId] || 0;
+                stockCell.textContent = Math.max(0, originalStock - reserved);
+                // Show active session's cart qty in the grid row
+                if (qtyValue) {
+                    const activeCartItem = this.cart.find(i => i.id === productId);
+                    qtyValue.textContent = activeCartItem ? activeCartItem.quantity : 1;
+                }
+            }
+        });
+    },
+
     clearSalePriceDisplay() {
         ['displayPrice', 'displayQty', 'displayStock'].forEach(id => {
             const el = document.getElementById(id);
@@ -418,9 +586,14 @@ const POS = {
         const tbody = document.getElementById('productsTableBody');
         if (!tbody) return;
 
+        // Prevent duplicate listeners
+        if (tbody._posEventsAttached) return;
+        tbody._posEventsAttached = true;
+
         tbody.addEventListener('click', (e) => {
             // Don't trigger on quantity buttons
             if (e.target.closest('.qty-btn')) return;
+            if (e.target.closest('.qty-control')) return;
 
             const row = e.target.closest('.product-row');
             if (!row) return;
@@ -584,12 +757,20 @@ const POS = {
         const totals = this.calculateTotals();
         const customerSelect = document.getElementById('posCustomer');
         const partner_id = customerSelect ? customerSelect.value : null;
+        const customerOption = customerSelect ? customerSelect.options[customerSelect.selectedIndex] : null;
+
         const treasurySelect = document.getElementById('posTreasury');
         const treasury_id = treasurySelect ? treasurySelect.value : null;
         const invoice_type = this.isReturnMode ? 'RETURN_SALE' : 'SALE';
 
         const applyTaxCheckbox = document.getElementById('posApplyTax');
         const applyTax = applyTaxCheckbox ? applyTaxCheckbox.checked : false;
+
+        const applyWhtCheckbox = document.getElementById('posApplyWht');
+        const applyWht = applyWhtCheckbox ? applyWhtCheckbox.checked : false;
+
+        const globalDiscountInput = document.getElementById('globalDiscountPct');
+        const globalDiscountPct = globalDiscountInput ? Math.max(0, Math.min(100, parseFloat(globalDiscountInput.value) || 0)) : 0;
 
         const payload = {
             cart: this.cart.map(item => ({
@@ -598,6 +779,7 @@ const POS = {
                 unit_price: item.price,
                 discount_percent: item.discount,
                 tax_rate: applyTax ? item.tax_rate : 0,
+                wht_rate: applyWht ? item.wht_rate : 0,
                 uom_id: item.uom_id
             })),
             payment_type: paymentType,
@@ -608,9 +790,11 @@ const POS = {
             ewallet_id: ewalletId,
             bank_account_id: bankAccountId,
             invoice_type: invoice_type,
+            discount_percentage: globalDiscountPct,
             subtotal: totals.subtotal,
             discount_amount: totals.discount,
             tax_amount: totals.tax,
+            wht_amount: totals.wht,
             total_amount: totals.total,
             cash_received: cashReceived
         };
@@ -633,9 +817,18 @@ const POS = {
             const data = await resp.json();
             if (data.success) {
                 this.lastInvoiceData = data;
+                // Update stock locally: subtract sold quantities from grid
+                this.cart.forEach(item => {
+                    const row = document.querySelector(`[data-product-id="${item.id}"]`);
+                    if (row) {
+                        const oldStock = parseFloat(row.dataset.availableStock) || 0;
+                        row.dataset.availableStock = Math.max(0, oldStock - item.quantity);
+                    }
+                });
                 this.showReceiptModal(data, totals, cashReceived);
-                this.closeTab(this.activeSessionId);
-                this.showNotification(`✓ تمت العملية: ${data.invoice_number}`, 'success');
+                this.closeTab(null, this.activeSessionId);
+                this.updateGridStockDisplay();
+                this.showNotification(`تم حفظ الفاتورة: ${data.invoice_number}`, 'success');
             } else {
                 throw new Error(data.error || 'فشل في إتمام البيع');
             }
@@ -708,12 +901,14 @@ const POS = {
     createTab() {
         const id = this.nextSessionId++;
         this.sessions.push({id: id, name: `فاتورة ${id}`, cart: []});
+        this.saveSessions();
         this.switchTab(id);
     },
 
     switchTab(id) {
         if (this.sessions.find(s => s.id === id)) {
             this.activeSessionId = id;
+            this.saveSessions();
             this.renderTabs();
             this.updateCartDisplay();
             this.clearSalePriceDisplay();
@@ -721,7 +916,10 @@ const POS = {
         }
     },
 
-    closeTab(id) {
+    closeTab(event, id) {
+        if (event && event.stopPropagation) {
+            event.stopPropagation();
+        }
         if (this.sessions.length <= 1) {
             this.clearCart();
             return;
@@ -730,6 +928,7 @@ const POS = {
         if (this.activeSessionId === id) {
             this.activeSessionId = this.sessions[this.sessions.length - 1].id;
         }
+        this.saveSessions();
         this.renderTabs();
         this.updateCartDisplay();
         this.clearSalePriceDisplay();
@@ -743,9 +942,9 @@ const POS = {
         tabsContainer.innerHTML = this.sessions.map(s => `
             <div class="pos-tab ${s.id === this.activeSessionId ? 'active' : ''}" onclick="POS.switchTab(${s.id})">
                 ${s.name}
-                ${this.sessions.length > 1 ? `<button class="pos-tab-close" onclick="event.stopPropagation(); POS.closeTab(${s.id})">✕</button>` : ''}
+                ${this.sessions.length > 1 ? `<button type="button" class="pos-tab-close" onclick="POS.closeTab(event, ${s.id})">❌</button>` : ''}
             </div>
-        `).join('') + `<button class="pos-tab-add" onclick="POS.createTab()" title="New Tab (F4)">+</button>`;
+        `).join('') + `<button type="button" class="pos-tab-add" onclick="POS.createTab()" title="New Tab (F4)">+</button>`;
     },
 
     // ============================================================
@@ -760,6 +959,12 @@ const POS = {
                              (activeTag === 'input' && !isBarcode);
 
             switch (e.key) {
+                case 'Enter':
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        this.processCashPayment();
+                    }
+                    break;
                 case 'F1':
                     e.preventDefault();
                     this.voidTransaction();
@@ -946,7 +1151,8 @@ const POS = {
                 data-product-barcode="${p.barcode || ''}"
                 data-sale-price="${p.sale_price}"
                 data-available-stock="${p.available_stock || 0}"
-                data-tax-rate="${p.tax_rate || 0}">
+                data-tax-rate="${p.tax_rate || 0}"
+                data-uoms='${JSON.stringify(p.uoms || [])}'>
                 <td>
                     ${p.image ? `<img src="${p.image}" class="product-thumb" alt="${p.name}">` :
                       `<div class="product-thumb-placeholder">📦</div>`}
@@ -955,20 +1161,23 @@ const POS = {
                 <td class="en">${p.barcode || '-'}</td>
                 <td>
                     <div class="qty-control">
-                        <button class="qty-btn" onclick="event.stopPropagation();POS.updateQuantityForProduct(${p.id}, -1)">−</button>
+                        <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, ${p.id}, -1)">−</button>
                         <span class="qty-value">1</span>
-                        <button class="qty-btn" onclick="event.stopPropagation();POS.updateQuantityForProduct(${p.id}, 1)">+</button>
+                        <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, ${p.id}, 1)">+</button>
                     </div>
                 </td>
-                <td>${p.available_stock || 0}</td>
+                <td class="stock-cell">${p.available_stock || 0}</td>
                 <td class="price-col en">${parseFloat(p.sale_price).toFixed(2)} EGP</td>
                 <td>-</td>
                 <td class="en">${parseFloat(p.sale_price).toFixed(2)} EGP</td>
                 <td>${p.unit_display || p.unit || '-'}</td>
             </tr>`).join('');
 
-        // Re-attach click events
+        // Reset flag so events re-attach after dynamic render
+        const tbody2 = document.getElementById('productsTableBody');
+        if (tbody2) tbody2._posEventsAttached = false;
         this.setupCartEvents();
+        this.updateGridStockDisplay();
     }
 };
 

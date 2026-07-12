@@ -1,0 +1,109 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding:2rem; max-width:800px; margin:0 auto;">
+    <div class="top-header" style="border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:1rem; margin-bottom:1.5rem;">
+        <h2 style="margin:0;color:#fff;">
+            <i class="fas fa-file-invoice-dollar" style="color:#ff7300;margin-left:0.5rem;"></i>{{ title }}
+        </h2>
+        <div style="display:flex; gap:1rem;">
+            {% if transaction.status == 'DRAFT' %}
+            <form method="POST" action="{% url 'accounting:eservice_post' transaction.pk %}" style="margin:0;">
+                {% csrf_token %}
+                <button type="submit" class="btn-orange" style="background:#2ed573; border-color:#2ed573;" onclick="return confirm('هل أنت متأكد من ترحيل هذه الحركة؟');">
+                    <i class="fas fa-check"></i> ترحيل الحركة
+                </button>
+            </form>
+            {% endif %}
+            <a href="{% url 'accounting:eservice_history' %}" class="btn" style="background:rgba(255,255,255,0.1);color:#fff;">
+                رجوع للسجل
+            </a>
+        </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; margin-bottom:2rem;">
+        <div>
+            <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">رقم العملية</p>
+            <div style="font-size:1.1rem; color:#00e5ff; font-family:monospace; font-weight:bold;">{{ transaction.transaction_number }}</div>
+        </div>
+        <div>
+            <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">التاريخ</p>
+            <div style="font-size:1.1rem; color:#fff;">{{ transaction.date }}</div>
+        </div>
+        <div>
+            <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">الحالة</p>
+            <div>
+                {% if transaction.status == 'POSTED' %}<span class="badge-status badge-success">مرحل</span>
+                {% else %}<span class="badge-status badge-warning">مسودة</span>{% endif %}
+            </div>
+        </div>
+        <div>
+            <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">بواسطة</p>
+            <div style="font-size:1.1rem; color:#fff;">{{ transaction.created_by.username|default:"—" }}</div>
+        </div>
+    </div>
+
+    <div style="background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; margin-bottom:2rem;">
+        <h3 style="margin-top:0; color:#ff7300; border-bottom:1px solid rgba(255,115,0,0.3); padding-bottom:0.5rem; margin-bottom:1rem;">تفاصيل العملية</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
+            <div>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">نوع العملية</p>
+                <div style="font-size:1.1rem; color:#fff;">{{ transaction.get_transaction_type_display }}</div>
+            </div>
+            <div>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">المصدر (ماكينة/محفظة)</p>
+                <div style="font-size:1.1rem; color:#fff;">
+                    {% if transaction.source_type == 'MACHINE' and transaction.pos_machine %}
+                        {{ transaction.pos_machine.name }}
+                    {% elif transaction.source_type == 'EWALLET' and transaction.ewallet %}
+                        {{ transaction.ewallet.name }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </div>
+            </div>
+            <div>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">الخزينة/الدرج</p>
+                <div style="font-size:1.1rem; color:#fff;">{{ transaction.treasury.name|default:"—" }}</div>
+            </div>
+            <div>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">رقم قيد اليومية</p>
+                <div style="font-size:1.1rem;">
+                    {% if transaction.journal_entry %}
+                        <a href="{% url 'accounting:journal_detail' transaction.journal_entry.pk %}" style="color:#ff7300;">{{ transaction.journal_entry.reference }}</a>
+                    {% else %}
+                        <span style="color:#64748b;">—</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; margin-bottom:2rem;">
+        <h3 style="margin-top:0; color:#2ed573; border-bottom:1px solid rgba(46,213,115,0.3); padding-bottom:0.5rem; margin-bottom:1rem;">التفاصيل المالية</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem;">
+            <div style="text-align:center;">
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">المبلغ الأصلي</p>
+                <div style="font-size:1.4rem; color:#fff; font-weight:bold;">{{ transaction.principal_amount|floatformat:2 }}</div>
+            </div>
+            <div style="text-align:center; border-right:1px solid rgba(255,255,255,0.1); border-left:1px solid rgba(255,255,255,0.1);">
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">عمولة الإيراد (للمحل)</p>
+                <div style="font-size:1.4rem; color:#2ed573; font-weight:bold;">+{{ transaction.commission_revenue|floatformat:2 }}</div>
+            </div>
+            <div style="text-align:center;">
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">عمولة المصروف (للمندوب)</p>
+                <div style="font-size:1.4rem; color:#ff3b30; font-weight:bold;">-{{ transaction.commission_expense|floatformat:2 }}</div>
+            </div>
+        </div>
+    </div>
+
+    {% if transaction.description %}
+    <div style="background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px;">
+        <h3 style="margin-top:0; color:#fff; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:0.5rem; margin-bottom:1rem;">البيان</h3>
+        <p style="color:#cbd5e1; margin:0; line-height:1.6;">{{ transaction.description|linebreaksbr }}</p>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

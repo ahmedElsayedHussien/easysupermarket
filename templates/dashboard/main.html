@@ -180,6 +180,22 @@
 
     </div>
 
+    <!-- E-Service Full-Width Card -->
+    <div style="margin-top:1rem;">
+    <div class="module-card" style="display:flex;flex-wrap:wrap;align-items:center;gap:1.5rem;padding:1.25rem 1.5rem;background:linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05));border:2px solid rgba(255,115,0,0.5);border-radius:12px;transition:all 0.2s;" onmouseover="this.style.borderColor='#ff7300';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.25),rgba(255,115,0,0.1))'" onmouseout="this.style.borderColor='rgba(255,115,0,0.5)';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05))'">
+            <div style="font-size:2.5rem;flex-shrink:0;">💳</div>
+            <div style="flex:1;min-width:250px;">
+                <div style="color:#ff7300;font-size:1.1rem;font-weight:800;">خدمات الشحن والدفع الإلكتروني</div>
+                <div style="color:#94a3b8;font-size:0.8rem;margin-top:0.25rem;">إدارة ماكينات فوري وأمان والبنوك | سحب وإيداع وتحويل رصيد للعملاء | شحن الماكينات من المناديب</div>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:0.75rem;position:relative;z-index:10;justify-content:flex-start;">
+                <a href="{% url 'accounting:eservice_history' %}" style="padding:0.5rem 1rem;border-radius:6px;border:1px solid rgba(255,255,255,0.2);color:#fff;font-size:0.8rem;font-weight:700;text-decoration:none;display:flex;align-items:center;gap:5px;">📜 السجل</a>
+                <a href="{% url 'accounting:pos_machine_list' %}" style="padding:0.5rem 1rem;border-radius:6px;border:1px solid rgba(255,115,0,0.5);color:#ff7300;font-size:0.8rem;font-weight:700;text-decoration:none;background:rgba(255,115,0,0.1);display:flex;align-items:center;gap:5px;">⚙️ الماكينات</a>
+                <a href="{% url 'accounting:eservice_center' %}" style="padding:0.5rem 1rem;border-radius:6px;background:#ff7300;color:#fff;font-size:0.8rem;font-weight:700;text-decoration:none;display:flex;align-items:center;gap:5px;">مركز الخدمات ←</a>
+            </div>
+        </div>
+    </div>
+
     <!-- ============================================================
          QUICK STATS ROW
          ============================================================ -->

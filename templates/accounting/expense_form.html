@@ -1,0 +1,247 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2 class="text-white mb-0">إضافة مصروف جديد</h2>
+                <a href="{% url 'accounting:expense_list' %}" class="btn btn-ghost">
+                    <i class="fas fa-arrow-right me-2"></i> رجوع
+                </a>
+            </div>
+
+            <div class="card p-4">
+                <form method="POST" class="needs-validation" novalidate>
+                    {% csrf_token %}
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label text-neon-blue">{{ form.date.label }}</label>
+                            {{ form.date }}
+                            <div class="text-danger small">{{ form.date.errors }}</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label text-neon-blue">{{ form.branch.label }}</label>
+                            {{ form.branch }}
+                            <div class="text-danger small">{{ form.branch.errors }}</div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label text-neon-blue">{{ form.expense_account.label }}</label>
+                            {{ form.expense_account }}
+                            <div class="text-danger small">{{ form.expense_account.errors }}</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label text-neon-blue">{{ form.payment_account.label }}</label>
+                            {{ form.payment_account }}
+                            <div class="text-danger small">{{ form.payment_account.errors }}</div>
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-4">
+
+                    <!-- Items Formset -->
+                    <h5 class="text-white mb-3">بنود المصروف</h5>
+                    {{ items_formset.management_form }}
+                    <div class="table-responsive mb-4">
+                        <table class="table table-dark table-bordered" id="itemsTable">
+                            <thead>
+                                <tr>
+                                    <th width="60%">البيان</th>
+                                    <th width="30%">المبلغ</th>
+                                    <th width="10%">إلغاء</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item_form in items_formset %}
+                                <tr class="item-row">
+                                    <td>
+                                        {{ item_form.id }}
+                                        {{ item_form.description }}
+                                        <div class="text-danger small">{{ item_form.description.errors }}</div>
+                                    </td>
+                                    <td>
+                                        {{ item_form.amount }}
+                                        <div class="text-danger small">{{ item_form.amount.errors }}</div>
+                                    </td>
+                                    <td class="text-center align-middle">
+                                        {% if items_formset.can_delete %}
+                                            <div class="d-none">{{ item_form.DELETE }}</div>
+                                            <button type="button" class="btn btn-sm btn-warning remove-row" title="حذف السطر"><i class="fas fa-trash text-dark"></i></button>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        <button type="button" class="btn btn-sm btn-warning mt-2" id="addRowBtn">
+                            <i class="fas fa-plus me-1 text-dark"></i> <span class="text-dark fw-bold">إضافة بند جديد</span>
+                        </button>
+                    </div>
+
+                    <hr class="border-secondary my-4">
+
+                    <div class="row align-items-end">
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label text-neon-blue">{{ form.amount.label }}</label>
+                            {{ form.amount }}
+                            <div class="text-danger small">{{ form.amount.errors }}</div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label text-neon-blue">{{ form.vat_percent.label }}</label>
+                            {{ form.vat_percent }}
+                            <div class="text-danger small">{{ form.vat_percent.errors }}</div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label class="form-label text-neon-blue">{{ form.withholding_tax_percent.label }}</label>
+                            {{ form.withholding_tax_percent }}
+                            <div class="text-danger small">{{ form.withholding_tax_percent.errors }}</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-dark rounded p-3 mb-4 border border-secondary">
+                        <div class="row text-center">
+                            <div class="col-4">
+                                <span class="d-block text-white-50 small mb-1">قيمة القيمة المضافة (+)</span>
+                                <span class="fs-5 text-warning" id="calcVatAmount">0.00</span>
+                            </div>
+                            <div class="col-4">
+                                <span class="d-block text-white-50 small mb-1">قيمة الخصم والإضافة (-)</span>
+                                <span class="fs-5 text-danger" id="calcWithholdingAmount">0.00</span>
+                            </div>
+                            <div class="col-4 border-start border-secondary">
+                                <span class="d-block text-white-50 small mb-1">الإجمالي المستحق</span>
+                                <span class="fs-4 text-success fw-bold" id="calcTotalAmount">0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <label class="form-label text-neon-blue">{{ form.description.label }}</label>
+                        {{ form.description }}
+                        <div class="text-danger small">{{ form.description.errors }}</div>
+                    </div>
+
+                    <div class="text-end">
+                        <button type="submit" class="btn btn-primary px-5 rounded-pill">
+                            <i class="fas fa-save me-2"></i> حفظ مسودة المصروف
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const amountInput = document.getElementById('id_amount');
+        const vatInput = document.getElementById('id_vat_percent');
+        const whInput = document.getElementById('id_withholding_tax_percent');
+
+        const vatSpan = document.getElementById('calcVatAmount');
+        const whSpan = document.getElementById('calcWithholdingAmount');
+        const totalSpan = document.getElementById('calcTotalAmount');
+
+        function calculateItemsTotal() {
+            let itemsTotal = 0;
+            document.querySelectorAll('input[name$="-amount"]').forEach(function(input) {
+                // Ignore if row is marked for deletion
+                const row = input.closest('tr');
+                const deleteInput = row.querySelector('input[name$="-DELETE"]');
+                if (!deleteInput || !deleteInput.checked) {
+                    itemsTotal += parseFloat(input.value) || 0;
+                }
+            });
+            amountInput.value = itemsTotal.toFixed(2);
+            calculateTotals();
+        }
+
+        function calculateTotals() {
+            const amount = parseFloat(amountInput.value) || 0;
+            const vatPercent = parseFloat(vatInput.value) || 0;
+            const whPercent = parseFloat(whInput.value) || 0;
+
+            const vatAmount = amount * (vatPercent / 100);
+            const whAmount = amount * (whPercent / 100);
+            const total = amount + vatAmount - whAmount;
+
+            vatSpan.textContent = vatAmount.toFixed(2);
+            whSpan.textContent = whAmount.toFixed(2);
+            totalSpan.textContent = total.toFixed(2);
+        }
+
+        // Event delegation for dynamically added rows
+        document.getElementById('itemsTable').addEventListener('input', function(e) {
+            if (e.target.name && e.target.name.endsWith('-amount')) {
+                calculateItemsTotal();
+            }
+        });
+
+        vatInput.addEventListener('input', calculateTotals);
+        whInput.addEventListener('input', calculateTotals);
+
+        // Add Row Logic
+        const addBtn = document.getElementById('addRowBtn');
+        const totalForms = document.getElementById('id_items-TOTAL_FORMS');
+        const tbody = document.querySelector('#itemsTable tbody');
+
+        if (addBtn) {
+            addBtn.addEventListener('click', function() {
+                const formIdx = parseInt(totalForms.value);
+                const firstRow = tbody.querySelector('.item-row');
+                if (!firstRow) return;
+
+                const newRow = firstRow.cloneNode(true);
+                
+                // Reset values and update names/ids
+                newRow.querySelectorAll('input, select, textarea').forEach(function(input) {
+                    if (input.name) {
+                        input.name = input.name.replace(/-\d+-/, `-${formIdx}-`);
+                    }
+                    if (input.id) {
+                        input.id = input.id.replace(/-\d+-/, `-${formIdx}-`);
+                    }
+                    if (input.type === 'checkbox' || input.type === 'radio') {
+                        input.checked = false;
+                    } else if (input.type !== 'hidden' || input.name.includes('DELETE')) {
+                        input.value = '';
+                    }
+                });
+
+                // Show row if it was hidden (e.g. marked as deleted)
+                newRow.style.display = '';
+
+                tbody.appendChild(newRow);
+                totalForms.value = formIdx + 1;
+            });
+        }
+
+        // Delete Row Logic
+        document.getElementById('itemsTable').addEventListener('click', function(e) {
+            const btn = e.target.closest('.remove-row');
+            if (btn) {
+                const row = btn.closest('tr');
+                const deleteInput = row.querySelector('input[name$="-DELETE"]');
+                if (deleteInput) {
+                    deleteInput.checked = true;
+                    row.style.display = 'none';
+                } else {
+                    row.remove();
+                    // Optional: update TOTAL_FORMS, but Django handles missing forms if they weren't initial
+                }
+                calculateItemsTotal();
+            }
+        });
+
+        // Initial calculation
+        calculateItemsTotal();
+    });
+</script>
+{% endblock %}
+{% endblock %}

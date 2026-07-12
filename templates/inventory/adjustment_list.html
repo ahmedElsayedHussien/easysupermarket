@@ -2,64 +2,73 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-between align-center mb-4">
-        <h2 class="text-neon-cyan">{{ title }}</h2>
-        <a href="{% url 'inventory:adjustment_create' %}" class="btn btn-neon-cyan">➕ إضافة تسوية جديدة</a>
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-sliders-h text-gold" style="margin-left: 0.5rem;"></i> {{ title }}</h2>
+        <a href="{% url 'inventory:adjustment_create' %}" class="btn-orange">
+            <i class="fas fa-plus"></i> إضافة تسوية جديدة
+        </a>
     </div>
 
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>رقم التسوية</th>
-                <th>النوع</th>
-                <th>المستودع</th>
-                <th>التاريخ</th>
-                <th>السبب</th>
-                <th>الحالة</th>
-                <th>إجراءات</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for adj in adjustments %}
-            <tr>
-                <td>#{{ adj.id }}</td>
-                <td>
-                    {% if adj.adjustment_type == 'OUT' %}
-                        <span class="badge" style="background-color: var(--neon-pink); color: #fff;">إعدام / عجز</span>
-                    {% elif adj.adjustment_type == 'IN' %}
-                        <span class="badge" style="background-color: var(--neon-lime); color: #000;">زيادة بضاعة</span>
-                    {% elif adj.adjustment_type == 'OPENING' %}
-                        <span class="badge" style="background-color: var(--neon-cyan); color: #000;">رصيد افتتاحي</span>
-                    {% endif %}
-                </td>
-                <td>{{ adj.warehouse.name }}</td>
-                <td>{{ adj.date }}</td>
-                <td>{{ adj.reason }}</td>
-                <td>
-                    {% if adj.status == 'DRAFT' %}
-                    <span class="badge" data-fifo-days="30">مسودة</span>
-                    {% else %}
-                    <span class="badge" data-fifo-days="180">مرحل</span>
-                    {% endif %}
-                </td>
-                <td>
-                    {% if adj.status == 'DRAFT' %}
-                    <form method="post" action="{% url 'inventory:adjustment_confirm' adj.pk %}" style="display:inline;">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-sm" style="background-color: #fd7e14; color: #ffffff; border: none; font-weight: bold;" onclick="return confirm('تأكيد ترحيل التسوية وتحديث المخزون؟')">ترحيل واعتماد</button>
-                    </form>
-                    {% else %}
-                    <button class="btn btn-sm btn-ghost" disabled>مكتمل</button>
-                    {% endif %}
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="7" class="text-center">لا توجد تسويات</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم التسوية</th>
+                    <th style="text-align: center;">النوع</th>
+                    <th>المستودع</th>
+                    <th>التاريخ</th>
+                    <th>السبب</th>
+                    <th style="text-align: center;">الحالة</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for adj in adjustments %}
+                <tr>
+                    <td class="en" style="color: #00e5ff; font-weight: bold;">#{{ adj.id }}</td>
+                    <td style="text-align: center;">
+                        {% if adj.adjustment_type == 'OUT' %}
+                            <span class="badge-status badge-danger">إعدام / عجز</span>
+                        {% elif adj.adjustment_type == 'IN' %}
+                            <span class="badge-status badge-success">زيادة بضاعة</span>
+                        {% elif adj.adjustment_type == 'OPENING' %}
+                            <span class="badge-status badge-info">رصيد افتتاحي</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ adj.warehouse.name }}</td>
+                    <td class="en">{{ adj.date|date:"Y-m-d" }}</td>
+                    <td title="{{ adj.reason }}" style="max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ adj.reason }}</td>
+                    <td style="text-align: center;">
+                        {% if adj.status == 'DRAFT' %}
+                        <span class="badge-status badge-warning">مسودة</span>
+                        {% else %}
+                        <span class="badge-status badge-success">مرحل</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if adj.status == 'DRAFT' %}
+                        <form method="post" action="{% url 'inventory:adjustment_confirm' adj.pk %}" style="display:inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn-orange" style="padding: 0.4rem 0.8rem; font-size: var(--font-size-xs);" onclick="return confirm('تأكيد ترحيل التسوية وتحديث المخزون؟')">
+                                <i class="fas fa-check"></i> ترحيل واعتماد
+                            </button>
+                        </form>
+                        {% else %}
+                        <button class="btn-action" style="opacity: 0.5;" disabled><i class="fas fa-check-double"></i> مكتمل</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 2rem; color: #94a3b8;">
+                        <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        لا توجد تسويات
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 {% endblock %}

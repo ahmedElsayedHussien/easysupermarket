@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-file-invoice-dollar text-gold" style="margin-left: 0.5rem;"></i> {{ title }}</h2>
+        <a href="{{ create_url }}" class="btn-orange">
+            <i class="fas fa-plus"></i> إضافة سند
+        </a>
+    </div>
+
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم السند</th>
+                    <th>التاريخ</th>
+                    <th>الشريك</th>
+                    <th>البيان</th>
+                    <th>المبلغ</th>
+                    <th>طريقة الدفع</th>
+                    <th>الحالة</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for voucher in vouchers %}
+                <tr>
+                    <td><strong style="color: #00e5ff;">{{ voucher.voucher_number }}</strong></td>
+                    <td style="color: rgba(255,255,255,0.7);">{{ voucher.date|date:"Y-m-d" }}</td>
+                    <td style="color: #ffc107;">{{ voucher.partner.name|default:"-" }}</td>
+                    <td style="color: rgba(255,255,255,0.7); max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{{ voucher.description|default:'' }}">{{ voucher.description|default:"-" }}</td>
+                    <td style="font-weight: 900; font-size: 1.1rem; color: #fff;">{{ voucher.amount }}</td>
+                    <td>{{ voucher.get_payment_method_display }}</td>
+                    <td>
+                        {% if voucher.status == 'DRAFT' %}
+                            <span class="badge-status badge-warning">مسودة</span>
+                        {% elif voucher.status == 'POSTED' %}
+                            <span class="badge-status badge-success">مرحل</span>
+                        {% else %}
+                            <span class="badge-status badge-danger">ملغي</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'accounting:voucher_detail' voucher.pk %}" class="btn-action" title="عرض التفاصيل">
+                            <i class="fas fa-eye"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" style="text-align: center; padding: 3rem; color: rgba(255,255,255,0.5);">لا توجد سندات حتى الآن.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    {% if is_paginated %}
+    <div class="pagination-container">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}" class="btn-page">&laquo; السابق</a>
+        {% endif %}
+        <span style="color: #ffd700; font-weight: bold;">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}" class="btn-page">التالي &raquo;</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

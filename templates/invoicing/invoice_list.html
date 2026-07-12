@@ -2,69 +2,107 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-between align-center mb-4">
-        <h2 class="text-neon-orange">{{ title }}</h2>
-        {% if list_type == 'purchases' %}
-        <a href="{% url 'invoicing:purchase_invoice' %}" class="btn btn-neon-red">+ فاتورة مشتريات</a>
-        {% elif list_type == 'sales' %}
-        <a href="{% url 'invoicing:pos' %}" class="btn btn-neon-green">+ فاتورة مبيعات (نقطة البيع)</a>
-        {% else %}
-        <!-- No button by default -->
-        {% endif %}
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-file-invoice text-gold" style="margin-left: 0.5rem;"></i> {{ title }}</h2>
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <form method="GET" style="display: flex; gap: 0.5rem; margin: 0;">
+                <input type="text" name="q" value="{{ search_query }}" placeholder="بحث باسم الشريك..." class="form-control" style="background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 0.5rem 1rem;">
+                <button type="submit" class="btn-ghost" style="padding: 0.5rem 1rem;"><i class="fas fa-search"></i> بحث</button>
+            </form>
+            {% if list_type == 'purchases' %}
+            <a href="{% url 'invoicing:purchase_invoice' %}" class="btn-orange">
+                <i class="fas fa-cart-arrow-down"></i> فاتورة مشتريات
+            </a>
+            {% elif list_type == 'sales' %}
+            <a href="{% url 'invoicing:pos' %}" class="btn-orange">
+                <i class="fas fa-cash-register"></i> فاتورة مبيعات (نقطة البيع)
+            </a>
+            {% endif %}
+        </div>
     </div>
 
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>رقم الفاتورة</th>
-                <th>النوع</th>
-                <th>التاريخ</th>
-                <th>الفرع</th>
-                <th>الإجمالي</th>
-                <th>الحالة</th>
-                <th>إجراءات</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for invoice in invoices %}
-            <tr>
-                <td>{{ invoice.invoice_number }}</td>
-                <td>
-                    {% if invoice.invoice_type == 'SALE' %}
-                    <span class="text-neon-green">مبيعات</span>
-                    {% elif invoice.invoice_type == 'PURCHASE' %}
-                    <span class="text-neon-red">مشتريات</span>
-                    {% else %}
-                    {{ invoice.get_invoice_type_display }}
-                    {% endif %}
-                </td>
-                <td>{{ invoice.date }}</td>
-                <td>{{ invoice.branch.name }}</td>
-                <td>{{ invoice.total_amount }} ج.م</td>
-                <td>
-                    {% if invoice.status == 'POSTED' %}
-                    <span class="badge badge-success">مرحلة</span>
-                    {% elif invoice.status == 'DRAFT' %}
-                    <span class="badge badge-draft">مسودة</span>
-                    {% else %}
-                    <span class="badge badge-danger">ملغاة</span>
-                    {% endif %}
-                </td>
-                <td class="table-actions">
-                    <a href="{% url 'invoicing:invoice_detail' invoice.id %}" class="btn btn-sm btn-ghost">عرض</a>
-                    {% if invoice.status == 'DRAFT' %}
-                    <button class="btn btn-sm btn-success" onclick="confirmInvoice({{ invoice.id }})">ترحيل</button>
-                    {% endif %}
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="7" class="text-center">لا توجد فواتير</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم الفاتورة</th>
+                    <th style="text-align: center;">النوع</th>
+                    <th>التاريخ</th>
+                    <th>الشريك</th>
+                    <th>الفرع</th>
+                    <th>الإجمالي</th>
+                    <th style="text-align: center;">الحالة</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for invoice in invoices %}
+                <tr>
+                    <td class="en" style="color: #00e5ff; font-weight: bold;">{{ invoice.invoice_number }}</td>
+                    <td style="text-align: center;">
+                        {% if invoice.invoice_type == 'SALE' %}
+                        <span class="badge-status badge-success">مبيعات</span>
+                        {% elif invoice.invoice_type == 'PURCHASE' %}
+                        <span class="badge-status badge-danger">مشتريات</span>
+                        {% else %}
+                        <span class="badge-status badge-info">{{ invoice.get_invoice_type_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="en">{{ invoice.date|date:"Y-m-d" }}</td>
+                    <td>{{ invoice.partner.name }}</td>
+                    <td>{{ invoice.branch.name }}</td>
+                    <td class="en" style="color: #fbbf24; font-weight: bold;">{{ invoice.total_amount|floatformat:2 }} ج.م</td>
+                    <td style="text-align: center;">
+                        {% if invoice.status == 'POSTED' %}
+                        <span class="badge-status badge-success">مرحلة</span>
+                        {% elif invoice.status == 'DRAFT' %}
+                        <span class="badge-status badge-warning">مسودة</span>
+                        {% else %}
+                        <span class="badge-status badge-danger">ملغاة</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'invoicing:invoice_detail' invoice.id %}" class="btn-action" title="عرض التفاصيل">
+                            <i class="fas fa-eye"></i> عرض
+                        </a>
+                        {% if invoice.status == 'DRAFT' %}
+                        <button class="btn-orange" style="padding: 0.4rem 0.8rem; font-size: var(--font-size-xs);" onclick="confirmInvoice({{ invoice.id }})">
+                            <i class="fas fa-check"></i> ترحيل
+                        </button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 2rem; color: #94a3b8;">
+                        <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        لا توجد فواتير
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if page_obj.has_other_pages %}
+    <div class="pagination" style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
+        {% if page_obj.has_previous %}
+        <a href="?page=1{% if search_query %}&q={{ search_query }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem;">&laquo; الأولى</a>
+        <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem;">السابق</a>
+        {% endif %}
+
+        <span class="btn-ghost" style="padding: 0.4rem 0.8rem; background: rgba(255, 115, 0, 0.2); border-color: var(--neon-orange); color: white;">
+            صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+        </span>
+
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem;">التالي</a>
+        <a href="?page={{ page_obj.paginator.num_pages }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem;">الأخيرة &raquo;</a>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 
 <script>

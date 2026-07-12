@@ -6,6 +6,10 @@
     <div class="d-flex justify-between align-center mb-4">
         <h2 class="text-neon-cyan">المنتجات</h2>
         <div class="d-flex" style="gap: 10px;">
+            <form method="GET" action="{% url 'inventory:product_list' %}" class="d-flex" style="gap: 5px;">
+                <input type="text" name="q" class="form-control bg-dark-glass text-white" placeholder="بحث بالاسم أو الباركود..." value="{{ search_query }}" style="width: 250px;">
+                <button type="submit" class="btn btn-secondary"><i class="fas fa-search"></i></button>
+            </form>
             <a href="{% url 'inventory:uom_create' %}" class="btn btn-neon-purple" style="opacity: 0.8;">+ إضافة وحدة</a>
             <a href="{% url 'inventory:category_create' %}" class="btn btn-neon-purple" style="opacity: 0.8;">+ إضافة قسم</a>
             <a href="{% url 'inventory:product_create' %}" class="btn btn-neon-cyan">+ إضافة منتج</a>
@@ -40,6 +44,9 @@
                     {% endif %}
                 </td>
                 <td class="table-actions">
+                    <button type="button" class="btn btn-sm btn-ghost" onclick="openPrintModal('{{ product.name|escapejs }}', '{{ product.barcode }}', '{{ product.sale_price|floatformat:2 }}')" title="طباعة الباركود">
+                        <i class="fas fa-print" style="color: #0ea5e9;"></i>
+                    </button>
                     <a href="{% url 'inventory:product_update' product.id %}" class="btn btn-sm btn-ghost">تعديل</a>
                 </td>
             </tr>
@@ -51,4 +58,206 @@
         </tbody>
     </table>
 </div>
+
+<!-- Print Barcode Modal -->
+<div id="printBarcodeModal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.6);">
+    <div class="modal-content glass-panel border-neon" style="background-color: var(--surface); margin: 10% auto; padding: 20px; border-radius: 10px; width: 400px; max-width: 90%; color: var(--text);">
+        <div class="d-flex justify-between align-center mb-3">
+            <h4 class="m-0 text-neon-cyan"><i class="fas fa-print me-2"></i> طباعة باركود</h4>
+            <span class="close" onclick="closePrintModal()" style="cursor: pointer; font-size: 1.5rem; color: var(--text-muted);">&times;</span>
+        </div>
+        <div class="form-group mb-3">
+            <label class="mb-1" style="color: var(--text-muted);">المنتج:</label>
+            <div id="printProductName" style="font-weight: bold; color: var(--text);"></div>
+        </div>
+        <div class="form-group mb-3">
+            <label for="printQuantity" class="mb-1" style="color: var(--text-muted);">عدد النسخ:</label>
+            <input type="number" id="printQuantity" class="form-control bg-dark-glass text-white" value="1" min="1" style="border: 1px solid var(--border);">
+        </div>
+        <div class="form-group mb-4">
+            <label for="printSize" class="mb-1" style="color: var(--text-muted);">مقاس الملصق:</label>
+            <select id="printSize" class="form-select bg-dark-glass text-white" style="border: 1px solid var(--border);">
+                <option value="38x25">صغير جداً - الصيدليات (38x25 مم)</option>
+                <option value="50x25">صغير - 2 بوصة (50x25 مم)</option>
+                <option value="75x50">متوسط - 3 بوصة (75x50 مم)</option>
+                <option value="100x50">كبير للمستودعات - 4 بوصة (100x50 مم)</option>
+                <option value="100x150">بوليصة شحن / كبير جداً (100x150 مم)</option>
+            </select>
+        </div>
+        
+        <input type="hidden" id="printBarcodeValue">
+        <input type="hidden" id="printPriceValue">
+        
+        <div class="d-flex justify-content-end" style="gap: 10px;">
+            <button type="button" class="btn btn-secondary" onclick="closePrintModal()">إلغاء</button>
+            <button type="button" class="btn btn-neon-cyan" onclick="executePrint()">
+                <i class="fas fa-print me-1"></i> طباعة الآن
+            </button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script>
+    function openPrintModal(name, barcode, price) {
+        if (!barcode || barcode === 'None' || barcode === '') {
+            alert('هذا المنتج ليس له باركود');
+            return;
+        }
+        document.getElementById('printProductName').innerText = name;
+        document.getElementById('printBarcodeValue').value = barcode;
+        document.getElementById('printPriceValue').value = price;
+        document.getElementById('printQuantity').value = 1;
+        document.getElementById('printBarcodeModal').style.display = 'block';
+    }
+
+    function closePrintModal() {
+        document.getElementById('printBarcodeModal').style.display = 'none';
+    }
+
+    function executePrint() {
+        const name = document.getElementById('printProductName').innerText;
+        const barcode = document.getElementById('printBarcodeValue').value;
+        const price = document.getElementById('printPriceValue').value;
+        const quantity = parseInt(document.getElementById('printQuantity').value) || 1;
+        const size = document.getElementById('printSize').value; // '38x25' or '50x25'
+        
+        const sizeParts = size.split('x');
+        const widthMm = sizeParts[0];
+        const heightMm = sizeParts[1];
+
+        // Generate barcode SVG string using a temporary canvas/svg
+        let svgNode = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        let bcWidth = 2;
+        let bcHeight = 50;
+        let fontSizePx = '11px';
+        let priceFontSizePx = '12px';
+
+        if (widthMm == '38') {
+            bcWidth = 1.3;
+            bcHeight = 30;
+            fontSizePx = '9px';
+            priceFontSizePx = '10px';
+        } else if (widthMm == '75') {
+            bcWidth = 2.5;
+            bcHeight = 70;
+            fontSizePx = '14px';
+            priceFontSizePx = '16px';
+        } else if (widthMm == '100') {
+            bcWidth = 3;
+            bcHeight = parseInt(heightMm) > 50 ? 100 : 60;
+            fontSizePx = '18px';
+            priceFontSizePx = '20px';
+        }
+
+        JsBarcode(svgNode, barcode, {
+            format: "CODE128",
+            width: bcWidth,
+            height: bcHeight,
+            displayValue: true,
+            fontSize: parseInt(fontSizePx) + 2,
+            margin: 0
+        });
+        const svgHtml = svgNode.outerHTML;
+
+        let html = `
+        <!DOCTYPE html>
+        <html dir="rtl">
+        <head>
+            <meta charset="UTF-8">
+            <title>طباعة باركود</title>
+            <style>
+                @page {
+                    size: ${widthMm}mm ${heightMm}mm;
+                    margin: 0;
+                }
+                body {
+                    margin: 0;
+                    padding: 0;
+                    font-family: Arial, sans-serif;
+                    background: #fff;
+                    color: #000;
+                }
+                .label-container {
+                    width: ${widthMm}mm;
+                    height: ${heightMm}mm;
+                    box-sizing: border-box;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 2mm;
+                    overflow: hidden;
+                    page-break-after: always;
+                }
+                .label-container:last-child {
+                    page-break-after: auto;
+                }
+                .product-name {
+                    font-size: ${fontSizePx};
+                    font-weight: bold;
+                    text-align: center;
+                    max-width: 100%;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    margin-bottom: 3px;
+                }
+                .product-price {
+                    font-size: ${priceFontSizePx};
+                    font-weight: bold;
+                    text-align: center;
+                    margin-bottom: 3px;
+                }
+                .barcode-svg {
+                    max-width: 100%;
+                    height: auto;
+                }
+            </style>
+        </head>
+        <body>
+        `;
+
+        for (let i = 0; i < quantity; i++) {
+            html += `
+            <div class="label-container">
+                <div class="product-name">${name}</div>
+                <div class="product-price">${price} ج.م</div>
+                <div class="barcode-svg">${svgHtml}</div>
+            </div>
+            `;
+        }
+
+        html += `
+        </body>
+        </html>
+        `;
+
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(html);
+        printWindow.document.close();
+        
+        // Wait for fonts to load before printing
+        setTimeout(() => {
+            printWindow.focus();
+            printWindow.print();
+            // Automatically close after print dialog
+            setTimeout(() => {
+                printWindow.close();
+                closePrintModal();
+            }, 500);
+        }, 250);
+    }
+
+    // Close modal on outside click
+    window.onclick = function(event) {
+        const modal = document.getElementById('printBarcodeModal');
+        if (event.target == modal) {
+            closePrintModal();
+        }
+    }
+</script>
 {% endblock %}

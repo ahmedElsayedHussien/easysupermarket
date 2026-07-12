@@ -140,6 +140,23 @@
             </div>
         </div>
 
+        <!-- إعدادات النظام -->
+        <div class="settings-widget" style="--widget-color: #f39c12;">
+            <style>.settings-widget[style*="f39c12"]::before { background: linear-gradient(90deg, #f39c12, #e67e22); } .settings-widget[style*="f39c12"] .widget-icon { color: #f39c12; } .settings-widget[style*="f39c12"] .widget-link:hover { border-color: rgba(243, 156, 18, 0.4); color: #f39c12; background: rgba(243, 156, 18, 0.08); box-shadow: 0 0 15px rgba(243, 156, 18, 0.1); } .settings-widget[style*="f39c12"] .widget-link:hover i { color: #f39c12; }</style>
+            <div class="widget-header">
+                <h3 class="widget-title">إعدادات النظام</h3>
+                <i class="fas fa-cogs widget-icon"></i>
+            </div>
+            <div class="widget-links">
+                <a href="{% url 'core:system_settings' %}" class="widget-link">
+                    <div>
+                        <i class="fas fa-sliders-h link-icon"></i> الإعدادات العامة والنظام
+                    </div>
+                    <i class="fas fa-chevron-left"></i>
+                </a>
+            </div>
+        </div>
+
         <!-- إدارة المخزون -->
         <div class="settings-widget" style="--widget-color: #2ed573;">
             <style>.settings-widget[style*="2ed573"]::before { background: linear-gradient(90deg, #2ed573, #10b981); } .settings-widget[style*="2ed573"] .widget-icon { color: #2ed573; } .settings-widget[style*="2ed573"] .widget-link:hover { border-color: rgba(46, 213, 115, 0.4); color: #2ed573; background: rgba(46, 213, 115, 0.08); box-shadow: 0 0 15px rgba(46, 213, 115, 0.1); } .settings-widget[style*="2ed573"] .widget-link:hover i { color: #2ed573; }</style>
@@ -206,12 +223,7 @@
                     </div>
                     <i class="fas fa-chevron-left"></i>
                 </a>
-                <a href="{% url 'accounting:tax_list' %}" class="widget-link">
-                    <div>
-                        <i class="fas fa-percentage link-icon"></i> ضريبة الخصم والإضافة
-                    </div>
-                    <i class="fas fa-chevron-left"></i>
-                </a>
+
                 <a href="{% url 'accounting:payment_method_list' %}" class="widget-link">
                     <div>
                         <i class="fas fa-credit-card link-icon"></i> طرق الدفع

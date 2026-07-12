@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% block title %}ماكينات الدفع الإلكتروني{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin:0;color:#fff;">
+            <i class="fas fa-cash-register text-gold" style="margin-left:0.5rem;"></i>
+            ماكينات الدفع الإلكتروني
+        </h2>
+        <div style="display:flex;gap:0.75rem;">
+            <a href="{% url 'accounting:eservice_center' %}" class="btn-orange">
+                <i class="fas fa-exchange-alt"></i> مركز خدمات الدفع
+            </a>
+            <a href="{% url 'accounting:pos_machine_create' %}" class="btn-orange">
+                <i class="fas fa-plus"></i> إضافة ماكينة
+            </a>
+        </div>
+    </div>
+
+    {% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }}" style="margin:1rem 0;padding:0.75rem 1rem;border-radius:8px;background:rgba(46,213,115,0.1);border:1px solid #2ed573;color:#2ed573;">{{ message }}</div>
+    {% endfor %}
+    {% endif %}
+
+    <!-- Summary Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1rem;margin:1.5rem 0;">
+        {% for machine in machines %}
+        <a href="{% url 'accounting:pos_machine_detail' machine.pk %}" style="text-decoration:none;">
+        <div class="card p-3 text-center" style="border:1px solid rgba(255,115,0,0.3);cursor:pointer;transition:all 0.2s;" onmouseover="this.style.borderColor='#ff7300'" onmouseout="this.style.borderColor='rgba(255,115,0,0.3)'">
+            <div style="font-size:2.2rem;margin-bottom:0.5rem;">
+                {% if machine.machine_type == 'FAWRY' %}💙
+                {% elif machine.machine_type == 'AMAN' %}🟢
+                {% elif machine.machine_type == 'BANK_VISA' %}💳
+                {% elif machine.machine_type == 'INSTAPAY' %}📱
+                {% else %}⚙️{% endif %}
+            </div>
+            <h4 style="color:#ff7300;margin-bottom:0.25rem;font-size:0.95rem;">{{ machine.name }}</h4>
+            <small style="color:#94a3b8;font-size:0.75rem;">{{ machine.get_machine_type_display }} | {{ machine.branch.name }}</small>
+            <div style="margin-top:0.75rem;font-size:1.4rem;font-weight:900;color:#2ed573;">
+                {{ machine.current_balance|floatformat:2 }} ج.م
+            </div>
+            <small style="color:#64748b;font-size:0.7rem;">الرصيد الحالي</small>
+        </div>
+        </a>
+        {% empty %}
+        <div style="grid-column:1/-1;text-align:center;padding:3rem;color:#94a3b8;">
+            <i class="fas fa-cash-register fa-3x" style="opacity:0.3;display:block;margin-bottom:1rem;"></i>
+            لا توجد ماكينات مسجلة بعد. <a href="{% url 'accounting:pos_machine_create' %}" style="color:#ff7300;">أضف ماكينة الآن</a>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if machines %}
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>اسم الماكينة</th>
+                    <th>النوع</th>
+                    <th>الفرع</th>
+                    <th>الحساب المحاسبي</th>
+                    <th>الرصيد الحالي</th>
+                    <th>الحالة</th>
+                    <th style="text-align:center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for machine in machines %}
+                <tr>
+                    <td style="font-weight:bold;color:#ff7300;">{{ machine.name }}</td>
+                    <td>{{ machine.get_machine_type_display }}</td>
+                    <td>{{ machine.branch.name }}</td>
+                    <td style="color:#00e5ff;font-family:monospace;">{{ machine.account.code|default:"—" }}</td>
+                    <td style="color:#2ed573;font-weight:bold;">{{ machine.current_balance|floatformat:2 }} ج.م</td>
+                    <td>
+                        {% if machine.is_active %}
+                        <span class="badge-status badge-success">نشطة</span>
+                        {% else %}
+                        <span class="badge-status badge-danger">معطلة</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align:center;">
+                        <a href="{% url 'accounting:pos_machine_detail' machine.pk %}" class="btn-action">
+                            <i class="fas fa-eye"></i> تفاصيل
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

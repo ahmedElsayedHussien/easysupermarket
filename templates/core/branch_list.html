@@ -2,31 +2,36 @@
 {% block title %}الفروع{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-between align-center mb-4">
-        <h2 class="text-neon-lime">فروع الشركة</h2>
-        <button class="btn btn-neon-lime">+ إضافة فرع</button>
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-code-branch text-gold" style="margin-left: 0.5rem;"></i> فروع الشركة</h2>
+        <button class="btn-orange">
+            <i class="fas fa-plus"></i> إضافة فرع
+        </button>
     </div>
 
     <div class="module-grid module-grid-3">
         {% for branch in branches %}
-        <div class="card p-3">
-            <h3 class="text-neon-lime">{{ branch.name }}</h3>
+        <div class="card p-3" style="background: rgba(13, 20, 36, 0.6); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px;">
+            <h3 style="color: #00e5ff; font-weight: bold; margin-bottom: 0.5rem;">{{ branch.name }}</h3>
             <p class="text-muted mb-2">كود: {{ branch.code }}</p>
             <p class="text-secondary">{{ branch.address }}</p>
             <p class="text-secondary">{{ branch.phone }}</p>
-            <hr class="divider">
+            <hr class="divider" style="border-color: rgba(255,255,255,0.05);">
             <div class="d-flex justify-between align-center mt-2">
                 {% if branch.is_active %}
-                <span class="badge badge-success">نشط</span>
+                <span class="badge-status badge-success">نشط</span>
                 {% else %}
-                <span class="badge badge-danger">غير نشط</span>
+                <span class="badge-status badge-danger">غير نشط</span>
                 {% endif %}
-                <button class="btn btn-sm btn-ghost">إدارة الفرع</button>
+                <button class="btn-action"><i class="fas fa-cog"></i> إدارة الفرع</button>
             </div>
         </div>
         {% empty %}
-        <p class="text-center">لا توجد فروع مضافة</p>
+        <div style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: #94a3b8;">
+            <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
+            لا توجد فروع مضافة
+        </div>
         {% endfor %}
     </div>
 </div>

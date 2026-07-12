@@ -3,12 +3,13 @@
 
 {% block content %}
 <div class="container-fluid">
-    <div class="d-flex justify-between align-center mb-4">
-        <h2 class="text-neon-cyan">تتبع المخزون (FIFO)</h2>
-        <div>
-            <a href="{% url 'inventory:transfer_stock' %}" class="btn btn-neon-cyan">🔄 تحويل مخزني</a>
-            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-neon-cyan" style="margin-right: 8px;">تسوية وإعدام</a>
-            <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost" style="margin-right: 8px;">المنتجات</a>
+    <div class="d-flex flex-column flex-md-row justify-between align-md-center mb-4 gap-3">
+        <h2 class="text-neon-cyan mb-0 text-center" style="text-align: right;">تتبع المخزون (FIFO)</h2>
+        <div class="d-flex flex-wrap gap-2" style="justify-content: center;">
+            <a href="{% url 'inventory:transfer_stock' %}" class="btn btn-neon-cyan" style="flex: 1 1 calc(50% - 0.5rem); text-align: center; white-space: nowrap;">🔄 تحويل مخزني</a>
+            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-neon-cyan" style="flex: 1 1 calc(50% - 0.5rem); text-align: center; white-space: nowrap;">تسوية وإعدام</a>
+            <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost" style="flex: 1 1 calc(50% - 0.5rem); text-align: center; white-space: nowrap;">المنتجات</a>
+            <a href="{% url 'inventory:warehouse_list' %}" class="btn btn-ghost" style="flex: 1 1 calc(50% - 0.5rem); text-align: center; white-space: nowrap;">المستودعات</a>
         </div>
     </div>
 
@@ -24,7 +25,8 @@
         </div>
     </div>
 
-    <table class="data-table">
+    <div style="overflow-x: auto;">
+        <table class="data-table" style="min-width: 800px;">
         <thead>
             <tr>
                 <th>المنتج</th>
@@ -58,6 +60,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 
 <script>

@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+.data-card {
+    background: rgba(13, 20, 36, 0.8);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.05);
+    height: 100%;
+}
+.data-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.data-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+    border-bottom: 1px dashed rgba(255,255,255,0.1);
+    padding-bottom: 0.5rem;
+}
+.data-item:last-child {
+    margin-bottom: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+.data-label {
+    color: rgba(255,255,255,0.7);
+}
+.data-value {
+    font-weight: 700;
+    color: #ffffff;
+    text-align: left;
+}
+.btn-orange {
+    background-color: #ff7300 !important;
+    border-color: #ff7300 !important;
+    color: white !important;
+    font-weight: bold;
+    box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);
+    padding: 0.6rem 1.5rem;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    text-decoration: none;
+    cursor: pointer;
+    border: none;
+    font-family: var(--font-arabic);
+}
+.btn-orange:hover {
+    background-color: #e66a00 !important;
+    box-shadow: 0 6px 20px rgba(255, 115, 0, 0.6);
+}
+.btn-outline-light {
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    padding: 0.6rem 1.5rem;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-decoration: none;
+}
+.btn-outline-light:hover {
+    background: rgba(255,255,255,0.1);
+}
+.top-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+.badge-status {
+    padding: 0.4rem 1rem;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    font-weight: bold;
+}
+.badge-warning { background: #ffc107; color: #000; }
+.badge-success { background: #198754; color: #fff; }
+.badge-danger { background: #dc3545; color: #fff; }
+
+.custom-grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+@media (max-width: 992px) {
+    .custom-grid-3 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 768px) {
+    .custom-grid-3 { grid-template-columns: 1fr; }
+    .top-header { flex-direction: column; }
+}
+.journal-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: rgba(13, 20, 36, 0.9);
+    border-radius: 12px;
+    overflow: hidden;
+}
+.journal-table th {
+    background: rgba(15, 23, 42, 1);
+    color: #fff;
+    padding: 1rem;
+    text-align: center;
+    border-bottom: 2px solid rgba(255,255,255,0.1);
+}
+.journal-table td {
+    padding: 1rem;
+    text-align: center;
+    color: #fff;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <!-- Header Section -->
+    <div class="top-header">
+        <div>
+            <h2 style="margin-bottom: 0.5rem; color: #fff;"><i class="fas fa-file-invoice-dollar text-gold" style="margin-left: 0.5rem;"></i>{{ title }}</h2>
+            <div style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+                <span style="color: rgba(255,255,255,0.7); font-size: 1.1rem;">رقم السند: <strong style="color: #00e5ff;">{{ voucher.voucher_number }}</strong></span>
+                
+                {% if voucher.status == 'DRAFT' %}
+                    <span class="badge-status badge-warning"><i class="fas fa-edit" style="margin-left: 0.3rem;"></i> مسودة</span>
+                {% elif voucher.status == 'POSTED' %}
+                    <span class="badge-status badge-success"><i class="fas fa-check" style="margin-left: 0.3rem;"></i> مرحل</span>
+                {% else %}
+                    <span class="badge-status badge-danger"><i class="fas fa-times" style="margin-left: 0.3rem;"></i> ملغي</span>
+                {% endif %}
+            </div>
+        </div>
+        <div style="background: rgba(255, 215, 0, 0.1); border: 1px solid rgba(255, 215, 0, 0.3); padding: 1rem 2rem; border-radius: 12px; text-align: center;">
+            <p style="color: rgba(255,255,255,0.7); margin-bottom: 0.3rem;">قيمة السند</p>
+            <h3 style="color: #ffd700; margin: 0; font-weight: 900; font-size: 1.8rem;">{{ voucher.amount }} <span style="font-size: 1rem;">ج.م</span></h3>
+        </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div style="display: flex; gap: 1rem; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1);">
+        <a href="{{ list_url }}" class="btn-outline-light">
+            <i class="fas fa-arrow-right"></i> عودة للقائمة
+        </a>
+        {% if voucher.status == 'DRAFT' %}
+        <form action="{% url 'accounting:voucher_confirm' voucher.pk %}" method="post" style="margin: 0;">
+            {% csrf_token %}
+            <button type="submit" class="btn-orange" onclick="return confirm('هل أنت متأكد من ترحيل السند واعتماده؟ لا يمكن التراجع بعد الترحيل.');">
+                <i class="fas fa-check-circle"></i> اعتماد وترحيل السند
+            </button>
+        </form>
+        {% endif %}
+    </div>
+
+    <!-- Information Cards Grid -->
+    <div class="custom-grid-3">
+        <!-- بيانات السند -->
+        <div class="data-card">
+            <h5 style="color: #ffd700; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">
+                <i class="fas fa-info-circle" style="margin-left: 0.5rem;"></i> بيانات أساسية
+            </h5>
+            <ul class="data-list">
+                <li class="data-item">
+                    <span class="data-label">النوع</span>
+                    <span class="data-value">{{ voucher.get_voucher_type_display }}</span>
+                </li>
+                <li class="data-item">
+                    <span class="data-label">التاريخ</span>
+                    <span class="data-value">{{ voucher.date|date:"Y-m-d" }}</span>
+                </li>
+            </ul>
+        </div>
+
+        <!-- تفاصيل الدفع -->
+        <div class="data-card">
+            <h5 style="color: #ffd700; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">
+                <i class="fas fa-wallet" style="margin-left: 0.5rem;"></i> تفاصيل الدفع
+            </h5>
+            <ul class="data-list">
+                <li class="data-item">
+                    <span class="data-label">طريقة الدفع</span>
+                    <span class="data-value">{{ voucher.get_payment_method_display }}</span>
+                </li>
+                <li class="data-item">
+                    <span class="data-label">المصدر/الوجهة</span>
+                    <span class="data-value" style="color: #00e5ff;">
+                        {% if voucher.payment_method == 'CASH' %}
+                            {{ voucher.treasury.name|default:"-" }}
+                        {% elif voucher.payment_method == 'BANK_TRANSFER' %}
+                            {{ voucher.bank_account.name|default:"-" }}
+                        {% elif voucher.payment_method == 'EWALLET' %}
+                            {{ voucher.ewallet.name|default:"-" }}
+                        {% endif %}
+                    </span>
+                </li>
+            </ul>
+        </div>
+
+        <!-- الطرف المقابل -->
+        <div class="data-card">
+            <h5 style="color: #ffd700; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">
+                <i class="fas fa-user-tie" style="margin-left: 0.5rem;"></i> الطرف المقابل
+            </h5>
+            <ul class="data-list">
+                <li class="data-item">
+                    <span class="data-label">الشريك</span>
+                    <span class="data-value" style="color: #ffc107;">{{ voucher.partner.name|default:"بدون شريك" }}</span>
+                </li>
+                <li class="data-item" style="align-items: flex-start;">
+                    <span class="data-label">الحساب المحاسبي</span>
+                    <div style="text-align: left;">
+                        <span class="data-value" style="display: block;">{{ voucher.account.name }}</span>
+                        <span style="font-size: 0.9rem; color: rgba(255,255,255,0.5);">({{ voucher.account.code }})</span>
+                    </div>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- البيان -->
+    {% if voucher.description %}
+    <div class="data-card" style="margin-bottom: 2rem; border-right: 4px solid #ffd700 !important;">
+        <h5 style="color: #ffd700; margin-bottom: 1rem;"><i class="fas fa-align-right" style="margin-left: 0.5rem;"></i> البيان (الملاحظات)</h5>
+        <p style="margin: 0; color: #fff; font-size: 1.1rem; line-height: 1.6;">{{ voucher.description }}</p>
+    </div>
+    {% endif %}
+
+    <!-- القيد المحاسبي -->
+    {% if voucher.journal_entry %}
+    <div style="margin-top: 3rem; padding-top: 2rem; border-top: 1px solid rgba(255,255,255,0.1);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h4 style="color: #fff; margin: 0;"><i class="fas fa-book" style="color: #00e5ff; margin-left: 0.5rem;"></i> القيد المحاسبي المربوط</h4>
+            <a href="{% url 'accounting:journal_detail' voucher.journal_entry.pk %}" style="color: #00e5ff; text-decoration: none; border: 1px solid #00e5ff; padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.9rem;">
+                عرض القيد بالكامل <i class="fas fa-external-link-alt" style="margin-right: 0.3rem;"></i>
+            </a>
+        </div>
+        
+        <table class="journal-table">
+            <thead>
+                <tr>
+                    <th>رقم القيد</th>
+                    <th>التاريخ</th>
+                    <th style="text-align: right; padding-right: 2rem;">البيان</th>
+                    <th style="color: #20c997;">إجمالي المدين</th>
+                    <th style="color: #dc3545;">إجمالي الدائن</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="font-weight: bold;">{{ voucher.journal_entry.reference }}</td>
+                    <td>{{ voucher.journal_entry.date }}</td>
+                    <td style="text-align: right; padding-right: 2rem; color: rgba(255,255,255,0.7);">{{ voucher.journal_entry.description }}</td>
+                    <td style="color: #20c997; font-weight: bold; font-size: 1.1rem;">{{ voucher.journal_entry.get_total_debit }}</td>
+                    <td style="color: #dc3545; font-weight: bold; font-size: 1.1rem;">{{ voucher.journal_entry.get_total_credit }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}

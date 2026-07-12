@@ -5,8 +5,8 @@
 
 {% block extra_css %}
 <style>
-.admin-dash { display: flex; flex-direction: column; gap: 1.25rem; }
-.dash-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-default); margin-bottom: 1.25rem; }
+.admin-dash { display: flex; flex-direction: column; gap: 1.25rem; max-width: 100%; overflow-x: hidden; }
+.dash-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border-default); margin-bottom: 1.25rem; overflow-x: auto; white-space: nowrap; padding-bottom: 0.5rem; max-width: 100vw; -webkit-overflow-scrolling: touch; }
 .dash-tab {
     padding: 0.6rem 1.1rem; font-size: 0.78rem; font-weight: 600; cursor: pointer;
     border-bottom: 2px solid transparent; color: var(--text-muted); background: none; border-top: none; border-left: none; border-right: none;
@@ -14,9 +14,14 @@
 }
 .dash-tab:hover { color: var(--text-secondary); }
 .dash-tab.active { color: var(--neon-cyan); border-bottom-color: var(--neon-cyan); }
-.chart-card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 1rem; }
+.dash-card-1 { grid-column: span 1; }
+.dash-card-2 { grid-column: span 2; }
+@media (max-width: 992px) {
+    .dash-card-1, .dash-card-2 { grid-column: 1 / -1 !important; }
+}
+.chart-card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 1rem; min-width: 0; max-width: 100%; }
 .chart-card-title { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.75rem; font-family: var(--font-english); }
-.chart-card canvas { max-height: 180px; }
+.chart-card canvas { max-height: 180px; width: 100% !important; }
 .big-stat { text-align:center; padding: 0.75rem; }
 .big-stat .num { font-family: var(--font-english); font-size: 2.5rem; font-weight: 800; }
 .big-stat .lbl { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; }
@@ -38,19 +43,21 @@
     <div class="dash-tabs">
         <button class="dash-tab" onclick="location.href='{% url 'core:branch_list' %}'">🏪 الفروع</button>
         <button class="dash-tab">🏭 المخازن</button>
-        <button class="dash-tab">👥 المستخدمون والصلاحيات</button>
+        <a href="{% url 'core:user_list' %}" style="text-decoration: none;">
+            <button class="dash-tab">👥 المستخدمون والصلاحيات</button>
+        </a>
         <button class="dash-tab" onclick="location.href='{% url 'partners:supplier_list' %}'">🚚 الموردون</button>
-        <button class="dash-tab">⚙ إعدادات النظام</button>
+        <button class="dash-tab" onclick="location.href='{% url 'core:system_settings' %}'">⚙ إعدادات النظام</button>
         <button class="dash-tab active">📈 لوحة المدير</button>
     </div>
 
     <!-- Page Header -->
-    <div class="page-header">
+    <div class="page-header" style="flex-wrap: wrap; gap: 1rem;">
         <div>
             <h1 class="page-title" style="color:var(--neon-cyan);">📈 لوحة تحكم المدير</h1>
             <p class="page-subtitle">نظرة شاملة على أداء الشبكة — Admin Analytics Dashboard</p>
         </div>
-        <div class="d-flex gap-3">
+        <div class="d-flex gap-2" style="flex-wrap: wrap;">
             <button class="btn btn-ghost btn-sm" onclick="exportTableToCSV('branchTable','branches.csv')">📥 تصدير CSV</button>
             <button class="btn btn-neon-cyan btn-sm" onclick="location.reload()">🔄 تحديث</button>
         </div>
@@ -126,7 +133,7 @@
     <div class="grid-3">
 
         <!-- Active Users Table -->
-        <div class="card" style="grid-column:1/2;">
+        <div class="card dash-card-1">
             <div class="card-header">
                 <span class="card-header-title">👥 المستخدمون النشطون</span>
                 <span class="badge badge-success">{{ active_users|default:"5" }} متصل</span>
@@ -163,7 +170,7 @@
         </div>
 
         <!-- FIFO Stock Valuation -->
-        <div class="card" style="grid-column:2/4;">
+        <div class="card dash-card-2">
             <div class="card-header">
                 <span class="card-header-title">📦 تقييم المخزون FIFO</span>
                 <div class="d-flex gap-2">
@@ -263,43 +270,43 @@
             </div>
         </div>
 
-        <!-- FIFO Inventory Alerts -->
-        <div class="card">
+        <!-- Low Stock Alerts -->
+        <div class="card dash-card-1">
             <div class="card-header">
-                <span class="card-header-title">⚠ تنبيهات المخزون FIFO</span>
-                <span class="badge badge-danger">{{ expiry_alerts_count|default:"0" }} تنبيه</span>
+                <span class="card-header-title">⚠ نواقص المخزون</span>
+                <span class="badge badge-danger">{{ alerts_count|default:"0" }} تنبيه</span>
             </div>
             <div class="table-container" style="border:none;">
                 <table class="data-table" style="font-size:0.75rem;">
                     <thead>
                         <tr>
                             <th>المنتج</th>
-                            <th>المخزن</th>
-                            <th>الكمية</th>
-                            <th>انتهاء الصلاحية</th>
-                            <th>حالة FIFO</th>
+                            <th>الفئة</th>
+                            <th class="en">الكمية المتاحة</th>
+                            <th class="en">الحد الأدنى</th>
+                            <th>الحالة</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for alert in fifo_alerts %}
+                        {% for alert in stock_alerts %}
                         <tr>
                             <td>
                                 <div style="font-weight:600;color:var(--text-primary);">{{ alert.product.name }}</div>
-                                <div style="font-size:0.65rem;color:var(--text-muted);">{{ alert.lot_number|default:"دفعة #" }}{{ alert.id }}</div>
+                                <div style="font-size:0.65rem;color:var(--text-muted);font-family:var(--font-english);">{{ alert.product.barcode }}</div>
                             </td>
-                            <td>{{ alert.warehouse.name|default:"-" }}</td>
-                            <td class="en">{{ alert.quantity }}</td>
-                            <td class="en" data-expiry-date="{{ alert.expiry_date|date:'Y-m-d' }}">
-                                {{ alert.expiry_date|date:"d/m/Y"|default:"N/A" }}
-                            </td>
+                            <td>{{ alert.product.category.name|default:"-" }}</td>
+                            <td class="en" style="color:var(--neon-red);font-weight:700;">{{ alert.stock|floatformat:2 }}</td>
+                            <td class="en">{{ alert.min_stock|floatformat:2 }}</td>
                             <td>
-                                <span class="badge fifo-badge-{{ alert.fifo_status|default:'warning' }}">
-                                    {{ alert.days_remaining|default:"?" }} يوم
-                                </span>
+                                {% if alert.stock <= 0 %}
+                                    <span class="badge badge-danger">نفذ من المخزون</span>
+                                {% else %}
+                                    <span class="badge badge-warning">أقل من الحد</span>
+                                {% endif %}
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="5" style="text-align:center;color:var(--neon-green);padding:1rem;">✓ لا توجد تنبيهات</td></tr>
+                        <tr><td colspan="5" style="text-align:center;color:var(--neon-green);padding:1rem;">✓ لا توجد نواقص في المخزون</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

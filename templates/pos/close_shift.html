@@ -1,0 +1,149 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="d-flex justify-content-center align-items-center" style="min-height: 80vh; padding: 20px 0;">
+    <div class="glass-container" style="max-width: 800px; width: 100%; padding: 2.5rem; border-top: 3px solid var(--neon-orange);">
+        <div class="text-center mb-4">
+            <h2 class="text-white fw-bold mb-2">
+                <i class="fas fa-lock" style="color: var(--neon-orange); text-shadow: 0 0 10px var(--neon-orange-glow);"></i> 
+                إغلاق الوردية وجرد الدرج
+            </h2>
+            <p style="color: var(--text-secondary);">الرجاء إدخال النقدية الفعلية الموجودة في الدرج لإنهاء ورديتك بأمان</p>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-6 mb-3 mb-md-0">
+                <div class="p-3 rounded" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-default);">
+                    <span class="d-block mb-1" style="color: var(--text-secondary); font-size: 0.9rem;">الرصيد الافتتاحي</span>
+                    <span class="fs-4 fw-bold text-white">{{ session.opening_balance|floatformat:2 }} ج.م</span>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="p-3 rounded" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-default);">
+                    <span class="d-block mb-1" style="color: var(--text-secondary); font-size: 0.9rem;">الخزينة المربوطة</span>
+                    <span class="fs-4 fw-bold" style="color: var(--neon-blue); text-shadow: 0 0 5px var(--neon-blue-glow);">{{ session.treasury.name }}</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-md-6 mb-3 mb-md-0">
+                <div class="p-3 rounded" style="background: rgba(46, 213, 115, 0.1); border: 1px solid rgba(46, 213, 115, 0.3);">
+                    <span class="d-block mb-1" style="color: var(--status-success); font-size: 0.9rem;">المبيعات النقدية</span>
+                    <span class="fs-4 fw-bold" style="color: var(--status-success);">+ {{ total_cash_sales|floatformat:2 }} ج.م</span>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="p-3 rounded" style="background: rgba(255, 71, 87, 0.1); border: 1px solid rgba(255, 71, 87, 0.3);">
+                    <span class="d-block mb-1" style="color: var(--status-danger); font-size: 0.9rem;">المرتجعات النقدية</span>
+                    <span class="fs-4 fw-bold" style="color: var(--status-danger);">- {{ total_cash_refunds|floatformat:2 }} ج.م</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-6 col-md-3 mb-3 mb-md-0">
+                <div class="p-3 rounded text-center" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-default);">
+                    <i class="fas fa-credit-card mb-2 fs-4" style="color: var(--neon-cyan); text-shadow: 0 0 5px var(--neon-cyan-glow);"></i>
+                    <span class="d-block" style="color: var(--text-secondary); font-size: 0.8rem;">فيزا (بطاقة)</span>
+                    <strong class="text-white fs-6 mt-1 d-block">{{ total_card_sales|floatformat:2 }}</strong>
+                </div>
+            </div>
+            <div class="col-6 col-md-3 mb-3 mb-md-0">
+                <div class="p-3 rounded text-center" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-default);">
+                    <i class="fas fa-wallet mb-2 fs-4" style="color: var(--neon-gold); text-shadow: 0 0 5px var(--neon-gold-glow);"></i>
+                    <span class="d-block" style="color: var(--text-secondary); font-size: 0.8rem;">محافظ إلكترونية</span>
+                    <strong class="text-white fs-6 mt-1 d-block">{{ total_ewallet_sales|floatformat:2 }}</strong>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="p-3 rounded text-center" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-default);">
+                    <i class="fas fa-university mb-2 fs-4" style="color: var(--neon-purple); text-shadow: 0 0 5px var(--neon-purple-glow);"></i>
+                    <span class="d-block" style="color: var(--text-secondary); font-size: 0.8rem;">تحويل بنكي</span>
+                    <strong class="text-white fs-6 mt-1 d-block">{{ total_bank_sales|floatformat:2 }}</strong>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="p-3 rounded text-center" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-default);">
+                    <i class="fas fa-hand-holding-usd mb-2 fs-4" style="color: var(--status-warning); text-shadow: 0 0 5px rgba(251, 191, 36, 0.5);"></i>
+                    <span class="d-block" style="color: var(--text-secondary); font-size: 0.8rem;">مبيعات آجلة</span>
+                    <strong class="text-white fs-6 mt-1 d-block">{{ total_credit_sales|floatformat:2 }}</strong>
+                </div>
+            </div>
+        </div>
+        
+        <div class="p-4 rounded text-center mb-5" style="background: rgba(251, 191, 36, 0.1); border: 1px solid var(--neon-gold);">
+            <span class="d-block mb-2 fw-bold" style="color: var(--neon-gold); font-size: 1.1rem; text-shadow: 0 0 5px var(--neon-gold-glow);">النقدية المتوقعة في الدرج (النظام)</span>
+            <h1 class="m-0 fw-bold" id="expectedBalance" data-val="{{ expected_balance }}" style="color: var(--neon-gold); font-size: 2.5rem; text-shadow: 0 0 10px var(--neon-gold-glow);">{{ expected_balance|floatformat:2 }} ج.م</h1>
+        </div>
+
+        <form method="post" class="needs-validation" novalidate id="closeShiftForm">
+            {% csrf_token %}
+            <div class="mb-4">
+                <label class="form-label text-white fw-bold" for="actual_balance">النقدية الفعلية (بعد الجرد) <span class="text-danger">*</span></label>
+                <div class="input-group input-group-lg">
+                    <input type="number" step="0.01" min="0" class="form-control text-center fw-bold fs-3" id="actual_balance" name="actual_balance" value="0.00" required dir="ltr" style="background-color: var(--bg-input); color: var(--neon-orange); border: 2px solid var(--neon-orange); padding: 15px; box-shadow: 0 0 20px rgba(255, 140, 66, 0.2) inset;">
+                    <span class="input-group-text fw-bold" style="background-color: rgba(255, 140, 66, 0.2); color: var(--neon-orange); border: 2px solid var(--neon-orange); padding: 0 20px;">ج.م</span>
+                </div>
+            </div>
+
+            <div class="alert d-none text-center rounded p-3 mb-4" id="diffAlert" style="border-width: 2px;">
+                <h5 class="m-0 fw-bold" id="diffText"></h5>
+            </div>
+
+            <div class="d-grid mt-4">
+                <button type="submit" class="btn btn-orange btn-lg fw-bold" style="padding: 15px; border-radius: 8px; font-size: 1.2rem; box-shadow: 0 0 15px var(--neon-orange-glow);">
+                    <i class="fas fa-check-circle me-2"></i> تأكيد الجرد وإغلاق الوردية
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const actualInput = document.getElementById('actual_balance');
+        const expectedVal = parseFloat(document.getElementById('expectedBalance').getAttribute('data-val'));
+        const diffAlert = document.getElementById('diffAlert');
+        const diffText = document.getElementById('diffText');
+        
+        function updateDiff() {
+            let actualVal = parseFloat(actualInput.value) || 0;
+            let diff = actualVal - expectedVal;
+            
+            // Reset styles
+            diffAlert.classList.remove('d-none');
+            diffAlert.style.backgroundColor = 'transparent';
+            diffAlert.style.borderColor = 'transparent';
+            diffAlert.style.color = 'var(--text-primary)';
+            
+            if (diff < 0) {
+                diffAlert.style.backgroundColor = 'rgba(255, 71, 87, 0.1)';
+                diffAlert.style.borderColor = 'var(--status-danger)';
+                diffAlert.style.color = 'var(--status-danger)';
+                diffText.innerHTML = `يوجد عجز بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong>`;
+            } else if (diff > 0) {
+                diffAlert.style.backgroundColor = 'rgba(46, 213, 115, 0.1)';
+                diffAlert.style.borderColor = 'var(--status-success)';
+                diffAlert.style.color = 'var(--status-success)';
+                diffText.innerHTML = `يوجد زيادة بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong>`;
+            } else {
+                diffAlert.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                diffAlert.style.borderColor = 'var(--border-default)';
+                diffAlert.style.color = 'var(--text-secondary)';
+                diffText.innerHTML = `<span style="color:var(--status-success);"><i class="fas fa-check-circle me-2"></i> الخزينة مطابقة تماماً، عمل ممتاز!</span>`;
+            }
+        }
+        
+        actualInput.addEventListener('input', updateDiff);
+        updateDiff();
+        
+        document.getElementById('closeShiftForm').addEventListener('submit', function(e) {
+            if (!confirm('هل أنت متأكد من النقدية الفعلية؟ لا يمكن التراجع عن إغلاق الوردية.')) {
+                e.preventDefault();
+            }
+        });
+    });
+</script>
+{% endblock %}

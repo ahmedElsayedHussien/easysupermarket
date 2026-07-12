@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-money-bill-wave text-gold" style="margin-left: 0.5rem;"></i> المصروفات</h2>
+        <a href="{% url 'accounting:expense_create' %}" class="btn-orange">
+            <i class="fas fa-plus"></i> إضافة مصروف
+        </a>
+    </div>
+
+    <!-- Filters -->
+    <div style="background: rgba(13, 20, 36, 0.6); padding: 1.5rem; border-radius: 12px; margin-bottom: 2rem; border: 1px solid rgba(255,255,255,0.05);">
+        <form method="GET" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+            <div style="flex-grow: 1; min-width: 200px;">
+                <label style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">تاريخ من</label>
+                <input type="date" name="start_date" value="{{ request.GET.start_date }}" style="width: 100%; padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+            </div>
+            <div style="flex-grow: 1; min-width: 200px;">
+                <label style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">تاريخ إلى</label>
+                <input type="date" name="end_date" value="{{ request.GET.end_date }}" style="width: 100%; padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+            </div>
+            <div style="flex-grow: 1; min-width: 200px;">
+                <label style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">بحث برقم أو بيان</label>
+                <input type="text" name="search_query" value="{{ request.GET.search_query }}" placeholder="بحث..." style="width: 100%; padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+            </div>
+            <div style="flex-grow: 1; min-width: 150px;">
+                <label style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">الحالة</label>
+                <select name="status" style="width: 100%; padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+                    <option value="">الكل</option>
+                    <option value="DRAFT" {% if request.GET.status == 'DRAFT' %}selected{% endif %}>مسودة</option>
+                    <option value="POSTED" {% if request.GET.status == 'POSTED' %}selected{% endif %}>مرحل</option>
+                    <option value="CANCELLED" {% if request.GET.status == 'CANCELLED' %}selected{% endif %}>ملغى</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 0.5rem;">
+                <button type="submit" class="btn-action" style="padding: 0.8rem 1.5rem; background: rgba(0, 229, 255, 0.2); color: #fff !important; font-weight: bold; cursor: pointer;">
+                    <i class="fas fa-search"></i> بحث
+                </button>
+                <a href="?" class="btn-action" style="padding: 0.8rem 1.5rem; color: #fff !important;">إلغاء الفلتر</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Data Table -->
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>الرقم</th>
+                    <th>التاريخ</th>
+                    <th>حساب المصروف</th>
+                    <th>المبلغ الإجمالي</th>
+                    <th>البيان</th>
+                    <th style="text-align: center;">الحالة</th>
+                    <th>الفرع</th>
+                    <th style="text-align: center;">الإجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for expense in expenses %}
+                <tr>
+                    <td class="en" style="color: #00e5ff; font-weight: bold;">{{ expense.expense_number }}</td>
+                    <td class="en">{{ expense.date|date:"Y-m-d" }}</td>
+                    <td>{{ expense.expense_account.name }}</td>
+                    <td class="en" style="color: #2ed573; font-weight: bold;">{{ expense.total_amount }}</td>
+                    <td title="{{ expense.description }}" style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ expense.description }}</td>
+                    <td style="text-align: center;">
+                        {% if expense.status == 'DRAFT' %}
+                            <span class="badge-status badge-warning">مسودة</span>
+                        {% elif expense.status == 'POSTED' %}
+                            <span class="badge-status badge-success">مرحل</span>
+                        {% else %}
+                            <span class="badge-status badge-danger">ملغى</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ expense.branch.name }}</td>
+                    <td style="text-align: center; display: flex; justify-content: center; gap: 0.5rem;">
+                        <a href="{% url 'accounting:expense_detail' expense.id %}" class="btn-action" title="عرض التفاصيل">
+                            <i class="fas fa-eye"></i>
+                        </a>
+                        {% if expense.status == 'DRAFT' %}
+                        <form action="{% url 'accounting:expense_delete' expense.id %}" method="POST" style="display: inline;" onsubmit="return confirm('هل أنت متأكد من حذف هذا المصروف؟');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn-action" title="حذف" style="color: #ff4757; border-color: rgba(255, 71, 87, 0.2); background: rgba(255, 71, 87, 0.1);">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" style="text-align: center; padding: 2rem; color: #94a3b8;">
+                        <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        لا توجد مصروفات مسجلة.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination-container" style="display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 2rem;">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}{% if request.GET.search_query %}&search_query={{ request.GET.search_query }}{% endif %}{% if request.GET.start_date %}&start_date={{ request.GET.start_date }}{% endif %}{% if request.GET.end_date %}&end_date={{ request.GET.end_date }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}" class="btn-action">&laquo; السابق</a>
+        {% endif %}
+        
+        <span style="color: #fff; font-weight: bold; background: rgba(255,255,255,0.1); padding: 0.4rem 1rem; border-radius: 6px;">
+            صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+        </span>
+        
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}{% if request.GET.search_query %}&search_query={{ request.GET.search_query }}{% endif %}{% if request.GET.start_date %}&start_date={{ request.GET.start_date }}{% endif %}{% if request.GET.end_date %}&end_date={{ request.GET.end_date }}{% endif %}{% if request.GET.status %}&status={{ request.GET.status }}{% endif %}" class="btn-action">التالي &raquo;</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

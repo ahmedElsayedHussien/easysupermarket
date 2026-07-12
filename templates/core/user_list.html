@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>👥 المستخدمون والصلاحيات</h1>
+        <p>إدارة الحسابات وصلاحيات الوصول للنظام</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:user_create' %}" class="btn btn-primary">➕ إضافة مستخدم جديد</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>اسم المستخدم</th>
+                    <th>الاسم بالكامل</th>
+                    <th>الدور الوظيفي</th>
+                    <th>الفرع</th>
+                    <th>الحالة</th>
+                    <th>الإجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user_obj in users %}
+                <tr>
+                    <td>
+                        <div style="font-weight:600;">{{ user_obj.username }}</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);">{{ user_obj.email|default:"-" }}</div>
+                    </td>
+                    <td>{{ user_obj.get_full_name|default:"-" }}</td>
+                    <td>
+                        {% if user_obj.is_superuser %}
+                            <span class="badge badge-success">مدير نظام عام</span>
+                        {% elif user_obj.employee_profile %}
+                            <span class="badge badge-primary">{{ user_obj.employee_profile.get_role_display }}</span>
+                        {% else %}
+                            <span class="badge badge-warning">غير محدد</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user_obj.employee_profile.branch.name|default:"الإدارة المركزية" }}</td>
+                    <td>
+                        {% if user_obj.is_active %}
+                            <span class="badge badge-success">نشط</span>
+                        {% else %}
+                            <span class="badge badge-danger">موقوف</span>
+                        {% endif %}
+                    </td>
+                    <td class="actions-cell">
+                        <a href="{% url 'core:user_update' user_obj.pk %}" class="btn-icon" title="تعديل والصلاحيات" style="color:var(--neon-blue);">✏️</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align:center;padding:2rem;">لا يوجد مستخدمون مسجلون</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

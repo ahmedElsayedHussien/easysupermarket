@@ -2,35 +2,42 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-between align-center mb-4">
-        <h2 class="text-neon-cyan">{{ title }}</h2>
-        <div>
-            <a href="{% url 'inventory:uom_create' %}" class="btn btn-neon-cyan">➕ إضافة وحدة قياس</a>
-        </div>
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-weight text-gold" style="margin-left: 0.5rem;"></i> {{ title }}</h2>
+        <a href="{% url 'inventory:uom_create' %}" class="btn-orange">
+            <i class="fas fa-plus"></i> إضافة وحدة قياس
+        </a>
     </div>
 
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>الاسم</th>
-                <th>إجراءات</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for uom in uoms %}
-            <tr>
-                <td>{{ uom.name }}</td>
-                <td>
-                    <a href="{% url 'inventory:uom_update' uom.pk %}" class="btn btn-sm btn-outline-cyan">تعديل</a>
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="2" class="text-center">لا توجد وحدات قياس</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>الاسم</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for uom in uoms %}
+                <tr>
+                    <td style="color: #00e5ff; font-weight: bold;">{{ uom.name }}</td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'inventory:uom_update' uom.pk %}" class="btn-action">
+                            <i class="fas fa-edit"></i> تعديل
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="2" style="text-align: center; padding: 2rem; color: #94a3b8;">
+                        <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        لا توجد وحدات قياس
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 {% endblock %}
