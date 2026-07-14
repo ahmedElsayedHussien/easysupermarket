@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📊 {{ title }}</h1>
+        <p>ملخص الأداء المالي من إيرادات وتكاليف ومصروفات لبيان صافي الربح أو الخسارة</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 200px;">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 200px;">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
+            <button type="submit" class="btn btn-primary">تحديث التقرير</button>
+        </div>
+    </form>
+</div>
+
+<!-- Income Statement Layout -->
+<div class="statement-container">
+    
+    <!-- Revenue Section -->
+    <div class="card section-card">
+        <h3 class="section-title text-success">💰 1. الإيرادات (المبيعات)</h3>
+        <div class="statement-row">
+            <span>إجمالي المبيعات (قبل الخصم)</span>
+            <span>{{ gross_sales|floatformat:"-2" }}</span>
+        </div>
+        <div class="statement-row text-danger">
+            <span>خصومات المبيعات</span>
+            <span>({{ sales_discount|floatformat:"-2" }})</span>
+        </div>
+        <div class="statement-row">
+            <span>إجمالي المبيعات الصافية</span>
+            <span style="font-weight: bold;">{{ net_sales|floatformat:"-2" }}</span>
+        </div>
+        <div class="statement-row text-danger">
+            <span>مردودات المبيعات (المرتجعات)</span>
+            <span>({{ net_returns|floatformat:"-2" }})</span>
+        </div>
+        <div class="statement-row total-row">
+            <span>صافي الإيرادات</span>
+            <span>{{ net_revenue|floatformat:"-2" }}</span>
+        </div>
+    </div>
+
+    <!-- COGS Section -->
+    <div class="card section-card">
+        <h3 class="section-title text-warning">📦 2. تكلفة البضاعة المباعة</h3>
+        <div class="statement-row text-danger">
+            <span>تكلفة البضاعة المباعة (COGS)</span>
+            <span>({{ net_cogs|floatformat:"-2" }})</span>
+        </div>
+        <div class="statement-row total-row">
+            <span>مجمل الربح (Gross Profit)</span>
+            <span class="{% if gross_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                {{ gross_profit|floatformat:"-2" }}
+            </span>
+        </div>
+    </div>
+
+    <!-- Expenses Section -->
+    <div class="card section-card">
+        <h3 class="section-title text-danger">📉 3. المصروفات التشغيلية</h3>
+        {% for exp in expenses_by_account %}
+        <div class="statement-row">
+            <span>{{ exp.expense_account__name }} {% if exp.expense_account__code %}({{ exp.expense_account__code }}){% endif %}</span>
+            <span>{{ exp.total_amount|floatformat:"-2" }}</span>
+        </div>
+        {% empty %}
+        <div class="statement-row text-muted" style="justify-content: center;">
+            <span>لا توجد مصروفات مسجلة خلال هذه الفترة</span>
+        </div>
+        {% endfor %}
+        
+        <div class="statement-row total-row" style="color: var(--neon-red);">
+            <span>إجمالي المصروفات</span>
+            <span>({{ total_expenses|floatformat:"-2" }})</span>
+        </div>
+    </div>
+
+    <!-- Net Profit Section -->
+    <div class="card net-profit-card {% if net_profit >= 0 %}profit{% else %}loss{% endif %}">
+        <div class="profit-title">
+            {% if net_profit >= 0 %}🎉 صافي الربح (Net Profit){% else %}⚠️ صافي الخسارة (Net Loss){% endif %}
+        </div>
+        <div class="profit-amount">
+            {{ net_profit|floatformat:"-2" }} ج.م
+        </div>
+    </div>
+
+</div>
+
+<style>
+    .statement-container {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+    .section-card {
+        padding: 1.5rem;
+        border-radius: 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-default);
+    }
+    .section-title {
+        margin-top: 0;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--border-default);
+        font-size: 1.25rem;
+    }
+    .statement-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 0.75rem 0;
+        border-bottom: 1px dashed rgba(255,255,255,0.05);
+        font-size: 1.05rem;
+    }
+    .statement-row:last-child {
+        border-bottom: none;
+    }
+    .total-row {
+        font-weight: bold;
+        font-size: 1.2rem;
+        border-top: 2px solid var(--border-default);
+        border-bottom: none;
+        padding-top: 1rem;
+        margin-top: 0.5rem;
+    }
+    
+    .text-success { color: var(--neon-green) !important; }
+    .text-danger { color: var(--neon-red) !important; }
+    .text-warning { color: var(--neon-gold) !important; }
+    .text-muted { color: var(--text-muted) !important; }
+    
+    .net-profit-card {
+        padding: 2rem;
+        border-radius: 12px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+    }
+    .net-profit-card.profit {
+        background: rgba(0, 230, 118, 0.1);
+        border: 2px solid var(--neon-green);
+        box-shadow: 0 0 20px rgba(0, 230, 118, 0.1);
+    }
+    .net-profit-card.loss {
+        background: rgba(255, 23, 68, 0.1);
+        border: 2px solid var(--neon-red);
+        box-shadow: 0 0 20px rgba(255, 23, 68, 0.1);
+    }
+    .profit-title {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: var(--text-primary);
+    }
+    .profit-amount {
+        font-size: 3rem;
+        font-weight: 800;
+        font-family: monospace;
+    }
+    .profit .profit-amount { color: var(--neon-green); }
+    .loss .profit-amount { color: var(--neon-red); }
+
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .net-profit-card.profit, .net-profit-card.loss {
+            background: white !important;
+            border: 2px solid black !important;
+            color: black !important;
+        }
+        .profit .profit-amount, .loss .profit-amount { color: black !important; }
+        .text-success, .text-danger, .text-warning { color: black !important; }
+    }
+</style>
+{% endblock %}

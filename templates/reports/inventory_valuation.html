@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📦 {{ title }}</h1>
+        <p>قيمة المخزون الحالي الفعلي مقيماً بالتكلفة الفعلية للأصناف (جرد مالي)</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 250px;">
+            <label class="form-label">🔍 بحث باسم الصنف أو الباركود</label>
+            <input type="text" name="search_query" class="form-control" value="{{ search_query }}" placeholder="ابحث...">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <a href="{% url 'core:report_inventory_valuation' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+<!-- Grand Totals -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي كمية المخزون لجميع الأصناف</div>
+            <div style="font-size: 1.8rem; font-weight: bold; color: var(--neon-cyan);">
+                {{ grand_totals.total_qty|default:"0"|floatformat:"-2" }}
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">📏</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between; border-color: var(--neon-blue);">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي قيمة المخزون (بالتكلفة)</div>
+            <div style="font-size: 1.8rem; font-weight: bold; color: var(--neon-blue);">
+                {{ grand_totals.total_value|default:"0"|floatformat:"-2" }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">💰</div>
+    </div>
+</div>
+
+<!-- Table Data -->
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>الباركود</th>
+                    <th>اسم الصنف</th>
+                    <th style="text-align: center;">الرصيد الفعلي</th>
+                    <th style="text-align: center;">متوسط التكلفة</th>
+                    <th style="text-align: center;">القيمة الإجمالية</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for product in products %}
+                <tr>
+                    <td style="font-family: monospace;">{{ product.barcode|default:"-" }}</td>
+                    <td style="font-weight: bold;">{{ product.name }}</td>
+                    <td style="text-align: center;">
+                        <span class="badge badge-primary" style="font-size: 1rem;">
+                            {{ product.current_stock|floatformat:"-2" }}
+                        </span>
+                    </td>
+                    <td style="text-align: center; font-family: monospace;">{{ product.avg_cost|floatformat:"-2" }}</td>
+                    <td style="text-align: center; color: var(--neon-cyan); font-weight: bold;">{{ product.total_value|floatformat:"-2" }} ج.م</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align: center; padding: 2rem;">لا توجد أصناف في المخزون</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&search_query={{ search_query }}" class="btn btn-sm btn-secondary">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&search_query={{ search_query }}" class="btn btn-sm btn-secondary">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination, .dash-card-1 { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; }
+    }
+</style>
+{% endblock %}

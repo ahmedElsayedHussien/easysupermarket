@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📜 تقرير مديونيات العملاء (أعمار الديون)</h1>
+        <p>عرض الأرصدة المستحقة على العملاء ومتابعة إجمالي الديون</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 2; min-width: 250px;">
+            <label class="form-label">🔍 بحث باسم العميل أو رقم الهاتف</label>
+            <input type="text" name="search_query" class="form-control" value="{{ search_query }}" placeholder="اكتب اسم العميل أو الهاتف...">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <a href="{% url 'core:report_customer_debts' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+<!-- Grand Totals -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between; border-color: var(--neon-red);">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي الديون (لعملاء هذه الصفحة)</div>
+            <div style="font-size: 1.8rem; font-weight: bold; color: var(--neon-red);">
+                {{ page_total_debt|floatformat:"-2" }} ج.م
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">* يتم حساب الإجمالي للعملاء الظاهرين في هذه الصفحة فقط لتسريع العرض</div>
+        </div>
+        <div style="font-size: 3rem; opacity: 0.5;">📜</div>
+    </div>
+</div>
+
+<!-- Table Data -->
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>اسم العميل</th>
+                    <th>رقم الهاتف</th>
+                    <th>الرقم الضريبي</th>
+                    <th style="text-align: left;">الرصيد المستحق (ديون)</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for customer in customers %}
+                <tr>
+                    <td style="font-weight: bold;">
+                        {{ customer.name }}
+                        {% if customer.name_en %}
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">{{ customer.name_en }}</div>
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace; color: var(--neon-blue);">
+                        {{ customer.phone|default:"-" }}
+                    </td>
+                    <td style="color: var(--text-muted);">
+                        {{ customer.tax_number|default:"-" }}
+                    </td>
+                    <td style="text-align: left; font-weight: bold; font-size: 1.1rem; {% if customer.outstanding_balance > 0 %}color: var(--neon-red);{% elif customer.outstanding_balance < 0 %}color: var(--neon-green);{% else %}color: var(--text-muted);{% endif %}">
+                        {{ customer.outstanding_balance|floatformat:"-2" }}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'core:report_customer_balances' %}?partner_id={{ customer.id }}" class="btn btn-sm btn-orange" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">
+                            📑 كشف حساب
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align: center; padding: 2rem;">لا يوجد عملاء مطابقين للبحث</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&search_query={{ search_query }}" class="btn btn-sm btn-orange">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&search_query={{ search_query }}" class="btn btn-sm btn-orange">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; color: black !important; }
+        .data-table th:last-child, .data-table td:last-child { display: none !important; }
+    }
+</style>
+{% endblock %}

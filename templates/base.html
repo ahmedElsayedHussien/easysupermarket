@@ -274,7 +274,23 @@
             
             <a href="{% url 'core:reports_index' %}" class="nav-link nav-lime {% if request.resolver_match.url_name == 'reports_index' %}active{% endif %}">
                 <span class="nav-icon">📊</span>
-                <span class="nav-text">{% trans 'التقارير المجمعة' %}</span>
+                <span class="nav-text">{% trans 'التقارير الشاملة' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'منظومة الضرائب' %}</p>
+            <a href="{% url 'einvoicing:invoice_approval_list' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'invoice_approval_list' %}active{% endif %}">
+                <span class="nav-icon">📤</span>
+                <span class="nav-text">{% trans 'إرسال للتوقيع' %}</span>
+            </a>
+            
+            <a href="{% url 'einvoicing:invoice_history' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'invoice_history' %}active{% endif %}">
+                <span class="nav-icon">📖</span>
+                <span class="nav-text">{% trans 'سجل الفواتير المرسلة' %}</span>
+            </a>
+            
+            <a href="{% url 'einvoicing:tax_settings' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'tax_settings' %}active{% endif %}">
+                <span class="nav-icon">🧾</span>
+                <span class="nav-text">{% trans 'إعدادات الضرائب' %}</span>
             </a>
             {% endif %}
 

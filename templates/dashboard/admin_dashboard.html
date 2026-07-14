@@ -46,8 +46,10 @@
         <a href="{% url 'core:user_list' %}" style="text-decoration: none;">
             <button class="dash-tab">👥 المستخدمون والصلاحيات</button>
         </a>
-        <button class="dash-tab" onclick="location.href='{% url 'partners:supplier_list' %}'">🚚 الموردون</button>
-        <button class="dash-tab" onclick="location.href='{% url 'core:system_settings' %}'">⚙ إعدادات النظام</button>
+        <button class="dash-tab" onclick="location.href='{% url 'partners:supplier_list' %}'">👥 الموردين</button>
+        <button class="dash-tab" onclick="location.href='{% url 'einvoicing:invoice_approval_list' %}'">📤 إرسال للضرائب</button>
+        <button class="dash-tab" onclick="location.href='{% url 'core:system_settings' %}'">⚙️ إعدادات النظام</button>
+        <button class="dash-tab" onclick="location.href='{% url 'einvoicing:tax_settings' %}'">🧾 إعدادات الضرائب</button>
         <button class="dash-tab active">📈 لوحة المدير</button>
     </div>
 

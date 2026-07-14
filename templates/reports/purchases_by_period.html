@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📅 {{ title }}</h1>
+        <p>إجمالي المشتريات مقسمة حسب الفترات الزمنية والأرباح</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">🔍 تجميع حسب</label>
+            <select name="group_by" class="form-control">
+                <option value="day" {% if group_by == 'day' %}selected{% endif %}>يومي (Daily)</option>
+                <option value="month" {% if group_by == 'month' %}selected{% endif %}>شهري (Monthly)</option>
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 200px;">
+            <label class="form-label">🔍 بحث بالمورد أو رقم الفاتورة</label>
+            <input type="text" name="search_query" class="form-control" value="{{ search_query }}" placeholder="ابحث...">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">📅 من تاريخ</label>
+            <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">📅 إلى تاريخ</label>
+            <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <a href="{% url 'core:report_period_purchases' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+<!-- Grand Totals -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي الفواتير</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-blue);">
+                {{ grand_totals.gt_count|default:"0" }}
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">🧾</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي التكلفة</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-cyan);">
+                {{ grand_totals.gt_rev|default:"0"|floatformat:2 }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">💰</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between; border-color: var(--neon-gold);">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">صافي الأرباح (التقديرية)</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-gold);">
+                {{ grand_totals.gt_profit|default:"0"|floatformat:2 }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">📈</div>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+    <!-- Chart -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-header-title">أداء المشتريات والأرباح عبر الزمن</span>
+        </div>
+        <div style="height: 300px; padding: 1rem;">
+            <canvas id="periodChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Table Data -->
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>الفترة ({% if group_by == 'month' %}شهر{% else %}يوم{% endif %})</th>
+                    <th style="text-align: center;">عدد الفواتير</th>
+                    <th style="text-align: left;">التكلفة (قبل الضريبة)</th>
+                    <th style="text-align: left;">إجمالي الخصومات</th>
+                    <th style="text-align: left;">تكلفة البضاعة المشتراة</th>
+                    <th style="text-align: left;">الربح التقريبي</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in periods_data %}
+                <tr>
+                    <td style="font-weight: bold; color: var(--text-primary);">
+                        {% if group_by == 'month' %}
+                            {{ item.period|date:"Y-m" }}
+                        {% else %}
+                            {{ item.period|date:"Y-m-d" }}
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <span class="badge badge-primary">{{ item.invoice_count }}</span>
+                    </td>
+                    <td style="text-align: left; color: var(--neon-cyan); font-weight: bold;">
+                        {{ item.total_revenue|floatformat:2 }}
+                    </td>
+                    <td style="text-align: left;">
+                        {{ item.total_discount|floatformat:2 }}
+                    </td>
+                    <td style="text-align: left; color: var(--neon-red);">
+                        {{ item.total_cogs|default:"0.00"|floatformat:2 }}
+                    </td>
+                    <td style="text-align: left; color: var(--neon-gold); font-weight: bold;">
+                        {{ item.total_profit|default:"0.00"|floatformat:2 }}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 2rem;">لا توجد بيانات مطابقة لمعايير البحث</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}&search_query={{ search_query }}&group_by={{ group_by }}" class="btn btn-sm btn-secondary">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}&search_query={{ search_query }}&group_by={{ group_by }}" class="btn btn-sm btn-secondary">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; }
+        canvas { display: none !important; }
+    }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const ctx = document.getElementById('periodChart').getContext('2d');
+    
+    // Setup Chart Defaults for Dark Theme
+    Chart.defaults.color = '#94a3b8';
+    Chart.defaults.font.family = 'Tajawal';
+    
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: {{ chart_labels|safe }},
+            datasets: [
+                {
+                    label: 'التكلفة',
+                    data: {{ chart_data_revenue|safe }},
+                    borderColor: 'rgba(56, 189, 248, 1)',
+                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3
+                },
+                {
+                    label: 'الأرباح',
+                    data: {{ chart_data_profit|safe }},
+                    borderColor: 'rgba(250, 204, 21, 1)',
+                    backgroundColor: 'rgba(250, 204, 21, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' }
+                },
+                x: {
+                    grid: { display: false }
+                }
+            },
+            plugins: {
+                legend: { position: 'top' }
+            }
+        }
+    });
+});
+</script>
+{% endblock %}

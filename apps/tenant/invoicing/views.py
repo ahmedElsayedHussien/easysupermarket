@@ -518,6 +518,8 @@ def complete_sale(request):
                     unit_price=Decimal(item['unit_price']),
                     discount_pct=Decimal(item.get('discount_percent', 0)),
                     uom_id=uom_id,
+                    tax_rate=Decimal(item.get('tax_rate', 0)),
+                    wht_rate=Decimal(item.get('wht_rate', 0)),
                 )
                 
             # Confirm

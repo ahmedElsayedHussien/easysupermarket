@@ -26,11 +26,35 @@
             <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير المبيعات</h3>
             <div class="reports-grid">
                 <div class="report-card">
+                    <div class="report-icon">🕒</div>
+                    <div class="report-info">
+                        <h4>يومية الكاشير (الورديات)</h4>
+                        <p>تقرير بتقفيل الورديات، المبيعات، ومطابقة النقدية مع العجز والزيادة لكل كاشير.</p>
+                        <a href="{% url 'core:report_shifts' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
                     <div class="report-icon">📈</div>
                     <div class="report-info">
                         <h4>مبيعات الأصناف</h4>
                         <p>تقرير تفصيلي بحركة مبيعات كل صنف والكميات المباعة.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                        <a href="{% url 'core:report_sales_product' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">💰</div>
+                    <div class="report-info">
+                        <h4>ربحية الأصناف</h4>
+                        <p>تحليل الأرباح المحققة من كل صنف مقارنة بالتكلفة.</p>
+                        <a href="{% url 'core:report_item_profitability' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">👨‍💼</div>
+                    <div class="report-info">
+                        <h4>مبيعات الموظفين</h4>
+                        <p>مبيعات الكاشير والمستخدمين وإجمالي المحصل لكل منهم.</p>
+                        <a href="{% url 'core:report_sales_users' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
                 <div class="report-card">
@@ -38,7 +62,39 @@
                     <div class="report-info">
                         <h4>مبيعات فترة (يومي/شهري)</h4>
                         <p>إجمالي المبيعات مقسمة حسب الفترات الزمنية والأرباح.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                        <a href="{% url 'core:report_sales_period' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📄</div>
+                    <div class="report-info">
+                        <h4>تقرير المبيعات التفصيلي</h4>
+                        <p>سجل تفصيلي بحركة الفواتير، الأصناف، الضرائب، والمرتجعات.</p>
+                        <a href="{% url 'core:report_sales_detailed' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">👥</div>
+                    <div class="report-info">
+                        <h4>كشف حساب عميل</h4>
+                        <p>متابعة أرصدة العميل والمبيعات والمدفوعات خلال فترة محددة.</p>
+                        <a href="{% url 'core:report_customer_balances' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📜</div>
+                    <div class="report-info">
+                        <h4>مديونيات العملاء الإجمالي</h4>
+                        <p>قائمة بالعملاء وأرصدتهم المستحقة وأعمار الديون مجمعة.</p>
+                        <a href="{% url 'core:report_customer_debts' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">↩️</div>
+                    <div class="report-info">
+                        <h4>المرتجعات (المبيعات)</h4>
+                        <p>تتبع فواتير وأصناف المرتجعات وقيمتها وأسبابها.</p>
+                        <a href="{% url 'core:report_sales_returns' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
             </div>
@@ -49,11 +105,67 @@
             <h3 style="color: var(--neon-red); margin-bottom: 1rem;">تقارير المشتريات</h3>
             <div class="reports-grid">
                 <div class="report-card">
-                    <div class="report-icon">🧾</div>
+                    <div class="report-icon">📦</div>
                     <div class="report-info">
-                        <h4>مشتريات الموردين</h4>
-                        <p>حجم المشتريات من كل مورد خلال فترة محددة.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                        <h4>مشتريات الأصناف</h4>
+                        <p>تقرير تفصيلي يوضح كميات وقيم المشتريات لكل صنف.</p>
+                        <a href="{% url 'core:report_product_purchases' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📄</div>
+                    <div class="report-info">
+                        <h4>المشتريات التفصيلية</h4>
+                        <p>سجل تفصيلي بجميع فواتير المشتريات وحالة السداد لكل فاتورة.</p>
+                        <a href="{% url 'core:report_detailed_purchases' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📅</div>
+                    <div class="report-info">
+                        <h4>مشتريات فترة (يومي/شهري)</h4>
+                        <p>تجميع فواتير المشتريات وعرض الإجماليات خلال فترة زمنية محددة.</p>
+                        <a href="{% url 'core:report_period_purchases' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📉</div>
+                    <div class="report-info">
+                        <h4>تغير أسعار الشراء</h4>
+                        <p>تتبع تقلبات أسعار شراء الأصناف مقارنة بآخر سعر وأعلى سعر.</p>
+                        <a href="{% url 'core:report_purchase_price_variation' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">👥</div>
+                    <div class="report-info">
+                        <h4>كشف حساب مورد</h4>
+                        <p>متابعة تفصيلية لحركة المشتريات والمدفوعات الخاصة بمورد محدد.</p>
+                        <a href="{% url 'core:report_supplier_balances' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📜</div>
+                    <div class="report-info">
+                        <h4>مديونيات الموردين</h4>
+                        <p>ملخص بجميع الموردين وأرصدتهم المستحقة ومطالباتهم المالية.</p>
+                        <a href="{% url 'core:report_supplier_debts' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">👨‍💼</div>
+                    <div class="report-info">
+                        <h4>مشتريات المستخدمين</h4>
+                        <p>تقييم ومتابعة المشتريات التي قام بإدخالها كل مستخدم في النظام.</p>
+                        <a href="{% url 'core:report_user_purchases' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">↩️</div>
+                    <div class="report-info">
+                        <h4>مرتجعات المشتريات</h4>
+                        <p>تتبع مفصل للمرتجعات إلى الموردين والكميات والقيم المستردة.</p>
+                        <a href="{% url 'core:report_purchase_returns' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
             </div>
@@ -64,27 +176,44 @@
             <h3 style="color: var(--neon-cyan); margin-bottom: 1rem;">تقارير المخزون</h3>
             <div class="reports-grid">
                 <div class="report-card">
+                    <div class="report-icon">🕸️</div>
+                    <div class="report-info">
+                        <h4>الأصناف الراكدة</h4>
+                        <p>الأصناف المتوفرة بالمخازن ولم تشهد حركة بيع منذ فترة طويلة.</p>
+                        <a href="{% url 'core:report_slow_moving' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
                     <div class="report-icon">⚠️</div>
                     <div class="report-info">
                         <h4>نواقص المخزون</h4>
                         <p>الأصناف التي وصلت لحد الطلب أو نفدت من المخازن.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                        <a href="{% url 'core:report_low_stock' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
+
                 <div class="report-card">
-                    <div class="report-icon">⏳</div>
-                    <div class="report-info">
-                        <h4>صلاحيات المنتجات</h4>
-                        <p>تتبع تواريخ انتهاء الصلاحية للمنتجات الموجودة بالمخازن.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
-                    </div>
-                </div>
-                <div class="report-card">
-                    <div class="report-icon">📋</div>
+                    <div class="report-icon">📦</div>
                     <div class="report-info">
                         <h4>جرد المخزون الفعلي</h4>
-                        <p>قائمة جرد مفصلة للأصناف وقيمتها المالية الإجمالية.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                        <p>قيمة المخزون الحالي الفعلي مقيماً بالتكلفة (جرد مالي).</p>
+                        <a href="{% url 'core:report_inventory_valuation' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">🏢</div>
+                    <div class="report-info">
+                        <h4>أرصدة الأصناف في المستودعات</h4>
+                        <p>عرض كميات الأصناف المتاحة وتوزيعها على المستودعات المختلفة.</p>
+                        <a href="{% url 'core:report_warehouse_stock' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">🔄</div>
+                    <div class="report-info">
+                        <h4>حركة الأصناف (كارت الصنف)</h4>
+                        <p>تتبع مفصل لكل حركات الأصناف (دخول، خروج، تسويات) وتواريخها.</p>
+                        <a href="{% url 'core:report_item_movement' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
             </div>
@@ -95,11 +224,19 @@
             <h3 style="color: var(--neon-gold); margin-bottom: 1rem;">تقارير المحاسبة</h3>
             <div class="reports-grid">
                 <div class="report-card">
+                    <div class="report-icon">📉</div>
+                    <div class="report-info">
+                        <h4>قائمة الدخل (الأرباح والخسائر)</h4>
+                        <p>بيان شامل بصافي المبيعات وتكلفة البضاعة والمصروفات لاستنتاج صافي الربح.</p>
+                        <a href="{% url 'core:report_income_statement' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
                     <div class="report-icon">💵</div>
                     <div class="report-info">
                         <h4>كشف حساب خزانة/بنك</h4>
                         <p>حركة الصادر والوارد لكل خزانة أو حساب بنكي.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                        <a href="{% url 'core:report_treasury' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
                 <div class="report-card">
@@ -107,7 +244,7 @@
                     <div class="report-info">
                         <h4>المصروفات التفصيلية</h4>
                         <p>تفصيل المصروفات حسب بنود الصرف خلال فترة.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                        <a href="{% url 'core:report_expenses' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
             </div>
@@ -122,7 +259,7 @@
                     <div class="report-info">
                         <h4>كشف حساب عميل/مورد</h4>
                         <p>المديونيات والمستحقات وحركة الدفعات للشركاء التجاريين.</p>
-                        <a href="#" class="btn btn-sm btn-primary">عرض التقرير</a>
+                        <a href="#" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
             </div>
@@ -168,7 +305,7 @@
     }
     .report-card {
         display: flex;
-        align-items: flex-start;
+        align-items: stretch;
         gap: 1rem;
         padding: 1.25rem;
         border: 1px solid var(--border-default);
@@ -192,6 +329,12 @@
         border-radius: 12px;
         flex-shrink: 0;
     }
+    .report-info {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        height: 100%;
+    }
     .report-info h4 {
         margin: 0 0 0.5rem 0;
         color: var(--text-primary);
@@ -202,6 +345,10 @@
         color: var(--text-muted);
         font-size: 0.8rem;
         line-height: 1.4;
+    }
+    .report-info .btn {
+        margin-top: auto;
+        align-self: flex-start;
     }
 </style>
 
@@ -221,7 +368,23 @@
         document.getElementById('tab-' + tabId).style.display = 'block';
         
         // Add active class to clicked tab
-        event.currentTarget.classList.add('active');
+        if (event && event.currentTarget) {
+            event.currentTarget.classList.add('active');
+        } else {
+            const btn = document.querySelector(`.reports-tab[onclick*="${tabId}"]`);
+            if(btn) btn.classList.add('active');
+        }
+        
+        // Store selected tab in localStorage
+        localStorage.setItem('activeReportTab', tabId);
     }
+
+    // Restore last active tab
+    document.addEventListener('DOMContentLoaded', () => {
+        const lastTab = localStorage.getItem('activeReportTab');
+        if(lastTab) {
+            switchReportTab(lastTab);
+        }
+    });
 </script>
 {% endblock %}
