@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>👥 كشف حساب عميل</h1>
+        <p>متابعة تفصيلية لحركة مبيعات ومدفوعات العميل خلال فترة محددة</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 2; min-width: 250px;">
+            <label class="form-label">👤 اختر العميل</label>
+            <select name="partner_id" class="form-control" required>
+                <option value="" disabled {% if not partner_id %}selected{% endif %}>-- الرجاء اختيار العميل --</option>
+                {% for p in partners %}
+                    <option value="{{ p.id }}" {% if partner_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">📅 من تاريخ</label>
+            <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">📅 إلى تاريخ</label>
+            <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <a href="{% url 'core:report_customer_balances' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+{% if selected_partner %}
+<!-- Grand Totals -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">الرصيد الافتتاحي للمدة</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-blue);">
+                {{ opening_balance|floatformat:"-2" }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">⚖️</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي مسحوبات الفترة</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-red);">
+                {{ period_debit|floatformat:"-2" }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">🛒</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي سدادات الفترة</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-green);">
+                {{ period_credit|floatformat:"-2" }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">💰</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between; border-color: var(--neon-gold);">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">الرصيد النهائي المستحق</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-gold);">
+                {{ final_balance|floatformat:"-2" }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">🎯</div>
+    </div>
+</div>
+
+<!-- Table Data -->
+<div class="card">
+    <div class="card-header">
+        <span class="card-header-title">حركة حساب العميل: {{ selected_partner.name }}</span>
+    </div>
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>التاريخ</th>
+                    <th>نوع الحركة</th>
+                    <th>رقم المرجع</th>
+                    <th style="text-align: left;">مدين (عليه)</th>
+                    <th style="text-align: left;">دائن (له)</th>
+                    <th style="text-align: left;">الرصيد المتراكم</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if opening_balance != 0 %}
+                <tr style="background-color: var(--bg-tertiary);">
+                    <td colspan="3" style="text-align: center; font-weight: bold;">الرصيد الافتتاحي (السابق للفترة)</td>
+                    <td></td>
+                    <td></td>
+                    <td style="text-align: left; font-weight: bold; font-size: 1.1rem; color: var(--neon-blue);">
+                        {{ opening_balance|floatformat:"-2" }}
+                    </td>
+                </tr>
+                {% endif %}
+
+                {% for txn in transactions %}
+                <tr>
+                    <td>{{ txn.date|date:"Y-m-d" }}</td>
+                    <td style="font-weight: bold;">{{ txn.type }}</td>
+                    <td style="font-family: monospace; color: var(--text-muted);">{{ txn.reference }}</td>
+                    <td style="text-align: left; color: var(--neon-red); font-weight: bold;">
+                        {% if txn.debit > 0 %}{{ txn.debit|floatformat:"-2" }}{% else %}-{% endif %}
+                    </td>
+                    <td style="text-align: left; color: var(--neon-green); font-weight: bold;">
+                        {% if txn.credit > 0 %}{{ txn.credit|floatformat:"-2" }}{% else %}-{% endif %}
+                    </td>
+                    <td style="text-align: left; font-weight: bold; font-size: 1.1rem; {% if txn.balance > 0 %}color: var(--neon-red);{% elif txn.balance < 0 %}color: var(--neon-green);{% else %}color: var(--text-muted);{% endif %}">
+                        {{ txn.balance|floatformat:"-2" }}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 2rem;">لا توجد حركات مسجلة للعميل في هذه الفترة</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}&partner_id={{ partner_id }}" class="btn btn-sm btn-orange">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}&partner_id={{ partner_id }}" class="btn btn-sm btn-orange">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<div class="card" style="text-align: center; padding: 4rem 1rem;">
+    <div style="font-size: 3rem; margin-bottom: 1rem;">👥</div>
+    <h3 style="color: var(--text-muted);">الرجاء اختيار عميل لعرض كشف الحساب</h3>
+</div>
+{% endif %}
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; }
+    }
+</style>
+
+<script>
+    // Initialize Select2 if available to make customer search easier
+    document.addEventListener('DOMContentLoaded', function() {
+        if(typeof jQuery !== 'undefined' && typeof jQuery.fn.select2 !== 'undefined') {
+            $('select[name="partner_id"]').select2({
+                placeholder: "-- الرجاء اختيار العميل --",
+                allowClear: true,
+                width: '100%',
+                dir: "rtl"
+            });
+        }
+    });
+</script>
+{% endblock %}

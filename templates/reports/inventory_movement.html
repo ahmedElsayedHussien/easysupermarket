@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>🔄 {{ title }}</h1>
+        <p>كارت الصنف التفصيلي (الرصيد الافتتاحي، الحركات، الرصيد التراكمي)</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 2; min-width: 250px;">
+            <label class="form-label">🔍 الصنف <span style="color:red">*</span></label>
+            <select name="product_id" class="form-control select2" required>
+                <option value="">-- اختر الصنف لعرض كارت الصنف --</option>
+                {% for p in products %}
+                    <option value="{{ p.id }}" {% if selected_product|stringformat:"s" == p.id|stringformat:"s" %}selected{% endif %}>{{ p.name }} ({{ p.barcode }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">المستودع</label>
+            <select name="warehouse_id" class="form-control">
+                <option value="">-- كل المستودعات --</option>
+                {% for w in warehouses %}
+                    <option value="{{ w.id }}" {% if selected_warehouse|stringformat:"s" == w.id|stringformat:"s" %}selected{% endif %}>{{ w.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">نوع الحركة</label>
+            <select name="movement_type" class="form-control">
+                <option value="">-- الكل --</option>
+                {% for code, label in movement_types %}
+                    <option value="{{ code }}" {% if selected_type == code %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 130px;">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 130px;">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
+            <button type="submit" class="btn btn-primary">بحث</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 إكسيل</button>
+            <a href="{% url 'core:report_item_movement' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+{% if show_balances %}
+<!-- Opening Balance Card -->
+<div class="card" style="margin-bottom: 1.5rem; background: var(--bg-tertiary); border-left: 4px solid var(--neon-blue);">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0; color: var(--text-primary);">الرصيد الافتتاحي للصنف قبل تاريخ <span style="color: var(--neon-cyan);">{{ date_from|default:"بداية النظام" }}</span></h3>
+        <h2 style="margin: 0; color: var(--neon-blue);">{{ opening_balance|floatformat:"-2" }} وحدة</h2>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info" style="margin-bottom: 1.5rem; background: rgba(0, 168, 255, 0.1); border: 1px solid var(--neon-blue); padding: 1rem; border-radius: 8px;">
+    يرجى اختيار <strong>الصنف</strong> للتمكن من عرض كارت الصنف كاملاً متضمناً الرصيد الافتتاحي والرصيد التراكمي.
+</div>
+{% endif %}
+
+<!-- Table Data -->
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>التاريخ</th>
+                    <th>م.</th>
+                    <th>المستودع</th>
+                    <th>نوع الحركة</th>
+                    <th style="text-align: center;">الكمية</th>
+                    <th style="text-align: left;">التكلفة (للوحدة)</th>
+                    {% if show_balances %}<th style="text-align: center; color: var(--neon-cyan);">الرصيد التراكمي</th>{% endif %}
+                    <th>المرجع / الفاتورة</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in movements %}
+                <tr>
+                    <td style="white-space: nowrap;">{{ m.created_at|date:"Y-m-d H:i" }}</td>
+                    <td style="color: var(--text-muted); font-size: 0.8rem;">#{{ m.id }}</td>
+                    <td>{{ m.warehouse.name }}</td>
+                    <td>
+                        {% if 'IN' in m.movement_type or m.movement_type == 'OPENING_BALANCE' %}
+                            <span class="badge badge-success">{{ m.get_movement_type_display }}</span>
+                        {% else %}
+                            <span class="badge badge-danger">{{ m.get_movement_type_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <span class="badge {% if 'IN' in m.movement_type or m.movement_type == 'OPENING_BALANCE' %}badge-success{% else %}badge-danger{% endif %}" style="font-size: 0.95rem;">
+                            {% if 'IN' in m.movement_type or m.movement_type == 'OPENING_BALANCE' %}+{% else %}-{% endif %} {{ m.quantity|floatformat:"-2" }}
+                        </span>
+                    </td>
+                    <td style="text-align: left;">{{ m.unit_cost|floatformat:"-2" }}</td>
+                    {% if show_balances %}
+                    <td style="text-align: center; font-weight: bold; color: var(--text-primary);">
+                        {{ m.running_balance|floatformat:"-2" }}
+                    </td>
+                    {% endif %}
+                    <td style="font-family: monospace;">{{ m.reference|default:"-" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="{% if show_balances %}8{% else %}7{% endif %}" style="text-align: center; padding: 2rem;">لا توجد حركات مخزنية</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&product_id={{ selected_product }}&warehouse_id={{ selected_warehouse }}&movement_type={{ selected_type }}&date_from={{ date_from }}&date_to={{ date_to }}" class="btn btn-sm btn-secondary">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&product_id={{ selected_product }}&warehouse_id={{ selected_warehouse }}&movement_type={{ selected_type }}&date_from={{ date_from }}&date_to={{ date_to }}" class="btn btn-sm btn-secondary">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{% if show_balances %}
+<!-- Closing Balance Card -->
+<div class="card" style="margin-top: 1.5rem; background: var(--bg-tertiary); border-right: 4px solid var(--neon-gold);">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0; color: var(--text-primary);">الرصيد المتبقي (النهائي) للصنف</h3>
+        <h2 style="margin: 0; color: var(--neon-gold);">{{ closing_balance|floatformat:"-2" }} وحدة</h2>
+    </div>
+</div>
+{% endif %}
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; }
+    }
+    
+    /* Select2 Dark Theme Fixes */
+    .select2-container--default .select2-selection--single {
+        background-color: var(--bg-secondary) !important;
+        border: 1px solid var(--border-default) !important;
+        border-radius: 8px !important;
+        height: 42px !important;
+        padding: 6px 12px !important;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__rendered {
+        color: var(--text-primary) !important;
+        line-height: 28px !important;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__arrow {
+        height: 40px !important;
+    }
+    .select2-dropdown {
+        background-color: var(--bg-secondary) !important;
+        border: 1px solid var(--border-default) !important;
+    }
+    .select2-search--dropdown .select2-search__field {
+        background-color: var(--bg-primary) !important;
+        color: var(--text-primary) !important;
+        border: 1px solid var(--border-default) !important;
+    }
+    .select2-results__option {
+        color: var(--text-primary) !important;
+    }
+    .select2-container--default .select2-results__option--selected {
+        background-color: rgba(0, 168, 255, 0.2) !important;
+    }
+    .select2-container--default .select2-results__option--highlighted.select2-results__option--selectable {
+        background-color: var(--neon-blue) !important;
+        color: #fff !important;
+    }
+</style>
+
+<!-- Add Select2 for product search -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script>
+    $(document).ready(function() {
+        $('.select2').select2({
+            dir: "rtl",
+            width: '100%',
+            placeholder: "-- اختر الصنف --",
+            allowClear: true
+        });
+
+        // Auto-submit form when product changes
+        $('select[name="product_id"]').on('change', function() {
+            if($(this).val()) {
+                $(this).closest('form').submit();
+            }
+        });
+    });
+</script>
+{% endblock %}

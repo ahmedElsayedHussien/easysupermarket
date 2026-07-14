@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}الفواتير بانتظار الإرسال للضرائب{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-blue">🧾 الفواتير بانتظار الإرسال للضرائب</h2>
+        <div>
+            <a href="{% url 'einvoicing:tax_settings' %}" class="btn btn-ghost me-2">⚙️ الإعدادات</a>
+            <a href="{% url 'core:admin_dashboard' %}" class="btn btn-ghost">العودة للوحة القيادة</a>
+        </div>
+    </div>
+
+    <div class="card p-4 border-neon-blue">
+        <div class="table-responsive">
+            <table class="table table-hover text-light align-middle">
+                <thead>
+                    <tr class="text-neon-blue border-bottom-neon">
+                        <th>رقم الفاتورة</th>
+                        <th>التاريخ</th>
+                        <th>العميل</th>
+                        <th>الإجمالي</th>
+                        <th>الحالة الحالية</th>
+                        <th class="text-center">إجراءات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td class="fw-bold">{{ log.invoice.invoice_number }}</td>
+                        <td>{{ log.invoice.date|date:"Y-m-d" }}</td>
+                        <td>{{ log.invoice.partner.name|default:"عميل نقدي" }}</td>
+                        <td class="text-neon-gold fw-bold">{{ log.invoice.total_amount }}</td>
+                        <td>
+                            <span class="badge bg-warning text-dark">{{ log.get_status_display }}</span>
+                        </td>
+                        <td class="text-center">
+                            <form method="POST" action="{% url 'einvoicing:approve_invoice' log.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-orange">
+                                    إرسال للضرائب 🚀
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-5 text-muted">
+                            <i class="fas fa-check-circle fs-1 mb-3 text-success d-block"></i>
+                            لا توجد فواتير بانتظار التأكيد. تم إرسال جميع الفواتير.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>🏢 {{ title }}</h1>
+        <p>عرض كميات الأصناف وتوزيعها على المستودعات</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 250px;">
+            <label class="form-label">🔍 بحث باسم الصنف أو الباركود</label>
+            <input type="text" name="search_query" class="form-control" value="{{ search_query }}" placeholder="ابحث...">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 200px;">
+            <label class="form-label">🏢 المستودع</label>
+            <select name="warehouse" class="form-control">
+                <option value="">-- جميع المستودعات --</option>
+                {% for w in warehouses %}
+                    <option value="{{ w.id }}" {% if selected_warehouse == w.id|stringformat:"s" %}selected{% endif %}>{{ w.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <a href="{% url 'core:report_warehouse_stock' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+<!-- Table Data -->
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>الباركود</th>
+                    <th>اسم الصنف</th>
+                    <th>المستودع</th>
+                    <th style="text-align: center;">الكمية المتاحة</th>
+                    <th style="text-align: left;">القيمة المالية (بالتكلفة)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in stock_data %}
+                <tr>
+                    <td style="font-family: monospace;">{{ item.product__barcode|default:"-" }}</td>
+                    <td style="font-weight: bold;">{{ item.product__name }}</td>
+                    <td>{{ item.warehouse__name }}</td>
+                    <td style="text-align: center;">
+                        <span class="badge badge-primary" style="font-size: 1rem;">
+                            {{ item.total_qty|floatformat:"-2" }}
+                        </span>
+                    </td>
+                    <td style="text-align: left; color: var(--neon-cyan); font-weight: bold;">
+                        {{ item.total_value|floatformat:"-2" }} ج.م
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" style="text-align: center; padding: 2rem;">لا يوجد مخزون يطابق بحثك</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&search_query={{ search_query }}&warehouse={{ selected_warehouse }}" class="btn btn-sm btn-secondary">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&search_query={{ search_query }}&warehouse={{ selected_warehouse }}" class="btn btn-sm btn-secondary">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; }
+    }
+</style>
+{% endblock %}

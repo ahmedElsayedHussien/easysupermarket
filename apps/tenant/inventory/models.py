@@ -460,7 +460,7 @@ class StockMovement(models.Model):
         max_length=100, blank=True, verbose_name=_('المرجع')
     )
     notes = models.TextField(blank=True, verbose_name=_('ملاحظات'))
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name=_('تاريخ الحركة'))
 
     class Meta:
         verbose_name = _('حركة مخزون')

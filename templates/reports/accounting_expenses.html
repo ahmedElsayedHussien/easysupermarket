@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📉 {{ title }}</h1>
+        <p>تفصيل المصروفات وتوزيعها على بنود الصرف خلال فترة</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+        <button onclick="exportTableToExcel('expenses-table', 'المصروفات_التفصيلية')" class="btn btn-success">📊 تصدير Excel</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 200px;">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 200px;">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
+            <button type="submit" class="btn btn-primary">تحديث التقرير</button>
+        </div>
+    </form>
+</div>
+
+<!-- Summary Cards -->
+<div class="reports-grid" style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin-bottom: 1.5rem;">
+    <div class="stat-card" style="border-left: 4px solid var(--neon-red);">
+        <div class="stat-icon" style="background: rgba(255, 23, 68, 0.1); color: var(--neon-red);">📉</div>
+        <div class="stat-details">
+            <h3 class="stat-title">إجمالي المصروفات</h3>
+            <div class="stat-value text-danger" style="color: var(--neon-red);">{{ total_expenses|floatformat:"-2" }} ج.م</div>
+        </div>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem; margin-bottom: 1.5rem;" class="expenses-layout">
+    <!-- Grouped Expenses -->
+    <div class="card">
+        <h3 style="margin-bottom: 1rem; color: var(--text-primary); border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+            📊 المصروفات حسب البند
+        </h3>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>بند المصروف</th>
+                    <th style="text-align: left;">القيمة</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for acc in expenses_by_account %}
+                <tr>
+                    <td>{{ acc.expense_account__name }}</td>
+                    <td style="text-align: left; font-weight: bold; color: var(--neon-red);">{{ acc.total_amount|floatformat:"-2" }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="2" class="text-center">لا توجد بيانات</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Detailed Expenses Table -->
+    <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+            <h3 style="margin: 0; color: var(--text-primary);">
+                📝 تفاصيل حركات الصرف
+            </h3>
+            <div class="search-box" style="width: 250px;">
+                <input type="text" id="searchInput" class="form-control" placeholder="بحث في المصروفات..." onkeyup="filterTable()">
+            </div>
+        </div>
+        
+        <div class="table-responsive">
+            <table class="data-table" id="expenses-table">
+                <thead>
+                    <tr>
+                        <th>التاريخ</th>
+                        <th>رقم الحركة</th>
+                        <th>الفرع</th>
+                        <th>بند المصروف</th>
+                        <th>حساب الدفع</th>
+                        <th>القيمة</th>
+                        <th>الضريبة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for exp in expenses %}
+                    <tr>
+                        <td style="color: var(--text-primary);">{{ exp.date|date:"Y-m-d" }}</td>
+                        <td style="color: var(--text-primary);">{{ exp.expense_number|default:"-" }}</td>
+                        <td style="color: var(--text-primary);">{{ exp.branch.name }}</td>
+                        <td style="color: var(--text-primary);">{{ exp.expense_account.name }}</td>
+                        <td style="color: var(--text-primary);">{{ exp.payment_account.name }}</td>
+                        <td style="color: var(--neon-red); font-weight: bold;">{{ exp.amount|floatformat:"-2" }}</td>
+                        <td style="color: var(--text-muted);">{{ exp.vat_amount|floatformat:"-2" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center">لا توجد مصروفات مسجلة في هذه الفترة</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    @media (max-width: 900px) {
+        .expenses-layout {
+            grid-template-columns: 1fr !important;
+        }
+    }
+    
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .search-box { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 20px !important; }
+        .data-table th, .data-table td { border-color: #ddd !important; color: black !important; }
+        .expenses-layout { grid-template-columns: 1fr !important; display: block !important; }
+    }
+</style>
+
+<script>
+function filterTable() {
+    let input = document.getElementById("searchInput");
+    let filter = input.value.toUpperCase();
+    let table = document.getElementById("expenses-table");
+    let tr = table.getElementsByTagName("tr");
+
+    for (let i = 1; i < tr.length; i++) {
+        let textValue = tr[i].textContent || tr[i].innerText;
+        if (textValue.toUpperCase().indexOf(filter) > -1) {
+            tr[i].style.display = "";
+        } else {
+            tr[i].style.display = "none";
+        }
+    }
+}
+
+function exportTableToExcel(tableID, filename = '') {
+    let downloadLink;
+    let dataType = 'application/vnd.ms-excel';
+    let tableSelect = document.getElementById(tableID);
+    let tableHTML = tableSelect.outerHTML.replace(/ /g, '%20');
+    
+    filename = filename ? filename + '.xls' : 'excel_data.xls';
+    
+    downloadLink = document.createElement("a");
+    document.body.appendChild(downloadLink);
+    
+    if (navigator.msSaveOrOpenBlob) {
+        let blob = new Blob(['\ufeff', tableHTML], { type: dataType });
+        navigator.msSaveOrOpenBlob(blob, filename);
+    } else {
+        downloadLink.href = 'data:' + dataType + ', ' + tableHTML;
+        downloadLink.download = filename;
+        downloadLink.click();
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}سجل الفواتير الإلكترونية{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-blue">📖 سجل الفواتير الإلكترونية (مصلحة الضرائب)</h2>
+        <div>
+            <a href="{% url 'einvoicing:invoice_approval_list' %}" class="btn btn-orange me-2">📤 إرسال للضرائب</a>
+        </div>
+    </div>
+
+    <div class="card p-4 border-neon-blue">
+        <div class="table-responsive">
+            <table class="table table-hover text-light align-middle">
+                <thead>
+                    <tr class="text-neon-blue border-bottom-neon">
+                        <th>رقم الفاتورة</th>
+                        <th>التاريخ</th>
+                        <th>الإجمالي</th>
+                        <th>الحالة</th>
+                        <th>الرقم الفريد (UUID)</th>
+                        <th>رقم الإرسال (Submission)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr>
+                        <td class="fw-bold text-nowrap">{{ log.invoice.invoice_number }}</td>
+                        <td class="text-nowrap" dir="ltr">{{ log.updated_at|date:"Y-m-d H:i" }}</td>
+                        <td class="text-neon-gold fw-bold text-nowrap">{{ log.invoice.total_amount }}</td>
+                        <td>
+                            <div class="d-flex align-items-center gap-2">
+                                {% if log.status == 'VALID' %}
+                                    <span class="badge bg-success"><i class="fas fa-check-circle"></i> {{ log.get_status_display }}</span>
+                                {% elif log.status == 'INVALID' or log.status == 'ERROR' %}
+                                    <span class="badge bg-danger"><i class="fas fa-times-circle"></i> {{ log.get_status_display }}</span>
+                                    {% if log.eta_response %}
+                                        <button class="btn btn-sm btn-orange mt-1" onclick="alert('تفاصيل الخطأ:\n{{ log.eta_response|escapejs }}')">التفاصيل</button>
+                                    {% endif %}
+                                    <form action="{% url 'einvoicing:resend_invoice' log.id %}" method="post" style="display:inline-block;" class="mt-1">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-primary" title="إعادة إرسال"><i class="fas fa-redo"></i> إعادة إرسال</button>
+                                    </form>
+                                {% elif log.status == 'PENDING' %}
+                                    <span class="badge bg-warning text-dark"><i class="fas fa-spinner fa-spin"></i> قيد الانتظار</span>
+                                {% elif log.status == 'SIGNED' %}
+                                    <span class="badge bg-info text-dark">{{ log.get_status_display }}</span>
+                                    <form action="{% url 'einvoicing:confirm_eta_submission' log.id %}" method="POST" class="m-0 p-0">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-orange" title="تأكيد الرفع لمصلحة الضرائب">
+                                            <i class="fas fa-cloud-upload-alt"></i> رفع للمنظومة
+                                        </button>
+                                    </form>
+                                {% else %}
+                                    <span class="badge bg-info text-dark">{{ log.get_status_display }}</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td class="text-nowrap">
+                            {% if log.uuid %}
+                                <span class="text-muted small" style="font-family: monospace;" dir="ltr">{{ log.uuid }}</span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td class="text-nowrap">
+                            {% if log.submission_id %}
+                                <span class="text-muted small" dir="ltr">{{ log.submission_id }}</span>
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-5 text-muted">
+                            <i class="fas fa-folder-open fs-1 mb-3 d-block"></i>
+                            لا توجد فواتير تم إرسالها لبرنامج التوقيع أو الضرائب بعد.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

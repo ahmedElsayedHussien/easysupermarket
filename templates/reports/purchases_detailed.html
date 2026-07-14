@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📑 {{ title }}</h1>
+        <p>تفاصيل حركة المشتريات والمرتجعات على مستوى كل صنف</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 250px;">
+            <label class="form-label">🔍 بحث (المورد، رقم الفاتورة، الصنف)</label>
+            <input type="text" name="search_query" class="form-control" value="{{ search_query }}" placeholder="ابحث...">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">📅 من تاريخ</label>
+            <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">📅 إلى تاريخ</label>
+            <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <a href="{% url 'core:report_detailed_purchases' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+<!-- Grand Totals -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي كمية الأصناف (صافي)</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-blue);">
+                {{ grand_totals.total_qty|default:"0"|floatformat:"-2" }}
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">📦</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي الضرائب (صافي)</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-red);">
+                {{ grand_totals.total_tax|default:"0"|floatformat:"-2" }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">🏛️</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between; border-color: var(--neon-cyan);">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي المشتريات (الصافي النهائي)</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-cyan);">
+                {{ grand_totals.total_purchases|default:"0"|floatformat:"-2" }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">💰</div>
+    </div>
+</div>
+
+<!-- Table Data -->
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>التاريخ</th>
+                    <th>رقم الفاتورة</th>
+                    <th>النوع</th>
+                    <th>المورد</th>
+                    <th>الصنف</th>
+                    <th style="text-align: center;">الكمية</th>
+                    <th style="text-align: left;">سعر الوحدة</th>
+                    <th style="text-align: left;">قبل الضريبة</th>
+                    <th style="text-align: left;">الضريبة</th>
+                    <th style="text-align: left;">الصافي النهائي</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in invoice_lines %}
+                <tr>
+                    <td>{{ line.invoice.date|date:"Y-m-d" }}</td>
+                    <td style="font-weight: bold; font-family: monospace;">
+                        <a href="#" style="color: var(--neon-blue); text-decoration: none;">
+                            {{ line.invoice.invoice_number }}
+                        </a>
+                    </td>
+                    <td>
+                        {% if line.invoice.invoice_type == 'PURCHASE' %}
+                            <span class="badge badge-success">شراء</span>
+                        {% else %}
+                            <span class="badge badge-danger">مرتجع شراء</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ line.invoice.partner.name|default:"-" }}</td>
+                    <td style="font-weight: bold;">{{ line.product.name }}</td>
+                    <td style="text-align: center;">
+                        <span class="badge {% if line.invoice.invoice_type == 'PURCHASE' %}badge-primary{% else %}badge-danger{% endif %}">
+                            {{ line.quantity|floatformat:"-2" }}
+                        </span>
+                    </td>
+                    <td style="text-align: left;">{{ line.unit_price|floatformat:"-2" }}</td>
+                    <td style="text-align: left;">
+                        {% if line.invoice.invoice_type == 'RETURN_PURCHASE' %}-{% endif %}{{ line.subtotal|floatformat:"-2" }}
+                    </td>
+                    <td style="text-align: left; color: var(--neon-red);">
+                        {% if line.invoice.invoice_type == 'RETURN_PURCHASE' %}-{% endif %}{{ line.tax_amount|floatformat:"-2" }}
+                    </td>
+                    <td style="text-align: left; color: var(--neon-cyan); font-weight: bold;">
+                        {% if line.invoice.invoice_type == 'RETURN_PURCHASE' %}-{% endif %}{{ line.total_amount|floatformat:"-2" }}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="10" style="text-align: center; padding: 2rem;">لا توجد حركة مشتريات مطابقة لمعايير البحث</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}&search_query={{ search_query }}" class="btn btn-sm btn-secondary">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}&search_query={{ search_query }}" class="btn btn-sm btn-secondary">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; }
+    }
+</style>
+{% endblock %}

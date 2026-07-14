@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📈 تقرير ربحية الأصناف والخدمات</h1>
+        <p>عرض تفصيلي لأرباح كل صنف أو خدمة مبيعة خلال فترة محددة</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 2; min-width: 250px;">
+            <label class="form-label">🔍 بحث باسم الصنف / الباركود</label>
+            <input type="text" name="search_query" class="form-control" value="{{ search_query }}" placeholder="اكتب اسم الصنف أو الباركود...">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">📅 من تاريخ</label>
+            <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">📅 إلى تاريخ</label>
+            <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <a href="{% url 'core:report_item_profitability' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+<!-- Grand Totals -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">إجمالي صافي الأرباح</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-green);">
+                {{ grand_totals.gt_profit|floatformat:"-2" }} ج.م
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">💰</div>
+    </div>
+    <div class="card dash-card-1" style="display: flex; align-items: center; justify-content: space-between; border-color: var(--neon-gold);">
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">متوسط هامش الربح</div>
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--neon-gold);">
+                {{ grand_totals.gt_margin|floatformat:"-2" }}%
+            </div>
+        </div>
+        <div style="font-size: 2.5rem; opacity: 0.5;">📊</div>
+    </div>
+</div>
+
+<!-- Table Data -->
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>الصنف / الخدمة</th>
+                    <th>النوع</th>
+                    <th style="text-align: center;">الكمية المباعة</th>
+                    <th style="text-align: left;">إجمالي الإيرادات</th>
+                    <th style="text-align: left;">إجمالي التكلفة</th>
+                    <th style="text-align: left;">صافي الربح</th>
+                    <th style="text-align: center;">هامش الربح %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in products_data %}
+                <tr>
+                    <td style="font-weight: bold;">
+                        {{ item.product__name }}
+                        {% if item.product__barcode %}
+                        <div style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">{{ item.product__barcode }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.product__product_type == 'SERVICE' %}
+                            <span style="color: var(--neon-blue); font-weight: bold;">خدمة</span>
+                        {% else %}
+                            <span style="color: var(--text-muted);">صنف ملموس</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center; font-weight: bold; color: var(--neon-blue);">
+                        {{ item.total_qty|floatformat:"-2" }}
+                    </td>
+                    <td style="text-align: left; color: var(--neon-green); font-weight: bold;">
+                        {{ item.total_revenue|default:0|floatformat:"-2" }}
+                    </td>
+                    <td style="text-align: left; color: var(--neon-red);">
+                        {{ item.total_cogs|default:0|floatformat:"-2" }}
+                    </td>
+                    <td style="text-align: left; font-weight: bold; font-size: 1.1rem; {% if item.total_profit > 0 %}color: var(--neon-green);{% elif item.total_profit < 0 %}color: var(--neon-red);{% endif %}">
+                        {{ item.total_profit|default:0|floatformat:"-2" }}
+                    </td>
+                    <td style="text-align: center;">
+                        <span style="padding: 0.25rem 0.5rem; border-radius: 4px; font-weight: bold; font-size: 0.85rem; 
+                            {% if item.profit_margin >= 50 %}background: rgba(0,255,0,0.1); color: #0f0;
+                            {% elif item.profit_margin >= 20 %}background: rgba(255,255,0,0.1); color: #ff0;
+                            {% elif item.profit_margin > 0 %}background: rgba(255,165,0,0.1); color: orange;
+                            {% else %}background: rgba(255,0,0,0.1); color: red;{% endif %}">
+                            {{ item.profit_margin|floatformat:"-1" }}%
+                        </span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 2rem;">لا توجد أصناف أو خدمات مبيعة مطابقة لبحثك في هذه الفترة</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}&search_query={{ search_query }}" class="btn btn-sm btn-orange">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}&search_query={{ search_query }}" class="btn btn-sm btn-orange">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; color: black !important; }
+        span { background: transparent !important; color: black !important; border: 1px solid #ccc; }
+    }
+</style>
+{% endblock %}
