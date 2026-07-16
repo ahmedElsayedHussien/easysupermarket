@@ -4,12 +4,13 @@ from django.urls import reverse_lazy
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from apps.tenant.core.mixins import CustomPermissionRequiredMixin
+from apps.tenant.core.decorators import custom_permission_required
 
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, View
 from .models import JournalEntry, Account, PaymentMethod, Treasury, BankAccount, EWallet, Expense, Voucher
 from .forms import TreasuryForm, BankAccountForm, EWalletForm, ExpenseForm, ExpenseItemFormSet, VoucherForm
-
-
+from django.db import transaction
+from django.core.exceptions import ValidationError
 
 class JournalEntryListView(CustomPermissionRequiredMixin, ListView):
     permission_required = 'accounting.view_journalentry'
@@ -307,6 +308,7 @@ class PaymentMethodUpdateView(CustomPermissionRequiredMixin, UpdateView):
         return context
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def chart_of_accounts(request):
     accounts = Account.objects.all()
     has_accounts = accounts.exists()
@@ -314,6 +316,7 @@ def chart_of_accounts(request):
     return render(request, 'accounting/chart_of_accounts.html', context)
 
 @login_required
+@custom_permission_required('accounting.add_account', redirect_url='core:main_screen')
 def setup_default_accounts(request):
     from django.contrib import messages
     from django.core.management import call_command
@@ -332,6 +335,7 @@ def setup_default_accounts(request):
     return redirect('accounting:chart_of_accounts')
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def trial_balance(request):
     accounts = Account.objects.all()
     # Logic to calculate trial balance
@@ -339,18 +343,53 @@ def trial_balance(request):
     return render(request, 'accounting/trial_balance.html', context)
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def income_statement(request):
     revenue_accounts = Account.objects.filter(account_type=Account.REVENUE)
     expense_accounts = Account.objects.filter(account_type=Account.EXPENSE)
     
-    total_revenue = sum(acc.current_balance for acc in revenue_accounts if not acc.has_children)
-    total_expense = sum(acc.current_balance for acc in expense_accounts if not acc.has_children)
+    # Calculate Sales (usually normal revenue accounts)
+    sales_accounts = [acc for acc in revenue_accounts if not acc.has_children and acc.code in ['4100', '4110']]
+    total_sales = sum(acc.current_balance for acc in sales_accounts)
+    
+    # Calculate Contra-Revenue (Returns & Discounts)
+    contra_revenue_accounts = [acc for acc in revenue_accounts if not acc.has_children and acc.code in ['4120', '4130']]
+    total_contra_revenue = sum(acc.current_balance for acc in contra_revenue_accounts) # This will naturally be negative
+    
+    # Other Revenues
+    other_revenue_accounts = [acc for acc in revenue_accounts if not acc.has_children and acc.code not in ['4100', '4110', '4120', '4130']]
+    total_other_revenue = sum(acc.current_balance for acc in other_revenue_accounts)
+    
+    net_sales = total_sales + total_contra_revenue
+    total_revenue = net_sales + total_other_revenue
+    
+    # COGS
+    cogs_accounts = [acc for acc in expense_accounts if not acc.has_children and acc.code.startswith('51')]
+    total_cogs = sum(acc.current_balance for acc in cogs_accounts)
+    
+    gross_profit = net_sales - total_cogs
+    
+    # Operating Expenses
+    op_expense_accounts = [acc for acc in expense_accounts if not acc.has_children and not acc.code.startswith('51')]
+    total_op_expense = sum(acc.current_balance for acc in op_expense_accounts)
+    
+    total_expense = total_cogs + total_op_expense
     net_income = total_revenue - total_expense
 
     context = {
-        'revenue_accounts': revenue_accounts,
-        'expense_accounts': expense_accounts,
+        'sales_accounts': sales_accounts,
+        'contra_revenue_accounts': contra_revenue_accounts,
+        'other_revenue_accounts': other_revenue_accounts,
+        'cogs_accounts': cogs_accounts,
+        'op_expense_accounts': op_expense_accounts,
+        'total_sales': total_sales,
+        'total_contra_revenue': total_contra_revenue,
+        'net_sales': net_sales,
+        'total_other_revenue': total_other_revenue,
         'total_revenue': total_revenue,
+        'total_cogs': total_cogs,
+        'gross_profit': gross_profit,
+        'total_op_expense': total_op_expense,
         'total_expense': total_expense,
         'net_income': net_income,
         'title': 'قائمة الدخل'
@@ -358,13 +397,22 @@ def income_statement(request):
     return render(request, 'accounting/income_statement.html', context)
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def balance_sheet(request):
     asset_accounts = Account.objects.filter(account_type=Account.ASSET)
     liability_accounts = Account.objects.filter(account_type=Account.LIABILITY)
     equity_accounts = Account.objects.filter(account_type=Account.EQUITY)
     
+    # Group Assets
+    current_assets = [acc for acc in asset_accounts if not acc.has_children and acc.code.startswith('11')]
+    fixed_assets = [acc for acc in asset_accounts if not acc.has_children and acc.code.startswith('12')]
     total_assets = sum(acc.current_balance for acc in asset_accounts if not acc.has_children)
+    
+    # Group Liabilities
+    current_liabilities = [acc for acc in liability_accounts if not acc.has_children and acc.code.startswith('21')]
+    long_term_liabilities = [acc for acc in liability_accounts if not acc.has_children and acc.code.startswith('22')]
     total_liabilities = sum(acc.current_balance for acc in liability_accounts if not acc.has_children)
+    
     total_equity = sum(acc.current_balance for acc in equity_accounts if not acc.has_children)
     
     revenue_accounts = Account.objects.filter(account_type=Account.REVENUE)
@@ -375,9 +423,11 @@ def balance_sheet(request):
     total_liabilities_and_equity = total_liabilities + total_equity + net_income
 
     context = {
-        'asset_accounts': asset_accounts,
-        'liability_accounts': liability_accounts,
-        'equity_accounts': equity_accounts,
+        'current_assets': current_assets,
+        'fixed_assets': fixed_assets,
+        'current_liabilities': current_liabilities,
+        'long_term_liabilities': long_term_liabilities,
+        'equity_accounts': [acc for acc in equity_accounts if not acc.has_children],
         'total_assets': total_assets,
         'total_liabilities': total_liabilities,
         'total_equity': total_equity,
@@ -610,6 +660,7 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
 # ===========================================================================
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def pos_machine_list(request):
     """List all POS machines with current balances."""
     from .models import POSMachine
@@ -622,6 +673,7 @@ def pos_machine_list(request):
 
 
 @login_required
+@custom_permission_required('accounting.add_account', redirect_url='core:main_screen')
 def pos_machine_create(request):
     """Create a new POS machine."""
     from .models import POSMachine
@@ -659,6 +711,7 @@ def pos_machine_create(request):
 
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def pos_machine_detail(request, pk):
     """Show machine details with its transaction history."""
     from .models import POSMachine, EServiceTransaction
@@ -679,6 +732,7 @@ def pos_machine_detail(request, pk):
 # ===========================================================================
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def eservice_center(request):
     """Main e-service center for handling recharge/withdrawal/transfer operations."""
     from .models import POSMachine, EWallet, Treasury, EServiceTransaction
@@ -742,6 +796,7 @@ def eservice_center(request):
 
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def eservice_history(request):
     """List all e-service transactions."""
     from .models import EServiceTransaction
@@ -756,6 +811,7 @@ def eservice_history(request):
 
 
 @login_required
+@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def eservice_detail(request, pk):
     from .models import EServiceTransaction
     txn = get_object_or_404(EServiceTransaction, pk=pk)
@@ -767,6 +823,7 @@ def eservice_detail(request, pk):
 
 
 @login_required
+@custom_permission_required('accounting.add_journalentry', redirect_url='core:main_screen')
 def eservice_post(request, pk):
     if request.method == 'POST':
         from .models import EServiceTransaction
@@ -781,5 +838,47 @@ def eservice_post(request, pk):
             messages.error(request, f'حدث خطأ أثناء الترحيل: {str(e)}')
     return redirect('accounting:eservice_history')
 
-
 from decimal import Decimal
+from django.views.generic import CreateView
+from django.urls import reverse_lazy
+from .forms import JournalEntryForm, JournalItemFormSet
+
+class ManualJournalEntryCreateView(CustomPermissionRequiredMixin, CreateView):
+    model = JournalEntry
+    form_class = JournalEntryForm
+    template_name = 'accounting/journal_entry_form.html'
+    permission_required = 'accounting.add_journalentry'
+    success_url = reverse_lazy('accounting:journal_list')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        if self.request.POST:
+            context['items_formset'] = JournalItemFormSet(self.request.POST)
+        else:
+            context['items_formset'] = JournalItemFormSet()
+        context['title'] = 'إنشاء قيد يومية يدوي'
+        return context
+
+    def form_valid(self, form):
+        context = self.get_context_data()
+        items_formset = context['items_formset']
+        if items_formset.is_valid():
+            with transaction.atomic():
+                self.object = form.save(commit=False)
+                self.object.created_by = self.request.user
+                self.object.status = JournalEntry.DRAFT
+                self.object.save()
+                items_formset.instance = self.object
+                items_formset.save()
+                
+                if self.object.is_balanced():
+                    try:
+                        self.object.post()
+                        messages.success(self.request, f'تم حفظ وترحيل القيد المحاسبي {self.object.reference} بنجاح.')
+                    except ValidationError as e:
+                        messages.warning(self.request, f'تم حفظ القيد كمسودة. تعذر الترحيل التلقائي: {str(e.message)}')
+                else:
+                    messages.warning(self.request, 'تم حفظ القيد كمسودة نظراً لعدم اتزان المدين والدائن.')
+            return super().form_valid(form)
+        else:
+            return self.form_invalid(form)

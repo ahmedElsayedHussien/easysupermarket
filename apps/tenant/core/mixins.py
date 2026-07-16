@@ -32,6 +32,6 @@ class CustomPermissionRequiredMixin(PermissionRequiredMixin):
             messages.error(self.request, msg)
             
             # Redirect to dashboard
-            return redirect('core:dashboard')
+            return redirect('core:main_screen')
             
         return super().handle_no_permission()

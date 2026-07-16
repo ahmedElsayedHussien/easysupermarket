@@ -65,7 +65,7 @@
                                     {% if perm in form.instance.user_permissions.all or form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}checked{% endif %}
                                     {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}disabled{% endif %}
                                     style="accent-color: var(--neon-blue);">
-                                {{ perm.name }}
+                                {{ perm.translated_name|default:perm.name }}
                             </label>
                             {% endfor %}
                         </div>

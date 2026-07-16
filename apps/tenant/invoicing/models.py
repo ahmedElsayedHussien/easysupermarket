@@ -151,6 +151,9 @@ class Invoice(models.Model):
     invoice_number = models.CharField(
         max_length=30, unique=True, blank=True, verbose_name='رقم الفاتورة'
     )
+    e_invoice_number = models.CharField(
+        max_length=100, blank=True, null=True, verbose_name='رقم الفاتورة الإلكترونية'
+    )
     invoice_type = models.CharField(
         max_length=20, choices=INVOICE_TYPE_CHOICES, verbose_name='نوع الفاتورة'
     )

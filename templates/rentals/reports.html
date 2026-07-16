@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold m-0"><i class="fas fa-chart-pie"></i> {{ title }}</h2>
+    </div>
+
+    <!-- Summary Cards -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;">
+        <div class="card p-4 text-center" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05); min-height: 150px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+            <h4 class="text-neon-blue m-0">إجمالي مكاسب الإيجارات</h4>
+            <h2 class="text-neon-cyan mt-3 m-0">{{ total_profits }} ج.م</h2>
+        </div>
+        
+        <div class="card p-4 text-center" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05); min-height: 150px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+            <h4 class="text-neon-blue mb-4 m-0">حالة المعدات الحالية</h4>
+            <div style="display: flex; justify-content: center; gap: 3rem; margin-top: 1rem;">
+                {% for status in equipment_status %}
+                    {% if status.status == 'AVAILABLE' %}
+                    <div class="text-center">
+                        <h2 class="text-neon-green m-0">{{ status.count }}</h2>
+                        <span class="text-muted">متاحة</span>
+                    </div>
+                    {% elif status.status == 'RENTED' %}
+                    <div class="text-center">
+                        <h2 class="text-neon-pink m-0">{{ status.count }}</h2>
+                        <span class="text-muted">مؤجرة</span>
+                    </div>
+                    {% else %}
+                    <div class="text-center">
+                        <h2 class="text-neon-gold m-0">{{ status.count }}</h2>
+                        <span class="text-muted">في الصيانة</span>
+                    </div>
+                    {% endif %}
+                {% empty %}
+                    <p class="text-muted m-0">لا يوجد بيانات</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Tables -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1.5rem;">
+        <!-- Active Rentals (Return Dates) -->
+        <div class="card p-4 h-100" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05);">
+            <h4 class="text-neon-pink mb-4"><i class="fas fa-clock"></i> مواعيد العودة (الإيجارات النشطة)</h4>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>المعدة</th>
+                            <th>العميل</th>
+                            <th>تاريخ العودة المتوقع</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for rental in active_rentals %}
+                        <tr>
+                            <td>{{ rental.equipment.name }}</td>
+                            <td>{{ rental.customer.name }}</td>
+                            <td class="text-neon-pink">{{ rental.end_date|date:"Y-m-d" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="text-center text-muted">لا توجد إيجارات نشطة حالياً.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Equipment Profitability -->
+        <div class="card p-4 h-100" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05);">
+            <h4 class="text-neon-green mb-4"><i class="fas fa-money-bill-wave"></i> ربحية المعدات</h4>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>المعدة</th>
+                            <th>إجمالي الإيرادات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for equip in equipment_profitability %}
+                        <tr>
+                            <td>{{ equip.name }} <span class="badge" style="background: rgba(255,255,255,0.1);">{{ equip.code }}</span></td>
+                            <td class="text-neon-cyan">{{ equip.total_revenue|default:"0" }} ج.م</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="2" class="text-center text-muted">لا توجد معدات مضافة.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block title %}المعدات{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold m-0"><i class="fas fa-toolbox"></i> المعدات</h2>
+        <a href="{% url 'rentals:equipment_create' %}" class="btn btn-neon-blue">+ إضافة معدة جديدة</a>
+    </div>
+
+    {% if messages %}
+    <div class="mb-4">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}" style="background: rgba(43,255,107,0.1); border-right: 4px solid var(--neon-green);">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>اسم المعدة</th>
+                    <th>الكود</th>
+                    <th>سعر الإيجار اليومي</th>
+                    <th>الحالة</th>
+                    <th>إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for equipment in equipments %}
+                <tr>
+                    <td>{{ equipment.name }}</td>
+                    <td><span class="badge" style="background: rgba(255,255,255,0.1);">{{ equipment.code }}</span></td>
+                    <td class="text-neon-cyan">{{ equipment.daily_rate }} ج.م</td>
+                    <td>
+                        {% if equipment.status == 'AVAILABLE' %}
+                        <span class="badge" style="background: rgba(43,255,107,0.2); color: var(--neon-green);">متاحة</span>
+                        {% elif equipment.status == 'RENTED' %}
+                        <span class="badge" style="background: rgba(255,71,87,0.2); color: var(--neon-pink);">مؤجرة</span>
+                        {% else %}
+                        <span class="badge" style="background: rgba(255,171,0,0.2); color: var(--neon-gold);">في الصيانة</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'rentals:equipment_edit' equipment.pk %}" class="btn-action text-neon-blue"><i class="fas fa-edit"></i> تعديل</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-center text-muted">لا يوجد معدات مضافة حتى الآن.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

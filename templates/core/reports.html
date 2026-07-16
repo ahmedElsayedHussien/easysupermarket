@@ -11,17 +11,24 @@
 <div class="card" style="padding: 0;">
     <!-- Tabs Header -->
     <div class="reports-tabs-header">
+        {% if perms.core.view_sales_reports or perms.core.view_purchases_reports %}
         <button class="reports-tab active" onclick="switchReportTab('sales')">🛒 تقارير المبيعات</button>
         <button class="reports-tab" onclick="switchReportTab('purchases')">📦 تقارير المشتريات</button>
+        {% endif %}
+        {% if perms.core.view_inventory_reports %}
         <button class="reports-tab" onclick="switchReportTab('inventory')">🏭 تقارير المخزون</button>
+        {% endif %}
+        {% if perms.core.view_accounting_reports %}
         <button class="reports-tab" onclick="switchReportTab('accounting')">💰 تقارير المحاسبة</button>
-        <button class="reports-tab" onclick="switchReportTab('partners')">🤝 تقارير الشركاء</button>
+        {% endif %}
+        <button class="reports-tab" onclick="switchReportTab('rentals')">🚜 تقارير التأجير</button>
     </div>
 
     <!-- Tabs Content -->
     <div class="reports-tabs-content" style="padding: 1.5rem;">
         
         <!-- Sales Tab -->
+        {% if perms.core.view_sales_reports %}
         <div id="tab-sales" class="report-tab-pane active">
             <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير المبيعات</h3>
             <div class="reports-grid">
@@ -99,8 +106,10 @@
                 </div>
             </div>
         </div>
+        {% endif %}
 
         <!-- Purchases Tab -->
+        {% if perms.core.view_purchases_reports %}
         <div id="tab-purchases" class="report-tab-pane" style="display: none;">
             <h3 style="color: var(--neon-red); margin-bottom: 1rem;">تقارير المشتريات</h3>
             <div class="reports-grid">
@@ -170,8 +179,10 @@
                 </div>
             </div>
         </div>
+        {% endif %}
 
         <!-- Inventory Tab -->
+        {% if perms.core.view_inventory_reports %}
         <div id="tab-inventory" class="report-tab-pane" style="display: none;">
             <h3 style="color: var(--neon-cyan); margin-bottom: 1rem;">تقارير المخزون</h3>
             <div class="reports-grid">
@@ -218,11 +229,37 @@
                 </div>
             </div>
         </div>
+        {% endif %}
 
         <!-- Accounting Tab -->
+        {% if perms.core.view_accounting_reports %}
         <div id="tab-accounting" class="report-tab-pane" style="display: none;">
             <h3 style="color: var(--neon-gold); margin-bottom: 1rem;">تقارير المحاسبة</h3>
             <div class="reports-grid">
+                <div class="report-card">
+                    <div class="report-icon">🧾</div>
+                    <div class="report-info">
+                        <h4>تقرير الضرائب (الإقرار)</h4>
+                        <p>ملخص القيمة المضافة والخصم والإضافة على المبيعات والمشتريات.</p>
+                        <a href="{% url 'core:report_taxes' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">⚖️</div>
+                    <div class="report-info">
+                        <h4>ميزان المراجعة (Trial Balance)</h4>
+                        <p>تأكيد توازن الحسابات بمطابقة الجانب المدين والدائن بالأرصدة والمجاميع.</p>
+                        <a href="{% url 'core:report_trial_balance' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📒</div>
+                    <div class="report-info">
+                        <h4>دفتر الأستاذ العام</h4>
+                        <p>كشف حساب تفصيلي وحركة القيود لحساب معين خلال فترة.</p>
+                        <a href="{% url 'core:report_general_ledger' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
                 <div class="report-card">
                     <div class="report-icon">📉</div>
                     <div class="report-info">
@@ -247,19 +284,35 @@
                         <a href="{% url 'core:report_expenses' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
+                <div class="report-card">
+                    <div class="report-icon" style="color: var(--neon-cyan);">☁️</div>
+                    <div class="report-info">
+                        <h4 style="color: var(--neon-cyan);">الفواتير الإلكترونية المعتمدة</h4>
+                        <p>الفواتير المرفوعة بنجاح للمنظومة وقيمة المبيعات والضرائب المرفوعة.</p>
+                        <a href="{% url 'core:report_einvoicing' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
             </div>
         </div>
-
-        <!-- Partners Tab -->
-        <div id="tab-partners" class="report-tab-pane" style="display: none;">
-            <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير الشركاء</h3>
+        {% endif %}
+        <!-- Rentals Tab -->
+        <div id="tab-rentals" class="report-tab-pane" style="display: none;">
+            <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير التأجير</h3>
             <div class="reports-grid">
                 <div class="report-card">
-                    <div class="report-icon">📒</div>
+                    <div class="report-icon">🚜</div>
                     <div class="report-info">
-                        <h4>كشف حساب عميل/مورد</h4>
-                        <p>المديونيات والمستحقات وحركة الدفعات للشركاء التجاريين.</p>
-                        <a href="#" class="btn btn-sm btn-orange">عرض التقرير</a>
+                        <h4>معدل تشغيل المعدات</h4>
+                        <p>تقرير شامل يوضح نسبة استخدام كل معدة مقارنة بأيام توافرها لتحديد ربحيتها الحقيقية.</p>
+                        <a href="{% url 'rentals:report_equipment_utilization' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon" style="color: var(--neon-pink);">⏰</div>
+                    <div class="report-info">
+                        <h4 style="color: var(--neon-pink);">المتأخرات (Overdue Rentals)</h4>
+                        <p>قائمة بالعقود النشطة التي تجاوزت تاريخ العودة المتوقع ولم يتم تسليمها، لمتابعة العملاء.</p>
+                        <a href="{% url 'rentals:report_overdue_rentals' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
             </div>

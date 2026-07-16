@@ -17,21 +17,32 @@
     </div>
 
     <div class="card p-4">
-        <ul class="tree-view" style="list-style:none; padding:0;">
+        <ul class="tree-view list-unstyled p-0 m-0">
             {% recursetree accounts %}
-                <li style="margin-bottom: 0.5rem;">
-                    <div class="d-flex align-center gap-2 p-2 border-bottom" style="border-color: var(--border-default);">
-                        <span class="en text-neon-gold">{{ node.code }}</span>
-                        <strong>{{ node.name }}</strong>
-                        <span class="badge badge-info">{{ node.get_account_type_display }}</span>
-                        {% if not node.is_leaf_node %}
-                        <span class="text-muted text-sm">({{ node.get_descendant_count }} حساب فرعي)</span>
-                        {% else %}
-                        <span class="badge badge-success" style="margin-right:auto;">رصيد: {{ node.current_balance }} ج.م</span>
-                        {% endif %}
+                <li class="mb-2">
+                    <div class="d-flex justify-content-between align-items-center p-3 rounded" style="background-color: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05);">
+                        <!-- Right Side (Account Info) -->
+                        <div class="d-flex align-items-center gap-3">
+                            <span class="badge bg-dark text-neon-gold px-3 py-2 fs-6" style="min-width: 60px;">{{ node.code }}</span>
+                            <strong class="fs-5 text-light">{{ node.name }}</strong>
+                            <span class="badge bg-info text-dark">{{ node.get_account_type_display }}</span>
+                            {% if not node.is_leaf_node %}
+                            <span class="text-muted small ms-2">({{ node.get_descendant_count }} حساب فرعي)</span>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- Left Side (Balance) -->
+                        <div class="text-start">
+                            {% if node.current_balance >= 0 %}
+                            <span class="badge bg-success px-3 py-2 fs-6" style="min-width: 120px;">رصيد: {{ node.current_balance|floatformat:2 }} ج.م</span>
+                            {% else %}
+                            <span class="badge bg-danger px-3 py-2 fs-6" style="min-width: 120px;">رصيد: {{ node.current_balance|floatformat:2 }} ج.م</span>
+                            {% endif %}
+                        </div>
                     </div>
+
                     {% if not node.is_leaf_node %}
-                        <ul class="children" style="list-style:none; margin-right: 3rem; padding-right: 1rem; border-right: 2px dashed var(--border-default); margin-top: 0.5rem;">
+                        <ul class="children list-unstyled mt-2" style="margin-right: 2.5rem; padding-right: 1.5rem; border-right: 2px dashed rgba(255, 255, 255, 0.1);">
                             {{ children }}
                         </ul>
                     {% endif %}

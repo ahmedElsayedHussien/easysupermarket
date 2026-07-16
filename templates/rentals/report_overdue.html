@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1 class="text-neon-pink">⏰ المتأخرات (Overdue Rentals)</h1>
+        <p>قائمة بالعقود النشطة التي تجاوزت تاريخ العودة المتوقع ولم يتم تسليمها، لمتابعة العملاء.</p>
+    </div>
+    <div class="content-actions">
+        <button class="btn btn-primary" onclick="window.print()">
+            <i class="fas fa-print"></i> طباعة التقرير
+        </button>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-secondary">
+            <i class="fas fa-arrow-right"></i> عودة للتقارير
+        </a>
+    </div>
+</div>
+
+<div class="card p-4">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم العقد</th>
+                    <th>المعدة</th>
+                    <th>العميل</th>
+                    <th>تاريخ العودة المتوقع</th>
+                    <th>أيام التأخير</th>
+                    <th>إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in report_data %}
+                <tr style="background: rgba(255, 60, 100, 0.05);">
+                    <td><strong>#{{ row.rental.id }}</strong></td>
+                    <td>{{ row.rental.equipment.name }}</td>
+                    <td>
+                        {{ row.rental.customer.name }}
+                        {% if row.rental.customer.phone %}
+                        <br><small class="text-muted"><i class="fas fa-phone"></i> {{ row.rental.customer.phone }}</small>
+                        {% endif %}
+                    </td>
+                    <td class="text-neon-pink">{{ row.rental.end_date|date:"Y-m-d" }}</td>
+                    <td><strong class="text-neon-pink">{{ row.days_overdue }} يوم</strong></td>
+                    <td>
+                        <a href="{% url 'rentals:rental_detail' row.rental.id %}" class="btn btn-sm btn-secondary" title="عرض التفاصيل">
+                            <i class="fas fa-eye"></i> تفاصيل
+                        </a>
+                        <a href="{% url 'rentals:rental_return' row.rental.id %}" class="btn btn-sm btn-orange ms-1" title="استلام المعدة">
+                            <i class="fas fa-undo"></i> استلام
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted">🎉 لا يوجد أي عقود متأخرة حالياً! كل المعدات تم تسليمها في موعدها.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="mt-4 text-muted" style="font-size: 0.9rem;">
+        <p><strong>ملاحظات:</strong></p>
+        <ul style="padding-right: 1.5rem;">
+            <li>هذا التقرير يعرض فقط العقود <strong>النشطة</strong> التي تأخرت عن موعدها.</li>
+            <li>للمطالبة بغرامات تأخير، يمكنك تسوية العقد من زر <strong>استلام</strong> ثم إضافة المبالغ المتفق عليها أثناء الرد.</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

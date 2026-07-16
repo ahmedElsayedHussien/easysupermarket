@@ -37,6 +37,7 @@ class Partner(models.Model):
     phone = models.CharField(max_length=30, blank=True, verbose_name='الهاتف')
     mobile = models.CharField(max_length=30, blank=True, verbose_name='الموبايل')
     email = models.EmailField(null=True, blank=True, verbose_name='البريد الإلكتروني')
+    national_id = models.CharField(max_length=20, null=True, blank=True, verbose_name='الرقم القومي')
     tax_id = models.CharField(
         max_length=50, blank=True, verbose_name='الرقم الضريبي'
     )

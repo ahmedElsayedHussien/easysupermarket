@@ -1,5 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, permission_required
 from django.http import JsonResponse
 from django.utils import timezone
 from django.contrib import messages
@@ -9,8 +9,10 @@ from apps.tenant.core.models import Branch, SystemSetting
 from apps.tenant.partners.models import Partner
 import json
 from decimal import Decimal
+from apps.tenant.core.decorators import custom_permission_required
 
 @login_required
+@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def pos_view(request):
     """Hybrid Sales Point View"""
     
@@ -75,8 +77,8 @@ def pos_view(request):
     else:
         # Non-admin sees only their branch's data
         treasuries = Treasury.objects.filter(branch=current_branch) if current_branch else Treasury.objects.none()
-        bank_accounts = BankAccount.objects.filter(branch=current_branch) if current_branch else BankAccount.objects.none()
-        ewallets = EWallet.objects.filter(branch=current_branch) if current_branch else EWallet.objects.none()
+        bank_accounts = BankAccount.objects.all()
+        ewallets = EWallet.objects.all()
         branches = Branch.objects.filter(id=current_branch.id) if current_branch else Branch.objects.none()
 
     context = {
@@ -97,6 +99,7 @@ def pos_view(request):
     return render(request, 'pos/index.html', context)
 
 @login_required
+@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def pos_open_shift(request):
     """View to open a new cashier shift"""
     open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
@@ -149,6 +152,7 @@ def pos_open_shift(request):
 
 
 @login_required
+@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def pos_close_shift(request):
     """View to close an active cashier shift"""
     open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
@@ -212,12 +216,26 @@ def pos_close_shift(request):
     return render(request, 'pos/close_shift.html', context)
 
 @login_required
+@custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
 def purchase_invoice_view(request):
     """Purchase Invoice Form"""
+    import json
     suppliers = Partner.objects.filter(partner_type__in=['SUPPLIER', 'BOTH'], is_active=True)
     warehouses = Warehouse.objects.filter(is_active=True)
-    products = Product.objects.filter(is_active=True)
+    products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom')
     
+    product_uoms_map = {}
+    for p in products:
+        base_name = p.get_unit_display()
+        uoms = [{'id': '', 'name': base_name}]
+        seen_names = {base_name}
+        for puom in p.uoms.all():
+            if puom.uom.name not in seen_names:
+                uoms.append({'id': puom.id, 'name': puom.uom.name})
+                seen_names.add(puom.uom.name)
+        product_uoms_map[p.id] = uoms
+    product_uoms_json = json.dumps(product_uoms_map)
+
     is_admin = False
     user_branch = None
     if hasattr(request.user, 'employee_profile'):
@@ -246,13 +264,18 @@ def purchase_invoice_view(request):
             product_ids = request.POST.getlist('product_id[]')
             quantities = request.POST.getlist('quantity[]')
             prices = request.POST.getlist('price[]')
+            uom_ids = request.POST.getlist('uom_id[]')
             
+            # Ensure uom_ids list matches length of product_ids (fill with None if empty)
+            if not uom_ids or len(uom_ids) != len(product_ids):
+                uom_ids = [None] * len(product_ids)
             discount_percentage = Decimal(request.POST.get('discount_percentage') or 0)
             
             vat_str = request.POST.get('vat_percentage', '')
             wht_str = request.POST.get('wht_percentage', '')
             vat_percentage = Decimal(vat_str) if vat_str != '' else None
             wht_percentage = Decimal(wht_str) if wht_str != '' else None
+            e_invoice_number = request.POST.get('e_invoice_number', '')
             
             with transaction.atomic():
                 supplier = Partner.objects.get(id=supplier_id)
@@ -280,15 +303,18 @@ def purchase_invoice_view(request):
                     discount_percentage=discount_percentage,
                     vat_percentage=vat_percentage if vat_percentage is not None else Decimal('0'),
                     wht_percentage=wht_percentage if wht_percentage is not None else Decimal('0'),
+                    e_invoice_number=e_invoice_number if e_invoice_number else None,
                 )
                 
-                for pid, qty, price in zip(product_ids, quantities, prices):
+                for pid, qty, price, uom_id in zip(product_ids, quantities, prices, uom_ids):
                     if pid and qty and price:
                         product = Product.objects.get(id=pid)
                         
                         # Apply global taxes if provided, else 0
                         wht_r = wht_percentage if wht_percentage is not None else Decimal('0')
                         tax_r = vat_percentage if vat_percentage is not None else Decimal('0')
+                        
+                        uom_id_val = uom_id if uom_id and uom_id != '' else None
                         
                         InvoiceLine.objects.create(
                             invoice=invoice,
@@ -298,6 +324,7 @@ def purchase_invoice_view(request):
                             tax_rate=tax_r,
                             wht_rate=wht_r,
                             discount_pct=invoice.discount_percentage,
+                            uom_id=uom_id_val,
                         )
                 
                 invoice.recalculate_totals()
@@ -334,13 +361,16 @@ def purchase_invoice_view(request):
         'suppliers': suppliers,
         'warehouses': warehouses,
         'products': products,
+        'product_uoms_json': product_uoms_json,
         'branches': branches,
         'treasuries': treasuries,
-        'title': 'إنشاء فاتورة مشتريات'
+        'is_admin': is_admin,
+        'title': 'فاتورة مشتريات'
     }
     return render(request, 'invoicing/purchase_invoice.html', context)
 
 @login_required
+@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def sales_invoice_list(request):
     search_query = request.GET.get('q', '')
     invoices = Invoice.objects.filter(invoice_type__in=['SALE', 'RETURN_SALE']).order_by('-date', '-created_at')
@@ -363,6 +393,7 @@ def sales_invoice_list(request):
     return render(request, 'invoicing/invoice_list.html', context)
 
 @login_required
+@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def purchase_invoice_list(request):
     search_query = request.GET.get('q', '')
     invoices = Invoice.objects.filter(invoice_type__in=['PURCHASE', 'RETURN_PURCHASE']).order_by('-date', '-created_at')
@@ -385,6 +416,7 @@ def purchase_invoice_list(request):
     return render(request, 'invoicing/invoice_list.html', context)
 
 @login_required
+@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def invoice_detail(request, invoice_id):
     from django.shortcuts import get_object_or_404
     invoice = get_object_or_404(Invoice, id=invoice_id)
@@ -398,6 +430,7 @@ def invoice_detail(request, invoice_id):
     return render(request, 'invoicing/invoice_detail.html', context)
 
 @login_required
+@custom_permission_required('invoicing.change_invoice', redirect_url='core:main_screen')
 def confirm_invoice_view(request, invoice_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)

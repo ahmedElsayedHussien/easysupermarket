@@ -53,9 +53,15 @@
                     </div>
 
                     <div class="form-check form-switch mt-4 mb-3 custom-switch">
+                        <input type="checkbox" name="enable_einvoicing" class="form-check-input" id="enable_einvoicing" {% if form.enable_einvoicing.value %}checked{% endif %}>
+                        <label class="form-check-label ms-2 fw-bold text-neon-blue" for="enable_einvoicing">تفعيل المنظومة (إرسال الفواتير)</label>
+                        <div class="text-muted mt-1" style="font-size: 0.85rem;">قم بتفعيل هذا الخيار لإرسال الفواتير تلقائياً للبرنامج الوسيط.</div>
+                    </div>
+
+                    <div class="form-check form-switch mt-4 mb-3 custom-switch">
                         <input type="checkbox" name="is_production" class="form-check-input" id="is_production" {% if form.is_production.value %}checked{% endif %}>
                         <label class="form-check-label ms-2 fw-bold text-danger" for="is_production">العملية الفعلية (Production Mode)</label>
-                        <div class="text-muted mt-1" style="font-size: 0.85rem;">إذا تم التفعيل سيتم إرسال الفواتير لمصلحة الضرائب الفعلية. اتركها مغلقة للبيئة التجريبية (Pre-Prod).</div>
+                        <div class="text-muted mt-1" style="font-size: 0.85rem;">حذّر من تفعيله إلا في بيئة الإنتاج.</div>
                     </div>
                 </div>
             </div>

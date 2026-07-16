@@ -84,15 +84,15 @@ def confirm_invoice(invoice_id: int):
         )
 
     # -------------------------------------------------------------------------
-    # SALE invoice processing
+    # SALE and RETURN_PURCHASE invoice processing (Stock OUT)
     # -------------------------------------------------------------------------
-    if invoice.invoice_type in (Invoice.SALE, Invoice.RETURN_SALE):
+    if invoice.invoice_type in (Invoice.SALE, Invoice.RETURN_PURCHASE):
         _process_sale_invoice(invoice, lines)
 
     # -------------------------------------------------------------------------
-    # PURCHASE invoice processing
+    # PURCHASE and RETURN_SALE invoice processing (Stock IN)
     # -------------------------------------------------------------------------
-    elif invoice.invoice_type in (Invoice.PURCHASE, Invoice.RETURN_PURCHASE):
+    elif invoice.invoice_type in (Invoice.PURCHASE, Invoice.RETURN_SALE):
         _process_purchase_invoice(invoice, lines)
 
     else:
@@ -171,12 +171,24 @@ def _process_purchase_invoice(invoice, lines):
 
     # --- Create inventory batches ---
     for line in lines:
-        base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
+        if line.product.product_type == 'SERVICE':
+            continue  # No stock tracking for services
+            
+        conversion_factor = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+        base_quantity = line.quantity * conversion_factor
+        
+        # Critical fix: unit cost must be per BASE unit, not per uom unit
+        # For RETURN_SALE, the cost should ideally be the original COGS, but for now we use cost_price
+        if invoice.invoice_type == Invoice.RETURN_SALE:
+            unit_cost = line.product.cost_price
+        else:
+            unit_cost = line.unit_price / conversion_factor
+            
         add_inventory_batch(
             product=line.product,
             warehouse=invoice.warehouse,
             quantity=base_quantity,
-            unit_cost=line.unit_price,   # Purchase price = unit cost for FIFO
+            unit_cost=unit_cost,
             invoice_line=line,
             reference=invoice.invoice_number,
         )

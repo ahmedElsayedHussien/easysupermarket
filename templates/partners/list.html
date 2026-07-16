@@ -8,6 +8,38 @@
         <a href="{% url 'partners:partner_create' %}?type={{ type }}" class="btn btn-neon-blue">+ إضافة</a>
     </div>
 
+    <!-- Search Form -->
+    <div class="card p-3 mb-4">
+        <form method="GET" class="d-flex" style="gap: 1rem;" id="searchForm">
+            <input type="text" name="q" id="searchInput" class="form-control" placeholder="ابحث بالاسم..." value="{{ search_query|default:'' }}">
+            <button type="submit" class="btn btn-neon-blue d-none">بحث</button>
+            {% if search_query %}
+            <a href="?" class="btn btn-ghost">مسح البحث</a>
+            {% endif %}
+        </form>
+    </div>
+
+    {% block extra_js %}
+    <script>
+        let searchTimeout;
+        const searchInput = document.getElementById('searchInput');
+        if(searchInput) {
+            // Move cursor to end of text
+            searchInput.focus();
+            const val = searchInput.value;
+            searchInput.value = '';
+            searchInput.value = val;
+            
+            searchInput.addEventListener('input', function() {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    document.getElementById('searchForm').submit();
+                }, 500); // 500ms debounce
+            });
+        }
+    </script>
+    {% endblock %}
+
     <table class="data-table">
         <thead>
             <tr>

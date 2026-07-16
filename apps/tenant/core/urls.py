@@ -44,5 +44,9 @@ urlpatterns = [
     path('reports/accounting/income-statement/', reports_views.IncomeStatementReportView.as_view(), name='report_income_statement'),
     path('reports/accounting/expenses/', reports_views.ExpenseReportView.as_view(), name='report_expenses'),
     path('reports/accounting/treasury/', reports_views.TreasuryStatementReportView.as_view(), name='report_treasury'),
+    path('reports/accounting/trial-balance/', reports_views.TrialBalanceReportView.as_view(), name='report_trial_balance'),
+    path('reports/accounting/general-ledger/', reports_views.GeneralLedgerReportView.as_view(), name='report_general_ledger'),
+    path('reports/accounting/tax/', reports_views.TaxReportView.as_view(), name='report_taxes'),
+    path('reports/accounting/einvoicing/', reports_views.EInvoicingReportView.as_view(), name='report_einvoicing'),
     path('reports/inventory/valuation/', reports_views.InventoryValuationReportView.as_view(), name='report_inventory_valuation'),
 ]

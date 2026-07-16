@@ -57,7 +57,7 @@ class CsvExportMixin:
 # Product Sales Report (مبيعات الأصناف)
 # ---------------------------------------------------------
 class ProductSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/sales_by_product.html'
     context_object_name = 'products_data'
     paginate_by = 20
@@ -77,9 +77,9 @@ class ProductSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
         ]
 
     def get_queryset(self):
-        # Base query: Posted Sales Invoices
+        # Base query: Posted Sales Invoices and Returns
         qs = InvoiceLine.objects.filter(
-            invoice__invoice_type=Invoice.SALE,
+            invoice__invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
             invoice__status=Invoice.POSTED
         )
         
@@ -99,29 +99,36 @@ class ProductSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
                 Q(product__barcode__icontains=search_query)
             )
             
+        from django.db.models import Sum, F, Case, When, DecimalField
+            
         # Aggregate by product
         aggregated = qs.values(
             'product__id', 
             'product__name', 
             'product__barcode'
         ).annotate(
-            total_qty=Sum('quantity'),
-            total_revenue=Sum('subtotal'),
-            total_cogs=Sum('cogs_amount'),
-        ).order_by('-total_revenue')
-        
-        # Calculate profit manually or via annotation
-        # Due to DecimalField operations, sometimes it's better to calculate in python or use expression
-        # We will calculate it directly in the annotation
-        aggregated = aggregated.annotate(
+            sold_qty=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='quantity'), default=0, output_field=DecimalField())),
+            returned_qty=Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then='quantity'), default=0, output_field=DecimalField())),
+            gross_revenue=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='subtotal'), default=0, output_field=DecimalField())),
+            returned_revenue=Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then='subtotal'), default=0, output_field=DecimalField())),
+            gross_cogs=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='cogs_amount'), default=0, output_field=DecimalField())),
+            returned_cogs=Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then='cogs_amount'), default=0, output_field=DecimalField())),
+        ).annotate(
+            net_qty=F('sold_qty') - F('returned_qty'),
+            net_total=F('gross_revenue') - F('returned_revenue'),
+            total_cogs=F('gross_cogs') - F('returned_cogs')
+        ).annotate(
+            total_qty=F('net_qty'),
+            total_revenue=F('net_total')
+        ).annotate(
             total_profit=F('total_revenue') - F('total_cogs')
-        )
+        ).order_by('-total_revenue')
         
         return aggregated
         
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['title'] = 'تقرير مبيعات الأصناف'
+        context['title'] = 'تقرير مبيعات الأصناف (صافي المبيعات)'
         context['start_date'] = self.request.GET.get('start_date', '')
         context['end_date'] = self.request.GET.get('end_date', '')
         context['search_query'] = self.request.GET.get('search_query', '')
@@ -132,6 +139,7 @@ class ProductSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
         context['chart_data_qty'] = [float(item['total_qty'] or 0) for item in top_10]
         context['chart_data_revenue'] = [float(item['total_revenue'] or 0) for item in top_10]
         
+        from django.db.models import Sum
         # Grand totals
         grand_totals = self.get_queryset().aggregate(
             gt_qty=Sum('total_qty'),
@@ -146,7 +154,7 @@ class ProductSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
 # Period Sales Report (مبيعات فترة)
 # ---------------------------------------------------------
 class PeriodSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/sales_by_period.html'
     context_object_name = 'periods_data'
     paginate_by = 31
@@ -246,7 +254,7 @@ class PeriodSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListV
 # Detailed Sales Report (مبيعات تفصيلي)
 # ---------------------------------------------------------
 class DetailedSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/sales_detailed.html'
     context_object_name = 'invoice_lines'
     paginate_by = 50
@@ -340,7 +348,7 @@ class DetailedSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
         return context
 
 class CustomerBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/customer_balances.html'
     context_object_name = 'transactions'
     csv_filename = "customer_statement.csv"
@@ -471,7 +479,7 @@ class CustomerBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
         return context
 
 class ItemProfitabilityReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/item_profitability.html'
     context_object_name = 'products_data'
     paginate_by = 20
@@ -553,7 +561,7 @@ class ItemProfitabilityReportView(CsvExportMixin, CustomPermissionRequiredMixin,
         return context
 
 class UserSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/sales_by_user.html'
     context_object_name = 'users_data'
     paginate_by = 20
@@ -643,7 +651,7 @@ class UserSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVie
         return context
 
 class CustomerDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'partners.view_partner'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/customer_debts.html'
     context_object_name = 'customers'
     paginate_by = 50
@@ -682,7 +690,7 @@ class CustomerDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
         return context
 
 class SalesReturnsReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/sales_returns.html'
     context_object_name = 'returns'
     paginate_by = 50
@@ -757,7 +765,7 @@ class SalesReturnsReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
 # Product Purchases Report (مشتريات الأصناف)
 # ---------------------------------------------------------
 class ProductPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/purchases_by_product.html'
     context_object_name = 'products_data'
     paginate_by = 20
@@ -847,7 +855,7 @@ class ProductPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
 # Detailed Purchases Report (تقرير المشتريات التفصيلي)
 # ---------------------------------------------------------
 class DetailedPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/purchases_detailed.html'
     context_object_name = 'invoice_lines'
     paginate_by = 50
@@ -912,7 +920,7 @@ class DetailedPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin,
 # Period Purchases Report (مشتريات فترة)
 # ---------------------------------------------------------
 class PeriodPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/purchases_by_period.html'
     context_object_name = 'periods_data'
     paginate_by = 31
@@ -997,7 +1005,7 @@ class PeriodPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, L
 # Purchase Price Variation Report (تغير أسعار الشراء)
 # ---------------------------------------------------------
 class PurchasePriceVariationReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/purchase_price_variation.html'
     context_object_name = 'variations'
     paginate_by = 30
@@ -1087,7 +1095,7 @@ class PurchasePriceVariationReportView(CsvExportMixin, CustomPermissionRequiredM
 # Supplier Balances (كشف حساب مورد)
 # ---------------------------------------------------------
 class SupplierBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
-    permission_required = 'partners.view_partner'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/supplier_balances.html'
     context_object_name = 'transactions'
     csv_filename = "supplier_statement.csv"
@@ -1218,7 +1226,7 @@ class SupplierBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
 # Supplier Debts Report (مستحقات الموردين الإجمالي)
 # ---------------------------------------------------------
 class SupplierDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'partners.view_partner'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/supplier_debts.html'
     context_object_name = 'suppliers'
     paginate_by = 50
@@ -1264,7 +1272,7 @@ class SupplierDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
 # User Purchases Report (مشتريات المستخدمين)
 # ---------------------------------------------------------
 class UserPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/purchases_by_user.html'
     context_object_name = 'users_data'
     paginate_by = 20
@@ -1333,7 +1341,7 @@ class UserPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
 # Purchase Returns Report (مرتجعات المشتريات)
 # ---------------------------------------------------------
 class PurchaseReturnsReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'invoicing.view_invoice'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/purchase_returns.html'
     context_object_name = 'returns'
     paginate_by = 50
@@ -1394,7 +1402,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 class LowStockReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'inventory.view_product'
+    permission_required = 'core.view_inventory_reports'
     template_name = 'reports/inventory_low_stock.html'
     context_object_name = 'products'
     paginate_by = 50
@@ -1443,7 +1451,7 @@ class LowStockReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView
         return context
 
 class ProductExpiryReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'inventory.view_inventorybatch'
+    permission_required = 'core.view_inventory_reports'
     template_name = 'reports/inventory_expiry.html'
     context_object_name = 'batches'
     paginate_by = 50
@@ -1496,7 +1504,7 @@ class ProductExpiryReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
         return context
 
 class InventoryValuationReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'inventory.view_product'
+    permission_required = 'core.view_inventory_reports'
     template_name = 'reports/inventory_valuation.html'
     context_object_name = 'products'
     paginate_by = 50
@@ -1572,7 +1580,7 @@ class InventoryValuationReportView(CsvExportMixin, CustomPermissionRequiredMixin
 from apps.tenant.inventory.models import StockMovement
 
 class WarehouseStockReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'inventory.view_inventorybatch'
+    permission_required = 'core.view_inventory_reports'
     template_name = 'reports/inventory_warehouse_stock.html'
     context_object_name = 'stock_data'
     paginate_by = 50
@@ -1623,7 +1631,7 @@ class WarehouseStockReportView(CsvExportMixin, CustomPermissionRequiredMixin, Li
         return context
 
 class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'inventory.view_stockmovement'
+    permission_required = 'core.view_inventory_reports'
     template_name = 'reports/inventory_movement.html'
     context_object_name = 'movements'
     paginate_by = 50
@@ -1759,7 +1767,7 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
 
 
 class SlowMovingReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
-    permission_required = 'inventory.view_product'
+    permission_required = 'core.view_inventory_reports'
     template_name = 'reports/inventory_slow_moving.html'
     context_object_name = 'products'
     paginate_by = 50
@@ -1847,7 +1855,7 @@ from django.views.generic import TemplateView
 
 class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
     # Depending on your permissions, you can use something appropriate
-    permission_required = 'accounting.view_expense'
+    permission_required = 'core.view_accounting_reports'
     template_name = 'reports/accounting_income_statement.html'
 
     def get_context_data(self, **kwargs):
@@ -1960,7 +1968,7 @@ class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
 
 
 class ExpenseReportView(CustomPermissionRequiredMixin, TemplateView):
-    permission_required = 'accounting.view_expense'
+    permission_required = 'core.view_accounting_reports'
     template_name = 'reports/accounting_expenses.html'
 
     def get_context_data(self, **kwargs):
@@ -2015,7 +2023,7 @@ class ExpenseReportView(CustomPermissionRequiredMixin, TemplateView):
 
 
 class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
-    permission_required = 'accounting.view_journalentry'
+    permission_required = 'core.view_accounting_reports'
     template_name = 'reports/accounting_treasury.html'
 
     def get_context_data(self, **kwargs):
@@ -2126,7 +2134,7 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
 
 class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
     # Depending on your permissions, you can use something appropriate
-    permission_required = 'invoicing.view_possession'
+    permission_required = 'core.view_sales_reports'
     template_name = 'reports/sales_shifts.html'
 
     def get_context_data(self, **kwargs):
@@ -2222,3 +2230,314 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
         })
         return context
 
+class TrialBalanceReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
+    permission_required = 'core.view_accounting_reports'
+    template_name = 'reports/trial_balance.html'
+    csv_filename = "trial_balance_report.csv"
+
+    def get_csv_headers(self):
+        return ['كود الحساب', 'اسم الحساب', 'النوع', 'إجمالي مدين', 'إجمالي دائن', 'رصيد مدين', 'رصيد دائن']
+
+    def get_csv_row(self, obj):
+        return [
+            obj['code'],
+            obj['name'],
+            obj['type'],
+            obj['debit'],
+            obj['credit'],
+            obj['net_debit'],
+            obj['net_credit']
+        ]
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        start_date = self.request.GET.get('start_date')
+        end_date = self.request.GET.get('end_date')
+
+        from apps.tenant.accounting.models import Account, JournalItem
+        from django.db.models import Sum
+
+        items = JournalItem.objects.filter(entry__status='POSTED')
+        if start_date:
+            items = items.filter(entry__date__gte=start_date)
+        if end_date:
+            items = items.filter(entry__date__lte=end_date)
+
+        acc_balances = items.values(
+            'account__id', 'account__code', 'account__name', 'account__account_type'
+        ).annotate(
+            total_debit=Sum('debit'),
+            total_credit=Sum('credit')
+        ).order_by('account__code')
+
+        accounts_list = []
+        total_debit = Decimal('0')
+        total_credit = Decimal('0')
+
+        for ab in acc_balances:
+            td = ab['total_debit'] or Decimal('0')
+            tc = ab['total_credit'] or Decimal('0')
+            
+            if ab['account__account_type'] in ['ASSET', 'EXPENSE']:
+                net = td - tc
+                net_debit = net if net > 0 else Decimal('0')
+                net_credit = abs(net) if net < 0 else Decimal('0')
+            else:
+                net = tc - td
+                net_credit = net if net > 0 else Decimal('0')
+                net_debit = abs(net) if net < 0 else Decimal('0')
+
+            if net_debit > 0 or net_credit > 0 or td > 0 or tc > 0:
+                accounts_list.append({
+                    'code': ab['account__code'],
+                    'name': ab['account__name'],
+                    'type': dict(Account.ACCOUNT_TYPES).get(ab['account__account_type'], ab['account__account_type']),
+                    'debit': td,
+                    'credit': tc,
+                    'net_debit': net_debit,
+                    'net_credit': net_credit
+                })
+                total_debit += td
+                total_credit += tc
+
+        context['accounts'] = accounts_list
+        context['total_debit'] = total_debit
+        context['total_credit'] = total_credit
+        context['total_net_debit'] = sum(a['net_debit'] for a in accounts_list)
+        context['total_net_credit'] = sum(a['net_credit'] for a in accounts_list)
+        context['start_date'] = start_date
+        context['end_date'] = end_date
+        context['title'] = 'ميزان المراجعة'
+        
+        # for CSV export
+        context['object_list'] = accounts_list
+
+        return context
+
+class GeneralLedgerReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
+    permission_required = 'core.view_accounting_reports'
+    template_name = 'reports/general_ledger.html'
+    csv_filename = "general_ledger_report.csv"
+
+    def get_csv_headers(self):
+        return ['التاريخ', 'رقم القيد', 'البيان', 'مدين', 'دائن', 'الرصيد التراكمي']
+
+    def get_csv_row(self, obj):
+        return [
+            obj['date'].strftime('%Y-%m-%d') if hasattr(obj['date'], 'strftime') else obj['date'],
+            obj['reference'],
+            obj['description'],
+            obj['debit'],
+            obj['credit'],
+            obj['balance']
+        ]
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from apps.tenant.accounting.models import Account, JournalItem
+        from django.db.models import Sum
+
+        account_id = self.request.GET.get('account_id')
+        start_date = self.request.GET.get('start_date')
+        end_date = self.request.GET.get('end_date')
+
+        context['accounts_list'] = Account.objects.all().order_by('code')
+        context['start_date'] = start_date
+        context['end_date'] = end_date
+        context['account_id'] = account_id
+
+        if account_id and account_id.isdigit():
+            try:
+                account = Account.objects.get(id=account_id)
+                context['selected_account'] = account
+                
+                opening_balance = Decimal('0')
+                items = JournalItem.objects.filter(account=account, entry__status='POSTED')
+                
+                if start_date:
+                    opening_items = items.filter(entry__date__lt=start_date)
+                    od = opening_items.aggregate(s=Sum('debit'))['s'] or Decimal('0')
+                    oc = opening_items.aggregate(s=Sum('credit'))['s'] or Decimal('0')
+                    
+                    if account.normal_balance == 'DEBIT':
+                        opening_balance = od - oc
+                    else:
+                        opening_balance = oc - od
+                        
+                context['opening_balance'] = opening_balance
+                
+                period_items = items
+                if start_date:
+                    period_items = period_items.filter(entry__date__gte=start_date)
+                if end_date:
+                    period_items = period_items.filter(entry__date__lte=end_date)
+                    
+                period_items = period_items.select_related('entry').order_by('entry__date', 'entry__created_at')
+                
+                transactions = []
+                running_balance = opening_balance
+                total_debit = Decimal('0')
+                total_credit = Decimal('0')
+                
+                for item in period_items:
+                    debit = item.debit
+                    credit = item.credit
+                    
+                    if account.normal_balance == 'DEBIT':
+                        running_balance += debit
+                        running_balance -= credit
+                    else:
+                        running_balance += credit
+                        running_balance -= debit
+                        
+                    transactions.append({
+                        'date': item.entry.date,
+                        'reference': item.entry.reference,
+                        'description': item.description or item.entry.description,
+                        'debit': debit,
+                        'credit': credit,
+                        'balance': running_balance
+                    })
+                    
+                    total_debit += debit
+                    total_credit += credit
+                    
+                context['transactions'] = transactions
+                context['total_debit'] = total_debit
+                context['total_credit'] = total_credit
+                context['final_balance'] = running_balance
+                context['title'] = f'دفتر الأستاذ - {account.name}'
+                context['object_list'] = transactions
+                
+            except Account.DoesNotExist:
+                pass
+
+        return context
+
+class TaxReportView(CustomPermissionRequiredMixin, TemplateView):
+    permission_required = 'core.view_sales_reports'
+    template_name = 'reports/tax_report.html'
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        start_date = self.request.GET.get('start_date')
+        end_date = self.request.GET.get('end_date')
+
+        from apps.tenant.invoicing.models import Invoice
+        from apps.tenant.accounting.models import Expense
+        from django.db.models import Sum
+        from decimal import Decimal
+
+        sales = Invoice.objects.filter(invoice_type=Invoice.SALE, status=Invoice.POSTED)
+        returns_sales = Invoice.objects.filter(invoice_type=Invoice.RETURN_SALE, status=Invoice.POSTED)
+        purchases = Invoice.objects.filter(invoice_type=Invoice.PURCHASE, status=Invoice.POSTED)
+        returns_purchases = Invoice.objects.filter(invoice_type=Invoice.RETURN_PURCHASE, status=Invoice.POSTED)
+        expenses = Expense.objects.filter(status=Expense.POSTED)
+
+        if start_date:
+            sales = sales.filter(date__gte=start_date)
+            returns_sales = returns_sales.filter(date__gte=start_date)
+            purchases = purchases.filter(date__gte=start_date)
+            returns_purchases = returns_purchases.filter(date__gte=start_date)
+            expenses = expenses.filter(date__gte=start_date)
+
+        if end_date:
+            sales = sales.filter(date__lte=end_date)
+            returns_sales = returns_sales.filter(date__lte=end_date)
+            purchases = purchases.filter(date__lte=end_date)
+            returns_purchases = returns_purchases.filter(date__lte=end_date)
+            expenses = expenses.filter(date__lte=end_date)
+
+        # Output Tax (المبيعات)
+        sales_tax = sales.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0')
+        returns_sales_tax = returns_sales.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0')
+        net_output_tax = sales_tax - returns_sales_tax
+
+        # Input Tax (المشتريات والمصروفات)
+        purchases_tax = purchases.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0')
+        returns_purchases_tax = returns_purchases.aggregate(s=Sum('tax_amount'))['s'] or Decimal('0')
+        expenses_tax = expenses.aggregate(s=Sum('vat_amount'))['s'] or Decimal('0')
+        net_input_tax = (purchases_tax - returns_purchases_tax) + expenses_tax
+
+        # Withholding Tax
+        # WHT on Sales (خصم واضافة مخصوم علينا من العملاء)
+        sales_wht = sales.aggregate(s=Sum('wht_amount'))['s'] or Decimal('0')
+        returns_sales_wht = returns_sales.aggregate(s=Sum('wht_amount'))['s'] or Decimal('0')
+        net_sales_wht = sales_wht - returns_sales_wht
+
+        # WHT on Purchases/Expenses (خصم واضافة مخصوم للغير - موردين)
+        purchases_wht = purchases.aggregate(s=Sum('wht_amount'))['s'] or Decimal('0')
+        returns_purchases_wht = returns_purchases.aggregate(s=Sum('wht_amount'))['s'] or Decimal('0')
+        expenses_wht = expenses.aggregate(s=Sum('withholding_tax_amount'))['s'] or Decimal('0')
+        net_purchases_wht = (purchases_wht - returns_purchases_wht) + expenses_wht
+
+        # Net Payable VAT (الضريبة المستحقة) = Output - Input
+        net_vat_payable = net_output_tax - net_input_tax
+
+        context.update({
+            'start_date': start_date,
+            'end_date': end_date,
+            'sales_tax': sales_tax,
+            'returns_sales_tax': returns_sales_tax,
+            'net_output_tax': net_output_tax,
+            
+            'purchases_tax': purchases_tax,
+            'returns_purchases_tax': returns_purchases_tax,
+            'expenses_tax': expenses_tax,
+            'net_input_tax': net_input_tax,
+            
+            'net_vat_payable': net_vat_payable,
+
+            'sales_wht': sales_wht,
+            'returns_sales_wht': returns_sales_wht,
+            'net_sales_wht': net_sales_wht,
+            
+            'purchases_wht': purchases_wht,
+            'returns_purchases_wht': returns_purchases_wht,
+            'expenses_wht': expenses_wht,
+            'net_purchases_wht': net_purchases_wht,
+            'title': 'تقرير الضرائب (الإقرار الضريبي)'
+        })
+        return context
+
+
+
+from apps.tenant.einvoicing.models import EInvoiceLog
+
+class EInvoicingReportView(CustomPermissionRequiredMixin, TemplateView):
+    permission_required = 'core.view_sales_reports'
+    template_name = 'reports/einvoicing_report.html'
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        start_date = self.request.GET.get('start_date')
+        end_date = self.request.GET.get('end_date')
+        
+        logs = EInvoiceLog.objects.filter(status='VALID').select_related('invoice')
+        
+        if start_date:
+            logs = logs.filter(invoice__date__gte=start_date)
+        if end_date:
+            logs = logs.filter(invoice__date__lte=end_date)
+            
+        logs = logs.order_by('-invoice__date', '-created_at')
+        
+        total_invoices = logs.count()
+        
+        total_amount = sum(log.invoice.subtotal for log in logs) if total_invoices > 0 else Decimal('0.00')
+        total_vat = sum(log.invoice.tax_amount for log in logs) if total_invoices > 0 else Decimal('0.00')
+        total_wht = sum(log.invoice.wht_amount for log in logs) if total_invoices > 0 else Decimal('0.00')
+        total_net = sum(log.invoice.total_amount for log in logs) if total_invoices > 0 else Decimal('0.00')
+        
+        context.update({
+            'start_date': start_date,
+            'end_date': end_date,
+            'logs': logs,
+            'total_invoices': total_invoices,
+            'total_amount': total_amount,
+            'total_vat': total_vat,
+            'total_wht': total_wht,
+            'total_net': total_net,
+            'title': 'تقرير الفواتير الإلكترونية المعتمدة'
+        })
+        return context

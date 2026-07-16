@@ -98,8 +98,8 @@ class Account(MPTTModel):
         total_debit = items.aggregate(s=Sum('debit'))['s'] or Decimal('0')
         total_credit = items.aggregate(s=Sum('credit'))['s'] or Decimal('0')
         if self.normal_balance == 'DEBIT':
-            return total_debit - total_credit
-        return total_credit - total_debit
+            return (total_debit - total_credit).quantize(Decimal('0.01'))
+        return (total_credit - total_debit).quantize(Decimal('0.01'))
 
     @property
     def has_children(self):
@@ -164,6 +164,21 @@ class JournalEntry(models.Model):
         verbose_name = 'قيد يومية'
         verbose_name_plural = 'قيود اليومية'
         ordering = ['-date', '-created_at']
+
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            year = self.date.year if self.date else datetime.date.today().year
+            prefix = f"JE-MANUAL-{year}-"
+            last = JournalEntry.objects.filter(reference__startswith=prefix).order_by('-id').first()
+            if last:
+                try:
+                    last_num = int(last.reference.split('-')[-1])
+                except ValueError:
+                    last_num = 0
+            else:
+                last_num = 0
+            self.reference = f"{prefix}{last_num + 1:05d}"
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.reference} - {self.date} [{self.get_status_display()}]'

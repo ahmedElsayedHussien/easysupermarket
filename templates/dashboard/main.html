@@ -197,8 +197,9 @@
     </div>
 
     <!-- ============================================================
-         QUICK STATS ROW
+         QUICK STATS ROW (Admin Only)
          ============================================================ -->
+    {% if request.user.is_superuser or request.user.employee_profile.role == 'Admin' %}
     <div class="grid-4" style="margin-top:1.5rem;">
         <div class="stat-card stat-green">
             <div class="stat-label">{% trans 'مبيعات اليوم' %}</div>
@@ -221,6 +222,7 @@
             <div class="stat-change up">✓ {% trans 'مكتملة' %}</div>
         </div>
     </div>
+    {% endif %}
 
 </div>
 {% endblock %}

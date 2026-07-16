@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+{% block title %}إنشاء عقد إيجار{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4" style="max-width: 800px; margin: 2rem auto;">
+    <div class="d-flex justify-between align-center mb-4">
+        <h3 class="text-neon-gold m-0">إنشاء عقد إيجار جديد</h3>
+        <a href="{% url 'rentals:rental_list' %}" class="btn-action">عودة</a>
+    </div>
+
+    <form method="POST">
+        {% csrf_token %}
+        
+        {% if form.errors %}
+        <div class="alert alert-danger" style="background: rgba(255, 71, 87, 0.2); border: 1px solid #ff4757; color: #ff4757;">
+            {{ form.errors }}
+        </div>
+        {% endif %}
+        
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <label class="form-label text-neon-blue">العميل</label>
+                {{ form.customer }}
+            </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label text-neon-blue">المعدة</label>
+                {{ form.equipment }}
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <label class="form-label text-neon-blue">تاريخ البداية</label>
+                {{ form.start_date }}
+            </div>
+            <div class="col-md-6 mb-3">
+                <label class="form-label text-neon-blue">عدد الأيام</label>
+                {{ form.days_rented }}
+            </div>
+        </div>
+
+        <hr style="border-color: rgba(255,255,255,0.1); margin: 2rem 0;">
+
+        <h4 class="text-neon-cyan mb-3">بيانات السداد</h4>
+        
+        <div class="row">
+            <div class="col-md-4 mb-3">
+                <label class="form-label text-neon-blue">طريقة الدفع</label>
+                {{ form.payment_method }}
+            </div>
+            <div class="col-md-4 mb-3 payment-cash-fields">
+                <label class="form-label text-neon-blue">الخزينة</label>
+                {{ form.treasury }}
+            </div>
+            <div class="col-md-4 mb-3 payment-cash-fields">
+                <label class="form-label text-neon-blue">المحفظة</label>
+                {{ form.ewallet }}
+            </div>
+        </div>
+
+        <div class="mt-4">
+            <button type="submit" class="btn btn-orange w-100 p-2" style="font-size: 1.1rem;">إصدار العقد</button>
+        </div>
+    </form>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const paymentMethodSelect = document.getElementById('id_payment_method');
+        const cashFields = document.querySelectorAll('.payment-cash-fields');
+        const treasurySelect = document.getElementById('id_treasury');
+        const ewalletSelect = document.getElementById('id_ewallet');
+
+        function toggleFields() {
+            if (paymentMethodSelect.value === 'CASH') {
+                cashFields.forEach(f => f.style.display = 'block');
+            } else {
+                cashFields.forEach(f => f.style.display = 'none');
+                // Clear selections if not cash
+                if(treasurySelect) treasurySelect.value = '';
+                if(ewalletSelect) ewalletSelect.value = '';
+                // Reset disabled states
+                if(treasurySelect) treasurySelect.disabled = false;
+                if(ewalletSelect) ewalletSelect.disabled = false;
+            }
+        }
+
+        function handleTreasuryWalletMutex() {
+            if (treasurySelect && ewalletSelect) {
+                if (treasurySelect.value) {
+                    ewalletSelect.value = '';
+                    ewalletSelect.disabled = true;
+                } else {
+                    ewalletSelect.disabled = false;
+                }
+
+                if (ewalletSelect.value) {
+                    treasurySelect.value = '';
+                    treasurySelect.disabled = true;
+                } else {
+                    treasurySelect.disabled = false;
+                }
+            }
+        }
+
+        if (paymentMethodSelect) {
+            paymentMethodSelect.addEventListener('change', toggleFields);
+            toggleFields();
+        }
+
+        if (treasurySelect) treasurySelect.addEventListener('change', handleTreasuryWalletMutex);
+        if (ewalletSelect) ewalletSelect.addEventListener('change', handleTreasuryWalletMutex);
+        handleTreasuryWalletMutex(); // Initialize state on load
+    });
+</script>
+{% endblock %}

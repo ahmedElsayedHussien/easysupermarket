@@ -43,6 +43,7 @@ TENANT_APPS = [
     'apps.tenant.partners',
     'apps.tenant.invoicing',
     'apps.tenant.einvoicing',
+    'apps.tenant.rentals',
 ]
 
 # INSTALLED_APPS must be SHARED_APPS + unique TENANT_APPS
@@ -67,6 +68,7 @@ MIDDLEWARE = [
     'django_tenants.middleware.main.TenantMainMiddleware',
 
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'apps.tenant.core.middleware.BranchMiddleware',
     'corsheaders.middleware.CorsMiddleware',
@@ -115,6 +117,7 @@ ASGI_APPLICATION = 'config.asgi.application'
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'

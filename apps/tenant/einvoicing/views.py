@@ -7,7 +7,7 @@ from apps.tenant.core.views import AdminRequiredMixin
 
 class TaxIntegrationSettingsUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
     model = TaxIntegrationSettings
-    fields = ['client_id', 'client_secret', 'taxpayer_activity_code', 'is_production', 'company_id', 'company_name']
+    fields = ['enable_einvoicing', 'client_id', 'client_secret', 'taxpayer_activity_code', 'is_production', 'company_id', 'company_name']
     template_name = 'einvoicing/settings.html'
     success_url = reverse_lazy('einvoicing:tax_settings')
 

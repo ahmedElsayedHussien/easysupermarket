@@ -85,6 +85,12 @@ class SystemSetting(models.Model):
     class Meta:
         verbose_name = _('إعدادات النظام')
         verbose_name_plural = _('إعدادات النظام')
+        permissions = [
+            ("view_sales_reports", "Can view sales reports"),
+            ("view_purchases_reports", "Can view purchases reports"),
+            ("view_inventory_reports", "Can view inventory reports"),
+            ("view_accounting_reports", "Can view accounting reports"),
+        ]
         
     def save(self, *args, **kwargs):
         # Ensure only one instance exists

@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block title %}إضافة / تعديل معدة{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4" style="max-width: 600px; margin: 2rem auto;">
+    <div class="d-flex justify-between align-center mb-4">
+        <h3 class="text-neon-gold m-0">إضافة / تعديل معدة</h3>
+        <a href="{% url 'rentals:equipment_list' %}" class="btn-action">عودة</a>
+    </div>
+
+    <form method="POST">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+        
+        <div class="mb-3">
+            <label class="form-label text-neon-blue">اسم المعدة</label>
+            {{ form.name }}
+            {{ form.name.errors }}
+        </div>
+        
+        <div class="mb-3">
+            <label class="form-label text-neon-blue">كود المعدة</label>
+            {{ form.code }}
+            {{ form.code.errors }}
+        </div>
+        
+        <div class="mb-3">
+            <label class="form-label text-neon-blue">تكلفة الشراء (لوضع رصيد افتتاحي كأصل)</label>
+            {{ form.purchase_cost }}
+            {{ form.purchase_cost.errors }}
+            <small class="text-muted d-block mt-1">اتركها 0 إذا كنت لا تريد تسجيل قيد رصيد افتتاحي للمعدة.</small>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label text-neon-blue">سعر الإيجار اليومي</label>
+            {{ form.daily_rate }}
+            {{ form.daily_rate.errors }}
+        </div>
+
+        <div class="mb-3 form-check">
+            {{ form.is_active }}
+            <label class="form-check-label text-neon-blue">نشط</label>
+            {{ form.is_active.errors }}
+        </div>
+        
+        <div class="mt-4">
+            <button type="submit" class="btn btn-orange w-100 p-2" style="font-size: 1.1rem;">حفظ</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

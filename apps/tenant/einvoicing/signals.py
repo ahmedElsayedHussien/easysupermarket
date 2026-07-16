@@ -12,4 +12,7 @@ def create_einvoice_log(sender, instance, created, **kwargs):
     if instance.invoice_type == 'SALE' and instance.status == Invoice.POSTED:
         # User requested to only send invoices that have taxes applied
         if getattr(instance, 'tax_amount', 0) > 0:
-            EInvoiceLog.objects.get_or_create(invoice=instance)
+            from .models import TaxIntegrationSettings
+            settings_obj = TaxIntegrationSettings.objects.first()
+            if settings_obj and settings_obj.enable_einvoicing:
+                EInvoiceLog.objects.get_or_create(invoice=instance)

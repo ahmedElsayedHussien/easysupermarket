@@ -230,8 +230,20 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
         entry.reference = reference
         entry.description = f'قيد استحقاق مرتجع مبيعات - فاتورة رقم {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
         entry.save(update_fields=['reference', 'description'])
+        
+        try:
+            sales_return_account = _get_system_account('4120')
+        except ValueError:
+            sales_return_account = revenue_account  # Fallback
+            
         for item in items_to_create:
+            # Reverse Dr/Cr
             item.debit, item.credit = item.credit, item.debit
+            
+            # If this is the revenue line, change its account to Sales Returns
+            if item.account == revenue_account or item.account.code == '4110':
+                item.account = sales_return_account
+                
             item.description = item.description.replace('مبيعات', 'مرتجع مبيعات').replace('استحقاق', 'عكس استحقاق')
 
     JournalItem.objects.bulk_create(items_to_create)
@@ -372,6 +384,9 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
         entry.reference = reference
         entry.description = f'قيد استحقاق مرتجع مشتريات - فاتورة رقم {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
         entry.save(update_fields=['reference', 'description'])
+        
+        # NOTE: In a perpetual inventory system, a purchase return correctly credits Inventory directly.
+        # We do not use a separate "Purchase Returns (5110)" account for the inventory value.
         for item in items_to_create:
             item.debit, item.credit = item.credit, item.debit
             item.description = item.description.replace('مشتريات', 'مرتجع مشتريات').replace('استحقاق', 'عكس استحقاق')

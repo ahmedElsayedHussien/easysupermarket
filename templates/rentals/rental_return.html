@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+{% block title %}إرجاع المعدة وتسوية الحساب{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4" style="max-width: 600px; margin: 2rem auto;">
+    <h3 class="text-neon-gold mb-4"><i class="fas fa-undo"></i> إرجاع المعدة وتسوية الحساب</h3>
+    
+    <div class="card p-3 mb-4" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05);">
+        <p><strong>المعدة:</strong> {{ rental.equipment.name }}</p>
+        <p><strong>العميل:</strong> <span class="text-neon-blue">{{ rental.customer.name }}</span></p>
+        <p><strong>إجمالي الإيجار المدفوع:</strong> <span class="text-neon-green">{{ rental.total_amount }} ج.م</span></p>
+        <p><strong>المدة المتفق عليها:</strong> {{ rental.days_rented }} يوم</p>
+    </div>
+
+    <form method="POST">
+        {% csrf_token %}
+        
+        <div class="mb-3">
+            <label class="form-label text-neon-cyan">قيمة المبلغ المرتجع للعميل (إن وجد)</label>
+            <input type="number" name="refund_amount" id="refund_amount" class="form-control bg-dark-glass text-white" value="0" min="0" step="0.01" max="{{ rental.total_amount }}">
+            <small class="text-muted">أدخل 0 إذا لم يتم رد أي مبالغ.</small>
+        </div>
+
+        <div id="refund_method_div" class="mb-3" style="display: none;">
+            <label class="form-label text-neon-pink">طريقة تسوية المرتجع</label>
+            <select name="refund_method" id="refund_method" class="form-select bg-dark-glass text-white">
+                <option value="none">بدون تسوية (بالتراضي ولن ينشأ قيد)</option>
+                <option value="account_balance">إبقاء المبلغ في حساب العميل (تخفيض إيرادات فقط)</option>
+                <option value="cash">رد المبلغ للعميل كاش (تخفيض إيرادات وتخفيض خزينة)</option>
+            </select>
+        </div>
+
+        <div id="payment_source_div" style="display: none;">
+            <div class="mb-3">
+                <label class="form-label">الخزينة المسترد منها المبلغ</label>
+                <select name="treasury" id="treasury" class="form-select bg-dark-glass text-white">
+                    <option value="">-- اختر الخزينة --</option>
+                    {% for t in treasuries %}
+                    <option value="{{ t.id }}">{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-3 text-center text-muted">أو</div>
+            <div class="mb-3">
+                <label class="form-label">المحفظة المسترد منها المبلغ</label>
+                <select name="ewallet" id="ewallet" class="form-select bg-dark-glass text-white">
+                    <option value="">-- اختر المحفظة --</option>
+                    {% for w in ewallets %}
+                    <option value="{{ w.id }}">{{ w.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="mt-4 d-flex" style="gap: 1rem;">
+            <button type="submit" class="btn btn-orange flex-grow-1" onclick="return confirm('هل أنت متأكد من تنفيذ الإرجاع والتسوية؟');">
+                تأكيد الإرجاع والتسوية
+            </button>
+            <a href="{% url 'rentals:rental_list' %}" class="btn btn-secondary">إلغاء</a>
+        </div>
+    </form>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const refundAmount = document.getElementById('refund_amount');
+        const refundMethodDiv = document.getElementById('refund_method_div');
+        const refundMethod = document.getElementById('refund_method');
+        const paymentSourceDiv = document.getElementById('payment_source_div');
+
+        function toggleFields() {
+            const amount = parseFloat(refundAmount.value) || 0;
+            const noneOption = refundMethod.querySelector('option[value="none"]');
+            
+            if (amount > 0) {
+                refundMethodDiv.style.display = 'block';
+                noneOption.style.display = 'none';
+                if (refundMethod.value === 'none') {
+                    refundMethod.value = 'account_balance';
+                }
+                
+                if (refundMethod.value === 'cash') {
+                    paymentSourceDiv.style.display = 'block';
+                } else {
+                    paymentSourceDiv.style.display = 'none';
+                }
+            } else {
+                refundMethodDiv.style.display = 'none';
+                paymentSourceDiv.style.display = 'none';
+                noneOption.style.display = 'block';
+                refundMethod.value = 'none';
+            }
+        }
+
+        refundAmount.addEventListener('input', toggleFields);
+        refundMethod.addEventListener('change', toggleFields);
+        toggleFields();
+        
+        // Ensure either treasury or ewallet is selected if cash is chosen
+        const treasury = document.getElementById('treasury');
+        const ewallet = document.getElementById('ewallet');
+        
+        treasury.addEventListener('change', function() {
+            if(this.value) ewallet.value = '';
+        });
+        ewallet.addEventListener('change', function() {
+            if(this.value) treasury.value = '';
+        });
+    });
+</script>
+{% endblock %}
