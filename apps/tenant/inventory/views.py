@@ -2,8 +2,10 @@ from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from .models import Product, InventoryBatch, StockMovement, Warehouse
+from apps.tenant.core.decorators import custom_permission_required
 
 @login_required
+@custom_permission_required('inventory.view_inventorybatch', redirect_url='core:main_screen')
 def stock_list(request):
     batches = InventoryBatch.objects.filter(quantity_remaining__gt=0).select_related('product', 'warehouse')
     warehouses = Warehouse.objects.filter(is_active=True)
@@ -13,6 +15,7 @@ def stock_list(request):
 from django.db.models import Q
 
 @login_required
+@custom_permission_required('inventory.view_product', redirect_url='core:main_screen')
 def product_list(request):
     query = request.GET.get('q', '').strip()
     products = Product.objects.all()
@@ -33,6 +36,7 @@ def product_list(request):
     return render(request, 'inventory/products.html', context)
 
 @login_required
+@custom_permission_required('inventory.change_inventorybatch', redirect_url='core:main_screen')
 def transfer_stock(request):
     if request.method == 'POST':
         product_id = request.POST.get('product_id')
@@ -73,6 +77,7 @@ def api_stock_level(request):
         return JsonResponse({'error': 'Product not found'}, status=404)
 
 @login_required
+@custom_permission_required('inventory.view_inventorybatch', redirect_url='core:main_screen')
 def valuation_report(request):
     batches = InventoryBatch.objects.filter(quantity_remaining__gt=0).select_related('product', 'warehouse')
     total_value = sum(b.total_value for b in batches)
@@ -80,6 +85,7 @@ def valuation_report(request):
     return render(request, 'inventory/valuation_report.html', context)
 
 @login_required
+@custom_permission_required('inventory.view_inventorybatch', redirect_url='core:main_screen')
 def expiry_report(request):
     import datetime
     today = datetime.date.today()
@@ -92,15 +98,16 @@ def expiry_report(request):
 from django.views.generic import ListView, CreateView, UpdateView
 from django.urls import reverse_lazy
 from django.contrib.auth.mixins import LoginRequiredMixin
+from apps.tenant.core.mixins import CustomPermissionRequiredMixin
 from .models import Warehouse, Category, Product, UnitOfMeasure
 from .forms import UnitOfMeasureForm
 
 # --- Warehouse Generic Views ---
-class WarehouseListView(LoginRequiredMixin, ListView):
+class WarehouseListView(CustomPermissionRequiredMixin, ListView):
     model = Warehouse
     template_name = 'core/generic_list.html'
     context_object_name = 'objects'
-    
+    permission_required = 'inventory.view_warehouse'
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = 'إدارة المستودعات'
@@ -109,11 +116,12 @@ class WarehouseListView(LoginRequiredMixin, ListView):
         context['delete_url_name'] = 'inventory:warehouse_delete'
         return context
 
-class WarehouseCreateView(LoginRequiredMixin, CreateView):
+class WarehouseCreateView(CustomPermissionRequiredMixin, CreateView):
     model = Warehouse
     fields = ['branch', 'name', 'code', 'is_cold_storage', 'is_active', 'description']
     template_name = 'core/generic_form.html'
     success_url = reverse_lazy('inventory:warehouse_list')
+    permission_required = 'inventory.add_warehouse'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -121,11 +129,12 @@ class WarehouseCreateView(LoginRequiredMixin, CreateView):
         context['cancel_url'] = reverse_lazy('inventory:warehouse_list')
         return context
 
-class WarehouseUpdateView(LoginRequiredMixin, UpdateView):
+class WarehouseUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = Warehouse
     fields = ['branch', 'name', 'code', 'is_cold_storage', 'is_active', 'description']
     template_name = 'core/generic_form.html'
     success_url = reverse_lazy('inventory:warehouse_list')
+    permission_required = 'inventory.change_warehouse'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -138,6 +147,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.db.models import ProtectedError
 
 @login_required
+@custom_permission_required('inventory.delete_warehouse', redirect_url='core:main_screen')
 def warehouse_delete(request, pk):
     from .models import Warehouse
     if request.method == 'POST':
@@ -154,11 +164,11 @@ def warehouse_delete(request, pk):
 
 
 # --- Category Generic Views ---
-class CategoryListView(LoginRequiredMixin, ListView):
+class CategoryListView(CustomPermissionRequiredMixin, ListView):
     model = Category
     template_name = 'core/generic_list.html'
     context_object_name = 'objects'
-    
+    permission_required = 'inventory.view_category'
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = 'إدارة فئات المنتجات'
@@ -166,11 +176,12 @@ class CategoryListView(LoginRequiredMixin, ListView):
         context['update_url_name'] = 'inventory:category_update'
         return context
 
-class CategoryCreateView(LoginRequiredMixin, CreateView):
+class CategoryCreateView(CustomPermissionRequiredMixin, CreateView):
     model = Category
     fields = ['name', 'parent', 'is_active', 'description']
     template_name = 'core/generic_form.html'
     success_url = reverse_lazy('inventory:category_list')
+    permission_required = 'inventory.add_category'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -178,11 +189,12 @@ class CategoryCreateView(LoginRequiredMixin, CreateView):
         context['cancel_url'] = reverse_lazy('inventory:category_list')
         return context
 
-class CategoryUpdateView(LoginRequiredMixin, UpdateView):
+class CategoryUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = Category
     fields = ['name', 'parent', 'is_active', 'description']
     template_name = 'core/generic_form.html'
     success_url = reverse_lazy('inventory:category_list')
+    permission_required = 'inventory.change_category'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -194,11 +206,12 @@ class CategoryUpdateView(LoginRequiredMixin, UpdateView):
 from .forms import ProductForm, ProductUoMFormSet
 
 # --- Product Generic Views (List view already exists) ---
-class ProductCreateView(LoginRequiredMixin, CreateView):
+class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
     model = Product
     form_class = ProductForm
     template_name = 'inventory/product_form.html'
     success_url = reverse_lazy('inventory:product_list')
+    permission_required = 'inventory.add_product'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -221,11 +234,12 @@ class ProductCreateView(LoginRequiredMixin, CreateView):
         else:
             return self.render_to_response(self.get_context_data(form=form))
 
-class ProductUpdateView(LoginRequiredMixin, UpdateView):
+class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = Product
     form_class = ProductForm
     template_name = 'inventory/product_form.html'
     success_url = reverse_lazy('inventory:product_list')
+    permission_required = 'inventory.change_product'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -259,11 +273,13 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 
 @login_required
+@custom_permission_required('inventory.view_stockadjustment', redirect_url='core:main_screen')
 def adjustment_list(request):
     adjustments = StockAdjustment.objects.all()
     return render(request, 'inventory/adjustment_list.html', {'adjustments': adjustments, 'title': 'تسويات المخزون'})
 
 @login_required
+@custom_permission_required('inventory.add_stockadjustment', redirect_url='core:main_screen')
 def adjustment_create(request):
     if request.method == 'POST':
         warehouse_id = request.POST.get('warehouse')
@@ -309,6 +325,7 @@ def adjustment_create(request):
     })
 
 @login_required
+@custom_permission_required('inventory.change_stockadjustment', redirect_url='core:main_screen')
 @transaction.atomic
 def adjustment_confirm(request, pk):
     adj = get_object_or_404(StockAdjustment, pk=pk, status='DRAFT')
@@ -417,21 +434,22 @@ def adjustment_confirm(request, pk):
     return redirect('inventory:adjustment_list')
 
 # --- Unit of Measure Generic Views ---
-class UnitOfMeasureListView(LoginRequiredMixin, ListView):
+class UnitOfMeasureListView(CustomPermissionRequiredMixin, ListView):
     model = UnitOfMeasure
     template_name = 'inventory/uom_list.html'
     context_object_name = 'uoms'
-    
+    permission_required = 'inventory.view_unitofmeasure'
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = 'وحدات القياس'
         return context
 
-class UnitOfMeasureCreateView(LoginRequiredMixin, CreateView):
+class UnitOfMeasureCreateView(CustomPermissionRequiredMixin, CreateView):
     model = UnitOfMeasure
     form_class = UnitOfMeasureForm
     template_name = 'inventory/uom_form.html'
     success_url = reverse_lazy('inventory:uom_list')
+    permission_required = 'inventory.add_unitofmeasure'
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -439,11 +457,12 @@ class UnitOfMeasureCreateView(LoginRequiredMixin, CreateView):
         context['cancel_url'] = self.success_url
         return context
 
-class UnitOfMeasureUpdateView(LoginRequiredMixin, UpdateView):
+class UnitOfMeasureUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = UnitOfMeasure
     form_class = UnitOfMeasureForm
     template_name = 'inventory/uom_form.html'
     success_url = reverse_lazy('inventory:uom_list')
+    permission_required = 'inventory.change_unitofmeasure'
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

@@ -1,5 +1,7 @@
 from django import forms
 from django.forms import inlineformset_factory
+from django.db.models import F
+import datetime
 from .models import Treasury, BankAccount, EWallet, Expense, ExpenseItem, Account, Voucher
 
 class BaseGlassForm(forms.ModelForm):
@@ -54,9 +56,11 @@ class ExpenseForm(BaseGlassForm):
         self.fields['amount'].widget.attrs['class'] += ' text-success fw-bold bg-dark'
         # Filter expense accounts to only show those of type EXPENSE
         self.fields['expense_account'].queryset = Account.objects.filter(account_type=Account.EXPENSE, parent__isnull=False)
-        # Filter payment accounts to show ASSET type (mainly cash, banks, etc)
-        # For a better UX, maybe just show cash and bank accounts. Let's just use ASSET for now.
-        self.fields['payment_account'].queryset = Account.objects.filter(account_type=Account.ASSET, parent__isnull=False)
+        # Filter payment accounts to show only Treasuries and EWallets
+        treasury_account_ids = Treasury.objects.values_list('account_id', flat=True)
+        ewallet_account_ids = EWallet.objects.values_list('account_id', flat=True)
+        allowed_account_ids = list(treasury_account_ids) + list(ewallet_account_ids)
+        self.fields['payment_account'].queryset = Account.objects.filter(id__in=allowed_account_ids)
 
 class TreasuryForm(BaseGlassForm):
     class Meta:
@@ -87,8 +91,11 @@ class VoucherForm(BaseGlassForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Limit accounts to logical choices (not root accounts)
-        self.fields['account'].queryset = Account.objects.filter(is_active=True).exclude(level=0)
+        # Limit accounts to leaf nodes (accounts that can receive transactions)
+        self.fields['account'].queryset = Account.objects.filter(
+            is_active=True, 
+            rght=F('lft') + 1
+        )
         self.fields['account'].required = False
         
     def clean(self):
@@ -120,3 +127,92 @@ class VoucherForm(BaseGlassForm):
                 raise forms.ValidationError({'account': 'يجب اختيار الحساب المقابل في حالة عدم اختيار شريك.'})
         
         return cleaned_data
+
+from .models import JournalEntry, JournalItem
+from django.db.models import F
+
+class JournalEntryForm(BaseGlassForm):
+    date = forms.DateField(
+        label='التاريخ',
+        widget=forms.DateInput(attrs={'type': 'date'}),
+        initial=datetime.date.today
+    )
+    
+    class Meta:
+        model = JournalEntry
+        fields = ['date', 'description']
+        widgets = {
+            'description': forms.Textarea(attrs={'rows': 2}),
+        }
+
+class JournalItemForm(BaseGlassForm):
+    class Meta:
+        model = JournalItem
+        fields = ['account', 'description', 'debit', 'credit']
+        widgets = {
+            'description': forms.TextInput(attrs={'placeholder': 'البيان (اختياري)'}),
+            'debit': forms.NumberInput(attrs={'class': 'item-debit', 'step': '0.0001'}),
+            'credit': forms.NumberInput(attrs={'class': 'item-credit', 'step': '0.0001'}),
+        }
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Prevent selecting parent accounts (only leaf nodes)
+        self.fields['account'].queryset = Account.objects.filter(is_active=True, rght=F('lft') + 1)
+        self.fields['debit'].required = False
+        self.fields['credit'].required = False
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if not cleaned_data.get('debit'):
+            cleaned_data['debit'] = 0
+        if not cleaned_data.get('credit'):
+            cleaned_data['credit'] = 0
+        return cleaned_data
+
+from django.forms import BaseInlineFormSet
+
+class BaseJournalItemFormSet(BaseInlineFormSet):
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+            
+        total_debit = 0
+        total_credit = 0
+        debit_accounts = set()
+        credit_accounts = set()
+        
+        for form in self.forms:
+            if self.can_delete and self._should_delete_form(form):
+                continue
+            
+            account = form.cleaned_data.get('account')
+            debit = form.cleaned_data.get('debit', 0) or 0
+            credit = form.cleaned_data.get('credit', 0) or 0
+            
+            if account:
+                total_debit += debit
+                total_credit += credit
+                if debit > 0:
+                    debit_accounts.add(account.id)
+                if credit > 0:
+                    credit_accounts.add(account.id)
+                    
+        if abs(total_debit - total_credit) >= 0.0001:
+            raise forms.ValidationError(f"القيد غير متزن! إجمالي المدين ({total_debit}) لا يساوي إجمالي الدائن ({total_credit}).")
+            
+        common_accounts = debit_accounts.intersection(credit_accounts)
+        if common_accounts:
+            raise forms.ValidationError("لا يمكن استخدام نفس الحساب في الجانبين المدين والدائن في نفس القيد.")
+
+JournalItemFormSet = inlineformset_factory(
+    JournalEntry,
+    JournalItem,
+    form=JournalItemForm,
+    formset=BaseJournalItemFormSet,
+    extra=2,
+    min_num=2,
+    validate_min=True,
+    can_delete=True
+)

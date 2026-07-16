@@ -1,6 +1,17 @@
 {% extends 'base.html' %}
 {% block title %}فاتورة مشتريات{% endblock %}
 
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+<style>
+    /* Dark mode overrides for TomSelect */
+    .ts-control { background-color: var(--bg-card); color: var(--text-primary); border-color: var(--border-default); }
+    .ts-dropdown { background-color: var(--bg-card); color: var(--text-primary); border-color: var(--border-default); }
+    .ts-dropdown .option:hover, .ts-dropdown .option.active { background-color: var(--neon-blue); color: #fff; }
+    .ts-control > input { color: var(--text-primary); }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
     <h2 class="text-neon-red mb-4">فاتورة مشتريات جديدة</h2>
@@ -64,6 +75,11 @@
                         {% endfor %}
                     </select>
                 </div>
+
+                <div class="form-group">
+                    <label class="form-label">رقم الفاتورة الإلكترونية (اختياري)</label>
+                    <input type="text" name="e_invoice_number" class="form-control" placeholder="أدخل رقم الفاتورة الإلكترونية..." value="{{ posted_data.e_invoice_number|default:'' }}">
+                </div>
             </div>
             
             <h4 class="text-neon-cyan mb-3">الأصناف</h4>
@@ -72,6 +88,7 @@
                     <thead>
                         <tr>
                             <th>الصنف</th>
+                            <th>الوحدة</th>
                             <th>الكمية</th>
                             <th>سعر الوحدة</th>
                             <th>الإجمالي</th>
@@ -81,11 +98,16 @@
                     <tbody id="purchaseLines">
                         <tr>
                             <td>
-                                <select name="product_id[]" class="form-select" onchange="calculateTotals()">
+                                <select name="product_id[]" class="form-select product-select">
                                     <option value="">اختر الصنف...</option>
                                     {% for p in products %}
-                                    <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{{ p.name }}</option>
+                                    <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                                     {% endfor %}
+                                </select>
+                            </td>
+                            <td>
+                                <select name="uom_id[]" class="form-select uom-select">
+                                    <option value="">الوحدة الأساسية</option>
                                 </select>
                             </td>
                             <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
@@ -143,9 +165,49 @@
             </div>
         </form>
     </div>
+    </div>
 </div>
+{% endblock %}
 
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
 <script>
+const productUoms = {{ product_uoms_json|safe }};
+
+function initTomSelect(element) {
+    if (element.tomselect) return;
+    new TomSelect(element, {
+        create: false,
+        placeholder: "ابحث بالباركود أو اسم الصنف...",
+        onChange: function(value) {
+            updateUoMs(element);
+            calculateTotals();
+        }
+    });
+}
+
+function updateUoMs(productSelect, selectedUomId = null) {
+    const productId = productSelect.value;
+    const row = productSelect.closest('tr');
+    const uomSelect = row.querySelector('.uom-select');
+    
+    if (!uomSelect) return;
+    
+    uomSelect.innerHTML = '<option value="">الوحدة الأساسية</option>';
+    if (productId && productUoms[productId]) {
+        uomSelect.innerHTML = '';
+        productUoms[productId].forEach(uom => {
+            const option = document.createElement('option');
+            option.value = uom.id;
+            option.textContent = uom.name;
+            if (selectedUomId !== null && uom.id == selectedUomId) {
+                option.selected = true;
+            }
+            uomSelect.appendChild(option);
+        });
+    }
+}
+
 function toggleTreasury() {
     const paymentType = document.getElementById('paymentType').value;
     const treasuryContainer = document.getElementById('treasuryContainer');
@@ -164,6 +226,11 @@ function toggleTreasury() {
 // Call on load to set initial state
 document.addEventListener('DOMContentLoaded', function() {
     toggleTreasury();
+    
+    // Initialize TomSelect on existing rows
+    document.querySelectorAll('.product-select').forEach(function(el) {
+        initTomSelect(el);
+    });
     
     {% if posted_lines_json %}
     const postedLines = {{ posted_lines_json|safe }};
@@ -185,11 +252,16 @@ function addLine() {
     const row = document.createElement('tr');
     row.innerHTML = `
         <td>
-            <select name="product_id[]" class="form-select" onchange="calculateTotals()">
+            <select name="product_id[]" class="form-select product-select">
                 <option value="">اختر الصنف...</option>
                 {% for p in products %}
-                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{{ p.name }}</option>
+                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                 {% endfor %}
+            </select>
+        </td>
+        <td>
+            <select name="uom_id[]" class="form-select uom-select">
+                <option value="">الوحدة الأساسية</option>
             </select>
         </td>
         <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
@@ -198,18 +270,24 @@ function addLine() {
         <td><button type="button" class="btn btn-sm btn-danger" onclick="this.closest('tr').remove(); calculateTotals()">X</button></td>
     `;
     tbody.appendChild(row);
+    initTomSelect(row.querySelector('.product-select'));
 }
 
-function addLineWithData(productId, qty, price) {
+function addLineWithData(productId, qty, price, uomId = null) {
     const tbody = document.getElementById('purchaseLines');
     const row = document.createElement('tr');
     row.innerHTML = `
         <td>
-            <select name="product_id[]" class="form-select" onchange="calculateTotals()">
+            <select name="product_id[]" class="form-select product-select">
                 <option value="">اختر الصنف...</option>
                 {% for p in products %}
-                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{{ p.name }}</option>
+                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                 {% endfor %}
+            </select>
+        </td>
+        <td>
+            <select name="uom_id[]" class="form-select uom-select">
+                <option value="">الوحدة الأساسية</option>
             </select>
         </td>
         <td><input type="number" name="quantity[]" class="form-control" step="0.01" value="${qty}" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
@@ -219,11 +297,17 @@ function addLineWithData(productId, qty, price) {
     `;
     
     if (productId) {
-        const selectElement = row.querySelector('select');
+        const selectElement = row.querySelector('select[name="product_id[]"]');
         selectElement.value = productId;
+        updateUoMs(selectElement, uomId);
     }
     
     tbody.appendChild(row);
+    const selectEl = row.querySelector('.product-select');
+    initTomSelect(selectEl);
+    if (productId) {
+        selectEl.tomselect.setValue(productId);
+    }
 }
 
 function calculateTotals() {

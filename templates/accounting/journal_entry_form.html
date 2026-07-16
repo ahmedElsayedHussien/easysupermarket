@@ -1,0 +1,216 @@
+{% extends 'base.html' %}
+
+{% block title %}إنشاء قيد يومية يدوي{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-edit text-gold" style="margin-left: 0.5rem;"></i> إنشاء قيد يومية يدوي</h2>
+        <a href="{% url 'accounting:journal_list' %}" class="btn-action">
+            <i class="fas fa-arrow-right"></i> عودة
+        </a>
+    </div>
+
+    <form method="POST" id="journal-entry-form" novalidate>
+        {% csrf_token %}
+        
+        {% if form.errors or items_formset.errors %}
+        <div class="alert alert-danger" style="background: rgba(255, 71, 87, 0.2); border: 1px solid #ff4757; color: #ff4757; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+            <strong>يوجد أخطاء في البيانات المدخلة:</strong>
+            {{ form.non_field_errors }}
+            {% for field in form %}
+                {% if field.errors %}{{ field.label }}: {{ field.errors|striptags }}<br>{% endif %}
+            {% endfor %}
+            {{ items_formset.non_form_errors }}
+            {% for form in items_formset %}
+                {% for field in form %}
+                    {% if field.errors %}سطر {{ forloop.parentloop.counter }} ({{ field.label }}): {{ field.errors|striptags }}<br>{% endif %}
+                {% endfor %}
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        <!-- Main Entry Info -->
+        <div style="background: rgba(13, 20, 36, 0.6); padding: 1.5rem; border-radius: 12px; margin-bottom: 2rem; border: 1px solid rgba(255,255,255,0.05);">
+            <h4 style="color: var(--neon-cyan); margin-bottom: 1rem;">بيانات القيد الأساسية</h4>
+            <div class="row">
+                <div class="col-md-6">
+                    <label class="text-neon-blue">{{ form.date.label }}</label>
+                    {{ form.date }}
+                </div>
+                <div class="col-md-6">
+                    <label class="text-neon-blue">{{ form.description.label }}</label>
+                    {{ form.description }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Journal Items -->
+        <div style="background: rgba(13, 20, 36, 0.6); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255,255,255,0.05);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h4 style="color: var(--neon-gold); margin: 0;">بنود القيد</h4>
+                <div id="balance-status" style="font-weight: bold; padding: 0.5rem 1rem; border-radius: 8px;">
+                    <!-- Updated by JS -->
+                </div>
+            </div>
+            
+            {{ items_formset.management_form }}
+            <div class="table-container" style="overflow-x: auto;">
+                <table class="data-table" id="items-table" style="min-width: 800px;">
+                    <thead>
+                        <tr>
+                            <th style="width: 35%;">الحساب</th>
+                            <th style="width: 25%;">البيان (اختياري)</th>
+                            <th style="width: 15%;">مدين (Debit)</th>
+                            <th style="width: 15%;">دائن (Credit)</th>
+                            <th style="width: 10%; text-align: center;">إلغاء</th>
+                        </tr>
+                    </thead>
+                    <tbody id="formset-container">
+                        {% for item_form in items_formset %}
+                        <tr class="item-row">
+                            {% for hidden in item_form.hidden_fields %}
+                                {{ hidden }}
+                            {% endfor %}
+                            <td>{{ item_form.account }}</td>
+                            <td>{{ item_form.description }}</td>
+                            <td>{{ item_form.debit }}</td>
+                            <td>{{ item_form.credit }}</td>
+                            <td style="text-align: center; vertical-align: middle;">
+                                {% if items_formset.can_delete %}
+                                    {{ item_form.DELETE }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot>
+                        <tr style="background: rgba(0,0,0,0.5); font-weight: bold; font-size: 1.1rem;">
+                            <td colspan="2" style="text-align: left; color: #fff;">الإجمالي:</td>
+                            <td id="total-debit" style="color: #2ed573;">0.00</td>
+                            <td id="total-credit" style="color: #ff4757;">0.00</td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <button type="button" id="add-row-btn" class="btn btn-outline mt-3">
+                <i class="fas fa-plus"></i> إضافة سطر جديد
+            </button>
+            
+            <!-- Hidden empty form template for JS cloning -->
+            <div id="empty-form-template" style="display: none;">
+                <tr class="item-row new-row">
+                    {% for hidden in items_formset.empty_form.hidden_fields %}
+                        {{ hidden }}
+                    {% endfor %}
+                    <td>{{ items_formset.empty_form.account }}</td>
+                    <td>{{ items_formset.empty_form.description }}</td>
+                    <td>{{ items_formset.empty_form.debit }}</td>
+                    <td>{{ items_formset.empty_form.credit }}</td>
+                    <td style="text-align: center; vertical-align: middle;">
+                        {% if items_formset.can_delete %}
+                            {{ items_formset.empty_form.DELETE }}
+                        {% endif %}
+                    </td>
+                </tr>
+            </div>
+
+            <div style="margin-top: 2rem; display: flex; justify-content: flex-end; gap: 1rem;">
+                <a href="{% url 'accounting:journal_list' %}" class="btn-action" style="background: rgba(255,255,255,0.1);">إلغاء</a>
+                <button type="submit" id="submit-btn" class="btn-action" style="background-color: var(--neon-cyan); color: #000 !important; font-weight: bold;">
+                    <i class="fas fa-save"></i> حفظ وترحيل القيد
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const tableBody = document.getElementById('formset-container');
+    const addBtn = document.getElementById('add-row-btn');
+    const totalManagementForm = document.getElementById('id_items-TOTAL_FORMS');
+    const emptyFormTemplate = document.getElementById('empty-form-template').querySelector('tr');
+    
+    function calculateTotals() {
+        let totalDebit = 0;
+        let totalCredit = 0;
+        
+        document.querySelectorAll('input[name$="-debit"]').forEach(input => {
+            const val = parseFloat(input.value) || 0;
+            // Also ensure if debit is entered, credit is 0
+            if(val > 0) {
+                const row = input.closest('tr');
+                const creditInput = row.querySelector('input[name$="-credit"]');
+                if(creditInput && parseFloat(creditInput.value) > 0) creditInput.value = 0;
+            }
+            totalDebit += val;
+        });
+        
+        document.querySelectorAll('input[name$="-credit"]').forEach(input => {
+            const val = parseFloat(input.value) || 0;
+            if(val > 0) {
+                const row = input.closest('tr');
+                const debitInput = row.querySelector('input[name$="-debit"]');
+                if(debitInput && parseFloat(debitInput.value) > 0) debitInput.value = 0;
+            }
+            totalCredit += val;
+        });
+        
+        document.getElementById('total-debit').innerText = totalDebit.toFixed(4);
+        document.getElementById('total-credit').innerText = totalCredit.toFixed(4);
+        
+        const balanceStatus = document.getElementById('balance-status');
+        const submitBtn = document.getElementById('submit-btn');
+        
+        if (totalDebit === 0 && totalCredit === 0) {
+            balanceStatus.innerText = 'أدخل مبالغ القيد';
+            balanceStatus.style.backgroundColor = 'rgba(255,255,255,0.1)';
+            balanceStatus.style.color = '#fff';
+            submitBtn.disabled = true;
+        } else if (Math.abs(totalDebit - totalCredit) < 0.0001) {
+            balanceStatus.innerHTML = '<i class="fas fa-check-circle"></i> القيد متزن';
+            balanceStatus.style.backgroundColor = 'rgba(46, 213, 115, 0.2)';
+            balanceStatus.style.color = '#2ed573';
+            submitBtn.disabled = false;
+        } else {
+            const diff = Math.abs(totalDebit - totalCredit).toFixed(4);
+            balanceStatus.innerHTML = `<i class="fas fa-exclamation-triangle"></i> غير متزن (الفرق: ${diff})`;
+            balanceStatus.style.backgroundColor = 'rgba(255, 71, 87, 0.2)';
+            balanceStatus.style.color = '#ff4757';
+            submitBtn.disabled = true;
+        }
+    }
+    
+    // Listen for changes
+    document.addEventListener('input', function(e) {
+        if (e.target.tagName === 'INPUT' && (e.target.name.endsWith('-debit') || e.target.name.endsWith('-credit'))) {
+            calculateTotals();
+        }
+    });
+
+    // Add new row
+    addBtn.addEventListener('click', function() {
+        const formCount = parseInt(totalManagementForm.value);
+        const newRow = emptyFormTemplate.cloneNode(true);
+        
+        newRow.innerHTML = newRow.innerHTML.replace(/__prefix__/g, formCount);
+        tableBody.appendChild(newRow);
+        
+        totalManagementForm.value = formCount + 1;
+        calculateTotals();
+    });
+
+    // Initial calculation
+    calculateTotals();
+});
+</script>
+
+<style>
+    /* Remove crispy forms labels for table cells since headers are used */
+    #items-table label { display: none; }
+    #items-table .mb-3 { margin-bottom: 0 !important; }
+</style>
+{% endblock %}

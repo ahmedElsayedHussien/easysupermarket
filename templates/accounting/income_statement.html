@@ -9,7 +9,7 @@
     </div>
 
     <div class="card p-4">
-        <h3 class="text-neon-blue mb-3">الإيرادات (Revenues)</h3>
+        <h3 class="text-neon-blue mb-3">1. الإيرادات (Revenues)</h3>
         <table class="data-table mb-4">
             <thead>
                 <tr>
@@ -19,8 +19,60 @@
                 </tr>
             </thead>
             <tbody>
-                {% for account in revenue_accounts %}
-                {% if not account.has_children and account.current_balance != 0 %}
+                {% for account in sales_accounts %}
+                {% if account.current_balance != 0 %}
+                <tr>
+                    <td class="en">{{ account.code }}</td>
+                    <td>{{ account.name }}</td>
+                    <td class="en">{{ account.current_balance }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+                {% for account in contra_revenue_accounts %}
+                {% if account.current_balance != 0 %}
+                <tr class="text-neon-pink">
+                    <td class="en">{{ account.code }}</td>
+                    <td>{{ account.name }}</td>
+                    <td class="en">({{ account.current_balance|stringformat:"f"|slice:"1:" }})</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td colspan="2" class="text-right text-bold">صافي المبيعات (Net Sales)</td>
+                    <td class="en text-bold text-neon-green">{{ net_sales }}</td>
+                </tr>
+                {% if total_other_revenue != 0 %}
+                {% for account in other_revenue_accounts %}
+                {% if account.current_balance != 0 %}
+                <tr>
+                    <td class="en">{{ account.code }}</td>
+                    <td>{{ account.name }}</td>
+                    <td class="en">{{ account.current_balance }}</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+                <tr>
+                    <td colspan="2" class="text-right text-bold">إجمالي الإيرادات (Total Revenue)</td>
+                    <td class="en text-bold text-neon-blue">{{ total_revenue }}</td>
+                </tr>
+                {% endif %}
+            </tfoot>
+        </table>
+
+        <h3 class="text-warning mb-3">2. تكلفة المبيعات (Cost of Goods Sold)</h3>
+        <table class="data-table mb-4">
+            <thead>
+                <tr>
+                    <th>رقم الحساب</th>
+                    <th>اسم الحساب</th>
+                    <th>المبلغ</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for account in cogs_accounts %}
+                {% if account.current_balance != 0 %}
                 <tr>
                     <td class="en">{{ account.code }}</td>
                     <td>{{ account.name }}</td>
@@ -31,13 +83,18 @@
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="2" class="text-right text-bold">إجمالي الإيرادات</td>
-                    <td class="en text-bold text-neon-green">{{ total_revenue }}</td>
+                    <td colspan="2" class="text-right text-bold">إجمالي تكلفة المبيعات</td>
+                    <td class="en text-bold text-warning">{{ total_cogs }}</td>
                 </tr>
             </tfoot>
         </table>
+        
+        <div class="d-flex justify-between align-center p-3 mb-4" style="background-color: var(--color-surface-hover); border-radius: 8px;">
+            <h3 class="mb-0 text-neon-gold">مجمل الربح (Gross Profit)</h3>
+            <h3 class="en mb-0 {% if gross_profit >= 0 %}text-neon-green{% else %}text-neon-pink{% endif %}">{{ gross_profit }}</h3>
+        </div>
 
-        <h3 class="text-neon-pink mb-3">المصروفات (Expenses)</h3>
+        <h3 class="text-neon-pink mb-3">3. المصروفات التشغيلية (Operating Expenses)</h3>
         <table class="data-table mb-4">
             <thead>
                 <tr>
@@ -47,8 +104,8 @@
                 </tr>
             </thead>
             <tbody>
-                {% for account in expense_accounts %}
-                {% if not account.has_children and account.current_balance != 0 %}
+                {% for account in op_expense_accounts %}
+                {% if account.current_balance != 0 %}
                 <tr>
                     <td class="en">{{ account.code }}</td>
                     <td>{{ account.name }}</td>
@@ -59,15 +116,15 @@
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="2" class="text-right text-bold">إجمالي المصروفات</td>
-                    <td class="en text-bold text-neon-pink">{{ total_expense }}</td>
+                    <td colspan="2" class="text-right text-bold">إجمالي المصروفات التشغيلية</td>
+                    <td class="en text-bold text-neon-pink">{{ total_op_expense }}</td>
                 </tr>
             </tfoot>
         </table>
 
-        <div class="d-flex justify-between align-center p-3" style="background-color: var(--color-surface-hover); border-radius: 8px;">
-            <h3 class="mb-0">صافي الدخل (Net Income)</h3>
-            <h3 class="en mb-0 {% if net_income >= 0 %}text-neon-green{% else %}text-neon-pink{% endif %}">{{ net_income }}</h3>
+        <div class="d-flex justify-between align-center p-3 mt-4" style="background-color: var(--color-surface-hover); border-radius: 8px; border: 1px solid var(--color-primary);">
+            <h2 class="mb-0">صافي الدخل (Net Income)</h2>
+            <h2 class="en mb-0 {% if net_income >= 0 %}text-neon-green{% else %}text-neon-pink{% endif %}">{{ net_income }}</h2>
         </div>
     </div>
 </div>

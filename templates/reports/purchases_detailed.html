@@ -74,9 +74,11 @@
                 <tr>
                     <th>التاريخ</th>
                     <th>رقم الفاتورة</th>
+                    <th>رقم ف. إلكترونية</th>
                     <th>النوع</th>
                     <th>المورد</th>
                     <th>الصنف</th>
+                    <th>الوحدة</th>
                     <th style="text-align: center;">الكمية</th>
                     <th style="text-align: left;">سعر الوحدة</th>
                     <th style="text-align: left;">قبل الضريبة</th>
@@ -93,6 +95,9 @@
                             {{ line.invoice.invoice_number }}
                         </a>
                     </td>
+                    <td style="font-family: monospace; font-size: 0.9em; color: var(--text-muted);">
+                        {{ line.invoice.e_invoice_number|default:"-" }}
+                    </td>
                     <td>
                         {% if line.invoice.invoice_type == 'PURCHASE' %}
                             <span class="badge badge-success">شراء</span>
@@ -102,6 +107,7 @@
                     </td>
                     <td>{{ line.invoice.partner.name|default:"-" }}</td>
                     <td style="font-weight: bold;">{{ line.product.name }}</td>
+                    <td>{{ line.uom.uom.name|default:"الوحدة الأساسية" }}</td>
                     <td style="text-align: center;">
                         <span class="badge {% if line.invoice.invoice_type == 'PURCHASE' %}badge-primary{% else %}badge-danger{% endif %}">
                             {{ line.quantity|floatformat:"-2" }}
@@ -120,7 +126,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="10" style="text-align: center; padding: 2rem;">لا توجد حركة مشتريات مطابقة لمعايير البحث</td>
+                    <td colspan="12" style="text-align: center; padding: 2rem;">لا توجد حركة مشتريات مطابقة لمعايير البحث</td>
                 </tr>
                 {% endfor %}
             </tbody>

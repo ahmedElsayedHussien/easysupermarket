@@ -1,37 +1,57 @@
-# ============================================================
-# EasySupermarket ERP — Requirements
-# ============================================================
-
-# Core Django
-Django==4.2.16
-
-# Multi-Tenant Architecture
-django-tenants==3.6.1
-
-# Database
-psycopg2-binary
-
-# Environment Variables
-python-decouple==3.8
-
-# REST Framework
-djangorestframework==3.15.2
-django-filter==24.3
-django-cors-headers==4.4.0
-
-# MPTT (Tree structures for Accounts & Categories)
-django-mptt==0.16.0
-
-# Image handling (Product images)
-Pillow
-
-# Task Queue (for reports/notifications)
+﻿altgraph==0.17.5
+amqp==5.3.1
+asgiref==3.11.1
+attrs==26.1.0
+billiard==4.3.0rc1
 celery==5.4.0
-redis==5.0.8
+certifi==2026.6.17
+charset-normalizer==3.4.9
+click==8.4.2
+click-didyoumean==0.3.1
+click-plugins==1.1.1.2
+click-repl==0.3.0
+colorama==0.4.6
+cron_descriptor==2.1.0
+Django==4.2.16
 django-celery-beat==2.7.0
-
-# API Documentation
+django-cors-headers==4.4.0
+django-filter==24.3
+django-js-asset==4.0.1
+django-mptt==0.16.0
+django-tenants==3.6.1
+django-timezone-field==7.2.2
+djangorestframework==3.15.2
 drf-spectacular==0.27.2
-
-# Utilities
+idna==3.18
+inflection==0.5.1
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+kombu==5.6.2
+packaging==26.2
+pefile==2024.8.26
+pillow==12.2.0
+prompt_toolkit==3.0.52
+psycopg2-binary==2.9.12
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+PyKCS11==1.5.18
+python-crontab==3.3.0
 python-dateutil==2.9.0
+python-decouple==3.8
+pywin32-ctypes==0.2.3
+PyYAML==6.0.3
+redis==5.0.8
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.5.1
+setuptools==83.0.0
+six==1.17.0
+sqlparse==0.5.5
+typing_extensions==4.16.0rc2
+tzdata==2026.2
+uritemplate==4.2.0
+urllib3==2.7.0
+vine==5.1.0
+waitress==3.0.2
+wcwidth==0.8.1
+whitenoise==6.12.0

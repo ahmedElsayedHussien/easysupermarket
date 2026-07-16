@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>عقد إيجار / إقرار استلام - {{ rental.id }}</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
+        
+        body {
+            font-family: 'Cairo', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f0f0f0;
+            color: #000;
+        }
+
+        .print-container {
+            width: 210mm;
+            min-height: 297mm;
+            margin: 20px auto;
+            padding: 20mm;
+            background: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            box-sizing: border-box;
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #000;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 800;
+        }
+
+        .header h2 {
+            margin: 5px 0 0 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .details-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 30px;
+            font-size: 15px;
+        }
+
+        .details-grid div {
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+        }
+
+        th, td {
+            border: 1px solid #000;
+            padding: 12px;
+            text-align: right;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            font-weight: 700;
+        }
+
+        .declaration {
+            line-height: 2;
+            font-size: 16px;
+            text-align: justify;
+            margin-bottom: 50px;
+            border: 2px dashed #000;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: #fafafa;
+        }
+
+        .declaration strong {
+            font-weight: 800;
+            font-size: 18px;
+        }
+
+        .signatures {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 50px;
+        }
+
+        .signature-box {
+            text-align: center;
+            width: 40%;
+        }
+
+        .signature-line {
+            border-top: 1px solid #000;
+            margin-top: 50px;
+            padding-top: 5px;
+            font-weight: 600;
+        }
+
+        /* Print Specific Styles */
+        @media print {
+            body {
+                background: white;
+            }
+            .print-container {
+                margin: 0;
+                padding: 10mm;
+                box-shadow: none;
+                width: 100%;
+                min-height: auto;
+            }
+            .no-print {
+                display: none !important;
+            }
+            @page {
+                size: A4;
+                margin: 10mm;
+            }
+        }
+
+        /* Utility button */
+        .print-btn {
+            display: block;
+            width: 200px;
+            margin: 20px auto;
+            padding: 12px 20px;
+            background: #ff7300;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 16px;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(255, 115, 0, 0.3);
+            font-family: inherit;
+        }
+        .print-btn:hover {
+            background: #e66600;
+        }
+    </style>
+</head>
+<body>
+
+    <button onclick="window.print()" class="print-btn no-print">🖨️ طباعة العقد</button>
+
+    <div class="print-container">
+        <!-- Header -->
+        <div class="header">
+            <h1>عقد إيجار وإقرار استلام معدات</h1>
+            <h2>رقم العقد: #{{ rental.id }}</h2>
+        </div>
+
+        <!-- Details -->
+        <div class="details-grid">
+            <div>
+                <strong>تاريخ العقد:</strong> {{ rental.created_at|date:"Y-m-d" }}<br>
+                <strong>تاريخ الاستلام (البداية):</strong> {{ rental.start_date|date:"Y-m-d" }}<br>
+                <strong>تاريخ العودة المتوقع:</strong> {{ rental.end_date|date:"Y-m-d" }}<br>
+            </div>
+            <div>
+                <strong>اسم العميل:</strong> {{ rental.customer.name }}<br>
+                <strong>الرقم القومي:</strong> {{ rental.customer.national_id|default:"غير مسجل" }}<br>
+                <strong>رقم الهاتف:</strong> {{ rental.customer.phone|default:"غير مسجل" }}<br>
+                <strong>طريقة الدفع:</strong> {{ rental.get_payment_method_display }}<br>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <table>
+            <thead>
+                <tr>
+                    <th>م</th>
+                    <th>اسم المعدة</th>
+                    <th>الكود</th>
+                    <th>سعر اليوم</th>
+                    <th>عدد الأيام</th>
+                    <th>إجمالي المبلغ</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>1</td>
+                    <td><strong>{{ rental.equipment.name }}</strong></td>
+                    <td>{{ rental.equipment.code }}</td>
+                    <td>{{ rental.daily_rate }} ج.م</td>
+                    <td>{{ rental.days_rented }} يوم</td>
+                    <td><strong>{{ rental.total_amount }} ج.م</strong></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- Legal Declaration -->
+        <div class="declaration">
+            أقر أنا الموقع أدناه / 
+            ................................................................................... بصفتي المستلم الفعلي للمعدات المذكورة أعلاه، 
+            بأن المعدات أصبحت <strong>أمانة في عهدتي</strong> وأني مسئول مسئولية كاملة عن أي خسائر تتعرض لها سواء كان تلف أو فقد، 
+            وأتحمل <strong>المسئولية الجنائية</strong> المترتبة على ذلك. ولا تخلي مسئوليتي إلا بعد تسليم المعدات كاملة وبحالتها 
+            التي استلمتها بها لأصحاب الشأن وإثبات تسليمها بحالتها. وفي حالة عدم تسليم المعدات أو توريد قيمتها أكون 
+            <strong>خائناً ومبدداً للأمانة</strong> وأتحمل المسئولية القانونية المترتبة على ذلك.
+        </div>
+
+        <!-- Signatures -->
+        <div class="signatures">
+            <div class="signature-box">
+                <div><strong>إمضاء وتوقيع الشركة</strong></div>
+                <div class="signature-line">
+                    (عنهم: .......................................)
+                </div>
+            </div>
+            <div class="signature-box">
+                <div><strong>توقيع المستلم الفعلي</strong></div>
+                <div class="signature-line">
+                    (الاسم: .......................................)
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auto Print Script -->
+    <script>
+        window.onload = function() {
+            setTimeout(function() {
+                window.print();
+            }, 500);
+        };
+    </script>
+</body>
+</html>

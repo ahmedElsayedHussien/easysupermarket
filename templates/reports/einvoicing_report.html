@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}تقرير الفواتير الإلكترونية المعتمدة{% endblock %}
+
+{% block content %}
+<div class="content-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="content-title">
+        <h2 style="margin: 0; color: #fff;"><i class="fas fa-cloud-upload-alt text-success" style="margin-left: 0.5rem;"></i> تقرير الفواتير الإلكترونية المعتمدة</h2>
+    </div>
+    <div class="content-actions">
+        <button class="btn-action" onclick="window.print()">
+            <i class="fas fa-print"></i> طباعة
+        </button>
+        <a href="{% url 'core:reports_index' %}" class="btn-action">
+            <i class="fas fa-arrow-right"></i> عودة للتقارير
+        </a>
+    </div>
+</div>
+
+<div class="filter-section hide-print" style="background: rgba(13, 20, 36, 0.6); padding: 1.5rem; border-radius: 12px; margin-bottom: 2rem; border: 1px solid rgba(255,255,255,0.05);">
+    <form method="GET" class="filter-form" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+        <div>
+            <label style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">من تاريخ</label>
+            <input type="date" name="start_date" value="{{ start_date|default:'' }}" style="padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+        </div>
+        <div>
+            <label style="display: block; margin-bottom: 0.5rem; color: #94a3b8; font-size: 0.85rem;">إلى تاريخ</label>
+            <input type="date" name="end_date" value="{{ end_date|default:'' }}" style="padding: 0.8rem 1rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-family: var(--font-arabic);">
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <button type="submit" class="btn-action" style="padding: 0.8rem 1.5rem; background: var(--neon-cyan); color: #000 !important; font-weight: bold; cursor: pointer;">
+                <i class="fas fa-search"></i> عرض التقرير
+            </button>
+            <a href="?" class="btn-action" style="padding: 0.8rem 1.5rem; color: #fff !important;"><i class="fas fa-times"></i> إلغاء</a>
+        </div>
+    </form>
+</div>
+
+<div class="glass-container">
+    <!-- Summary Cards -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+        <div class="card" style="background: rgba(13, 20, 36, 0.6); border: 1px solid rgba(255,255,255,0.05); padding: 1.5rem; text-align: center; border-radius: 12px; min-width: 0; max-width: 100%; overflow: hidden;">
+            <h5 style="color: #94a3b8; margin-bottom: 0.5rem; font-size: 0.9rem;">عدد الفواتير المرفوعة</h5>
+            <h3 style="color: var(--neon-cyan); margin: 0; font-size: 1.5rem;">{{ total_invoices }}</h3>
+        </div>
+        <div class="card" style="background: rgba(13, 20, 36, 0.6); border: 1px solid rgba(255,255,255,0.05); padding: 1.5rem; text-align: center; border-radius: 12px; min-width: 0; max-width: 100%; overflow: hidden;">
+            <h5 style="color: #94a3b8; margin-bottom: 0.5rem; font-size: 0.9rem;">المبيعات قبل الضريبة</h5>
+            <h3 style="color: var(--neon-gold); margin: 0; font-size: 1.5rem;" class="en">{{ total_amount|floatformat:2 }}</h3>
+        </div>
+        <div class="card" style="background: rgba(13, 20, 36, 0.6); border: 1px solid rgba(255,255,255,0.05); padding: 1.5rem; text-align: center; border-radius: 12px; min-width: 0; max-width: 100%; overflow: hidden;">
+            <h5 style="color: #94a3b8; margin-bottom: 0.5rem; font-size: 0.9rem;">القيمة المضافة</h5>
+            <h3 style="color: #2ed573; margin: 0; font-size: 1.5rem;" class="en">{{ total_vat|floatformat:2 }}</h3>
+        </div>
+        <div class="card" style="background: rgba(13, 20, 36, 0.6); border: 1px solid rgba(255,255,255,0.05); padding: 1.5rem; text-align: center; border-radius: 12px; min-width: 0; max-width: 100%; overflow: hidden;">
+            <h5 style="color: #94a3b8; margin-bottom: 0.5rem; font-size: 0.9rem;">خصم وإضافة</h5>
+            <h3 style="color: #ff4757; margin: 0; font-size: 1.5rem;" class="en">{{ total_wht|floatformat:2 }}</h3>
+        </div>
+    </div>
+
+    <!-- Data Table -->
+    <div class="table-container" style="overflow-x: auto; max-width: 100%;">
+        <table class="data-table" style="min-width: 800px; margin-bottom: 1rem;">
+            <thead>
+                <tr>
+                    <th>تاريخ الفاتورة</th>
+                    <th>رقم الفاتورة</th>
+                    <th>العميل</th>
+                    <th>UUID (المنظومة)</th>
+                    <th>المبلغ الأساسي</th>
+                    <th>القيمة المضافة</th>
+                    <th>ضريبة الخصم</th>
+                    <th>الصافي</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td class="en">{{ log.invoice.date|date:"Y-m-d" }}</td>
+                    <td class="en">{{ log.invoice.invoice_number }}</td>
+                    <td>{{ log.invoice.partner.name }}</td>
+                    <td class="en" style="font-size: 0.85rem; color: #94a3b8;" title="{{ log.uuid }}">
+                        {{ log.uuid|truncatechars:15 }}
+                    </td>
+                    <td class="en">{{ log.invoice.subtotal|floatformat:2 }}</td>
+                    <td class="en" style="color: #2ed573;">{{ log.invoice.tax_amount|floatformat:2 }}</td>
+                    <td class="en" style="color: #ff4757;">{{ log.invoice.wht_amount|floatformat:2 }}</td>
+                    <td class="en" style="font-weight: bold; color: var(--neon-cyan);">{{ log.invoice.total_amount|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" style="text-align: center; padding: 2rem; color: #94a3b8;">
+                        <i class="fas fa-file-invoice fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        لا توجد فواتير معتمدة في هذه الفترة
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            {% if total_invoices > 0 %}
+            <tfoot>
+                <tr style="background: rgba(0,0,0,0.5); font-weight: bold; font-size: 1.1rem;">
+                    <td colspan="4" style="text-align: left; color: #fff;">الإجمالي:</td>
+                    <td class="en" style="color: var(--neon-gold);">{{ total_amount|floatformat:2 }}</td>
+                    <td class="en" style="color: #2ed573;">{{ total_vat|floatformat:2 }}</td>
+                    <td class="en" style="color: #ff4757;">{{ total_wht|floatformat:2 }}</td>
+                    <td class="en" style="color: var(--neon-cyan);">{{ total_net|floatformat:2 }}</td>
+                </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+    </div>
+</div>
+
+<style>
+    @media print {
+        body { background: #fff !important; color: #000 !important; }
+        .hide-print, .sidebar, .top-header, .filter-section { display: none !important; }
+        .glass-container { background: none !important; border: none !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; }
+        .card { background: none !important; border: 1px solid #ddd !important; }
+        .card h5 { color: #555 !important; }
+        .card h3 { color: #000 !important; }
+        .data-table th { background: #f8f9fa !important; color: #000 !important; border: 1px solid #ddd !important; }
+        .data-table td { border: 1px solid #ddd !important; color: #000 !important; }
+        .en { color: #000 !important; }
+    }
+</style>
+{% endblock %}

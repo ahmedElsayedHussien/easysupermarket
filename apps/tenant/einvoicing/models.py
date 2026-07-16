@@ -5,6 +5,7 @@ class TaxIntegrationSettings(models.Model):
     client_id = models.CharField(max_length=255, verbose_name="معرف العميل (Client ID)")
     client_secret = models.CharField(max_length=255, verbose_name="كلمة السر (Client Secret)")
     taxpayer_activity_code = models.CharField(max_length=10, default="4741", verbose_name="كود النشاط (Activity Code)")
+    enable_einvoicing = models.BooleanField(default=True, verbose_name="تفعيل المنظومة (إرسال الفواتير)")
     is_production = models.BooleanField(default=False, verbose_name="العملية الفعلية (Production Mode)")
     company_id = models.CharField(max_length=50, blank=True, null=True, verbose_name="رقم التسجيل الضريبي (Issuer ID)")
     company_name = models.CharField(max_length=255, blank=True, null=True, verbose_name="اسم الشركة (Issuer Name)")

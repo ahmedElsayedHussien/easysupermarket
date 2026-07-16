@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}ميزان المراجعة{% endblock %}
+
+{% block content %}
+<div class="content-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="content-title">
+        <h1>⚖️ ميزان المراجعة (Trial Balance)</h1>
+        <p>مراجعة أرصدة الحسابات ومطابقة المدين والدائن</p>
+    </div>
+    <div class="header-actions">
+        <button type="button" class="btn btn-outline" onclick="window.print()">🖨️ طباعة</button>
+        <a href="?{{ request.GET.urlencode }}&export=excel" class="btn btn-neon-green">📥 تصدير إكسيل</a>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-outline">⬅️ عودة للتقارير</a>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card filters-card mb-4">
+    <form method="get" class="row align-items-end g-3">
+        <div class="col-md-4">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="start_date" class="form-input" value="{{ start_date }}">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="end_date" class="form-input" value="{{ end_date }}">
+        </div>
+        <div class="col-md-4">
+            <button type="submit" class="btn btn-primary w-100">🔍 عرض التقرير</button>
+        </div>
+    </form>
+</div>
+
+<!-- Report Table -->
+<div class="card">
+    <div class="table-container" style="overflow-x: auto; max-width: 100%;">
+        <table class="data-table" style="min-width: 800px;">
+            <thead>
+                <tr>
+                    <th rowspan="2" style="vertical-align: middle;">كود الحساب</th>
+                    <th rowspan="2" style="vertical-align: middle;">اسم الحساب</th>
+                    <th rowspan="2" style="vertical-align: middle; text-align: center;">النوع</th>
+                    <th colspan="2" style="text-align: center; border-bottom: 1px solid var(--border-default);">بالمجاميع (حركة الفترة)</th>
+                    <th colspan="2" style="text-align: center; border-bottom: 1px solid var(--border-default);">بالأرصدة (الرصيد النهائي)</th>
+                </tr>
+                <tr>
+                    <th style="text-align: center; color: var(--neon-cyan);">إجمالي مدين</th>
+                    <th style="text-align: center; color: var(--neon-red);">إجمالي دائن</th>
+                    <th style="text-align: center; color: var(--neon-cyan);">رصيد مدين</th>
+                    <th style="text-align: center; color: var(--neon-red);">رصيد دائن</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for acc in accounts %}
+                <tr>
+                    <td class="en">{{ acc.code }}</td>
+                    <td style="font-weight: 600;">{{ acc.name }}</td>
+                    <td style="text-align: center;">{{ acc.type }}</td>
+                    <td class="en" style="text-align: center;">{{ acc.debit|floatformat:2 }}</td>
+                    <td class="en" style="text-align: center;">{{ acc.credit|floatformat:2 }}</td>
+                    <td class="en" style="text-align: center; font-weight: bold; color: var(--neon-cyan);">
+                        {% if acc.net_debit > 0 %}{{ acc.net_debit|floatformat:2 }}{% else %}-{% endif %}
+                    </td>
+                    <td class="en" style="text-align: center; font-weight: bold; color: var(--neon-red);">
+                        {% if acc.net_credit > 0 %}{{ acc.net_credit|floatformat:2 }}{% else %}-{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center" style="padding: 2rem;">لا توجد حركات محاسبية في هذه الفترة</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr style="background-color: var(--bg-tertiary); font-weight: bold; font-size: 1.1rem;">
+                    <td colspan="3" style="text-align: left; color: var(--neon-gold);">الإجمالي العام:</td>
+                    <td class="en" style="text-align: center;">{{ total_debit|floatformat:2 }}</td>
+                    <td class="en" style="text-align: center;">{{ total_credit|floatformat:2 }}</td>
+                    <td class="en" style="text-align: center; color: var(--neon-cyan);">{{ total_net_debit|floatformat:2 }}</td>
+                    <td class="en" style="text-align: center; color: var(--neon-red);">{{ total_net_credit|floatformat:2 }}</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+<style>
+    @media print {
+        .content-header .header-actions, .filters-card { display: none !important; }
+        body { background: white; color: black; }
+        .card { border: none; box-shadow: none; }
+        .data-table th, .data-table td { color: black !important; border: 1px solid #ddd; }
+    }
+</style>
+{% endblock %}

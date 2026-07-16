@@ -5,6 +5,7 @@ app_name = 'accounting'
 urlpatterns = [
     # Journal Entries
     path('journals/', views.JournalEntryListView.as_view(), name='journal_list'),
+    path('journals/create/', views.ManualJournalEntryCreateView.as_view(), name='journal_create'),
     path('journals/<int:pk>/', views.JournalEntryDetailView.as_view(), name='journal_detail'),
     
     # Reports

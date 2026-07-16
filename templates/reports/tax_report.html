@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block title %}تقرير الضرائب{% endblock %}
+
+{% block content %}
+<div class="content-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="content-title">
+        <h1>🧾 تقرير الضرائب (الإقرار الضريبي)</h1>
+        <p>بيان تفصيلي بضريبة القيمة المضافة وضريبة الخصم والإضافة</p>
+    </div>
+    <div class="header-actions">
+        <button type="button" class="btn btn-outline" onclick="window.print()">🖨️ طباعة</button>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-outline">⬅️ عودة للتقارير</a>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card filters-card mb-4">
+    <form method="get" class="row align-items-end g-3">
+        <div class="col-md-5">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="start_date" class="form-input" value="{{ start_date }}">
+        </div>
+        <div class="col-md-5">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="end_date" class="form-input" value="{{ end_date }}">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary w-100">🔍 عرض التقرير</button>
+        </div>
+    </form>
+</div>
+
+<div class="grid-2">
+    <!-- Value Added Tax (VAT) -->
+    <div class="card">
+        <h3 style="color: var(--neon-cyan); margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+            📊 ضريبة القيمة المضافة (VAT)
+        </h3>
+        
+        <div class="table-container" style="overflow-x: auto; max-width: 100%;">
+        <table class="data-table" style="margin-bottom: 1rem; min-width: 600px;">
+            <tbody>
+                <tr style="background-color: rgba(0,255,255,0.05);">
+                    <td colspan="2" style="font-weight: bold; color: var(--neon-cyan);">الضريبة المحصلة (المخرجات / المبيعات)</td>
+                </tr>
+                <tr>
+                    <td>ضريبة المبيعات</td>
+                    <td class="en" style="text-align: left; color: var(--text-primary);">{{ sales_tax|floatformat:2 }}</td>
+                </tr>
+                <tr>
+                    <td>(يخصم) ضريبة مرتجعات المبيعات</td>
+                    <td class="en" style="text-align: left; color: var(--neon-red);">{{ returns_sales_tax|floatformat:2 }}</td>
+                </tr>
+                <tr style="font-weight: bold;">
+                    <td>صافي الضريبة المحصلة</td>
+                    <td class="en" style="text-align: left; color: var(--neon-cyan);">{{ net_output_tax|floatformat:2 }}</td>
+                </tr>
+
+                <tr style="background-color: rgba(255,100,100,0.05);">
+                    <td colspan="2" style="font-weight: bold; color: var(--neon-red); margin-top: 1rem;">الضريبة المدفوعة (المدخلات / المشتريات والمصروفات)</td>
+                </tr>
+                <tr>
+                    <td>ضريبة المشتريات</td>
+                    <td class="en" style="text-align: left; color: var(--text-primary);">{{ purchases_tax|floatformat:2 }}</td>
+                </tr>
+                <tr>
+                    <td>(يخصم) ضريبة مرتجعات المشتريات</td>
+                    <td class="en" style="text-align: left; color: var(--neon-cyan);">{{ returns_purchases_tax|floatformat:2 }}</td>
+                </tr>
+                <tr>
+                    <td>ضريبة المصروفات التشغيلية</td>
+                    <td class="en" style="text-align: left; color: var(--text-primary);">{{ expenses_tax|floatformat:2 }}</td>
+                </tr>
+                <tr style="font-weight: bold;">
+                    <td>صافي الضريبة المدفوعة</td>
+                    <td class="en" style="text-align: left; color: var(--neon-red);">{{ net_input_tax|floatformat:2 }}</td>
+                </tr>
+            </tbody>
+            <tfoot>
+                <tr style="background-color: var(--bg-tertiary); font-size: 1.1rem; font-weight: bold;">
+                    <td style="color: var(--neon-gold);">صافي ضريبة القيمة المضافة المستحقة للإقرار</td>
+                    <td class="en" style="text-align: left; color: {% if net_vat_payable > 0 %}var(--neon-cyan){% else %}var(--neon-green){% endif %};">
+                        {{ net_vat_payable|floatformat:2 }} 
+                        {% if net_vat_payable > 0 %}
+                            <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">(مستحقة للدفع)</span>
+                        {% elif net_vat_payable < 0 %}
+                            <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">(رصيد دائن / مستردة)</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+        </div>
+    </div>
+
+    <!-- Withholding Tax (WHT) -->
+    <div class="card">
+        <h3 style="color: var(--neon-purple); margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+            ✂️ ضريبة الخصم والإضافة (WHT)
+        </h3>
+        
+        <div class="table-container" style="overflow-x: auto; max-width: 100%;">
+        <table class="data-table" style="min-width: 600px;">
+            <tbody>
+                <tr style="background-color: rgba(200,100,255,0.05);">
+                    <td colspan="2" style="font-weight: bold; color: var(--neon-purple);">المخصوم علينا (لصالحنا لدى الضرائب)</td>
+                </tr>
+                <tr>
+                    <td>مخصوم من المبيعات بواسطة العملاء</td>
+                    <td class="en" style="text-align: left; color: var(--text-primary);">{{ sales_wht|floatformat:2 }}</td>
+                </tr>
+                <tr>
+                    <td>(مردود) مرتجعات المبيعات</td>
+                    <td class="en" style="text-align: left; color: var(--neon-red);">{{ returns_sales_wht|floatformat:2 }}</td>
+                </tr>
+                <tr style="font-weight: bold;">
+                    <td>صافي المخصوم علينا</td>
+                    <td class="en" style="text-align: left; color: var(--neon-purple);">{{ net_sales_wht|floatformat:2 }}</td>
+                </tr>
+
+                <tr style="background-color: rgba(255,100,100,0.05);">
+                    <td colspan="2" style="font-weight: bold; color: var(--neon-red); margin-top: 1rem;">المخصوم لحساب الغير (مستحق الدفع للضرائب)</td>
+                </tr>
+                <tr>
+                    <td>مخصوم من الموردين (المشتريات)</td>
+                    <td class="en" style="text-align: left; color: var(--text-primary);">{{ purchases_wht|floatformat:2 }}</td>
+                </tr>
+                <tr>
+                    <td>(مردود) مرتجعات المشتريات</td>
+                    <td class="en" style="text-align: left; color: var(--neon-cyan);">{{ returns_purchases_wht|floatformat:2 }}</td>
+                </tr>
+                <tr>
+                    <td>مخصوم من المصروفات والخدمات</td>
+                    <td class="en" style="text-align: left; color: var(--text-primary);">{{ expenses_wht|floatformat:2 }}</td>
+                </tr>
+                <tr style="font-weight: bold;">
+                    <td>صافي المخصوم للغير (نموذج 41)</td>
+                    <td class="en" style="text-align: left; color: var(--neon-red);">{{ net_purchases_wht|floatformat:2 }}</td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    .card { min-width: 0; max-width: 100%; overflow: hidden; }
+    @media print {
+        .content-header .header-actions, .filters-card { display: none !important; }
+        body { background: white; color: black; }
+        .card { border: none; box-shadow: none; padding: 0 !important; margin-bottom: 2rem; min-width: 0; max-width: 100%; overflow: hidden; }
+        .grid-2 { display: block; }
+        .data-table th, .data-table td { color: black !important; border: 1px solid #ddd; padding: 0.5rem; }
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% block title %}تفاصيل عقد الإيجار #{{ rental.id }}{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4" style="max-width: 800px; margin: 2rem auto;">
+    <div class="d-flex justify-between align-center mb-4">
+        <h3 class="text-neon-gold m-0">
+            <i class="fas fa-file-invoice"></i> تفاصيل عقد الإيجار #{{ rental.id }}
+        </h3>
+        <div>
+            {% if rental.status == 'ACTIVE' %}
+            <a href="{% url 'rentals:rental_return' rental.pk %}" class="btn btn-sm btn-orange ms-2">
+                <i class="fas fa-undo"></i> إرجاع المعدة
+            </a>
+            {% endif %}
+            <a href="{% url 'rentals:rental_list' %}" class="btn-action">عودة للقائمة</a>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Rental Information -->
+        <div class="col-md-6 mb-4">
+            <div class="card p-3 h-100" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05);">
+                <h5 class="text-neon-cyan mb-3">بيانات العقد</h5>
+                <p><strong>المعدة:</strong> {{ rental.equipment.name }} <span class="badge bg-secondary">{{ rental.equipment.code }}</span></p>
+                <p><strong>العميل:</strong> <a href="{% url 'partners:partner_edit' rental.customer.pk %}" class="text-neon-blue" style="text-decoration: none; font-weight: bold;">{{ rental.customer.name }} <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i></a></p>
+                <p><strong>الحالة:</strong> 
+                    {% if rental.status == 'ACTIVE' %}
+                        <span class="badge" style="background: rgba(43,255,107,0.2); color: var(--neon-green);">نشط</span>
+                    {% else %}
+                        <span class="badge" style="background: rgba(255,255,255,0.1); color: #ccc;">تم الإرجاع</span>
+                    {% endif %}
+                </p>
+                <p><strong>طريقة السداد:</strong> {{ rental.get_payment_method_display }}</p>
+                <p><strong>إجمالي المبلغ:</strong> <span class="text-neon-green">{{ rental.total_amount }} ج.م</span></p>
+                {% if rental.treasury %}<p><strong>الخزينة:</strong> {{ rental.treasury.name }}</p>{% endif %}
+                {% if rental.ewallet %}<p><strong>المحفظة:</strong> {{ rental.ewallet.name }}</p>{% endif %}
+            </div>
+        </div>
+
+        <!-- Dates -->
+        <div class="col-md-6 mb-4">
+            <div class="card p-3 h-100" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05);">
+                <h5 class="text-neon-pink mb-3">التواريخ</h5>
+                <p><strong>تاريخ البداية:</strong> {{ rental.start_date|date:"Y-m-d" }}</p>
+                <p><strong>تاريخ العودة:</strong> {{ rental.end_date|date:"Y-m-d" }}</p>
+                <p><strong>عدد الأيام:</strong> {{ rental.days_rented }} يوم</p>
+                <p><strong>تاريخ الإنشاء:</strong> {{ rental.created_at|date:"Y-m-d H:i" }}</p>
+                <p><strong>بواسطة:</strong> {{ rental.created_by.username }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Accounting Entries -->
+    <div class="card p-3 mb-4" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05);">
+        <h5 class="text-neon-gold mb-3">القيود المحاسبية المرتبطة</h5>
+        
+        {% if rental.accrual_journal_entry %}
+        <div class="d-flex justify-between align-center mb-2" style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">
+            <span><strong>قيد الاستحقاق:</strong> {{ rental.accrual_journal_entry.description }}</span>
+            <a href="{% url 'accounting:journal_detail' rental.accrual_journal_entry.pk %}" class="btn-action text-neon-blue btn-sm">عرض القيد</a>
+        </div>
+        {% endif %}
+        
+        {% if rental.payment_journal_entry %}
+        <div class="d-flex justify-between align-center mt-2">
+            <span><strong>قيد السداد:</strong> {{ rental.payment_journal_entry.description }}</span>
+            <a href="{% url 'accounting:journal_detail' rental.payment_journal_entry.pk %}" class="btn-action text-neon-blue btn-sm">عرض القيد</a>
+        </div>
+        {% endif %}
+        
+        {% if not rental.accrual_journal_entry and not rental.payment_journal_entry %}
+        <p class="text-muted m-0">لا توجد قيود محاسبية مرتبطة.</p>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}

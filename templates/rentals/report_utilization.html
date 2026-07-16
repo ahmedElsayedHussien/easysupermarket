@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>🚜 معدل تشغيل المعدات (Equipment Utilization)</h1>
+        <p>نسبة الأيام التي كانت فيها المعدة مؤجرة مقارنة بأيام تواجدها في المخزن.</p>
+    </div>
+    <div class="content-actions">
+        <button class="btn btn-primary" onclick="window.print()">
+            <i class="fas fa-print"></i> طباعة التقرير
+        </button>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-secondary">
+            <i class="fas fa-arrow-right"></i> عودة للتقارير
+        </a>
+    </div>
+</div>
+
+<div class="card p-4">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>المعدة</th>
+                    <th>الحالة الحالية</th>
+                    <th>إجمالي الأيام المتاحة</th>
+                    <th>الأيام الفعلية للإيجار</th>
+                    <th>معدل التشغيل (الاستخدام)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in report_data %}
+                <tr>
+                    <td><strong>{{ row.equipment.name }}</strong> ({{ row.equipment.code }})</td>
+                    <td>
+                        {% if row.equipment.status == 'AVAILABLE' %}
+                        <span class="badge bg-success">متاحة</span>
+                        {% elif row.equipment.status == 'RENTED' %}
+                        <span class="badge bg-warning text-dark">مؤجرة</span>
+                        {% else %}
+                        <span class="badge bg-danger">في الصيانة</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ row.total_days_available }} يوم</td>
+                    <td><span class="text-neon-cyan">{{ row.actual_rented_days }} يوم</span></td>
+                    <td>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <div style="flex-grow: 1; background: rgba(255,255,255,0.1); border-radius: 4px; height: 10px; overflow: hidden;">
+                                <div style="height: 100%; width: {{ row.utilization_pct }}%; background: {% if row.utilization_pct > 70 %}var(--neon-green){% elif row.utilization_pct > 30 %}var(--neon-gold){% else %}var(--neon-pink){% endif %};"></div>
+                            </div>
+                            <span style="min-width: 50px; font-weight: bold; color: {% if row.utilization_pct > 70 %}var(--neon-green){% elif row.utilization_pct > 30 %}var(--neon-gold){% else %}var(--neon-pink){% endif %};">{{ row.utilization_pct }}%</span>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted">لا يوجد معدات مسجلة بعد.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="mt-4 text-muted" style="font-size: 0.9rem;">
+        <p><strong>ملاحظات:</strong></p>
+        <ul style="padding-right: 1.5rem;">
+            <li><strong>إجمالي الأيام المتاحة:</strong> عدد الأيام منذ إضافة المعدة للنظام وحتى اليوم.</li>
+            <li><strong>معدل التشغيل:</strong> يعبر عن كفاءة استغلال المعدة. المعدل المرتفع (أكثر من 70%) يعني طلب عالي على المعدة ويمكنك التفكير في شراء المزيد منها. والمعدل المنخفض (أقل من 30%) يعني أن المعدة مركونة وتفقد من قيمتها الشرائية بمرور الوقت دون عائد جيد.</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

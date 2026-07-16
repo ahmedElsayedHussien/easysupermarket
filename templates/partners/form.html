@@ -25,8 +25,23 @@
             </div>
             
             <div class="form-group mb-3">
-                <label class="form-label">رقم الهاتف</label>
+                <label class="form-label">رقم الهاتف الأساسي</label>
                 <input type="text" name="phone" class="form-control" value="{{ partner.phone }}">
+            </div>
+
+            <div class="form-group mb-3">
+                <label class="form-label">رقم الهاتف الإضافي (الموبايل)</label>
+                <input type="text" name="mobile" class="form-control" value="{{ partner.mobile }}">
+            </div>
+
+            <div class="form-group mb-3">
+                <label class="form-label">البريد الإلكتروني</label>
+                <input type="email" name="email" class="form-control" value="{{ partner.email }}">
+            </div>
+
+            <div class="form-group mb-3">
+                <label class="form-label">الرقم القومي (اختياري)</label>
+                <input type="text" name="national_id" class="form-control" value="{{ partner.national_id }}">
             </div>
 
             <div class="form-group mb-3">

@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}دفتر الأستاذ العام{% endblock %}
+
+{% block content %}
+<div class="content-header" style="display: flex; justify-content: space-between; align-items: center;">
+    <div class="content-title">
+        <h1>📒 دفتر الأستاذ العام (General Ledger)</h1>
+        <p>كشف حساب تفصيلي وحركة القيود لحساب معين</p>
+    </div>
+    <div class="header-actions">
+        <button type="button" class="btn btn-outline" onclick="window.print()">🖨️ طباعة</button>
+        <a href="?{{ request.GET.urlencode }}&export=excel" class="btn btn-neon-green">📥 تصدير إكسيل</a>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-outline">⬅️ عودة للتقارير</a>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card filters-card mb-4">
+    <form method="get" class="row align-items-end g-3">
+        <div class="col-md-4">
+            <label class="form-label">الحساب</label>
+            <select name="account_id" class="form-input" required>
+                <option value="">-- اختر الحساب --</option>
+                {% for acc in accounts_list %}
+                    <option value="{{ acc.id }}" {% if account_id|add:"0" == acc.id %}selected{% endif %}>
+                        {{ acc.code }} - {{ acc.name }} ({{ acc.get_account_type_display }})
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="start_date" class="form-input" value="{{ start_date }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="end_date" class="form-input" value="{{ end_date }}">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary w-100">🔍 عرض</button>
+        </div>
+    </form>
+</div>
+
+{% if selected_account %}
+<div class="grid-2 mb-4">
+    <div class="card" style="display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
+        <div style="font-size: 2.5rem; color: var(--neon-cyan);">📋</div>
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.9rem;">اسم الحساب</div>
+            <div style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);">{{ selected_account.code }} - {{ selected_account.name }}</div>
+            <div style="font-size: 0.8rem; color: var(--neon-gold); margin-top: 0.2rem;">طبيعة الحساب: {% if selected_account.normal_balance == 'DEBIT' %}مدين (أصول/مصروفات){% else %}دائن (خصوم/إيرادات){% endif %}</div>
+        </div>
+    </div>
+    <div class="card" style="display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
+        <div style="font-size: 2.5rem; color: var(--neon-green);">💰</div>
+        <div>
+            <div style="color: var(--text-muted); font-size: 0.9rem;">الرصيد النهائي (المتراكم)</div>
+            <div style="font-size: 1.5rem; font-weight: 700; font-family: var(--font-english); color: var(--neon-green);">{{ final_balance|floatformat:2 }} ج.م</div>
+        </div>
+    </div>
+</div>
+
+<!-- Report Table -->
+<div class="card">
+    <div class="table-container" style="overflow-x: auto;">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>التاريخ</th>
+                    <th>رقم القيد</th>
+                    <th>البيان</th>
+                    <th style="color: var(--neon-cyan); text-align: left;">مدين (Debit)</th>
+                    <th style="color: var(--neon-red); text-align: left;">دائن (Credit)</th>
+                    <th style="text-align: left;">الرصيد التراكمي</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Opening Balance Row -->
+                <tr style="background-color: var(--bg-secondary); font-weight: bold;">
+                    <td colspan="3" style="text-align: right; color: var(--text-muted);">رصيد افتتاحي (قبل {{ start_date|default:"بداية المدة" }})</td>
+                    <td colspan="2"></td>
+                    <td class="en" style="text-align: left; color: var(--neon-gold);">{{ opening_balance|floatformat:2 }}</td>
+                </tr>
+
+                <!-- Transactions -->
+                {% for txn in transactions %}
+                <tr>
+                    <td class="en">{{ txn.date|date:"Y-m-d" }}</td>
+                    <td class="en">{{ txn.reference }}</td>
+                    <td>{{ txn.description }}</td>
+                    <td class="en" style="text-align: left; color: var(--neon-cyan);">{% if txn.debit > 0 %}{{ txn.debit|floatformat:2 }}{% else %}-{% endif %}</td>
+                    <td class="en" style="text-align: left; color: var(--neon-red);">{% if txn.credit > 0 %}{{ txn.credit|floatformat:2 }}{% else %}-{% endif %}</td>
+                    <td class="en" style="text-align: left; font-weight: bold;">{{ txn.balance|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center" style="padding: 2rem;">لا توجد حركات على هذا الحساب في الفترة المحددة</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr style="background-color: var(--bg-tertiary); font-weight: bold; font-size: 1.05rem;">
+                    <td colspan="3" style="text-align: right; color: var(--neon-gold);">إجمالي حركات الفترة:</td>
+                    <td class="en" style="text-align: left; color: var(--neon-cyan);">{{ total_debit|floatformat:2 }}</td>
+                    <td class="en" style="text-align: left; color: var(--neon-red);">{{ total_credit|floatformat:2 }}</td>
+                    <td class="en" style="text-align: left;">{{ final_balance|floatformat:2 }}</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card text-center" style="padding: 4rem 1rem;">
+    <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--text-muted);">👆</div>
+    <h3 style="color: var(--text-secondary);">يرجى اختيار حساب من القائمة أعلاه لعرض دفتر الأستاذ الخاص به</h3>
+</div>
+{% endif %}
+
+<style>
+    @media print {
+        .content-header .header-actions, .filters-card { display: none !important; }
+        body { background: white; color: black; }
+        .card { border: none; box-shadow: none; padding: 0 !important; }
+        .grid-2 { display: flex; justify-content: space-between; border-bottom: 2px solid #ccc; padding-bottom: 1rem; }
+        .data-table th, .data-table td { color: black !important; border: 1px solid #ddd; padding: 0.4rem; }
+    }
+</style>
+{% endblock %}

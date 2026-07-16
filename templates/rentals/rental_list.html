@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+{% block title %}عقود الإيجار{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4">
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold m-0"><i class="fas fa-file-contract"></i> عقود الإيجار</h2>
+        <a href="{% url 'rentals:rental_create' %}" class="btn btn-neon-blue">+ إنشاء عقد جديد</a>
+    </div>
+
+    {% if messages %}
+    <div class="mb-4">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}" style="background: rgba(43,255,107,0.1); border-right: 4px solid var(--neon-green);">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم العقد</th>
+                    <th>المعدة</th>
+                    <th>العميل</th>
+                    <th>تاريخ البداية</th>
+                    <th>تاريخ العودة</th>
+                    <th>طريقة الدفع</th>
+                    <th>المبلغ</th>
+                    <th>الحالة</th>
+                    <th>إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rental in rentals %}
+                <tr>
+                    <td>{{ rental.id }}</td>
+                    <td>{{ rental.equipment.name }}</td>
+                    <td>{{ rental.customer.name }}</td>
+                    <td>{{ rental.start_date|date:"Y-m-d" }}</td>
+                    <td>{{ rental.end_date|date:"Y-m-d" }}</td>
+                    <td>{{ rental.get_payment_method_display }}</td>
+                    <td class="text-neon-cyan">{{ rental.total_amount }}</td>
+                    <td>
+                        {% if rental.status == 'ACTIVE' %}
+                        <span class="badge" style="background: rgba(43,255,107,0.2); color: var(--neon-green);">نشط</span>
+                        {% else %}
+                        <span class="badge" style="background: rgba(255,255,255,0.1); color: #ccc;">تم الإرجاع</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex align-center" style="gap: 0.5rem;">
+                            <a href="{% url 'rentals:rental_detail' rental.pk %}" class="btn-action text-neon-cyan" title="عرض التفاصيل">
+                                <i class="fas fa-eye"></i>
+                            </a>
+                            <a href="{% url 'rentals:rental_print' rental.pk %}" target="_blank" class="btn-action text-muted" title="طباعة عقد الإيجار">
+                                <i class="fas fa-print"></i>
+                            </a>
+                            {% if rental.status == 'ACTIVE' %}
+                            <a href="{% url 'rentals:rental_return' rental.pk %}" class="btn btn-sm btn-orange">
+                                <i class="fas fa-undo"></i> إرجاع
+                            </a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="9" class="text-center text-muted py-4">لا يوجد عقود إيجار مسجلة.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    // Check if we need to auto-print a newly created contract
+    const urlParams = new URLSearchParams(window.location.search);
+    const printId = urlParams.get('print_contract');
+    
+    if (printId) {
+        // Open the print view in a new window/popup
+        const printUrl = `/rentals/${printId}/print/`;
+        window.open(printUrl, 'PrintContract', 'width=800,height=900,menubar=no,toolbar=no,location=no,status=no');
+        
+        // Remove the query param from URL so it doesn't pop up again on refresh
+        const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+        window.history.replaceState({path: cleanUrl}, '', cleanUrl);
+    }
+</script>
+{% endblock %}
