@@ -130,10 +130,17 @@ class Product(models.Model):
     PRODUCT_TYPE_CHOICES = [
         ('PRODUCT', _('منتج مخزني')),
         ('SERVICE', _('خدمة / مصنعية')),
+        ('SERIALIZED', _('منتج برقم تسلسلي (موبايل/أجهزة)')),
     ]
     product_type = models.CharField(
-        max_length=10, choices=PRODUCT_TYPE_CHOICES, default='PRODUCT',
+        max_length=15, choices=PRODUCT_TYPE_CHOICES, default='PRODUCT',
         verbose_name=_('نوع المنتج')
+    )
+    has_serial = models.BooleanField(
+        default=False, verbose_name=_('له رقم تسلسلي (S/N)')
+    )
+    has_imei = models.BooleanField(
+        default=False, verbose_name=_('له أرقام IMEI (موبايلات)')
     )
     is_open_price = models.BooleanField(
         default=False, verbose_name=_('سعر مفتوح في نقطة البيع')
@@ -187,15 +194,16 @@ class Product(models.Model):
 
     def get_stock(self, warehouse=None):
         """
-        Returns total available stock (quantity_remaining).
-        Optionally filtered by a specific Warehouse.
-
-        Args:
-            warehouse: Warehouse instance or None (all warehouses)
-
-        Returns:
-            Decimal: total available quantity
+        Returns total available stock.
+        For SERIALIZED products, counts unsold SerialItems.
+        For TANGIBLE products, aggregates quantity_remaining from InventoryBatch.
         """
+        if self.product_type == 'SERIALIZED':
+            qs = self.serials.filter(is_sold=False)
+            if warehouse is not None:
+                qs = qs.filter(warehouse=warehouse)
+            return Decimal(str(qs.count()))
+            
         qs = InventoryBatch.objects.filter(
             product=self,
             quantity_remaining__gt=Decimal('0')
@@ -542,3 +550,49 @@ class StockAdjustmentLine(models.Model):
 
     def __str__(self):
         return f'{self.product.name} - {self.quantity}'
+
+# ---------------------------------------------------------------------------
+# Serial Item (For SERIALIZED products like Mobile Phones)
+# ---------------------------------------------------------------------------
+class SerialItem(models.Model):
+    """
+    سجل تتبع السيريالات/الأجهزة (للأصناف من نوع SERIALIZED)
+    يُنشأ تلقائياً عند شراء الجهاز، ويُباع باختيار السيريال.
+    """
+    CONDITION_NEW = 'NEW'
+    CONDITION_USED = 'USED'
+    
+    CONDITION_CHOICES = [
+        (CONDITION_NEW, 'جديد'),
+        (CONDITION_USED, 'مستعمل'),
+    ]
+    
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='serials', verbose_name=_('المنتج (الموديل)'))
+    serial_number = models.CharField(max_length=100, null=True, blank=True, verbose_name=_('رقم السيريال (S/N)'))
+    imei_1 = models.CharField(max_length=20, null=True, blank=True, verbose_name=_('IMEI 1'))
+    imei_2 = models.CharField(max_length=20, null=True, blank=True, verbose_name=_('IMEI 2'))
+    condition = models.CharField(max_length=20, choices=CONDITION_CHOICES, default=CONDITION_NEW, verbose_name=_('الحالة'))
+    
+    # تفاصيل الأجهزة المستعملة
+    storage = models.CharField(max_length=50, blank=True, null=True, verbose_name=_('مساحة التخزين'))
+    ram = models.CharField(max_length=50, blank=True, null=True, verbose_name=_('الرام'))
+    notes = models.TextField(blank=True, null=True, verbose_name=_('ملاحظات'))
+    
+    # التتبع
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.SET_NULL, null=True, blank=True, related_name='serial_items', verbose_name=_('مستودع التخزين'))
+    is_sold = models.BooleanField(default=False, verbose_name=_('تم بيعه'))
+    is_returned = models.BooleanField(default=False, verbose_name=_('مرتجع للمورد'))
+    
+    # التكلفة الخاصة بهذه القطعة تحديداً
+    actual_cost = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('التكلفة الفعلية لهذه القطعة'))
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('منتج بسيريال')
+        verbose_name_plural = _('المنتجات بالسيريال')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.product.name} - {self.serial_number} ({self.get_condition_display()})"

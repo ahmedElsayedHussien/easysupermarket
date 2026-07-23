@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="mb-0 text-primary"><i class="fas fa-money-check-alt me-2"></i> {{ title }}</h3>
+        
+        <form method="post" action="{% url 'hr:payroll_process' %}" class="d-flex align-items-center gap-2">
+            {% csrf_token %}
+            <select name="month" class="form-select form-select-sm" style="width: auto;">
+                {% for m in "123456789101112" %}
+                <option value="{{ forloop.counter }}" {% if forloop.counter == now.month %}selected{% endif %}>شهر {{ forloop.counter }}</option>
+                {% endfor %}
+            </select>
+            <input type="number" name="year" class="form-control form-control-sm" value="2026" style="width: 80px;">
+            <button type="submit" class="btn btn-warning btn-sm fw-bold">
+                <i class="fas fa-cogs"></i> معالجة مسير الرواتب
+            </button>
+        </form>
+    </div>
+
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th style="padding: 1rem; text-align: right;">الموظف</th>
+                    <th style="padding: 1rem; text-align: center;">الفترة</th>
+                    <th style="padding: 1rem; text-align: center;">الأساسي</th>
+                    <th style="padding: 1rem; text-align: center;">خصومات (تأخير)</th>
+                    <th style="padding: 1rem; text-align: center;">إضافي</th>
+                    <th style="padding: 1rem; text-align: center;">الصافي</th>
+                    <th style="padding: 1rem; text-align: center;">الحالة</th>
+                    <th style="padding: 1rem; text-align: center;">الإجراء</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for payroll in payrolls %}
+                <tr>
+                    <td style="text-align: right;">
+                        <div class="fw-bold">{{ payroll.employee.user.get_full_name|default:payroll.employee.user.username }}</div>
+                        <div class="small text-muted">{{ payroll.employee.branch.name }}</div>
+                    </td>
+                    <td style="text-align: center;">{{ payroll.month }} / {{ payroll.year }}</td>
+                    <td style="text-align: center;">{{ payroll.base_pay }}</td>
+                    <td class="text-danger" style="text-align: center;">{{ payroll.deductions }} <small>({{ payroll.total_delay_hours }} ساعة)</small></td>
+                    <td class="text-success" style="text-align: center;">{{ payroll.overtime_pay }} <small>({{ payroll.total_overtime_hours }} ساعة)</small></td>
+                    <td class="fw-bold text-primary" style="text-align: center;">{{ payroll.net_salary }}</td>
+                    <td style="text-align: center;">
+                        {% if payroll.is_paid %}
+                            <span class="badge bg-success">تم الاعتماد</span>
+                        {% else %}
+                            <span class="badge" style="background: rgba(255,171,0,0.2); color: var(--neon-gold);">معلق</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if not payroll.is_paid %}
+                        <form method="post" action="{% url 'hr:payroll_confirm' payroll.id %}" style="display: inline;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-orange btn-sm" onclick="return confirm('هل أنت متأكد من اعتماد الراتب وإنشاء القيد المحاسبي؟');" style="background-color: #ff7300; border-color: #ff7300; color: white;">
+                                <i class="fas fa-check"></i> اعتماد للقيد
+                            </button>
+                        </form>
+                        {% else %}
+                            {% if payroll.journal_entry %}
+                            <a href="#" class="btn btn-sm btn-outline-info">
+                                <i class="fas fa-file-invoice"></i> قيد #{{ payroll.journal_entry.reference }}
+                            </a>
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" class="text-center py-4 text-muted">لا توجد مسيرات رواتب مصدرة بعد.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

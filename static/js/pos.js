@@ -95,7 +95,82 @@ const POS = {
             }
         }
         
+        this.setupPersistedHeaders();
+
         console.log('[POS] Initialized. Warehouse:', this.currentWarehouseId, 'Branch:', this.currentBranchId);
+    },
+
+    // ============================================================
+    // PERSISTED HEADERS (Branch, Warehouse, Bank, Safe, Wallet, Customer)
+    // ============================================================
+    setupPersistedHeaders() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const userSuffix = `_${this.currentUserId || 'default'}`;
+        
+        // 1. Branch & Warehouse Check
+        const branchSelect = document.getElementById('posBranchSelect');
+        const warehouseSelect = document.getElementById('posWarehouseSelect');
+        
+        if (branchSelect && warehouseSelect) {
+            const hasUrlParams = urlParams.has('branch_id') || urlParams.has('warehouse_id');
+            const savedBranch = localStorage.getItem(`pos_saved_branch${userSuffix}`);
+            const savedWarehouse = localStorage.getItem(`pos_saved_warehouse${userSuffix}`);
+            
+            if (!hasUrlParams && savedBranch) {
+                // If no URL params but we have saved config, redirect immediately to apply them
+                let redirectUrl = '?branch_id=' + savedBranch;
+                if (savedWarehouse) redirectUrl += '&warehouse_id=' + savedWarehouse;
+                window.location.href = redirectUrl;
+                return; // Stop execution to let redirect happen
+            } else {
+                // Save current URL state to localStorage
+                localStorage.setItem(`pos_saved_branch${userSuffix}`, branchSelect.value);
+                localStorage.setItem(`pos_saved_warehouse${userSuffix}`, warehouseSelect.value);
+                
+                branchSelect.addEventListener('change', function() {
+                    localStorage.setItem(`pos_saved_branch${userSuffix}`, this.value);
+                    localStorage.removeItem(`pos_saved_warehouse${userSuffix}`); // Reset warehouse on branch change
+                });
+                warehouseSelect.addEventListener('change', function() {
+                    localStorage.setItem(`pos_saved_warehouse${userSuffix}`, this.value);
+                });
+            }
+        }
+
+        // 2. Treasury, Bank, Ewallet, Customer
+        const selectsToPersist = [
+            { id: 'posTreasury', key: `pos_saved_treasury${userSuffix}` },
+            { id: 'posBank', key: `pos_saved_bank${userSuffix}` },
+            { id: 'posEwallet', key: `pos_saved_ewallet${userSuffix}` },
+            { id: 'posCustomer', key: `pos_saved_customer${userSuffix}`, isSelect2: true }
+        ];
+
+        selectsToPersist.forEach(item => {
+            const selectEl = document.getElementById(item.id);
+            if (selectEl) {
+                // Restore saved value
+                const savedVal = localStorage.getItem(item.key);
+                if (savedVal && Array.from(selectEl.options).some(opt => opt.value === savedVal)) {
+                    selectEl.value = savedVal;
+                    if (item.isSelect2 && typeof $ !== 'undefined') {
+                        $(selectEl).trigger('change');
+                    } else {
+                        selectEl.dispatchEvent(new Event('change'));
+                    }
+                }
+
+                // Listen for changes and save
+                if (item.isSelect2 && typeof $ !== 'undefined') {
+                    $(selectEl).on('change', function() {
+                        localStorage.setItem(item.key, this.value);
+                    });
+                } else {
+                    selectEl.addEventListener('change', function() {
+                        localStorage.setItem(item.key, this.value);
+                    });
+                }
+            }
+        });
     },
 
     // ============================================================
@@ -241,10 +316,21 @@ const POS = {
     // CART MANAGEMENT
     // ============================================================
     addToCart(product, quantity = 1) {
+        // SERIALIZED: show serial picker instead of direct add
+        if (product.product_type === 'SERIALIZED') {
+            this.showSerialPickerModal(product);
+            return;
+        }
+
         // Validate stock
         const stock = parseInt(product.available_stock) || 0;
         const isService = product.product_type === 'SERVICE';
-        const existing = this.cart.find(item => item.id === parseInt(product.id));
+        // Use _uniqueKey for SERIALIZED items (never merge them)
+        const existing = this.cart.find(item => 
+            item._uniqueKey 
+                ? item._uniqueKey === product._uniqueKey 
+                : item.id === parseInt(product.id)
+        );
 
         if (existing) {
             const newQty = existing.quantity + quantity;
@@ -780,7 +866,8 @@ const POS = {
                 discount_percent: item.discount,
                 tax_rate: applyTax ? item.tax_rate : 0,
                 wht_rate: applyWht ? item.wht_rate : 0,
-                uom_id: item.uom_id
+                uom_id: item.uom_id,
+                serial_item_id: item.serial_item_id || null
             })),
             payment_type: paymentType,
             warehouse_id: this.currentWarehouseId,
@@ -835,6 +922,89 @@ const POS = {
         } catch (err) {
             this.showNotification(`❌ خطأ: ${err.message}`, 'error');
         }
+    },
+
+    // ============================================================
+    // SERIAL PICKER MODAL (for SERIALIZED products)
+    // ============================================================
+    async showSerialPickerModal(product) {
+        // Remove old modal if exists
+        const oldModal = document.getElementById('serialPickerModal');
+        if (oldModal) oldModal.remove();
+
+        // Fetch available serials from server
+        let serials = [];
+        try {
+            const resp = await fetch(`/invoicing/api/product/serials/?product_id=${product.id}&warehouse_id=${this.currentWarehouseId || ''}`);
+            const data = await resp.json();
+            serials = data.serials || [];
+        } catch(e) {
+            this.showNotification('❌ خطأ في جلب السيريالات', 'error');
+            return;
+        }
+
+        if (serials.length === 0) {
+            this.showNotification(`⚠ لا يوجد مخزون متاح من "${product.name}"`, 'warning');
+            return;
+        }
+
+        const rowsHtml = serials.map(s => `
+            <tr style="cursor:pointer; color:#fff; border-bottom:1px solid rgba(255,255,255,0.05);" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'" onclick="POS._selectSerial(${product.id}, ${s.id}, '${s.display_label}', ${product.sale_price || 0}, '${product.name}', '${product.barcode || ''}', ${product.tax_rate || 0}); document.getElementById('serialPickerModal').remove();">
+                <td style="padding:10px;">${s.display_label}</td>
+                <td style="padding:10px;">${s.condition}</td>
+                <td style="padding:10px;">${s.storage || '-'}</td>
+                <td style="padding:10px;">${s.ram || '-'}</td>
+            </tr>
+        `).join('');
+
+        const modal = document.createElement('div');
+        modal.id = 'serialPickerModal';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;';
+        modal.innerHTML = `
+            <div style="background:var(--surface,#1e2a3a);border-radius:12px;padding:24px;min-width:520px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                    <h3 style="margin:0;color:var(--text,#fff);font-size:1.1rem;">اختر السيريال — ${product.name}</h3>
+                    <button onclick="document.getElementById('serialPickerModal').remove()" style="background:none;border:none;color:var(--text-muted,#94a3b8);font-size:1.4rem;cursor:pointer;">✕</button>
+                </div>
+                <div style="max-height:340px;overflow-y:auto;">
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead>
+                            <tr style="background:rgba(255,255,255,0.05);">
+                                <th style="padding:10px;text-align:right;color:var(--text-muted,#94a3b8);font-size:0.85rem;">السيريال/IMEI</th>
+                                <th style="padding:10px;text-align:right;color:var(--text-muted,#94a3b8);font-size:0.85rem;">الحالة</th>
+                                <th style="padding:10px;text-align:right;color:var(--text-muted,#94a3b8);font-size:0.85rem;">المساحة</th>
+                                <th style="padding:10px;text-align:right;color:var(--text-muted,#94a3b8);font-size:0.85rem;">الرام</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+    },
+
+    _selectSerial(productId, serialId, displayLabel, price, name, barcode, taxRate) {
+        this.cart.push({
+            id: productId,
+            name: `${name} (${displayLabel})`,
+            product_type: 'SERIALIZED',
+            barcode: barcode,
+            price: parseFloat(price) || 0,
+            base_price: parseFloat(price) || 0,
+            quantity: 1,
+            discount: 0,
+            tax_rate: parseFloat(taxRate) || 0,
+            wht_rate: 0,
+            available_stock: 1,
+            uoms: [{id: 'base', name: 'قطعة'}],
+            uom_id: 'base',
+            serial_item_id: serialId,
+            serial_number: displayLabel,
+            _uniqueKey: `${productId}_${serialId}` // prevent merging
+        });
+        this.saveSessions();
+        this.updateCartDisplay();
+        this.showNotification(`✓ تمت الإضافة: ${name} (${displayLabel})`, 'success');
     },
 
     // ============================================================

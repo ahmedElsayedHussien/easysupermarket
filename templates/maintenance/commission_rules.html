@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="glass-container p-4">
+  <div class="d-flex justify-between align-center mb-4">
+    <h2 class="m-0" style="color:var(--text);"><i class="fas fa-percentage" style="color:#ff7300;"></i> {{ title }}</h2>
+    <a href="{% url 'maintenance:commission_report' %}" class="btn" style="background:#ff7300;color:#fff;font-weight:bold;">
+      <i class="fas fa-chart-bar"></i> عرض تقرير العمولات
+    </a>
+  </div>
+
+  {% if messages %}{% for msg in messages %}<div class="alert alert-{{ msg.tags }} mb-3">{{ msg }}</div>{% endfor %}{% endif %}
+
+  <div class="row g-4">
+    <!-- Add/Edit Rule Form -->
+    <div class="col-lg-5">
+      <div class="card bg-dark-glass border-0">
+        <div class="card-header"><strong><i class="fas fa-plus"></i> إضافة / تعديل قاعدة عمولة</strong></div>
+        <div class="card-body">
+          <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+              <label class="form-label text-muted">الفئة الرئيسية *</label>
+              <select name="category_id" class="form-select bg-dark-glass text-white" required>
+                <option value="">-- اختر الفئة --</option>
+                {% for cat in categories %}
+                <option value="{{ cat.id }}">{{ cat.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label text-muted">شريحة المبيعات (ج.م) *</label>
+              <input type="number" name="sales_milestone" class="form-control bg-dark-glass text-white"
+                     placeholder="مثال: 1000" step="0.01" min="0.01" required>
+              <small class="text-muted">عمولة لكل هذا المبلغ من المبيعات</small>
+            </div>
+            <div class="mb-3">
+              <label class="form-label text-muted">مبلغ العمولة لكل شريحة (ج.م) *</label>
+              <input type="number" name="commission_amount" class="form-control bg-dark-glass text-white"
+                     placeholder="مثال: 5" step="0.01" min="0" required>
+            </div>
+            <div class="form-check mb-3">
+              <input type="checkbox" name="is_active" id="isActive" class="form-check-input" checked>
+              <label for="isActive" class="form-check-label text-muted">نشطة</label>
+            </div>
+            <button type="submit" class="btn w-100" style="background:#ff7300;color:#fff;font-weight:bold;">
+              <i class="fas fa-save"></i> حفظ القاعدة
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rules Table -->
+    <div class="col-lg-7">
+      <div class="card bg-dark-glass border-0">
+        <div class="card-header"><strong><i class="fas fa-list"></i> القواعد الحالية</strong></div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>الفئة</th>
+                <th>شريحة المبيعات</th>
+                <th>العمولة/شريحة</th>
+                <th>الحالة</th>
+                <th>مثال حسابي</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for rule in rules %}
+              <tr>
+                <td><strong>{{ rule.category.name }}</strong></td>
+                <td>{{ rule.sales_milestone }} ج</td>
+                <td style="color:#ff7300;font-weight:bold;">{{ rule.commission_amount }} ج</td>
+                <td>
+                  {% if rule.is_active %}
+                    <span class="badge bg-success">نشطة</span>
+                  {% else %}
+                    <span class="badge bg-secondary">معطلة</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <small class="text-muted">
+                    5000 ج → {{ rule.commission_amount|floatformat:0 }}×5 = 
+                    <strong style="color:#22c55e;">{% widthratio 5000 rule.sales_milestone 1 %} شريحة</strong>
+                  </small>
+                </td>
+                <td>
+                  <a href="{% url 'maintenance:commission_rule_delete' rule.pk %}"
+                     onclick="return confirm('حذف قاعدة {{ rule.category.name }}؟')"
+                     class="btn btn-sm btn-outline-danger">
+                    <i class="fas fa-trash"></i>
+                  </a>
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="6" class="text-center text-muted py-4">لا توجد قواعد عمولات بعد.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

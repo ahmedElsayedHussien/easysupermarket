@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4" style="max-width:700px;margin:auto;">
+  <div class="d-flex justify-between align-center mb-4">
+    <h2 class="text-neon-blue m-0"><i class="fas fa-tools"></i> {{ title }}</h2>
+    <a href="{% url 'maintenance:ticket_list' %}" class="btn" style="background:#333;color:#fff;border:1px solid #ff7300;">← رجوع</a>
+  </div>
+
+  {% if messages %}
+    {% for msg in messages %}
+      <div class="alert alert-{{ msg.tags }} mb-3">{{ msg }}</div>
+    {% endfor %}
+  {% endif %}
+
+  {% if parent_ticket %}
+  <div class="alert alert-info mb-3">
+    <i class="fas fa-link"></i> هذه تذكرة ضمان مرتبطة بالتذكرة الأصلية
+    <strong><a href="{% url 'maintenance:ticket_detail' parent_ticket.pk %}">#{{ parent_ticket.id }}</a></strong>
+    — {{ parent_ticket.device_model }}
+  </div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    {% if parent_ticket %}
+      <input type="hidden" name="parent_ticket_id" value="{{ parent_ticket.id }}">
+    {% endif %}
+
+    <div class="row g-3">
+      <!-- Customer -->
+      <div class="col-12">
+        <label class="form-label text-muted">العميل *</label>
+        <select name="customer_id" class="form-select bg-dark-glass text-white" required>
+          <option value="">-- اختر العميل --</option>
+          {% for c in customers %}
+            <option value="{{ c.id }}" {% if parent_ticket.customer_id == c.id %}selected{% endif %}>
+              {{ c.name }} {% if c.phone %}({{ c.phone }}){% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Device Model -->
+      <div class="col-md-6">
+        <label class="form-label text-muted">موديل الجهاز *</label>
+        <input type="text" name="device_model" class="form-control bg-dark-glass text-white"
+               placeholder="مثال: iPhone 15 Pro / سامسونج A55 / غسالة LG"
+               value="{% if parent_ticket %}{{ parent_ticket.device_model }}{% endif %}" required>
+      </div>
+
+      <!-- Device Serial -->
+      <div class="col-md-6">
+        <label class="form-label text-muted">السيريال / IMEI (اختياري)</label>
+        <input type="text" name="device_serial" class="form-control bg-dark-glass text-white"
+               placeholder="رقم السيريال أو الـ IMEI"
+               value="{% if parent_ticket %}{{ parent_ticket.device_serial|default:'' }}{% endif %}">
+      </div>
+
+      <!-- Issue Description -->
+      <div class="col-12">
+        <label class="form-label text-muted">وصف العطل *</label>
+        <textarea name="issue_description" class="form-control bg-dark-glass text-white" rows="3"
+                  placeholder="صف العطل بالتفصيل..." required>{% if parent_ticket %}متابعة للتذكرة السابقة #{{ parent_ticket.id }}:
+{% endif %}</textarea>
+      </div>
+
+      <!-- Device Condition -->
+      <div class="col-12">
+        <label class="form-label text-muted">حالة الجهاز عند الاستلام</label>
+        <textarea name="device_condition_on_receipt" class="form-control bg-dark-glass text-white" rows="2"
+                  placeholder="مثال: شاشة مكسورة، هيكل خدوش، بطارية ضعيفة..."></textarea>
+      </div>
+
+      <!-- Technician -->
+      <div class="col-md-6">
+        <label class="form-label text-muted">الفني المختص</label>
+        <select name="technician_id" class="form-select bg-dark-glass text-white">
+          <option value="">-- لم يُحدد --</option>
+          {% for t in technicians %}
+            <option value="{{ t.id }}">{{ t.get_full_name|default:t.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Labor Cost -->
+      <div class="col-md-6">
+        <label class="form-label text-muted">المصنعية</label>
+        <input type="number" name="labor_cost" class="form-control bg-dark-glass text-white"
+               value="0" step="0.01" min="0">
+      </div>
+
+      <!-- Estimated Cost -->
+      <div class="col-md-6">
+        <label class="form-label text-muted">التكلفة التقديرية (اختياري)</label>
+        <input type="number" name="estimated_cost" class="form-control bg-dark-glass text-white"
+               step="0.01" min="0" placeholder="0.00">
+      </div>
+
+      <!-- Warranty Days -->
+      <div class="col-md-6">
+        <label class="form-label text-muted">أيام الضمان بعد الصيانة</label>
+        <input type="number" name="warranty_days" class="form-control bg-dark-glass text-white"
+               value="0" min="0">
+      </div>
+
+      <!-- Notes -->
+      <div class="col-12">
+        <label class="form-label text-muted">ملاحظات</label>
+        <textarea name="notes" class="form-control bg-dark-glass text-white" rows="2"
+                  placeholder="أي ملاحظات إضافية..."></textarea>
+      </div>
+    </div>
+
+    <div class="mt-4 d-flex gap-3">
+      <button type="submit" class="btn" style="background:#ff7300;color:#fff;font-weight:bold;padding:10px 28px;">
+        <i class="fas fa-save"></i> حفظ وفتح التذكرة
+      </button>
+      <a href="{% url 'maintenance:ticket_list' %}" class="btn btn-outline">إلغاء</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

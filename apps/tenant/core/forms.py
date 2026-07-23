@@ -47,6 +47,14 @@ class EmployeeUserCreationForm(UserCreationForm):
         required=False,
         label='الصلاحيات المخصصة'
     )
+    
+    # HR Fields
+    base_salary = forms.DecimalField(max_digits=10, decimal_places=2, initial=0.00, required=False, label='الراتب الأساسي')
+    hourly_rate = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة ساعة العمل')
+    shift_start_time = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}), required=False, label='ميعاد الحضور')
+    shift_end_time = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}), required=False, label='ميعاد الانصراف')
+    deduction_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة الخصم للساعة')
+    overtime_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة الإضافي للساعة')
 
     class Meta(UserCreationForm.Meta):
         model = User
@@ -74,6 +82,12 @@ class EmployeeUserCreationForm(UserCreationForm):
                 defaults={
                     'branch': self.cleaned_data.get('branch'),
                     'role': self.cleaned_data.get('role'),
+                    'base_salary': self.cleaned_data.get('base_salary') or 0,
+                    'hourly_rate': self.cleaned_data.get('hourly_rate') or 0,
+                    'shift_start_time': self.cleaned_data.get('shift_start_time'),
+                    'shift_end_time': self.cleaned_data.get('shift_end_time'),
+                    'deduction_per_hour': self.cleaned_data.get('deduction_per_hour') or 0,
+                    'overtime_per_hour': self.cleaned_data.get('overtime_per_hour') or 0,
                 }
             )
             user.user_permissions.set(self.cleaned_data.get('user_permissions', []))
@@ -101,6 +115,14 @@ class EmployeeUserUpdateForm(forms.ModelForm):
         label='الصلاحيات المخصصة'
     )
 
+    # HR Fields
+    base_salary = forms.DecimalField(max_digits=10, decimal_places=2, initial=0.00, required=False, label='الراتب الأساسي')
+    hourly_rate = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة ساعة العمل')
+    shift_start_time = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}), required=False, label='ميعاد الحضور')
+    shift_end_time = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}), required=False, label='ميعاد الانصراف')
+    deduction_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة الخصم للساعة')
+    overtime_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة الإضافي للساعة')
+
     class Meta:
         model = User
         fields = ('username', 'first_name', 'last_name', 'email', 'is_active')
@@ -112,6 +134,12 @@ class EmployeeUserUpdateForm(forms.ModelForm):
                 employee = self.instance.employee_profile
                 self.fields['branch'].initial = employee.branch
                 self.fields['role'].initial = employee.role
+                self.fields['base_salary'].initial = employee.base_salary
+                self.fields['hourly_rate'].initial = employee.hourly_rate
+                self.fields['shift_start_time'].initial = employee.shift_start_time
+                self.fields['shift_end_time'].initial = employee.shift_end_time
+                self.fields['deduction_per_hour'].initial = employee.deduction_per_hour
+                self.fields['overtime_per_hour'].initial = employee.overtime_per_hour
             except Employee.DoesNotExist:
                 pass
             self.fields['user_permissions'].initial = self.instance.user_permissions.all()
@@ -134,6 +162,12 @@ class EmployeeUserUpdateForm(forms.ModelForm):
                 defaults={
                     'branch': self.cleaned_data.get('branch'),
                     'role': self.cleaned_data.get('role'),
+                    'base_salary': self.cleaned_data.get('base_salary') or 0,
+                    'hourly_rate': self.cleaned_data.get('hourly_rate') or 0,
+                    'shift_start_time': self.cleaned_data.get('shift_start_time'),
+                    'shift_end_time': self.cleaned_data.get('shift_end_time'),
+                    'deduction_per_hour': self.cleaned_data.get('deduction_per_hour') or 0,
+                    'overtime_per_hour': self.cleaned_data.get('overtime_per_hour') or 0,
                 }
             )
             user.user_permissions.set(self.cleaned_data.get('user_permissions', []))

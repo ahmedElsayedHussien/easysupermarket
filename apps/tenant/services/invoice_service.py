@@ -134,6 +134,23 @@ def _process_sale_invoice(invoice, lines):
             line.save(update_fields=['cogs_amount'])
             continue
 
+        if line.product.product_type == 'SERIALIZED':
+            if not line.serial_item:
+                raise ValueError(f'يجب تحديد السيريال للمنتج "{line.product.name}"')
+            
+            if invoice.invoice_type == Invoice.RETURN_PURCHASE:
+                line.serial_item.is_returned = True
+                line.serial_item.warehouse = None
+            else:
+                line.serial_item.is_sold = True
+                line.serial_item.warehouse = None
+                
+            line.serial_item.save()
+            line.cogs_amount = line.serial_item.actual_cost
+            line.save(update_fields=['cogs_amount'])
+            total_cogs += line.cogs_amount
+            continue
+
         base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
         consumptions = consume_fifo_batches(
             product=line.product,
@@ -173,6 +190,15 @@ def _process_purchase_invoice(invoice, lines):
     for line in lines:
         if line.product.product_type == 'SERVICE':
             continue  # No stock tracking for services
+
+        if line.product.product_type == 'SERIALIZED':
+            # For SERIALIZED, the SerialItem is created from the frontend with the serial number.
+            # Here we just ensure the serial is assigned to the correct warehouse.
+            if line.serial_item:
+                line.serial_item.warehouse = invoice.warehouse
+                line.serial_item.is_sold = False
+                line.serial_item.save()
+            continue
             
         conversion_factor = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
         base_quantity = line.quantity * conversion_factor

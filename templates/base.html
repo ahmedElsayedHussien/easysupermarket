@@ -219,6 +219,37 @@
                 <span class="nav-text">{% trans 'تقارير الإيجارات' %}</span>
             </a>
 
+            <p class="nav-section-title">{% trans 'الصيانة' %}</p>
+
+            <a href="{% url 'maintenance:ticket_list' %}" class="nav-link nav-orange {% if request.resolver_match.app_name == 'maintenance' and request.resolver_match.url_name != 'commission_rules' and request.resolver_match.url_name != 'commission_report' %}active{% endif %}">
+                <span class="nav-icon">🔧</span>
+                <span class="nav-text">{% trans 'تذاكر الصيانة' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'العمولات والمبيعات' %}</p>
+
+            <a href="{% url 'maintenance:commission_rules' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'commission_rules' %}active{% endif %}">
+                <span class="nav-icon">⚖️</span>
+                <span class="nav-text">{% trans 'قواعد العمولات' %}</span>
+            </a>
+            
+            <a href="{% url 'maintenance:commission_report' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'commission_report' %}active{% endif %}">
+                <span class="nav-icon">📈</span>
+                <span class="nav-text">{% trans 'تقرير العمولات' %}</span>
+            </a>
+
+            <p class="nav-section-title">{% trans 'شؤون الموظفين' %}</p>
+
+            <a href="{% url 'hr:attendance_dashboard' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'attendance_dashboard' %}active{% endif %}">
+                <span class="nav-icon">⏰</span>
+                <span class="nav-text">{% trans 'الحضور والانصراف' %}</span>
+            </a>
+
+            <a href="{% url 'hr:payroll_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'payroll_list' %}active{% endif %}">
+                <span class="nav-icon">💸</span>
+                <span class="nav-text">{% trans 'مسير الرواتب' %}</span>
+            </a>
+
             <p class="nav-section-title">{% trans 'الشركاء' %}</p>
 
             <a href="{% url 'partners:supplier_list' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'supplier_list' %}active{% endif %}">

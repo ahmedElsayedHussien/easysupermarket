@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-md-6 col-lg-5">
+            <div class="card shadow-sm border-0 mt-5">
+                <div class="card-body text-center p-5">
+                    <h2 class="mb-4 text-primary">تسجيل الحضور والانصراف</h2>
+                    
+                    <div class="mb-4">
+                        <h5 class="text-muted">مرحباً، {{ employee.user.get_full_name|default:employee.user.username }}</h5>
+                        <p class="mb-1">فرع: <span class="fw-bold">{{ employee.branch.name|default:"غير محدد" }}</span></p>
+                        <p class="small text-muted">ميعاد الدوام: {{ employee.shift_start_time|time:"H:i" }} إلى {{ employee.shift_end_time|time:"H:i" }}</p>
+                    </div>
+
+                    {% if attendance %}
+                        <div class="alert alert-info text-start">
+                            <strong>حالة اليوم:</strong>
+                            <ul class="mb-0 mt-2 list-unstyled">
+                                <li>وقت الحضور: {% if attendance.check_in %}<span class="text-success fw-bold">{{ attendance.check_in|time:"h:i A" }}</span>{% else %}--{% endif %}</li>
+                                <li>وقت الانصراف: {% if attendance.check_out %}<span class="text-danger fw-bold">{{ attendance.check_out|time:"h:i A" }}</span>{% else %}--{% endif %}</li>
+                            </ul>
+                        </div>
+                    {% endif %}
+
+                    <div class="d-grid gap-3 mt-4">
+                        <button id="btnCheckIn" class="btn btn-orange btn-lg py-3 rounded-pill fw-bold" onclick="processAttendance('check_in')" {% if attendance.check_in %}disabled{% endif %}>
+                            <i class="fas fa-sign-in-alt me-2"></i> تسجيل حضور
+                        </button>
+                        
+                        <button id="btnCheckOut" class="btn btn-orange btn-lg py-3 rounded-pill fw-bold" onclick="processAttendance('check_out')" {% if not attendance.check_in or attendance.check_out %}disabled{% endif %}>
+                            <i class="fas fa-sign-out-alt me-2"></i> تسجيل انصراف
+                        </button>
+                    </div>
+                    
+                    <div id="statusMessage" class="mt-3 fw-bold"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function processAttendance(action) {
+    const btnId = action === 'check_in' ? 'btnCheckIn' : 'btnCheckOut';
+    const btn = document.getElementById(btnId);
+    const originalText = btn.innerHTML;
+    
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span> جاري تحديد الموقع...';
+    
+    const statusMsg = document.getElementById('statusMessage');
+    statusMsg.className = "mt-3 fw-bold text-info";
+    statusMsg.innerText = "جاري الحصول على إحداثيات GPS...";
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => sendAttendance(action, position.coords.latitude, position.coords.longitude, btn, originalText),
+            (error) => {
+                let msg = "فشل تحديد الموقع.";
+                if(error.code === 1) msg = "لقد رفضت صلاحية الوصول للموقع (GPS). يجب السماح بها لتسجيل الحضور.";
+                else if(error.code === 2) msg = "الموقع غير متوفر حالياً.";
+                else if(error.code === 3) msg = "انتهى وقت طلب الموقع.";
+                
+                statusMsg.className = "mt-3 fw-bold text-danger";
+                statusMsg.innerText = msg;
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+    } else {
+        statusMsg.className = "mt-3 fw-bold text-danger";
+        statusMsg.innerText = "متصفحك لا يدعم تحديد الموقع (GPS).";
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+async function sendAttendance(action, lat, lon, btn, originalText) {
+    const statusMsg = document.getElementById('statusMessage');
+    statusMsg.innerText = "جاري إرسال البيانات للخادم...";
+    
+    const formData = new FormData();
+    formData.append('action', action);
+    formData.append('latitude', lat);
+    formData.append('longitude', lon);
+    formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+    try {
+        const response = await fetch("{% url 'hr:api_attendance_check' %}", {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            statusMsg.className = "mt-3 fw-bold text-success";
+            statusMsg.innerText = data.message;
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            statusMsg.className = "mt-3 fw-bold text-danger";
+            statusMsg.innerText = data.error;
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    } catch(err) {
+        statusMsg.className = "mt-3 fw-bold text-danger";
+        statusMsg.innerText = "حدث خطأ في الاتصال بالسيرفر.";
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+</script>
+{% endblock %}

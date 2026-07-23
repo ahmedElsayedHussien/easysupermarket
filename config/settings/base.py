@@ -44,6 +44,8 @@ TENANT_APPS = [
     'apps.tenant.invoicing',
     'apps.tenant.einvoicing',
     'apps.tenant.rentals',
+    'apps.tenant.maintenance',
+    'apps.tenant.hr',
 ]
 
 # INSTALLED_APPS must be SHARED_APPS + unique TENANT_APPS

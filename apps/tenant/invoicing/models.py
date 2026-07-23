@@ -233,6 +233,15 @@ class Invoice(models.Model):
     eta_uuid = models.CharField(max_length=100, blank=True, null=True)
     eta_status = models.CharField(max_length=50, blank=True, null=True)
 
+    parent_invoice = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='return_invoices',
+        verbose_name='الفاتورة الأصلية (للمرتجعات)'
+    )
+
     # Financial totals (auto-calculated from lines)
     subtotal = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
@@ -374,8 +383,20 @@ class InvoiceLine(models.Model):
         related_name='invoice_lines',
         verbose_name='المنتج'
     )
+    serial_item = models.ForeignKey(
+        'inventory.SerialItem',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='invoice_lines',
+        verbose_name='السيريال (للمنتجات المسروِلة)'
+    )
     quantity = models.DecimalField(
         max_digits=15, decimal_places=4, verbose_name='الكمية'
+    )
+    returned_quantity = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'),
+        verbose_name='الكمية المرتجعة مسبقاً'
     )
     unit_price = models.DecimalField(
         max_digits=15, decimal_places=4, verbose_name='سعر الوحدة'

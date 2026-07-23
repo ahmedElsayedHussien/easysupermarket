@@ -395,10 +395,15 @@ class CustomerBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
                 for inv in invoices:
                     debit = Decimal('0')
                     credit = Decimal('0')
-                    if inv.invoice_type in ['SALE', 'RETURN_PURCHASE']:
+                    if inv.invoice_type == 'SALE':
+                        # فاتورة مبيعات: مدين على العميل
                         debit = inv.total_amount
-                    else:
+                    elif inv.invoice_type == 'RETURN_SALE':
+                        # مرتجع مبيعات: دائن للعميل (يقلل رصيده)
                         credit = inv.total_amount
+                    else:
+                        # فواتير مشتريات أو أنواع أخرى: تجاهل في كشف العميل
+                        continue
                         
                     transactions.append({
                         'date': inv.date,
@@ -1116,21 +1121,22 @@ class SupplierBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         
-        supplier_id = self.request.GET.get('supplier_id')
+        partner_id = self.request.GET.get('partner_id')
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
         
-        context['suppliers'] = Partner.objects.filter(partner_type__in=[Partner.SUPPLIER, Partner.BOTH]).order_by('name')
+        context['partners'] = Partner.objects.filter(partner_type__in=[Partner.SUPPLIER, Partner.BOTH]).order_by('name')
+        context['partner_id'] = int(partner_id) if partner_id else None
         context['transactions'] = []
         context['initial_balance'] = Decimal('0.00')
         context['final_balance'] = Decimal('0.00')
         context['period_debit'] = Decimal('0.00')
         context['period_credit'] = Decimal('0.00')
         
-        if supplier_id:
+        if partner_id:
             try:
-                supplier = Partner.objects.get(id=supplier_id, partner_type__in=[Partner.SUPPLIER, Partner.BOTH])
-                context['selected_supplier'] = supplier
+                supplier = Partner.objects.get(id=partner_id, partner_type__in=[Partner.SUPPLIER, Partner.BOTH])
+                context['selected_partner'] = supplier
                 
                 # Fetch transactions (Invoices and Vouchers)
                 # For a supplier: Vouchers (Payments to them) are Debit (reducing their balance).
@@ -1158,7 +1164,7 @@ class SupplierBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
                 # Vouchers (Debit)
                 vouchers = Voucher.objects.filter(
                     partner=supplier,
-                    voucher_type=Voucher.PAYMENT_VOUCHER,
+                    voucher_type=Voucher.PAYMENT,
                     status=Voucher.POSTED
                 )
                 
