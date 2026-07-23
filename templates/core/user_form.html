@@ -13,26 +13,51 @@
     
     <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem; align-items: start;">
         
-        <!-- User Details Section -->
-        <div class="card dash-card-1">
-            <div class="card-header">
-                <span class="card-header-title">👤 البيانات الأساسية</span>
-            </div>
-            <div style="padding: 1.25rem;">
-                {% for field in form %}
-                    {% if field.name == 'username' or field.name == 'first_name' or field.name == 'last_name' or field.name == 'email' or field.name == 'branch' or field.name == 'role' or field.name == 'is_active' %}
-                    <div class="form-group" style="margin-bottom: 1rem;">
-                        <label class="form-label">{{ field.label }}</label>
-                        {{ field }}
-                        {% if field.help_text %}
-                            <small class="form-text text-muted">{{ field.help_text }}</small>
+        <div style="display: flex; flex-direction: column;">
+            <!-- User Details Section -->
+            <div class="card dash-card-1">
+                <div class="card-header">
+                    <span class="card-header-title">👤 البيانات الأساسية</span>
+                </div>
+                <div style="padding: 1.25rem;">
+                    {% for field in form %}
+                        {% if field.name == 'username' or field.name == 'first_name' or field.name == 'last_name' or field.name == 'email' or field.name == 'branch' or field.name == 'role' or field.name == 'is_active' %}
+                        <div class="form-group" style="margin-bottom: 1rem;">
+                            <label class="form-label">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.help_text %}
+                                <small class="form-text text-muted">{{ field.help_text }}</small>
+                            {% endif %}
+                            {% for error in field.errors %}
+                                <div style="color: var(--neon-red); font-size: 0.8rem; margin-top: 0.25rem;">{{ error }}</div>
+                            {% endfor %}
+                        </div>
                         {% endif %}
-                        {% for error in field.errors %}
-                            <div style="color: var(--neon-red); font-size: 0.8rem; margin-top: 0.25rem;">{{ error }}</div>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-                {% endfor %}
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- HR Details Section -->
+            <div class="card dash-card-1" style="margin-top: 1.5rem;">
+                <div class="card-header">
+                    <span class="card-header-title">💼 بيانات الرواتب والدوام</span>
+                </div>
+                <div style="padding: 1.25rem;">
+                    {% for field in form %}
+                        {% if field.name in 'base_salary,hourly_rate,shift_start_time,shift_end_time,deduction_per_hour,overtime_per_hour' %}
+                        <div class="form-group" style="margin-bottom: 1rem;">
+                            <label class="form-label">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.help_text %}
+                                <small class="form-text text-muted">{{ field.help_text }}</small>
+                            {% endif %}
+                            {% for error in field.errors %}
+                                <div style="color: var(--neon-red); font-size: 0.8rem; margin-top: 0.25rem;">{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
             </div>
         </div>
 

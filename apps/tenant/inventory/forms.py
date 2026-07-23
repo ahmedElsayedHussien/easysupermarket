@@ -24,7 +24,7 @@ class ProductForm(BaseGlassForm):
     class Meta:
         model = Product
         fields = [
-            'name', 'name_en', 'product_type', 'barcode', 'sku', 'gs1_code', 'egs_code',
+            'name', 'name_en', 'product_type', 'has_imei', 'has_serial', 'barcode', 'sku', 'gs1_code', 'egs_code',
             'category', 'sale_price', 'min_sale_price', 'tax_rate', 'withholding_tax_rate',
             'min_stock_level', 'max_stock_level', 'is_active',
             'allow_negative_stock', 'description', 'image'

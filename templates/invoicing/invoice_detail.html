@@ -10,6 +10,17 @@
         {% if invoice.status == 'DRAFT' %}
         <button class="btn btn-neon-red" onclick="confirmInvoice({{ invoice.id }})">ترحيل الفاتورة</button>
         {% endif %}
+        {% if invoice.status == 'POSTED' and request.user.is_superuser %}
+            {% if invoice.invoice_type == 'SALE' or invoice.invoice_type == 'PURCHASE' %}
+                {% if is_fully_returned %}
+                <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; padding: 8px 16px; font-size: 1rem; border-radius: 8px; font-weight: bold; border: 1px solid rgba(239, 68, 68, 0.4); display: flex; align-items: center; justify-content: center; gap: 8px;">
+                    <i class="fas fa-check-circle"></i> مرتجعة بالكامل
+                </span>
+                {% else %}
+                <button class="btn" onclick="openReturnModal()" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; font-weight: bold; border: none; box-shadow: 0 4px 10px rgba(255, 115, 0, 0.3); border-radius: 8px;">🔄 إرجاع أصناف</button>
+                {% endif %}
+            {% endif %}
+        {% endif %}
         <button class="btn btn-neon-green" onclick="printThermalReceipt({{ invoice.id }})">🖨 طباعة حرارية</button>
         <a href="javascript:history.back()" class="btn btn-ghost">العودة للقائمة</a>
     </div>
@@ -99,7 +110,7 @@
                         {% for line in lines %}
                         <tr>
                             <td>{{ line.product.name }}</td>
-                            <td>{{ line.uom.uom.name|default:"الوحدة الأساسية" }}</td>
+                            <td>{{ line.display_unit_name }}</td>
                             <td>{{ line.quantity|floatformat:2 }}</td>
                             <td>{{ line.unit_price|floatformat:2 }} ج.م</td>
                             <td>{{ line.subtotal|floatformat:2 }} ج.م</td>
@@ -150,6 +161,90 @@
     </div>
 </div>
 
+<!-- Return Modal - Premium Design -->
+<div id="returnModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px); align-items:center; justify-content:center;">
+  <div style="background: linear-gradient(145deg, #0f1923, #1a2535); border:1px solid rgba(255,115,0,0.3); border-radius:16px; width:680px; max-width:95vw; max-height:88vh; display:flex; flex-direction:column; box-shadow: 0 25px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,115,0,0.1);">
+
+    <!-- Header -->
+    <div style="padding:20px 24px; border-bottom:1px solid rgba(255,115,0,0.2); display:flex; justify-content:space-between; align-items:center; background:rgba(255,115,0,0.05); border-radius:16px 16px 0 0;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:40px; height:40px; background:linear-gradient(135deg,#ff7300,#ff9500); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; box-shadow:0 4px 12px rgba(255,115,0,0.4);">🔄</div>
+        <div>
+          <h5 style="margin:0; color:#ff7300; font-family:'Tajawal',sans-serif; font-size:1.1rem; font-weight:700;">إرجاع أصناف من الفاتورة</h5>
+          <p style="margin:0; color:#94a3b8; font-size:0.8rem;">حدد الأصناف التي تود إرجاعها</p>
+        </div>
+      </div>
+      <button onclick="closeReturnModal()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; width:34px; height:34px; border-radius:8px; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center; transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.2)';this.style.color='#ef4444';" onmouseout="this.style.background='rgba(255,255,255,0.08)';this.style.color='#94a3b8';">&times;</button>
+    </div>
+
+    <!-- Body - Cards -->
+    <div id="returnItemsList" style="padding:20px 24px; overflow-y:auto; flex-grow:1; display:flex; flex-direction:column; gap:12px;">
+      {% for line in lines %}
+      {% if line.quantity > line.returned_quantity %}
+      <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:16px 20px; display:flex; align-items:center; gap:16px; transition:all 0.2s;" class="return-item-card">
+
+        <!-- Product Icon -->
+        <div style="width:48px; height:48px; background:linear-gradient(135deg,#1e3a5f,#0f2040); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.4rem; flex-shrink:0; border:1px solid rgba(59,130,246,0.2);">
+          {% if line.serial_item %}📱{% else %}📦{% endif %}
+        </div>
+
+        <!-- Product Info -->
+        <div style="flex:1; min-width:0;">
+          <div style="color:#f1f5f9; font-family:'Tajawal',sans-serif; font-weight:600; font-size:0.95rem; margin-bottom:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ line.product.name }}</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:4px;">
+            <span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:2px 8px; border-radius:20px; font-size:0.75rem;">💰 {{ line.unit_price|floatformat:2 }} ج.م</span>
+            {% if line.serial_item %}
+              {% if line.serial_item.imei_1 %}
+              <span style="background:rgba(16,185,129,0.15); color:#34d399; padding:2px 8px; border-radius:20px; font-size:0.75rem; font-family:monospace;">IMEI: {{ line.serial_item.imei_1 }}</span>
+              {% endif %}
+              {% if line.serial_item.serial_number %}
+              <span style="background:rgba(139,92,246,0.15); color:#a78bfa; padding:2px 8px; border-radius:20px; font-size:0.75rem; font-family:monospace;">S/N: {{ line.serial_item.serial_number }}</span>
+              {% endif %}
+            {% else %}
+              <span style="background:rgba(100,116,139,0.2); color:#94a3b8; padding:2px 8px; border-radius:20px; font-size:0.75rem;">متاح للإرجاع: <b style="color: #fff;">{{ line.available_return_qty|floatformat:2 }}</b> {{ line.display_unit_name }}</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Hidden inputs -->
+        <input type="hidden" class="return-max-qty" value="{{ line.available_return_qty }}">
+        <input type="hidden" class="return-line-id" value="{{ line.id }}">
+        <input type="hidden" class="return-serial-id" value="{{ line.serial_item_id|default:'' }}">
+
+        <!-- Return Control -->
+        <div style="flex-shrink:0;">
+          {% if line.serial_item %}
+          <!-- Toggle Button for Serial Items -->
+          <button type="button" class="return-toggle-btn" onclick="toggleReturnItem(this)"
+            style="background:rgba(255,255,255,0.05); border:2px solid rgba(255,255,255,0.15); color:#94a3b8; padding:8px 18px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-size:0.85rem; font-weight:600; transition:all 0.25s; white-space:nowrap;">
+            إرجاع
+          </button>
+          <input type="hidden" class="return-qty-input" value="0">
+          {% else %}
+          <!-- Quantity Input for Non-Serial Items -->
+          <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:4px 8px;">
+            <span style="color:#64748b; font-size:0.8rem;">الكمية:</span>
+            <input type="number" class="return-qty-input" min="0" max="{{ line.available_return_qty }}" step="any" value="0"
+              style="background:transparent; border:none; color:#f1f5f9; width:60px; font-size:1rem; font-weight:bold; text-align:center; outline:none;">
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:16px 24px; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); border-radius:0 0 16px 16px;">
+      <span style="color:#64748b; font-size:0.85rem;">سيتم إنشاء فاتورة مرتجع مقيدة فوراً</span>
+      <div style="display:flex; gap:10px;">
+        <button onclick="closeReturnModal()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; padding:10px 20px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-weight:600; transition:all 0.2s;">إلغاء</button>
+        <button onclick="submitReturn()" style="background:linear-gradient(135deg,#ff7300,#ff9500); border:none; color:white; padding:10px 24px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-weight:700; font-size:0.95rem; box-shadow:0 4px 15px rgba(255,115,0,0.4); transition:all 0.2s;" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 20px rgba(255,115,0,0.5)';" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 15px rgba(255,115,0,0.4)';">✅ تأكيد الإرجاع</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 function confirmInvoice(invoiceId) {
     if (confirm('هل أنت متأكد من ترحيل هذه الفاتورة؟ لن تتمكن من تعديلها لاحقاً وسوف يتم إنشاء القيود المحاسبية وحركة المخازن.')) {
@@ -180,6 +275,96 @@ function printThermalReceipt(invoiceId) {
     } else {
         alert('يرجى السماح بالنوافذ المنبثقة (Pop-ups) لطباعة الإيصال.');
     }
+}
+
+function openReturnModal() {
+    document.getElementById('returnModal').style.display = 'flex';
+}
+
+function closeReturnModal() {
+    document.getElementById('returnModal').style.display = 'none';
+}
+
+function toggleReturnItem(btn) {
+    const card = btn.closest('.return-item-card');
+    const hiddenInput = card.querySelector('.return-qty-input');
+    const isSelected = hiddenInput.value === '1';
+    
+    if (isSelected) {
+        // Deselect
+        hiddenInput.value = '0';
+        btn.textContent = 'إرجاع';
+        btn.style.background = 'rgba(255,255,255,0.05)';
+        btn.style.border = '2px solid rgba(255,255,255,0.15)';
+        btn.style.color = '#94a3b8';
+        card.style.border = '1px solid rgba(255,255,255,0.08)';
+        card.style.background = 'rgba(255,255,255,0.03)';
+    } else {
+        // Select
+        hiddenInput.value = '1';
+        btn.textContent = '✓ سيتم إرجاعها';
+        btn.style.background = 'linear-gradient(135deg,#16a34a,#15803d)';
+        btn.style.border = '2px solid #22c55e';
+        btn.style.color = '#fff';
+        card.style.border = '1px solid rgba(34,197,94,0.4)';
+        card.style.background = 'rgba(34,197,94,0.05)';
+    }
+}
+
+function submitReturn() {
+    const cards = document.querySelectorAll('#returnItemsList .return-item-card');
+    const returnData = [];
+    
+    cards.forEach(card => {
+        const lineId = card.querySelector('.return-line-id').value;
+        const maxQty = parseFloat(card.querySelector('.return-max-qty').value);
+        const serialId = card.querySelector('.return-serial-id').value;
+        const inputEl = card.querySelector('.return-qty-input');
+        
+        const qtyToReturn = parseFloat(inputEl.value) || 0;
+        
+        if (qtyToReturn > 0) {
+            if (qtyToReturn > maxQty) {
+                alert('الكمية المرتجعة لا يمكن أن تتجاوز الكمية المتاحة للسطر!');
+                return;
+            }
+            returnData.push({
+                line_id: lineId,
+                quantity: qtyToReturn,
+                serial_id: serialId
+            });
+        }
+    });
+    
+    if (returnData.length === 0) {
+        alert('يرجى تحديد الكميات المراد إرجاعها أولاً.');
+        return;
+    }
+    
+    if (!confirm('هل أنت متأكد من تنفيذ الإرجاع؟ سيتم إنشاء فاتورة مرتجع مقيدة واعتمادها فوراً.')) {
+        return;
+    }
+    
+    fetch(`/invoicing/api/invoice/{{ invoice.id }}/return/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ items: returnData })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            alert('تم إنشاء فاتورة المرتجع بنجاح!');
+            window.location.reload();
+        } else {
+            alert('خطأ: ' + data.message);
+        }
+    })
+    .catch(err => {
+        alert('خطأ في الاتصال بالخادم.');
+    });
 }
 </script>
 {% endblock %}

@@ -261,23 +261,62 @@
         }
     });
     function generateBarcode() {
-        // Generate a random 12-digit barcode starting with 200 (common for local store barcodes)
-        // Format: 200 + 9 random digits
         let randomNum = Math.floor(Math.random() * 1000000000).toString().padStart(9, '0');
         let barcode = '200' + randomNum;
-        
-        // Calculate EAN-13 check digit
         let sum = 0;
         for (let i = 0; i < 12; i++) {
             sum += parseInt(barcode[i]) * (i % 2 === 0 ? 1 : 3);
         }
         let checkDigit = (10 - (sum % 10)) % 10;
-        
         let finalBarcode = barcode + checkDigit;
-        
         document.getElementById('id_barcode').value = finalBarcode;
-        // Also fire change event in case of other listeners
         document.getElementById('id_barcode').dispatchEvent(new Event('change'));
     }
+
+    // Auto-highlight IMEI/Serial fields when SERIALIZED is selected
+    const productTypeSelect = document.getElementById('id_product_type');
+    const hasImeiField = document.getElementById('id_has_imei');
+    const hasSerialField = document.getElementById('id_has_serial');
+
+    function handleProductTypeChange() {
+        const isSerialized = productTypeSelect && productTypeSelect.value === 'SERIALIZED';
+        
+        const imeiWrapper = hasImeiField ? hasImeiField.closest('.col-md-4') : null;
+        const serialWrapper = hasSerialField ? hasSerialField.closest('.col-md-4') : null;
+
+        if (imeiWrapper) {
+            imeiWrapper.style.border = isSerialized ? '2px solid #ff7300' : '';
+            imeiWrapper.style.borderRadius = isSerialized ? '8px' : '';
+            imeiWrapper.style.padding = isSerialized ? '10px' : '';
+            imeiWrapper.style.background = isSerialized ? 'rgba(255, 115, 0, 0.08)' : '';
+        }
+        if (serialWrapper) {
+            serialWrapper.style.border = isSerialized ? '2px solid #ff7300' : '';
+            serialWrapper.style.borderRadius = isSerialized ? '8px' : '';
+            serialWrapper.style.padding = isSerialized ? '10px' : '';
+            serialWrapper.style.background = isSerialized ? 'rgba(255, 115, 0, 0.08)' : '';
+        }
+
+        if (isSerialized) {
+            // Show a tip message
+            let tip = document.getElementById('serialized-tip');
+            if (!tip) {
+                tip = document.createElement('div');
+                tip.id = 'serialized-tip';
+                tip.style.cssText = 'background: rgba(255,115,0,0.15); border: 1px solid #ff7300; border-radius: 8px; padding: 10px 15px; margin: 10px 0; color: #ffd700; font-family: Tajawal, sans-serif;';
+                tip.innerHTML = '⚠️ هذا المنتج من نوع <strong>ذو سريال</strong>. يرجى تحديد نوع السريال: <strong>IMEI</strong> (موبايلات وأجهزة لوحية) أو <strong>Serial Number</strong> (أجهزة أخرى).';
+                productTypeSelect.closest('.col-md-4').after(tip);
+            }
+        } else {
+            const tip = document.getElementById('serialized-tip');
+            if (tip) tip.remove();
+        }
+    }
+
+    if (productTypeSelect) {
+        productTypeSelect.addEventListener('change', handleProductTypeChange);
+        handleProductTypeChange(); // Run on load
+    }
+
 </script>
 {% endblock %}

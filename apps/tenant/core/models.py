@@ -20,6 +20,15 @@ class Employee(models.Model):
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.CASHIER, verbose_name=_('الدور'))
     branch = models.ForeignKey('Branch', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_('الفرع'))
 
+    # HR & Payroll Fields
+    hourly_rate = models.DecimalField(max_digits=8, decimal_places=2, default=0.00, verbose_name=_('قيمة ساعة العمل العادية'))
+    daily_working_hours = models.DecimalField(max_digits=4, decimal_places=2, default=8.00, verbose_name=_('ساعات العمل اليومية'))
+    shift_start_time = models.TimeField(null=True, blank=True, verbose_name=_('ميعاد الحضور'))
+    shift_end_time = models.TimeField(null=True, blank=True, verbose_name=_('ميعاد الانصراف'))
+    deduction_per_hour = models.DecimalField(max_digits=8, decimal_places=2, default=0.00, verbose_name=_('قيمة الخصم للساعة'))
+    overtime_per_hour = models.DecimalField(max_digits=8, decimal_places=2, default=0.00, verbose_name=_('قيمة الإضافي للساعة'))
+    base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name=_('الراتب الأساسي (اختياري)'))
+
     def is_admin(self):
         return self.role == Role.ADMIN or self.user.is_superuser
 
@@ -38,6 +47,7 @@ class Employee(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.get_role_display()}"
 
+
 class Branch(models.Model):
     """
     A physical or logical branch of the supermarket chain.
@@ -47,6 +57,12 @@ class Branch(models.Model):
     code = models.CharField(max_length=20, unique=True, verbose_name=_('كود الفرع'))
     address = models.TextField(blank=True, verbose_name=_('العنوان'))
     phone = models.CharField(max_length=20, blank=True, verbose_name=_('التليفون'))
+    
+    # Location for GPS Attendance
+    latitude = models.DecimalField(max_digits=18, decimal_places=15, null=True, blank=True, verbose_name=_('خط العرض (Latitude)'))
+    longitude = models.DecimalField(max_digits=18, decimal_places=15, null=True, blank=True, verbose_name=_('خط الطول (Longitude)'))
+    allowed_radius = models.IntegerField(default=50, verbose_name=_('نطاق السماح (بالمتر)'))
+
     is_active = models.BooleanField(default=True, verbose_name=_('نشط'))
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -283,6 +283,7 @@
     <script src="{% static 'js/pos.js' %}?v={% now 'U' %}"></script>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <script>
+        POS.currentUserId = {{ request.user.id|default:'null' }};
         POS.currentWarehouseId = {{ current_warehouse.id|default:'null' }};
         POS.currentBranchId = {{ current_branch.id|default:'null' }};
         POS.allowPriceEdit = {% if settings.allow_pos_price_modification %}true{% else %}false{% endif %};

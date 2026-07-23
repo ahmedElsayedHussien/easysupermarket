@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, permission_required
 from django.http import JsonResponse
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 from django.contrib import messages
 from .models import Invoice, InvoiceLine, POSSession
 from apps.tenant.inventory.models import Product, Warehouse
@@ -306,7 +307,7 @@ def purchase_invoice_view(request):
                     e_invoice_number=e_invoice_number if e_invoice_number else None,
                 )
                 
-                for pid, qty, price, uom_id in zip(product_ids, quantities, prices, uom_ids):
+                for i, (pid, qty, price, uom_id) in enumerate(zip(product_ids, quantities, prices, uom_ids)):
                     if pid and qty and price:
                         product = Product.objects.get(id=pid)
                         
@@ -316,16 +317,62 @@ def purchase_invoice_view(request):
                         
                         uom_id_val = uom_id if uom_id and uom_id != '' else None
                         
-                        InvoiceLine.objects.create(
-                            invoice=invoice,
-                            product=product,
-                            quantity=Decimal(qty),
-                            unit_price=Decimal(price),
-                            tax_rate=tax_r,
-                            wht_rate=wht_r,
-                            discount_pct=invoice.discount_percentage,
-                            uom_id=uom_id_val,
-                        )
+                        # Handle Serial/IMEI creation
+                        if product.product_type == 'SERIALIZED':
+                            from apps.tenant.inventory.models import SerialItem
+                            # Find all serials posted for this specific line
+                            imei_1_list = request.POST.getlist(f'imei_1_line_{i}[]')
+                            imei_2_list = request.POST.getlist(f'imei_2_line_{i}[]')
+                            serial_list = request.POST.getlist(f'serial_line_{i}[]')
+                            
+                            num_items = int(Decimal(qty))
+                            if not imei_1_list: imei_1_list = [''] * num_items
+                            if not imei_2_list: imei_2_list = [''] * num_items
+                            if not serial_list: serial_list = [''] * num_items
+                            
+                            for j in range(num_items):
+                                i1 = imei_1_list[j] if j < len(imei_1_list) else ''
+                                i2 = imei_2_list[j] if j < len(imei_2_list) else ''
+                                sn = serial_list[j] if j < len(serial_list) else ''
+                                
+                                if product.has_imei and not i1:
+                                    raise ValueError(f"يرجى إدخال IMEI 1 للمنتج {product.name}")
+                                if product.has_serial and not sn:
+                                    raise ValueError(f"يرجى إدخال السيريال للمنتج {product.name}")
+                                    
+                                serial_item = SerialItem.objects.create(
+                                    product=product,
+                                    serial_number=sn if sn else None,
+                                    imei_1=i1 if i1 else None,
+                                    imei_2=i2 if i2 else None,
+                                    condition=SerialItem.CONDITION_NEW,
+                                    warehouse=warehouse,
+                                    is_sold=False,
+                                    actual_cost=Decimal(price),
+                                )
+                                
+                                InvoiceLine.objects.create(
+                                    invoice=invoice,
+                                    product=product,
+                                    serial_item=serial_item,
+                                    quantity=Decimal('1'),
+                                    unit_price=Decimal(price),
+                                    tax_rate=tax_r,
+                                    wht_rate=wht_r,
+                                    discount_pct=invoice.discount_percentage,
+                                    uom_id=uom_id_val,
+                                )
+                        else:
+                            InvoiceLine.objects.create(
+                                invoice=invoice,
+                                product=product,
+                                quantity=Decimal(qty),
+                                unit_price=Decimal(price),
+                                tax_rate=tax_r,
+                                wht_rate=wht_r,
+                                discount_pct=invoice.discount_percentage,
+                                uom_id=uom_id_val,
+                            )
                 
                 invoice.recalculate_totals()
                 
@@ -420,11 +467,20 @@ def purchase_invoice_list(request):
 def invoice_detail(request, invoice_id):
     from django.shortcuts import get_object_or_404
     invoice = get_object_or_404(Invoice, id=invoice_id)
-    lines = invoice.lines.select_related('product').all()
+    lines = invoice.lines.select_related('product', 'serial_item', 'uom').all()
+    
+    is_fully_returned = False
+    if lines.exists():
+        is_fully_returned = all(line.quantity <= line.returned_quantity for line in lines)
+        
+    for line in lines:
+        line.available_return_qty = line.quantity - line.returned_quantity
+        line.display_unit_name = line.uom.uom.name if line.uom else line.product.pos_unit_name
     
     context = {
         'invoice': invoice,
         'lines': lines,
+        'is_fully_returned': is_fully_returned,
         'title': f'تفاصيل فاتورة رقم {invoice.invoice_number}'
     }
     return render(request, 'invoicing/invoice_detail.html', context)
@@ -462,6 +518,7 @@ def get_product_by_barcode(request):
                 'id': product.id,
                 'name': product.name,
                 'barcode': product.barcode,
+                'product_type': product.product_type,
                 'sale_price': str(product.get_price_for_branch(current_branch)),
                 'tax_rate': str(product.tax_rate),
                 'available_stock': str(product.get_stock()),
@@ -478,6 +535,33 @@ def add_to_cart(request):
         # Logic to add to session cart
         return JsonResponse({'success': True})
     return JsonResponse({'success': False})
+
+@login_required
+def get_available_serials(request):
+    """API: Returns all unsold SerialItems for a given product & warehouse."""
+    from apps.tenant.inventory.models import SerialItem
+    product_id = request.GET.get('product_id')
+    warehouse_id = request.GET.get('warehouse_id')
+    if not product_id:
+        return JsonResponse({'serials': []})
+    qs = SerialItem.objects.filter(product_id=product_id, is_sold=False)
+    if warehouse_id:
+        qs = qs.filter(warehouse_id=warehouse_id)
+    serials = [
+        {
+            'id': s.id,
+            'serial_number': s.serial_number,
+            'imei_1': s.imei_1,
+            'imei_2': s.imei_2,
+            'display_label': s.imei_1 or s.serial_number or f"رقم {s.id}",
+            'condition': s.get_condition_display(),
+            'storage': s.storage or '',
+            'ram': s.ram or '',
+            'actual_cost': str(s.actual_cost),
+        }
+        for s in qs
+    ]
+    return JsonResponse({'serials': serials})
 
 @login_required
 def complete_sale(request):
@@ -543,10 +627,18 @@ def complete_sale(request):
                 uom_id = item.get('uom_id')
                 if uom_id == 'base':
                     uom_id = None
-                
+
+                # Resolve serial_item for SERIALIZED products
+                serial_item_id = item.get('serial_item_id')
+                serial_item = None
+                if product.product_type == 'SERIALIZED' and serial_item_id:
+                    from apps.tenant.inventory.models import SerialItem
+                    serial_item = SerialItem.objects.get(id=serial_item_id)
+
                 InvoiceLine.objects.create(
                     invoice=invoice,
                     product=product,
+                    serial_item=serial_item,
                     quantity=Decimal(item['quantity']),
                     unit_price=Decimal(item['unit_price']),
                     discount_pct=Decimal(item.get('discount_percent', 0)),
@@ -570,6 +662,89 @@ def complete_sale(request):
 def receipt_view(request, invoice_id):
     invoice = get_object_or_404(Invoice, id=invoice_id)
     return render(request, 'pos/receipt.html', {'invoice': invoice})
+
+@login_required
+@require_POST
+def process_invoice_return(request, invoice_id):
+    if not request.user.is_superuser:
+        return JsonResponse({'status': 'error', 'message': 'غير مصرح لك بإجراء هذه العملية.'}, status=403)
+        
+    try:
+        data = json.loads(request.body)
+        items = data.get('items', [])
+        if not items:
+            return JsonResponse({'status': 'error', 'message': 'لم يتم تحديد أصناف للإرجاع.'})
+            
+        original_invoice = get_object_or_404(Invoice, id=invoice_id, status=Invoice.POSTED)
+        
+        if original_invoice.invoice_type not in [Invoice.SALE, Invoice.PURCHASE]:
+            return JsonResponse({'status': 'error', 'message': 'لا يمكن إرجاع هذه الفاتورة.'})
+            
+        return_type = Invoice.RETURN_SALE if original_invoice.invoice_type == Invoice.SALE else Invoice.RETURN_PURCHASE
+        
+        from django.db import transaction
+        import datetime
+        
+        with transaction.atomic():
+            # Create Return Invoice
+            return_invoice = Invoice.objects.create(
+                invoice_type=return_type,
+                partner=original_invoice.partner,
+                treasury=original_invoice.treasury,
+                ewallet=original_invoice.ewallet,
+                bank_account=original_invoice.bank_account,
+                pos_machine=original_invoice.pos_machine,
+                branch=original_invoice.branch,
+                warehouse=original_invoice.warehouse,
+                date=datetime.date.today(),
+                payment_type=original_invoice.payment_type,
+                status=Invoice.DRAFT,
+                cashier=request.user,
+                parent_invoice=original_invoice,
+                discount_percentage=original_invoice.discount_percentage,
+                pos_session=original_invoice.pos_session,
+            )
+            
+            for item in items:
+                line_id = item.get('line_id')
+                return_qty = Decimal(str(item.get('quantity', 0)))
+                serial_id = item.get('serial_id')
+                
+                original_line = get_object_or_404(InvoiceLine, id=line_id, invoice=original_invoice)
+                
+                if return_qty <= 0:
+                    continue
+                    
+                available_to_return = original_line.quantity - original_line.returned_quantity
+                if return_qty > available_to_return:
+                    raise Exception(f'الكمية المرتجعة للسطر {original_line.product.name} تتجاوز الكمية المسموحة.')
+                    
+                # Update original line
+                original_line.returned_quantity += return_qty
+                original_line.save()
+                
+                # Create return line
+                InvoiceLine.objects.create(
+                    invoice=return_invoice,
+                    product=original_line.product,
+                    serial_item=original_line.serial_item,
+                    quantity=return_qty,
+                    unit_price=original_line.unit_price,
+                    discount_pct=original_line.discount_pct,
+                    uom=original_line.uom,
+                    tax_rate=original_line.tax_rate,
+                    wht_rate=original_line.wht_rate,
+                )
+            
+            # Recalculate and Confirm
+            return_invoice.recalculate_totals()
+            from apps.tenant.services.invoice_service import confirm_invoice
+            confirmed_return = confirm_invoice(return_invoice.id)
+            
+            return JsonResponse({'status': 'success', 'invoice_id': confirmed_return.id})
+            
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)})
 
 @login_required
 def shift_report(request):

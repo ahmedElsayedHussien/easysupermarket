@@ -101,9 +101,11 @@
                                 <select name="product_id[]" class="form-select product-select">
                                     <option value="">اختر الصنف...</option>
                                     {% for p in products %}
-                                    <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
+                                    <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                                     {% endfor %}
                                 </select>
+                                <div class="serial-btn-container mt-2"></div>
+                                <div class="serial-inputs-container d-none"></div>
                             </td>
                             <td>
                                 <select name="uom_id[]" class="form-select uom-select">
@@ -167,6 +169,23 @@
     </div>
     </div>
 </div>
+
+<!-- Custom Serial/IMEI Modal -->
+<div id="serialModal" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.7); align-items: center; justify-content: center;">
+  <div style="background: #1e2a3a; border: 1px solid #334155; border-radius: 12px; width: 600px; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+    <div style="padding: 16px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;">
+      <h5 style="margin: 0; color: #ffd700; font-family: 'Tajawal', sans-serif;">إدخال السيريالات والـ IMEI</h5>
+      <button type="button" onclick="closeSerialModal()" style="background: transparent; border: none; color: #fff; font-size: 1.5rem; cursor: pointer;">&times;</button>
+    </div>
+    <div id="serialModalBody" style="padding: 16px; overflow-y: auto; flex-grow: 1;">
+    </div>
+    <div style="padding: 16px; border-top: 1px solid #334155; display: flex; justify-content: flex-end; gap: 10px;">
+      <button type="button" class="btn" onclick="closeSerialModal()" style="background: #334155; color: #fff; border: none; border-radius: 4px; padding: 8px 16px;">إلغاء</button>
+      <button type="button" class="btn btn-orange" onclick="saveSerials()" style="background-color: #ff7300; color: white; border: none; border-radius: 4px; padding: 8px 16px; font-weight: bold;">حفظ السيريالات</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -182,6 +201,7 @@ function initTomSelect(element) {
         onChange: function(value) {
             updateUoMs(element);
             calculateTotals();
+            checkSerialRequirement(element);
         }
     });
 }
@@ -255,9 +275,11 @@ function addLine() {
             <select name="product_id[]" class="form-select product-select">
                 <option value="">اختر الصنف...</option>
                 {% for p in products %}
-                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
+                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                 {% endfor %}
             </select>
+            <div class="serial-btn-container mt-2"></div>
+            <div class="serial-inputs-container d-none"></div>
         </td>
         <td>
             <select name="uom_id[]" class="form-select uom-select">
@@ -281,9 +303,11 @@ function addLineWithData(productId, qty, price, uomId = null) {
             <select name="product_id[]" class="form-select product-select">
                 <option value="">اختر الصنف...</option>
                 {% for p in products %}
-                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
+                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                 {% endfor %}
             </select>
+            <div class="serial-btn-container mt-2"></div>
+            <div class="serial-inputs-container d-none"></div>
         </td>
         <td>
             <select name="uom_id[]" class="form-select uom-select">
@@ -363,6 +387,142 @@ function calculateTotals() {
     
     document.getElementById('totalDisplay').innerText = total.toFixed(2);
     document.getElementById('totalInput').value = total.toFixed(2);
+}
+
+// --- Serial & IMEI Logic ---
+let currentSerialRowIndex = -1;
+
+function checkSerialRequirement(selectElement) {
+    const row = selectElement.closest('tr');
+    const option = selectElement.options[selectElement.selectedIndex];
+    const btnContainer = row.querySelector('.serial-btn-container');
+    const inputsContainer = row.querySelector('.serial-inputs-container');
+    
+    if (!option || !btnContainer) return;
+    
+    const hasImei = option.dataset.hasImei === 'true';
+    const hasSerial = option.dataset.hasSerial === 'true';
+    
+    if (hasImei || hasSerial) {
+        btnContainer.innerHTML = `<button type="button" class="btn" style="background-color: #ff7300; color: white; border: none; border-radius: 4px; padding: 6px 12px; font-weight: bold; width: 100%; text-align: center; margin-top: 5px; box-shadow: 0 0 10px rgba(255, 115, 0, 0.3);" onclick="openSerialModal(this)">⌨️ إدخال السيريالات/IMEI</button>`;
+        // Reset inputs if item changed
+        inputsContainer.innerHTML = '';
+    } else {
+        btnContainer.innerHTML = '';
+        inputsContainer.innerHTML = '';
+    }
+}
+
+function openSerialModal(btn) {
+    const row = btn.closest('tr');
+    // Find row index
+    const tbody = document.getElementById('purchaseLines');
+    currentSerialRowIndex = Array.from(tbody.children).indexOf(row);
+    
+    const select = row.querySelector('.product-select');
+    const option = select.options[select.selectedIndex];
+    const qtyInput = row.querySelector('input[name="quantity[]"]');
+    const qty = parseInt(qtyInput.value) || 0;
+    
+    if (qty <= 0) {
+        alert("يرجى إدخال الكمية أولاً لتحديد عدد السيريالات المطلوبة.");
+        qtyInput.focus();
+        return;
+    }
+    
+    const hasImei = option.dataset.hasImei === 'true';
+    const hasSerial = option.dataset.hasSerial === 'true';
+    
+    const modalBody = document.getElementById('serialModalBody');
+    let html = `<p>الرجاء إدخال بيانات الأجهزة للكمية المطلوبة (${qty} أجهزة)</p>`;
+    
+    for(let i=0; i<qty; i++) {
+        html += `<div style="background: #0f172a; border: 1px solid #334155; border-radius: 8px; margin-bottom: 15px; padding: 15px;">
+                    <h6 style="color: #00ffff; margin-top: 0;">الجهاز #${i+1}</h6>
+                    <div style="display: flex; flex-wrap: wrap; gap: 10px;">`;
+        if (hasImei) {
+            html += `<div style="flex: 1; min-width: 200px;">
+                        <label style="color: #fff; margin-bottom: 5px; display: block;">IMEI 1 <span style="color: #ef4444;">*</span></label>
+                        <input type="text" class="form-control modal-imei1" data-index="${i}" required style="width: 100%; background: #1e293b; color: #fff; border: 1px solid #475569; padding: 8px; border-radius: 4px;">
+                     </div>
+                     <div style="flex: 1; min-width: 200px;">
+                        <label style="color: #fff; margin-bottom: 5px; display: block;">IMEI 2 (اختياري)</label>
+                        <input type="text" class="form-control modal-imei2" data-index="${i}" style="width: 100%; background: #1e293b; color: #fff; border: 1px solid #475569; padding: 8px; border-radius: 4px;">
+                     </div>`;
+        }
+        if (hasSerial) {
+            html += `<div style="flex: 1; min-width: 200px;">
+                        <label style="color: #fff; margin-bottom: 5px; display: block;">Serial Number <span style="color: #ef4444;">*</span></label>
+                        <input type="text" class="form-control modal-serial" data-index="${i}" required style="width: 100%; background: #1e293b; color: #fff; border: 1px solid #475569; padding: 8px; border-radius: 4px;">
+                     </div>`;
+        }
+        html += `   </div>
+                 </div>`;
+    }
+    
+    modalBody.innerHTML = html;
+    
+    // If there were previously saved inputs, load them
+    const inputsContainer = row.querySelector('.serial-inputs-container');
+    const savedImei1 = inputsContainer.querySelectorAll('input[name^="imei_1_line"]');
+    const savedImei2 = inputsContainer.querySelectorAll('input[name^="imei_2_line"]');
+    const savedSerial = inputsContainer.querySelectorAll('input[name^="serial_line"]');
+    
+    const modalImei1s = modalBody.querySelectorAll('.modal-imei1');
+    const modalImei2s = modalBody.querySelectorAll('.modal-imei2');
+    const modalSerials = modalBody.querySelectorAll('.modal-serial');
+    
+    savedImei1.forEach((inp, idx) => { if(modalImei1s[idx]) modalImei1s[idx].value = inp.value; });
+    savedImei2.forEach((inp, idx) => { if(modalImei2s[idx]) modalImei2s[idx].value = inp.value; });
+    savedSerial.forEach((inp, idx) => { if(modalSerials[idx]) modalSerials[idx].value = inp.value; });
+    
+    document.getElementById('serialModal').style.display = 'flex';
+}
+
+function closeSerialModal() {
+    document.getElementById('serialModal').style.display = 'none';
+}
+
+function saveSerials() {
+    const modalBody = document.getElementById('serialModalBody');
+    const modalImei1s = modalBody.querySelectorAll('.modal-imei1');
+    const modalSerials = modalBody.querySelectorAll('.modal-serial');
+    
+    // Validate mandatory fields
+    let isValid = true;
+    modalImei1s.forEach(inp => { if(!inp.value) { inp.classList.add('is-invalid'); isValid = false; } else { inp.classList.remove('is-invalid'); }});
+    modalSerials.forEach(inp => { if(!inp.value) { inp.classList.add('is-invalid'); isValid = false; } else { inp.classList.remove('is-invalid'); }});
+    
+    if (!isValid) {
+        alert("يرجى ملء جميع الحقول الإجبارية (بالنجمة الحمراء).");
+        return;
+    }
+    
+    const tbody = document.getElementById('purchaseLines');
+    const row = tbody.children[currentSerialRowIndex];
+    const inputsContainer = row.querySelector('.serial-inputs-container');
+    
+    let hiddenInputsHtml = '';
+    const modalImei2s = modalBody.querySelectorAll('.modal-imei2');
+    
+    // The number of items is determined by how many input blocks were rendered
+    const maxItems = Math.max(modalImei1s.length, modalSerials.length);
+    for(let i=0; i<maxItems; i++) {
+        if(modalImei1s[i]) hiddenInputsHtml += `<input type="hidden" name="imei_1_line_${currentSerialRowIndex}[]" value="${modalImei1s[i].value}">`;
+        if(modalImei2s[i]) hiddenInputsHtml += `<input type="hidden" name="imei_2_line_${currentSerialRowIndex}[]" value="${modalImei2s[i].value}">`;
+        if(modalSerials[i]) hiddenInputsHtml += `<input type="hidden" name="serial_line_${currentSerialRowIndex}[]" value="${modalSerials[i].value}">`;
+    }
+    
+    inputsContainer.innerHTML = hiddenInputsHtml;
+    
+    // Update button color to success to show it's saved
+    const btn = row.querySelector('.serial-btn-container button');
+    if(btn) {
+        btn.style.backgroundColor = '#10b981'; // Success green
+        btn.innerHTML = '✅ تم إدخال السيريالات';
+    }
+    
+    closeSerialModal();
 }
 </script>
 {% endblock %}

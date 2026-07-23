@@ -1,0 +1,533 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="glass-container p-4">
+  <!-- Header -->
+  <div class="d-flex justify-between align-center mb-3 flex-wrap gap-2">
+    <h2 class="m-0" style="color:var(--text);">
+      <i class="fas fa-tools" style="color:#ff7300;"></i>
+      تذكرة صيانة <span style="color:#ff7300;">#{{ ticket.id }}</span>
+    </h2>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{% url 'maintenance:ticket_create' %}?parent_id={{ ticket.pk }}"
+         class="btn btn-sm" style="background:#ff7300;color:#fff;box-shadow:0 0 10px rgba(255,115,0,0.3);">
+        <i class="fas fa-shield-alt"></i> فتح تذكرة ضمان
+      </a>
+      <a href="{% url 'maintenance:ticket_list' %}" class="btn btn-sm" style="background:#333;color:#fff;border:1px solid #ff7300;">← رجوع</a>
+    </div>
+  </div>
+
+  <!-- Status Badge -->
+  <div class="mb-4">
+    {% if ticket.status == 'PENDING' %}
+      <span class="badge bg-warning text-dark fs-6">{{ ticket.get_status_display }}</span>
+    {% elif ticket.status == 'IN_PROGRESS' %}
+      <span class="badge bg-info fs-6">{{ ticket.get_status_display }}</span>
+    {% elif ticket.status == 'WAITING_PARTS' %}
+      <span class="badge bg-secondary fs-6">{{ ticket.get_status_display }}</span>
+    {% elif ticket.status == 'DONE' %}
+      <span class="badge bg-success fs-6">{{ ticket.get_status_display }}</span>
+    {% elif ticket.status == 'DELIVERED' %}
+      <span class="badge bg-dark fs-6">{{ ticket.get_status_display }}</span>
+    {% endif %}
+    {% if ticket.parent_ticket %}
+      <span class="ms-2 badge bg-info">
+        ضمان لـ <a href="{% url 'maintenance:ticket_detail' ticket.parent_ticket.pk %}" class="text-white">
+          #{{ ticket.parent_ticket.id }}
+        </a>
+      </span>
+    {% endif %}
+    {% if ticket.journal_entry %}
+      <span class="ms-2 badge bg-success"><i class="fas fa-check"></i> تم الترحيل المحاسبي</span>
+    {% endif %}
+  </div>
+
+  <div class="row g-4">
+    <!-- LEFT: Ticket Info + Parts -->
+    <div class="col-lg-8">
+
+      <!-- Ticket Info Card -->
+      <div class="card bg-dark-glass border-0 mb-4">
+        <div class="card-header d-flex justify-between align-center">
+          <strong><i class="fas fa-info-circle"></i> بيانات التذكرة</strong>
+          {% if ticket.status != 'DELIVERED' %}
+          <button class="btn btn-sm" style="background:#ff7300;color:#fff;box-shadow:0 0 8px rgba(255,115,0,0.4);" onclick="document.getElementById('editPanel').classList.toggle('d-none')">
+            <i class="fas fa-edit"></i> تعديل
+          </button>
+          {% endif %}
+        </div>
+        <div class="card-body">
+          <div class="row g-2">
+            <div class="col-md-6">
+              <small class="text-muted">العميل</small>
+              <div class="fw-bold">{{ ticket.customer.name }}</div>
+              {% if ticket.customer.phone %}<small class="text-muted">{{ ticket.customer.phone }}</small>{% endif %}
+            </div>
+            <div class="col-md-6">
+              <small class="text-muted">الفني المختص</small>
+              <div class="fw-bold">{{ ticket.technician.get_full_name|default:ticket.technician.username|default:'—' }}</div>
+            </div>
+            <div class="col-md-6">
+              <small class="text-muted">موديل الجهاز</small>
+              <div class="fw-bold">{{ ticket.device_model }}</div>
+            </div>
+            <div class="col-md-6">
+              <small class="text-muted">السيريال / IMEI</small>
+              <div>{{ ticket.device_serial|default:'—' }}</div>
+            </div>
+            <div class="col-12">
+              <small class="text-muted">وصف العطل</small>
+              <div class="p-2 rounded" style="background:rgba(255,255,255,0.04);">{{ ticket.issue_description }}</div>
+            </div>
+            {% if ticket.device_condition_on_receipt %}
+            <div class="col-12">
+              <small class="text-muted">حالة الجهاز عند الاستلام</small>
+              <div class="p-2 rounded" style="background:rgba(255,255,255,0.04);">{{ ticket.device_condition_on_receipt }}</div>
+            </div>
+            {% endif %}
+            <div class="col-md-4">
+              <small class="text-muted">المصنعية</small>
+              <div class="fw-bold text-success">{{ ticket.labor_cost }} ج.م</div>
+            </div>
+            <div class="col-md-4">
+              <small class="text-muted">التكلفة التقديرية</small>
+              <div>{{ ticket.estimated_cost|default:'—' }} {% if ticket.estimated_cost %}ج.م{% endif %}</div>
+            </div>
+            <div class="col-md-4">
+              <small class="text-muted">أيام الضمان</small>
+              <div>{{ ticket.warranty_days }} يوم</div>
+            </div>
+            <div class="col-md-4">
+              <small class="text-muted">تاريخ الفتح</small>
+              <div>{{ ticket.created_at|date:"Y/m/d H:i" }}</div>
+            </div>
+            {% if ticket.delivered_at %}
+            <div class="col-md-4">
+              <small class="text-muted">تاريخ التسليم</small>
+              <div>{{ ticket.delivered_at|date:"Y/m/d H:i" }}</div>
+            </div>
+            {% endif %}
+            {% if ticket.notes %}
+            <div class="col-12">
+              <small class="text-muted">ملاحظات</small>
+              <div>{{ ticket.notes }}</div>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Inline Edit Panel -->
+      {% if ticket.status != 'DELIVERED' %}
+      <div id="editPanel" class="card bg-dark-glass border-0 mb-4 d-none">
+        <div class="card-header"><strong><i class="fas fa-edit"></i> تعديل التذكرة</strong></div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label text-muted">الحالة</label>
+              <select id="statusSelect" class="form-select bg-dark-glass text-white">
+                {% for val, label in status_choices %}
+                <option value="{{ val }}" {% if ticket.status == val %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label text-muted">الفني</label>
+              <select id="technicianSelect" class="form-select bg-dark-glass text-white">
+                <option value="">-- لم يُحدد --</option>
+                {% for t in technicians %}
+                <option value="{{ t.id }}" {% if ticket.technician_id == t.id %}selected{% endif %}>
+                  {{ t.get_full_name|default:t.username }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label text-muted">المصنعية</label>
+              <input type="number" id="laborCostInput" class="form-control bg-dark-glass text-white"
+                     value="{{ ticket.labor_cost }}" step="0.01" min="0">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label text-muted">ملاحظات</label>
+              <input type="text" id="notesInput" class="form-control bg-dark-glass text-white"
+                     value="{{ ticket.notes }}">
+            </div>
+            <div class="col-12">
+              <button onclick="saveEdit()" class="btn" style="background:#ff7300;color:#fff;font-weight:bold;">
+                <i class="fas fa-save"></i> حفظ التعديلات
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Parts Used -->
+      <div class="card bg-dark-glass border-0 mb-4">
+        <div class="card-header d-flex justify-between align-center">
+          <strong><i class="fas fa-cogs"></i> قطع الغيار المستهلكة</strong>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>القطعة</th>
+                <th>الكمية</th>
+                <th>سعر البيع</th>
+                <th>التكلفة الفعلية</th>
+                <th>الإجمالي</th>
+                {% if ticket.status != 'DELIVERED' %}<th></th>{% endif %}
+              </tr>
+            </thead>
+            <tbody id="partsTableBody">
+              {% for part in parts %}
+              <tr id="part-row-{{ part.id }}">
+                <td>
+                  {{ part.product.name }}
+                  {% if part.serial_item %}<br><small class="text-muted">{{ part.serial_item.serial_number }}</small>{% endif %}
+                </td>
+                <td>{{ part.quantity }}</td>
+                <td>{{ part.selling_price }} ج</td>
+                <td><small class="text-muted">{{ part.actual_cost }} ج</small></td>
+                <td class="fw-bold">{{ part.quantity|floatformat:2 }} × {{ part.selling_price }} = <span>{{ part.selling_price }}</span></td>
+                {% if ticket.status != 'DELIVERED' %}
+                <td>
+                  <button onclick="deletePart({{ part.id }})" class="btn btn-sm btn-danger">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
+                {% endif %}
+              </tr>
+              {% empty %}
+              <tr id="emptyPartsRow"><td colspan="6" class="text-center text-muted py-3">لا توجد قطع غيار مضافة بعد.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Add Part Form -->
+      {% if ticket.status != 'DELIVERED' %}
+      <div class="card bg-dark-glass border-0">
+        <div class="card-header"><strong><i class="fas fa-plus"></i> إضافة قطعة غيار</strong></div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label text-muted">المخزن</label>
+              <select id="partWarehouse" class="form-select bg-dark-glass text-white" onchange="onWarehouseChange()">
+                <option value="">-- اختر --</option>
+                {% for w in warehouses %}
+                <option value="{{ w.id }}">{{ w.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label text-muted">الصنف</label>
+              <input type="text" id="partSearch" class="form-control bg-dark-glass text-white mb-2" placeholder="بحث بالاسم أو باركود (ثم اضغط Enter)..." onkeyup="filterProducts(event)" disabled>
+              <select id="partProduct" class="form-select bg-dark-glass text-white" onchange="onProductChange()" disabled>
+                <option value="">-- اختر المخزن أولاً --</option>
+                <!-- Products will be loaded here dynamically -->
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label text-muted">الكمية</label>
+              <input type="number" id="partQty" class="form-control bg-dark-glass text-white" value="1" min="0.001" step="0.001">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label text-muted">سعر البيع</label>
+              <input type="number" id="partPrice" class="form-control bg-dark-glass text-white" value="0" step="0.01" min="0">
+            </div>
+
+            <!-- Serial picker (shown only for SERIALIZED products) -->
+            <div class="col-12 d-none" id="serialPickerDiv">
+              <label class="form-label text-muted">السيريال (للقطعة المسروِلة)</label>
+              <select id="partSerial" class="form-select bg-dark-glass text-white">
+                <option value="">-- اختر السيريال --</option>
+              </select>
+            </div>
+
+            <div class="col-12">
+              <button onclick="addPartToTicket()" class="btn" style="background:#ff7300;color:#fff;font-weight:bold;">
+                <i class="fas fa-plus-circle"></i> إضافة وخصم من المخزون
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- RIGHT: Summary + Delivery -->
+    <div class="col-lg-4">
+      <!-- Financial Summary -->
+      <div class="card bg-dark-glass border-0 mb-4">
+        <div class="card-header"><strong><i class="fas fa-calculator"></i> ملخص مالي</strong></div>
+        <div class="card-body">
+          <div class="d-flex justify-between py-1">
+            <span class="text-muted">المصنعية</span>
+            <span class="fw-bold text-success">{{ ticket.labor_cost }} ج.م</span>
+          </div>
+          <div class="d-flex justify-between py-1">
+            <span class="text-muted">مبيعات قطع الغيار</span>
+            <span class="fw-bold">{{ ticket.parts_selling_total }} ج.م</span>
+          </div>
+          <div class="d-flex justify-between py-1">
+            <span class="text-muted">تكلفة قطع الغيار (FIFO)</span>
+            <span class="fw-bold text-warning">{{ ticket.parts_cost_total }} ج.م</span>
+          </div>
+          <hr class="border-secondary">
+          <div class="d-flex justify-between py-1">
+            <span class="text-muted fw-bold">إجمالي الإيراد</span>
+            <span class="fw-bold text-info fs-5">{{ ticket.total_revenue }} ج.م</span>
+          </div>
+          <div class="d-flex justify-between py-1">
+            <span class="text-muted">صافي الربح</span>
+            <span class="fw-bold" style="color:#ff7300;">{{ ticket.ticket_profit }} ج.م</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Deliver Button -->
+      {% if ticket.status != 'DELIVERED' %}
+      <div class="card bg-dark-glass border-0">
+        <div class="card-header"><strong><i class="fas fa-handshake"></i> تسليم الجهاز</strong></div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            عند التسليم، سيتم ترحيل القيد المحاسبي تلقائياً، <strong class="text-success">وتحصيل إجمالي الإيراد من العميل وإيداعه في الخزينة المختارة</strong>.
+          </p>
+          <label class="form-label text-muted">الخزينة</label>
+          <select id="deliveryTreasury" class="form-select bg-dark-glass text-white mb-3">
+            <option value="">-- اختر الخزينة --</option>
+            {% for t in treasuries %}
+            <option value="{{ t.id }}">{{ t.name }}</option>
+            {% endfor %}
+          </select>
+          <button onclick="deliverTicket()" class="btn w-100" style="background:#ff7300;color:#fff;font-weight:bold;padding:12px;">
+            <i class="fas fa-check-circle"></i> تأكيد التسليم وترحيل القيد
+          </button>
+        </div>
+      </div>
+      {% else %}
+      <div class="card border-0" style="background:rgba(34,197,94,0.1);border:1px solid #22c55e !important;">
+        <div class="card-body text-center">
+          <div style="font-size:2rem;color:#22c55e;"><i class="fas fa-check-circle"></i></div>
+          <div class="fw-bold mt-2">تم تسليم الجهاز</div>
+          <small class="text-muted">{{ ticket.delivered_at|date:"Y/m/d H:i" }}</small>
+          {% if ticket.journal_entry %}
+          <div class="mt-2">
+            <small class="text-muted">قيد محاسبي: <strong>{{ ticket.journal_entry.reference }}</strong></small>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+const TICKET_ID = {{ ticket.id }};
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || getCsrfToken();
+
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim())
+    .find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+}
+
+// ---- Edit functions ----
+async function saveEdit() {
+  const fields = [
+    { field: 'status',       value: document.getElementById('statusSelect').value },
+    { field: 'labor_cost',   value: document.getElementById('laborCostInput').value },
+    { field: 'technician_id',value: document.getElementById('technicianSelect').value },
+    { field: 'notes',        value: document.getElementById('notesInput').value },
+  ];
+  for (const f of fields) {
+    await fetch(`/maintenance/${TICKET_ID}/edit/`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': getCsrfToken()},
+      body: new URLSearchParams(f)
+    });
+  }
+  location.reload();
+}
+
+// ---- Warehouse / Product logic ----
+let allProducts = [];
+
+async function onWarehouseChange() {
+  const warehouseId = document.getElementById('partWarehouse').value;
+  const productSel = document.getElementById('partProduct');
+  const searchInput = document.getElementById('partSearch');
+  
+  // Reset
+  productSel.innerHTML = '<option value="">-- جاري التحميل... --</option>';
+  productSel.disabled = true;
+  searchInput.disabled = true;
+  searchInput.value = '';
+  document.getElementById('serialPickerDiv').classList.add('d-none');
+  document.getElementById('partSerial').innerHTML = '<option value="">-- اختر السيريال --</option>';
+  document.getElementById('partQty').value = 1;
+  document.getElementById('partQty').disabled = false;
+
+  if (!warehouseId) {
+    productSel.innerHTML = '<option value="">-- اختر المخزن أولاً --</option>';
+    return;
+  }
+
+  try {
+    const resp = await fetch(`/maintenance/api/warehouse/${warehouseId}/products/`);
+    const data = await resp.json();
+    productSel.innerHTML = '<option value="">-- اختر الصنف --</option>';
+    if (data.products && data.products.length > 0) {
+      allProducts = data.products;
+      renderProductOptions(allProducts);
+      productSel.disabled = false;
+      searchInput.disabled = false;
+    } else {
+      productSel.innerHTML = '<option value="">-- لا يوجد أصناف متاحة --</option>';
+    }
+  } catch(e) {
+    productSel.innerHTML = '<option value="">-- خطأ في التحميل --</option>';
+  }
+}
+
+function renderProductOptions(productsList) {
+  const productSel = document.getElementById('partProduct');
+  productSel.innerHTML = '<option value="">-- اختر الصنف --</option>';
+  productsList.forEach(p => {
+    productSel.innerHTML += `<option value="${p.id}" data-type="${p.product_type}" data-barcode="${p.barcode}">${p.name}</option>`;
+  });
+}
+
+function filterProducts(event) {
+  const query = document.getElementById('partSearch').value.toLowerCase().trim();
+  
+  // If Enter key is pressed, check for exact barcode match
+  if (event && event.key === 'Enter' && query) {
+    const exactMatch = allProducts.find(p => p.barcode && p.barcode.toLowerCase() === query);
+    if (exactMatch) {
+      document.getElementById('partProduct').value = exactMatch.id;
+      onProductChange(); // trigger serials loading if serialized
+      // Optionally focus on quantity
+      document.getElementById('partQty').focus();
+      return;
+    }
+  }
+  
+  // Filter the options
+  const filtered = allProducts.filter(p => 
+    p.name.toLowerCase().includes(query) || 
+    (p.barcode && p.barcode.toLowerCase().includes(query))
+  );
+  
+  renderProductOptions(filtered);
+}
+
+// ---- Serial loader ----
+function onProductChange() {
+  const sel = document.getElementById('partProduct');
+  const opt = sel.options[sel.selectedIndex];
+  const isSerial = opt.dataset.type === 'SERIALIZED';
+  document.getElementById('serialPickerDiv').classList.toggle('d-none', !isSerial);
+  document.getElementById('partQty').value = 1;
+  document.getElementById('partQty').disabled = isSerial;
+  if (isSerial) loadSerials();
+}
+
+async function loadSerials() {
+  const productId   = document.getElementById('partProduct').value;
+  const warehouseId = document.getElementById('partWarehouse').value;
+  const sel = document.getElementById('partProduct');
+  const opt = sel.options[sel.selectedIndex];
+  if (!productId || opt.dataset.type !== 'SERIALIZED') return;
+
+  const resp = await fetch(`/invoicing/api/product/serials/?product_id=${productId}&warehouse_id=${warehouseId}`);
+  const data = await resp.json();
+  const serialSel = document.getElementById('partSerial');
+  serialSel.innerHTML = '<option value="">-- اختر السيريال --</option>';
+  (data.serials || []).forEach(s => {
+    serialSel.innerHTML += `<option value="${s.id}">${s.display_label} - ${s.condition} - التكلفة: ${s.actual_cost} ج</option>`;
+  });
+}
+
+// ---- Add Part ----
+async function addPartToTicket() {
+  const productId   = document.getElementById('partProduct').value;
+  const warehouseId = document.getElementById('partWarehouse').value;
+  const qty         = document.getElementById('partQty').value;
+  const price       = document.getElementById('partPrice').value;
+  const serialId    = document.getElementById('partSerial')?.value || '';
+
+  if (!productId || !warehouseId || !price) {
+    alert('يجب تحديد الصنف والمخزن وسعر البيع.');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('product_id', productId);
+  formData.append('warehouse_id', warehouseId);
+  formData.append('quantity', qty);
+  formData.append('selling_price', price);
+  if (serialId) formData.append('serial_item_id', serialId);
+
+  try {
+    const resp = await fetch(`/maintenance/${TICKET_ID}/add-part/`, {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrfToken()},
+      body: formData
+    });
+    const data = await resp.json();
+    if (data.success) {
+      location.reload();
+    } else {
+      alert('خطأ: ' + data.error);
+    }
+  } catch(e) {
+    alert('خطأ في الاتصال بالسيرفر.');
+  }
+}
+
+// ---- Delete Part ----
+async function deletePart(partId) {
+  if (!confirm('حذف هذه القطعة؟ (لن يُعاد المخزون)')) return;
+  const resp = await fetch(`/maintenance/api/part/${partId}/delete/`, {
+    method: 'POST',
+    headers: {'X-CSRFToken': getCsrfToken()}
+  });
+  const data = await resp.json();
+  if (data.success) {
+    location.reload();
+  } else {
+    alert('خطأ: ' + data.error);
+  }
+}
+
+// ---- Deliver Ticket ----
+async function deliverTicket() {
+  const treasuryId = document.getElementById('deliveryTreasury').value;
+  if (!treasuryId) { alert('اختر الخزينة أولاً.'); return; }
+  if (!confirm('تأكيد تسليم الجهاز وترحيل القيد المحاسبي؟')) return;
+
+  const formData = new FormData();
+  formData.append('treasury_id', treasuryId);
+  try {
+    const resp = await fetch(`/maintenance/${TICKET_ID}/deliver/`, {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrfToken()},
+      body: formData
+    });
+    const data = await resp.json();
+    if (data.success) {
+      location.reload();
+    } else {
+      alert('خطأ: ' + data.error);
+    }
+  } catch(e) {
+    alert('خطأ في الاتصال.');
+  }
+}
+</script>
+{% csrf_token %}
+{% endblock %}

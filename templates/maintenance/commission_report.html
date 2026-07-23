@@ -1,0 +1,125 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="glass-container p-4">
+  <!-- Header -->
+  <div class="d-flex justify-between align-center mb-4 flex-wrap gap-2">
+    <h2 class="m-0" style="color:var(--text);"><i class="fas fa-chart-bar" style="color:#ff7300;"></i> {{ title }}</h2>
+    <a href="{% url 'maintenance:commission_rules' %}" class="btn btn-outline">
+      <i class="fas fa-cog"></i> إدارة القواعد
+    </a>
+  </div>
+
+  <!-- Filters -->
+  <form method="get" class="card bg-dark-glass border-0 p-3 mb-4">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-4">
+        <label class="form-label text-muted">الفترة</label>
+        <select name="period" class="form-select bg-dark-glass text-white">
+          {% for val, label in periods %}
+          <option value="{{ val }}" {% if period == val %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label text-muted">التاريخ</label>
+        <input type="date" name="date" class="form-control bg-dark-glass text-white"
+               value="{{ target_date|date:'Y-m-d' }}">
+      </div>
+      <div class="col-md-4">
+        <button type="submit" class="btn w-100" style="background:#ff7300;color:#fff;font-weight:bold;">
+          <i class="fas fa-calculator"></i> احسب العمولات
+        </button>
+      </div>
+    </div>
+  </form>
+
+  <!-- Period Summary -->
+  <div class="alert" style="background:rgba(255,115,0,0.1);border:1px solid rgba(255,115,0,0.3);border-radius:8px;" class="mb-4">
+    <i class="fas fa-calendar-alt" style="color:#ff7300;"></i>
+    الفترة: <strong>{{ start_date }}</strong> → <strong>{{ end_date }}</strong>
+  </div>
+
+  {% if report %}
+  <!-- Report Table -->
+  {% for entry in report %}
+  <div class="card bg-dark-glass border-0 mb-4">
+    <div class="card-header d-flex justify-between align-center">
+      <div class="d-flex align-center gap-3">
+        <div style="width:40px;height:40px;border-radius:50%;background:rgba(255,115,0,0.2);display:flex;align-items:center;justify-content:center;">
+          <i class="fas fa-user" style="color:#ff7300;"></i>
+        </div>
+        <div>
+          <div class="fw-bold">{{ entry.user.get_full_name|default:entry.user.username }}</div>
+          <small class="text-muted">إجمالي المبيعات: <strong>{{ entry.total_sales|floatformat:2 }} ج.م</strong></small>
+        </div>
+      </div>
+      <div class="text-end">
+        <div class="fs-5 fw-bold" style="color:#ff7300;">{{ entry.total_commission|floatformat:2 }} ج.م</div>
+        <small class="text-muted">إجمالي العمولة</small>
+      </div>
+    </div>
+    <div class="table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>الفئة</th>
+            <th>المبيعات</th>
+            <th>الشريحة</th>
+            <th>شرائح محققة</th>
+            <th>العمولة/شريحة</th>
+            <th style="color:#ff7300;">العمولة المستحقة</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for cat in entry.categories %}
+          <tr>
+            <td><strong>{{ cat.category_name }}</strong></td>
+            <td>{{ cat.sales|floatformat:2 }} ج</td>
+            <td>كل {{ cat.milestone }} ج</td>
+            <td>
+              <span class="badge bg-info">× {{ cat.milestones_achieved }}</span>
+            </td>
+            <td>{{ cat.commission_per_milestone }} ج</td>
+            <td class="fw-bold" style="color:#22c55e;">{{ cat.commission|floatformat:2 }} ج</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr style="background:rgba(255,115,0,0.1);">
+            <td colspan="5" class="fw-bold text-end">إجمالي العمولة المستحقة:</td>
+            <td class="fw-bold fs-6" style="color:#ff7300;">{{ entry.total_commission|floatformat:2 }} ج.م</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+
+  <!-- Grand Total -->
+  <div class="card border-0 p-3" style="background:rgba(255,115,0,0.15);border:1px solid rgba(255,115,0,0.4) !important;">
+    <div class="d-flex justify-between align-center">
+      <span class="fw-bold fs-5">إجمالي العمولات المستحقة (جميع الموظفين)</span>
+      <span class="fw-bold fs-4" style="color:#ff7300;">
+        {% with total=0 %}
+          {% for entry in report %}{{ entry.total_commission|add:"0" }}{% endfor %}
+        {% endwith %}
+        —
+        <span id="grandTotal">
+          {{ report|length }} موظف
+        </span>
+      </span>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="text-center py-5 text-muted">
+    <i class="fas fa-info-circle fa-2x mb-3"></i>
+    <div>لا توجد بيانات مبيعات في هذه الفترة، أو لم يتم تحديد قواعد عمولات بعد.</div>
+    <a href="{% url 'maintenance:commission_rules' %}" class="btn mt-3" style="background:#ff7300;color:#fff;">
+      إعداد قواعد العمولات أولاً
+    </a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

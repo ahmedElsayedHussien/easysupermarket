@@ -29,6 +29,7 @@ class Command(BaseCommand):
         Account.objects.get_or_create(code='1110', defaults={'name': 'النقدية والخزينة', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
         Account.objects.get_or_create(code='1120', defaults={'name': 'البنوك', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
         Account.objects.get_or_create(code='1130', defaults={'name': 'ذمم مدينة - عملاء', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+        Account.objects.get_or_create(code='1135', defaults={'name': 'ذمم الموظفين والعهد', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
         Account.objects.get_or_create(code='1140', defaults={'name': 'المخزون', 'account_type': Account.ASSET, 'parent': curr_assets})
         Account.objects.get_or_create(code='1150', defaults={'name': 'عهد نقدية ومصروفات مقدمة', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
         Account.objects.get_or_create(code='1160', defaults={'name': 'المحافظ الإلكترونية', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
@@ -44,6 +45,7 @@ class Command(BaseCommand):
         Account.objects.get_or_create(code='2130', defaults={'name': 'ضريبة القيمة المضافة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
         Account.objects.get_or_create(code='2140', defaults={'name': 'مصروفات مستحقة الدفع', 'account_type': Account.LIABILITY, 'parent': curr_liab})
         Account.objects.get_or_create(code='2150', defaults={'name': 'أرصدة دائنة أخرى', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+        Account.objects.get_or_create(code='2160', defaults={'name': 'الرواتب والأجور المستحقة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
 
         # 3000 EQUITY
         equity, _ = Account.objects.get_or_create(code='3000', defaults={'name': 'حقوق الملكية', 'account_type': Account.EQUITY})
@@ -60,13 +62,16 @@ class Command(BaseCommand):
         Account.objects.get_or_create(code='4130', defaults={'name': 'خصم مسموح به', 'account_type': Account.REVENUE, 'parent': rev})
         Account.objects.get_or_create(code='4200', defaults={'name': 'إيرادات أخرى', 'account_type': Account.REVENUE, 'parent': rev})
         Account.objects.get_or_create(code='4210', defaults={'name': 'خصم مكتسب (موردين)', 'account_type': Account.REVENUE, 'parent': rev})
+        Account.objects.get_or_create(code='4300', defaults={'name': 'إيرادات الصيانة والمصنعيات', 'account_type': Account.REVENUE, 'parent': rev})
 
         # 5000 EXPENSE
         exp, _ = Account.objects.get_or_create(code='5000', defaults={'name': 'مصروفات', 'account_type': Account.EXPENSE})
         Account.objects.get_or_create(code='5100', defaults={'name': 'تكلفة البضاعة المباعة', 'account_type': Account.EXPENSE, 'parent': exp})
+        Account.objects.get_or_create(code='5105', defaults={'name': 'تكلفة قطع الغيار المستهلكة في الصيانة', 'account_type': Account.EXPENSE, 'parent': exp})
         Account.objects.get_or_create(code='5110', defaults={'name': 'مردودات ومسموحات المشتريات', 'account_type': Account.EXPENSE, 'parent': exp})
         Account.objects.get_or_create(code='5200', defaults={'name': 'مصاريف تشغيلية', 'account_type': Account.EXPENSE, 'parent': exp})
         Account.objects.get_or_create(code='5210', defaults={'name': 'رواتب وأجور', 'account_type': Account.EXPENSE, 'parent': exp})
+        Account.objects.get_or_create(code='5215', defaults={'name': 'مصروف عمولات الموظفين', 'account_type': Account.EXPENSE, 'parent': exp})
         Account.objects.get_or_create(code='5220', defaults={'name': 'مصروف الإهلاك', 'account_type': Account.EXPENSE, 'parent': exp})
         Account.objects.get_or_create(code='5300', defaults={'name': 'مصاريف إدارية', 'account_type': Account.EXPENSE, 'parent': exp})
         Account.objects.get_or_create(code='5400', defaults={'name': 'عجز وزيادة الخزينة (الورديات)', 'account_type': Account.EXPENSE, 'parent': exp})
