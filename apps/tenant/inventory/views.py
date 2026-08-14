@@ -277,6 +277,27 @@ from django.core.exceptions import ValidationError
 def adjustment_list(request):
     adjustments = StockAdjustment.objects.all()
     return render(request, 'inventory/adjustment_list.html', {'adjustments': adjustments, 'title': 'تسويات المخزون'})
+@login_required
+@custom_permission_required('inventory.view_stockadjustment', redirect_url='core:main_screen')
+def adjustment_detail(request, pk):
+    adj = get_object_or_404(StockAdjustment.objects.select_related('warehouse', 'created_by').prefetch_related('lines__product'), pk=pk)
+    return render(request, 'inventory/adjustment_detail.html', {'adjustment': adj, 'title': f'تفاصيل التسوية #{adj.id}'})
+
+@login_required
+@custom_permission_required('inventory.delete_stockadjustment', redirect_url='core:main_screen')
+def adjustment_delete(request, pk):
+    adj = get_object_or_404(StockAdjustment, pk=pk)
+    if adj.status != 'DRAFT':
+        messages.error(request, 'لا يمكن حذف تسوية تم ترحيلها بالفعل.')
+        return redirect('inventory:adjustment_list')
+        
+    if request.method == 'POST':
+        adj.delete()
+        messages.success(request, 'تم حذف المسودة بنجاح.')
+        return redirect('inventory:adjustment_list')
+        
+    # Optional: we can just delete via POST without a confirmation template since we use JS confirm in the button.
+    return redirect('inventory:adjustment_list')
 
 @login_required
 @custom_permission_required('inventory.add_stockadjustment', redirect_url='core:main_screen')
@@ -382,28 +403,42 @@ def adjustment_confirm(request, pk):
         
         # Journal Entry
         if total_cost > 0:
+            from apps.tenant.services.journal_service import _get_system_account
+            exp_parent = _get_system_account('5200') or _get_system_account('5000')
+            rev_parent = _get_system_account('4200') or _get_system_account('4000')
+            eq_parent = _get_system_account('3000')
+
             inventory_acc, _ = Account.objects.get_or_create(
                 code='1140', defaults={'name': 'المخزون', 'account_type': Account.ASSET, 'is_active': True}
             )
             
             if adj.adjustment_type == 'OUT':
                 offset_acc, _ = Account.objects.get_or_create(
-                    code='5999', defaults={'name': 'مصروفات التالف والعجز (تسويات)', 'account_type': Account.EXPENSE, 'is_active': True}
+                    code='5250', defaults={'name': 'مصاريف تالف وهالك مخزون', 'account_type': Account.EXPENSE, 'parent': exp_parent, 'is_active': True}
                 )
+                if not offset_acc.parent and exp_parent:
+                    offset_acc.parent = exp_parent
+                    offset_acc.save()
                 debit_acc = offset_acc
                 credit_acc = inventory_acc
                 desc = f'عجز بضاعة تسوية {adj.id}'
             elif adj.adjustment_type == 'IN':
                 offset_acc, _ = Account.objects.get_or_create(
-                    code='4999', defaults={'name': 'إيرادات تسويات بالزيادة', 'account_type': Account.REVENUE, 'is_active': True}
+                    code='4999', defaults={'name': 'إيرادات تسويات بالزيادة', 'account_type': Account.REVENUE, 'parent': rev_parent, 'is_active': True}
                 )
+                if not offset_acc.parent and rev_parent:
+                    offset_acc.parent = rev_parent
+                    offset_acc.save()
                 debit_acc = inventory_acc
                 credit_acc = offset_acc
                 desc = f'زيادة بضاعة تسوية {adj.id}'
             else:
                 offset_acc, _ = Account.objects.get_or_create(
-                    code='3999', defaults={'name': 'أرصدة افتتاحية', 'account_type': Account.EQUITY, 'is_active': True}
+                    code='3999', defaults={'name': 'أرصدة افتتاحية', 'account_type': Account.EQUITY, 'parent': eq_parent, 'is_active': True}
                 )
+                if not offset_acc.parent and eq_parent:
+                    offset_acc.parent = eq_parent
+                    offset_acc.save()
                 debit_acc = inventory_acc
                 credit_acc = offset_acc
                 desc = f'رصيد افتتاحي بضاعة تسوية {adj.id}'

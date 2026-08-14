@@ -60,6 +60,16 @@ class Account(MPTTModel):
     )
     is_active = models.BooleanField(default=True, verbose_name='نشط')
     allow_reconcile = models.BooleanField(default=False, verbose_name='قابل للتسوية')
+    is_cogs = models.BooleanField(
+        default=False,
+        verbose_name='حساب تكلفة بضاعة (COGS)',
+        help_text='خصصه لحسابات تكلفة البضاعة المباعة حتى يظهر في قائمة الدخل ضمن بند تكلفة المبيعات'
+    )
+    is_contra_revenue = models.BooleanField(
+        default=False,
+        verbose_name='إيراد معاكس (مرتجعات/خصومات)',
+        help_text='خصصه لحسابات مرتجعات المبيعات والخصومات حتى تُخصم من صافي المبيعات'
+    )
     description = models.TextField(blank=True, verbose_name='وصف')
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -545,16 +555,31 @@ class Expense(models.Model):
             entry = JournalEntry.objects.create(
                 date=self.date,
                 reference=self.expense_number,
-                description=f"سداد مصروف: {self.description}"
+                description=f"سداد مصروف: {self.description}",
+                status=JournalEntry.POSTED,
+                created_by=self.created_by
             )
             
-            # Dr: Expense Account
-            JournalItem.objects.create(
-                entry=entry,
-                account=self.expense_account,
-                debit=self.amount,
-                credit=0
-            )
+            # Dr: Expense Account (Separate line per ExpenseItem with its specific description)
+            items = list(self.items.all())
+            if items:
+                for item in items:
+                    if item.amount > 0:
+                        JournalItem.objects.create(
+                            entry=entry,
+                            account=self.expense_account,
+                            debit=item.amount,
+                            credit=0,
+                            description=item.description or self.description or f"سداد مصروف: {self.expense_account.name}"
+                        )
+            else:
+                JournalItem.objects.create(
+                    entry=entry,
+                    account=self.expense_account,
+                    debit=self.amount,
+                    credit=0,
+                    description=self.description or f"سداد مصروف: {self.expense_account.name}"
+                )
             
             # Dr: VAT Account
             if self.vat_amount > 0:
@@ -564,7 +589,8 @@ class Expense(models.Model):
                         entry=entry,
                         account=vat_account,
                         debit=self.vat_amount,
-                        credit=0
+                        credit=0,
+                        description=f"ضريبة قيمة مضافة - مصروف {self.expense_number}"
                     )
                     
             # Cr: Withholding Tax Account
@@ -580,15 +606,17 @@ class Expense(models.Model):
                         entry=entry,
                         account=wh_account,
                         debit=0,
-                        credit=self.withholding_tax_amount
+                        credit=self.withholding_tax_amount,
+                        description=f"ضريبة خصم وإضافة - مصروف {self.expense_number}"
                     )
                     
-            # Cr: Payment Account (Cash/Bank)
+            # Cr: Payment Account (Cash/Bank/Wallet)
             JournalItem.objects.create(
                 entry=entry,
                 account=self.payment_account,
                 debit=0,
-                credit=self.total_amount
+                credit=self.total_amount,
+                description=f"سداد مصروف {self.expense_account.name}"
             )
             
             self.status = self.POSTED
@@ -719,7 +747,8 @@ class Voucher(models.Model):
             entry = JournalEntry.objects.create(
                 date=self.date,
                 reference=self.voucher_number,
-                description=f"{self.get_voucher_type_display()} - {self.description or ''}"
+                description=f"{self.get_voucher_type_display()} - {self.description or ''}",
+                status=JournalEntry.POSTED
             )
             
             if self.voucher_type == self.RECEIPT:

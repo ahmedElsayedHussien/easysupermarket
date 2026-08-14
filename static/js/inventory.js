@@ -541,10 +541,10 @@ const Inventory = {
         container.appendChild(alert);
 
         setTimeout(() => {
-            alert.style.transition = 'all 0.3s ease';
+            alert.style.transition = 'all 0.5s ease';
             alert.style.opacity = '0';
-            setTimeout(() => alert.remove(), 300);
-        }, 4000);
+            setTimeout(() => alert.remove(), 500);
+        }, 8000);
     }
 };
 

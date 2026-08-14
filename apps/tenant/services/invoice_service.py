@@ -203,10 +203,15 @@ def _process_purchase_invoice(invoice, lines):
         conversion_factor = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
         base_quantity = line.quantity * conversion_factor
         
-        # Critical fix: unit cost must be per BASE unit, not per uom unit
-        # For RETURN_SALE, the cost should ideally be the original COGS, but for now we use cost_price
+        # For RETURN_SALE, use the exact original line's unit COGS if available from parent invoice, else fallback to average_cost / last_purchase_price
         if invoice.invoice_type == Invoice.RETURN_SALE:
-            unit_cost = line.product.cost_price
+            unit_cost = line.product.get_average_cost(invoice.warehouse) or line.product.last_purchase_price
+            if getattr(invoice, 'parent_invoice', None):
+                orig_line = invoice.parent_invoice.lines.filter(product=line.product).first()
+                if orig_line and orig_line.quantity > 0 and orig_line.cogs_amount > 0:
+                    orig_conv = orig_line.uom.conversion_factor if getattr(orig_line, 'uom', None) else Decimal('1')
+                    orig_base_qty = orig_line.quantity * orig_conv
+                    unit_cost = (orig_line.cogs_amount / orig_base_qty).quantize(Decimal('0.0001'))
         else:
             unit_cost = line.unit_price / conversion_factor
             

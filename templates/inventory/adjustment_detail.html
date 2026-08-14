@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem; max-width: 900px; margin: auto;">
+    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
+        <h2 class="text-neon-cyan m-0"><i class="fas fa-file-invoice me-2"></i> {{ title }}</h2>
+        <div>
+            {% if adjustment.status == 'DRAFT' %}
+            <form method="post" action="{% url 'inventory:adjustment_confirm' adjustment.pk %}" style="display:inline;">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-orange" onclick="return confirm('تأكيد ترحيل التسوية وتحديث المخزون؟')">
+                    <i class="fas fa-check"></i> ترحيل واعتماد
+                </button>
+            </form>
+            <form method="post" action="{% url 'inventory:adjustment_delete' adjustment.pk %}" style="display:inline;">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-danger ms-2" onclick="return confirm('هل أنت متأكد من حذف هذه المسودة نهائياً؟')">
+                    <i class="fas fa-trash"></i> حذف
+                </button>
+            </form>
+            {% else %}
+            <span class="badge badge-success"><i class="fas fa-check-double"></i> مرحل ومكتمل</span>
+            {% endif %}
+            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-ghost ms-2"><i class="fas fa-arrow-right"></i> عودة</a>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <table class="table table-borderless text-white">
+                <tr>
+                    <th style="width: 150px; color: #94a3b8;">نوع التسوية:</th>
+                    <td>
+                        {% if adjustment.adjustment_type == 'OUT' %}
+                            <span class="text-danger font-weight-bold">إعدام / عجز</span>
+                        {% elif adjustment.adjustment_type == 'IN' %}
+                            <span class="text-success font-weight-bold">زيادة بضاعة</span>
+                        {% elif adjustment.adjustment_type == 'OPENING' %}
+                            <span class="text-info font-weight-bold">رصيد افتتاحي</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <th style="color: #94a3b8;">المستودع:</th>
+                    <td class="font-weight-bold">{{ adjustment.warehouse.name }}</td>
+                </tr>
+                <tr>
+                    <th style="color: #94a3b8;">التاريخ:</th>
+                    <td class="en">{{ adjustment.date|date:"Y-m-d" }}</td>
+                </tr>
+            </table>
+        </div>
+        <div class="col-md-6">
+            <table class="table table-borderless text-white">
+                <tr>
+                    <th style="width: 150px; color: #94a3b8;">أنشئ بواسطة:</th>
+                    <td>{{ adjustment.created_by.username|default:"-" }}</td>
+                </tr>
+                <tr>
+                    <th style="color: #94a3b8;">السبب / البيان:</th>
+                    <td>{{ adjustment.reason }}</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+
+    <h4 class="text-neon-cyan mb-3 border-bottom border-secondary pb-2">الأصناف المسواة</h4>
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>المنتج</th>
+                    <th>الباركود</th>
+                    <th>الكمية</th>
+                    {% if adjustment.adjustment_type != 'OUT' %}
+                    <th>التكلفة (للوحدة)</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for line in adjustment.lines.all %}
+                <tr>
+                    <td>{{ line.product.name }}</td>
+                    <td class="en">{{ line.product.barcode|default:"-" }}</td>
+                    <td class="en">{{ line.quantity|floatformat:2 }}</td>
+                    {% if adjustment.adjustment_type != 'OUT' %}
+                    <td class="en">{{ line.unit_cost|floatformat:2 }} ج.م</td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

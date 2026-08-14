@@ -45,6 +45,17 @@ const POS = {
             }
         } catch(e) { /* ignore */ }
     },
+
+    clearPOSCache() {
+        try {
+            sessionStorage.removeItem('pos_sessions');
+            sessionStorage.removeItem('pos_activeSessionId');
+            sessionStorage.removeItem('pos_nextSessionId');
+            this.sessions = [{id: 1, name: 'فاتورة 1', cart: []}];
+            this.activeSessionId = 1;
+            this.nextSessionId = 2;
+        } catch(e) { /* ignore */ }
+    },
     
     currentWarehouseId: null,
     currentBranchId: null,
@@ -96,6 +107,12 @@ const POS = {
         }
         
         this.setupPersistedHeaders();
+
+        window.addEventListener('pageshow', (event) => {
+            if (event.persisted) {
+                window.location.reload();
+            }
+        });
 
         console.log('[POS] Initialized. Warehouse:', this.currentWarehouseId, 'Branch:', this.currentBranchId);
     },
@@ -255,6 +272,7 @@ const POS = {
             available_stock: parseFloat(cleanNumber(row.dataset.availableStock)) || 0,
             tax_rate: parseFloat(cleanNumber(row.dataset.taxRate)) || 0,
             wht_rate: parseFloat(cleanNumber(row.dataset.whtRate)) || 0,
+            avg_cost: parseFloat(cleanNumber(row.dataset.avgCost)) || 0,
             uoms: JSON.parse(row.dataset.uoms || '[{"id":"base", "name":"Unit"}]')
         };
     },
@@ -356,8 +374,10 @@ const POS = {
                 tax_rate: parseFloat(product.tax_rate) || 0,
                 wht_rate: parseFloat(product.wht_rate) || 0,
                 available_stock: stock,
-                uoms: product.uoms || [{id:'base', name:'Unit'}],
-                uom_id: 'base'
+                uoms: product.uoms || [{id:'base', name:'Unit', factor:1.0}],
+                uom_id: 'base',
+                base_cost: parseFloat(product.avg_cost) || parseFloat(product.sale_price) || 0,
+                current_cost: parseFloat(product.avg_cost) || parseFloat(product.sale_price) || 0
             });
         }
 
@@ -430,8 +450,12 @@ const POS = {
             const selectedUom = item.uoms.find(u => u.id == uomId);
             const factor = selectedUom ? parseFloat(selectedUom.factor) || 1.0 : 1.0;
             item.price = item.base_price * factor;
+            item.current_cost = (item.base_cost || 0) * factor;
             this.saveSessions();
             this.updateCartDisplay();
+            // Update cost display in side panel if this product is selected
+            const costEl = document.getElementById('displayCost');
+            if (costEl) costEl.textContent = item.current_cost.toFixed(2);
         }
     },
 
@@ -557,11 +581,18 @@ const POS = {
                 const effectiveTaxRate = applyTax ? item.tax_rate : 0;
                 const effectiveWhtRate = applyWht ? item.wht_rate : 0;
                 const lineTotal = lineNet + (lineNet * (effectiveTaxRate / 100)) - (lineNet * (effectiveWhtRate / 100));
+                const selectedUom = item.uoms && item.uoms.find(u => u.id == item.uom_id);
+                const uomFactor = selectedUom ? parseFloat(selectedUom.factor) || 1.0 : 1.0;
+                const displayCost = ((item.base_cost || 0) * uomFactor).toFixed(2);
+                const costLabel = item.product_type !== 'SERVICE' && item.base_cost > 0 
+                    ? `<div style="font-size:0.75em; color:#f59e0b; margin-top:2px;">💰 تكلفة/وحدة: ${displayCost}</div>` 
+                    : '';
                 return `
                 <div class="cart-item" data-cart-id="${item.id}" style="display:grid; grid-template-columns: 2fr 1fr 1.5fr 1fr 1fr; gap: 5px; align-items:center; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px;">
                     <div>
                         <div class="cart-item-name">${item.name}</div>
                         <div class="cart-item-barcode" style="font-size:0.8em; color:var(--text-muted);">${item.barcode}</div>
+                        ${costLabel}
                     </div>
                     <div class="cart-item-qty d-flex align-center gap-1">
                         <button class="qty-btn" onclick="POS.updateQuantity(${item.id}, ${item.quantity - 1})" style="padding:2px 6px;">−</button>
@@ -622,11 +653,17 @@ const POS = {
         const priceEl = document.getElementById('displayPrice');
         const qtyEl = document.getElementById('displayQty');
         const stockEl = document.getElementById('displayStock');
+        const costEl = document.getElementById('displayCost');
 
         if (priceEl) priceEl.textContent = parseFloat(product.sale_price).toFixed(2);
         if (qtyEl) {
             const cartItem = this.cart.find(i => i.id === parseInt(product.id));
             qtyEl.textContent = cartItem ? cartItem.quantity : 1;
+            if (costEl && cartItem) {
+                costEl.textContent = (cartItem.current_cost || cartItem.base_cost || 0).toFixed(2);
+            } else if (costEl) {
+                costEl.textContent = parseFloat(product.avg_cost || 0).toFixed(2);
+            }
         }
         if (stockEl) stockEl.textContent = product.available_stock || 0;
     },
@@ -659,7 +696,7 @@ const POS = {
     },
 
     clearSalePriceDisplay() {
-        ['displayPrice', 'displayQty', 'displayStock'].forEach(id => {
+        ['displayPrice', 'displayQty', 'displayStock', 'displayCost'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.textContent = '-';
         });
@@ -835,9 +872,122 @@ const POS = {
     },
 
     // ============================================================
+    // PAYMENT — SPLIT / MULTI-PAYMENT
+    // ============================================================
+    processSplitPayment() {
+        if (this.cart.length === 0) {
+            this.showNotification('⚠️ السلة فارغة', 'warning');
+            return;
+        }
+        const modal = document.getElementById('splitModal');
+        if (modal) {
+            const totals = this.calculateTotals();
+            const totalEl = document.getElementById('splitModalTotal');
+            if (totalEl) totalEl.textContent = `${this.formatCurrency(totals.total)} ج.م`;
+
+            // Reset inputs
+            ['splitCashInput', 'splitCardInput', 'splitEwalletInput', 'splitBankInput', 'splitCreditInput'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '0';
+            });
+            // Default first input (cash) with full total
+            const cashInp = document.getElementById('splitCashInput');
+            if (cashInp) cashInp.value = totals.total;
+
+            this.updateSplitCalculations();
+            modal.style.display = 'flex';
+        }
+    },
+
+    updateSplitCalculations() {
+        const totals = this.calculateTotals();
+        const total = totals.total;
+
+        const cash = parseFloat(document.getElementById('splitCashInput')?.value) || 0;
+        const card = parseFloat(document.getElementById('splitCardInput')?.value) || 0;
+        const ewallet = parseFloat(document.getElementById('splitEwalletInput')?.value) || 0;
+        const bank = parseFloat(document.getElementById('splitBankInput')?.value) || 0;
+        const credit = parseFloat(document.getElementById('splitCreditInput')?.value) || 0;
+
+        const totalPaid = cash + card + ewallet + bank + credit;
+        const remaining = total - totalPaid;
+
+        const remEl = document.getElementById('splitRemainingAmount');
+        if (remEl) {
+            remEl.textContent = `${this.formatCurrency(remaining)} ج.م`;
+            remEl.style.color = Math.abs(remaining) < 0.01 ? 'var(--neon-green)' : (remaining > 0 ? 'var(--neon-gold)' : 'var(--danger)');
+        }
+    },
+
+    fillSplitRemaining(targetType) {
+        const totals = this.calculateTotals();
+        const total = totals.total;
+
+        const inputs = {
+            cash: document.getElementById('splitCashInput'),
+            card: document.getElementById('splitCardInput'),
+            ewallet: document.getElementById('splitEwalletInput'),
+            bank: document.getElementById('splitBankInput'),
+            credit: document.getElementById('splitCreditInput'),
+        };
+
+        let otherTotal = 0;
+        Object.keys(inputs).forEach(key => {
+            if (key !== targetType && inputs[key]) {
+                otherTotal += parseFloat(inputs[key].value) || 0;
+            }
+        });
+
+        const remaining = Math.max(0, total - otherTotal);
+        if (inputs[targetType]) {
+            inputs[targetType].value = remaining.toFixed(2);
+        }
+        this.updateSplitCalculations();
+    },
+
+    async confirmSplitPayment() {
+        const totals = this.calculateTotals();
+        const total = totals.total;
+
+        const cash = parseFloat(document.getElementById('splitCashInput')?.value) || 0;
+        const card = parseFloat(document.getElementById('splitCardInput')?.value) || 0;
+        const ewallet = parseFloat(document.getElementById('splitEwalletInput')?.value) || 0;
+        const bank = parseFloat(document.getElementById('splitBankInput')?.value) || 0;
+        const credit = parseFloat(document.getElementById('splitCreditInput')?.value) || 0;
+
+        const sumPaid = cash + card + ewallet + bank + credit;
+
+        if (credit > 0) {
+            const customerSelect = document.getElementById('posCustomer');
+            if (!customerSelect || !customerSelect.value) {
+                this.showNotification('⚠️ يجب اختيار عميل لتسجيل جزء آجل', 'warning');
+                return;
+            }
+        }
+
+        if (Math.abs(sumPaid - total) > 0.05) {
+            this.showNotification(`⚠️ إجمالي المبالغ المدخلة (${this.formatCurrency(sumPaid)}) لا يساوي إجمالي الفاتورة (${this.formatCurrency(total)})`, 'error');
+            return;
+        }
+
+        const ewalletSelect = document.getElementById('posEwallet');
+        const ewalletId = ewalletSelect ? ewalletSelect.value : null;
+
+        const bankSelect = document.getElementById('posBank');
+        const bankId = bankSelect ? bankSelect.value : null;
+
+        const splitPayments = { cash, card, ewallet, bank, credit };
+
+        const modal = document.getElementById('splitModal');
+        if (modal) modal.style.display = 'none';
+
+        await this.completeSale('SPLIT', cash, ewalletId, bankId, splitPayments);
+    },
+
+    // ============================================================
     // COMPLETE SALE
     // ============================================================
-    async completeSale(paymentType, cashReceived = null, ewalletId = null, bankAccountId = null) {
+    async completeSale(paymentType, cashReceived = null, ewalletId = null, bankAccountId = null, splitPayments = null) {
         if (this.cart.length === 0) return;
 
         const totals = this.calculateTotals();
@@ -883,7 +1033,8 @@ const POS = {
             tax_amount: totals.tax,
             wht_amount: totals.wht,
             total_amount: totals.total,
-            cash_received: cashReceived
+            cash_received: cashReceived,
+            payments: splitPayments || {}
         };
 
         try {
@@ -921,6 +1072,11 @@ const POS = {
             }
         } catch (err) {
             this.showNotification(`❌ خطأ: ${err.message}`, 'error');
+            if (err.message && err.message.includes('وردية')) {
+                setTimeout(() => {
+                    window.location.href = '/invoicing/pos/open-shift/';
+                }, 1500);
+            }
         }
     },
 
@@ -1157,7 +1313,7 @@ const POS = {
                     break;
                 case 'F9':
                     e.preventDefault();
-                    this.processBankPayment();
+                    this.processSplitPayment();
                     break;
                 case 'F10':
                     e.preventDefault();

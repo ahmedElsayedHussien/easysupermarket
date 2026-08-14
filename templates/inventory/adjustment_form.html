@@ -74,18 +74,29 @@
         </div>
 
         <div class="d-flex gap-3">
-            <button type="submit" class="btn btn-neon-cyan">حفظ كمسودة</button>
+            <button type="submit" class="btn btn-orange">حفظ كمسودة</button>
             <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-ghost">إلغاء</a>
         </div>
     </form>
 </div>
 
 <script>
+let availableProducts = [];
+let allProductsHtml = '';
+
 function addLine() {
     const tbody = document.querySelector('#linesTable tbody');
     const tr = tbody.querySelector('tr').cloneNode(true);
     tr.querySelectorAll('input').forEach(i => i.value = '');
-    tr.querySelectorAll('select').forEach(s => s.value = '');
+    
+    // For selects, if we have dynamic products, we populate them, else clear selection
+    const select = tr.querySelector('select[name="product_id[]"]');
+    if (availableProducts.length > 0) {
+        populateSelect(select);
+    } else {
+        select.value = '';
+    }
+    
     tbody.appendChild(tr);
     toggleCostField(); // Apply current display state to the new row
 }
@@ -107,9 +118,61 @@ function toggleCostField() {
             input.required = isIncrease;
         }
     });
+    
+    // Update product dropdowns based on new operation type
+    fetchWarehouseProducts();
 }
 
-// Initial call on page load
-document.addEventListener('DOMContentLoaded', toggleCostField);
+function populateSelect(selectEl) {
+    const currentValue = selectEl.value;
+    selectEl.innerHTML = '<option value="">-- اختر المنتج --</option>';
+    availableProducts.forEach(p => {
+        const option = document.createElement('option');
+        option.value = p.id;
+        option.textContent = p.name + (p.available_stock > 0 ? ` (المتاح: ${p.available_stock})` : '');
+        selectEl.appendChild(option);
+    });
+    // Try to keep previous selection if it still exists in the new list
+    if (currentValue && availableProducts.find(p => p.id == currentValue)) {
+        selectEl.value = currentValue;
+    }
+}
+
+function fetchWarehouseProducts() {
+    const warehouseId = document.querySelector('select[name="warehouse"]').value;
+    const type = document.getElementById('adjustment_type').value;
+    
+    if (!warehouseId) {
+        return; // Wait until a warehouse is selected
+    }
+    
+    fetch(`{% url 'inventory:api_products' %}?warehouse_id=${warehouseId}`)
+        .then(res => res.json())
+        .then(data => {
+            if (type === 'OUT') {
+                // For Write-off / Decrease: show ONLY items with stock > 0
+                availableProducts = data.products.filter(p => p.available_stock > 0);
+            } else {
+                // For Increase / Opening: show all active items
+                availableProducts = data.products;
+            }
+            
+            // Update all existing selects
+            document.querySelectorAll('select[name="product_id[]"]').forEach(select => {
+                populateSelect(select);
+            });
+        })
+        .catch(err => console.error('Error fetching products:', err));
+}
+
+// Event Listeners
+document.addEventListener('DOMContentLoaded', function() {
+    toggleCostField();
+    
+    const warehouseSelect = document.querySelector('select[name="warehouse"]');
+    warehouseSelect.addEventListener('change', fetchWarehouseProducts);
+    
+    document.getElementById('adjustment_type').addEventListener('change', fetchWarehouseProducts);
+});
 </script>
 {% endblock %}

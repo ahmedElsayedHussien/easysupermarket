@@ -109,12 +109,10 @@ def api_attendance_check(request):
         
     return JsonResponse({'error': 'عملية غير معروفة.'}, status=400)
 
-@login_required
-def payroll_list(request):
-    if not request.user.employee_profile.is_admin() and not request.user.employee_profile.is_manager():
-        messages.error(request, 'ليس لديك صلاحية الدخول.')
-        return redirect('dashboard:index')
+from apps.tenant.core.decorators import custom_permission_required
 
+@custom_permission_required('hr.view_payroll', redirect_url='core:main_screen')
+def payroll_list(request):
     payrolls = Payroll.objects.all().order_by('-year', '-month')
     context = {
         'title': 'إدارة مسيرات الرواتب',
@@ -122,12 +120,9 @@ def payroll_list(request):
     }
     return render(request, 'hr/payroll_list.html', context)
 
-@login_required
+@custom_permission_required('hr.add_payroll', redirect_url='core:main_screen')
 @require_POST
 def payroll_process(request):
-    if not request.user.employee_profile.is_admin():
-        return redirect('hr:payroll_list')
-        
     month = int(request.POST.get('month', timezone.now().month))
     year = int(request.POST.get('year', timezone.now().year))
     
@@ -165,11 +160,8 @@ def payroll_process(request):
     messages.success(request, f'تم إصدار مسير الرواتب لعدد {count} موظفين.')
     return redirect('hr:payroll_list')
 
-@login_required
+@custom_permission_required('hr.change_payroll', redirect_url='core:main_screen')
 def payroll_confirm(request, pk):
-    if not request.user.employee_profile.is_admin():
-        return redirect('hr:payroll_list')
-        
     payroll = get_object_or_404(Payroll, pk=pk)
     if not payroll.is_paid:
         entry = post_payroll(payroll)

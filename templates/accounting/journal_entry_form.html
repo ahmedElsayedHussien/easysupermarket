@@ -119,13 +119,42 @@
 
             <div style="margin-top: 2rem; display: flex; justify-content: flex-end; gap: 1rem;">
                 <a href="{% url 'accounting:journal_list' %}" class="btn-action" style="background: rgba(255,255,255,0.1);">إلغاء</a>
-                <button type="submit" id="submit-btn" class="btn-action" style="background-color: var(--neon-cyan); color: #000 !important; font-weight: bold;">
+                <button type="submit" id="submit-btn" class="btn btn-lg" style="background-color: #ff7300; border-color: #ff7300; color: white; font-weight: bold; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
                     <i class="fas fa-save"></i> حفظ وترحيل القيد
                 </button>
             </div>
         </div>
     </form>
 </div>
+
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+
+<style>
+.ts-control {
+    background-color: rgba(15, 23, 42, 0.7) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    color: #fff !important;
+    border-radius: 0.375rem;
+}
+.ts-dropdown, .ts-control, .ts-dropdown.form-control {
+    background-color: rgba(15, 23, 42, 0.95) !important;
+    color: #fff !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+.ts-dropdown .option {
+    color: #fff;
+}
+.ts-dropdown .option:hover, .ts-dropdown .option.active {
+    background-color: rgba(255, 115, 0, 0.25) !important;
+    color: #ff7300 !important;
+}
+.ts-control > input {
+    color: #fff !important;
+}
+#items-table label { display: none; }
+#items-table .mb-3 { margin-bottom: 0 !important; }
+</style>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -134,62 +163,113 @@ document.addEventListener('DOMContentLoaded', function() {
     const totalManagementForm = document.getElementById('id_items-TOTAL_FORMS');
     const emptyFormTemplate = document.getElementById('empty-form-template').querySelector('tr');
     
+    function initTomSelectOnSelect(selectElem) {
+        if (!selectElem || selectElem.tomselect) return;
+        new TomSelect(selectElem, {
+            create: false,
+            placeholder: 'ابحث بالاسم أو الكود (مثلاً: 5215 أو رواتب)...',
+            sortField: { field: "text", direction: "asc" }
+        });
+    }
+
+    // Initialize TomSelect on all existing account selects
+    document.querySelectorAll('select[name$="-account"]').forEach(selectElem => {
+        initTomSelectOnSelect(selectElem);
+    });
+
+    function checkDuplicates() {
+        const selectedAccounts = {};
+        let hasDuplicate = false;
+
+        document.querySelectorAll('#formset-container tr.item-row').forEach(row => {
+            const delInput = row.querySelector('input[name$="-DELETE"]');
+            if (delInput && delInput.checked) return;
+
+            const accSelect = row.querySelector('select[name*="account"]');
+            if (!accSelect) return;
+            const val = accSelect.value;
+
+            if (val) {
+                if (selectedAccounts[val]) {
+                    hasDuplicate = true;
+                    row.style.outline = '2px solid #ff4757';
+                    row.style.backgroundColor = 'rgba(255, 71, 87, 0.15)';
+                } else {
+                    selectedAccounts[val] = true;
+                    row.style.outline = '';
+                    row.style.backgroundColor = '';
+                }
+            } else {
+                row.style.outline = '';
+                row.style.backgroundColor = '';
+            }
+        });
+
+        return hasDuplicate;
+    }
+
     function calculateTotals() {
         let totalDebit = 0;
         let totalCredit = 0;
         
-        document.querySelectorAll('input[name$="-debit"]').forEach(input => {
-            const val = parseFloat(input.value) || 0;
-            // Also ensure if debit is entered, credit is 0
-            if(val > 0) {
-                const row = input.closest('tr');
-                const creditInput = row.querySelector('input[name$="-credit"]');
-                if(creditInput && parseFloat(creditInput.value) > 0) creditInput.value = 0;
-            }
-            totalDebit += val;
+        document.querySelectorAll('#formset-container tr.item-row').forEach(row => {
+            const delInput = row.querySelector('input[name$="-DELETE"]');
+            if (delInput && delInput.checked) return;
+
+            const debitInput = row.querySelector('input[name*="debit"], .item-debit');
+            const creditInput = row.querySelector('input[name*="credit"], .item-credit');
+
+            const debitVal = debitInput ? (parseFloat(debitInput.value) || 0) : 0;
+            const creditVal = creditInput ? (parseFloat(creditInput.value) || 0) : 0;
+
+            totalDebit += debitVal;
+            totalCredit += creditVal;
         });
         
-        document.querySelectorAll('input[name$="-credit"]').forEach(input => {
-            const val = parseFloat(input.value) || 0;
-            if(val > 0) {
-                const row = input.closest('tr');
-                const debitInput = row.querySelector('input[name$="-debit"]');
-                if(debitInput && parseFloat(debitInput.value) > 0) debitInput.value = 0;
-            }
-            totalCredit += val;
-        });
-        
-        document.getElementById('total-debit').innerText = totalDebit.toFixed(4);
-        document.getElementById('total-credit').innerText = totalCredit.toFixed(4);
+        const totalDebitElem = document.getElementById('total-debit');
+        const totalCreditElem = document.getElementById('total-credit');
+
+        if (totalDebitElem) totalDebitElem.innerText = totalDebit.toFixed(2);
+        if (totalCreditElem) totalCreditElem.innerText = totalCredit.toFixed(2);
         
         const balanceStatus = document.getElementById('balance-status');
         const submitBtn = document.getElementById('submit-btn');
-        
-        if (totalDebit === 0 && totalCredit === 0) {
+
+        const hasDuplicate = checkDuplicates();
+
+        if (!balanceStatus || !submitBtn) return;
+
+        if (hasDuplicate) {
+            balanceStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> تكرار الحساب غير مسموح!';
+            balanceStatus.style.backgroundColor = 'rgba(255, 71, 87, 0.25)';
+            balanceStatus.style.color = '#ff4757';
+            submitBtn.disabled = true;
+        } else if (totalDebit === 0 && totalCredit === 0) {
             balanceStatus.innerText = 'أدخل مبالغ القيد';
             balanceStatus.style.backgroundColor = 'rgba(255,255,255,0.1)';
             balanceStatus.style.color = '#fff';
             submitBtn.disabled = true;
         } else if (Math.abs(totalDebit - totalCredit) < 0.0001) {
             balanceStatus.innerHTML = '<i class="fas fa-check-circle"></i> القيد متزن';
-            balanceStatus.style.backgroundColor = 'rgba(46, 213, 115, 0.2)';
+            balanceStatus.style.backgroundColor = 'rgba(46, 213, 115, 0.25)';
             balanceStatus.style.color = '#2ed573';
             submitBtn.disabled = false;
         } else {
-            const diff = Math.abs(totalDebit - totalCredit).toFixed(4);
+            const diff = Math.abs(totalDebit - totalCredit).toFixed(2);
             balanceStatus.innerHTML = `<i class="fas fa-exclamation-triangle"></i> غير متزن (الفرق: ${diff})`;
-            balanceStatus.style.backgroundColor = 'rgba(255, 71, 87, 0.2)';
+            balanceStatus.style.backgroundColor = 'rgba(255, 71, 87, 0.25)';
             balanceStatus.style.color = '#ff4757';
             submitBtn.disabled = true;
         }
     }
     
-    // Listen for changes
-    document.addEventListener('input', function(e) {
-        if (e.target.tagName === 'INPUT' && (e.target.name.endsWith('-debit') || e.target.name.endsWith('-credit'))) {
-            calculateTotals();
-        }
-    });
+    // Attach event listeners to form element to capture any input/change/keyup
+    const journalForm = document.getElementById('journal-entry-form');
+    if (journalForm) {
+        journalForm.addEventListener('input', calculateTotals);
+        journalForm.addEventListener('keyup', calculateTotals);
+        journalForm.addEventListener('change', calculateTotals);
+    }
 
     // Add new row
     addBtn.addEventListener('click', function() {
@@ -200,6 +280,12 @@ document.addEventListener('DOMContentLoaded', function() {
         tableBody.appendChild(newRow);
         
         totalManagementForm.value = formCount + 1;
+        
+        const newSelect = newRow.querySelector('select[name*="account"]');
+        if (newSelect) {
+            initTomSelectOnSelect(newSelect);
+        }
+
         calculateTotals();
     });
 
@@ -207,10 +293,4 @@ document.addEventListener('DOMContentLoaded', function() {
     calculateTotals();
 });
 </script>
-
-<style>
-    /* Remove crispy forms labels for table cells since headers are used */
-    #items-table label { display: none; }
-    #items-table .mb-3 { margin-bottom: 0 !important; }
-</style>
 {% endblock %}

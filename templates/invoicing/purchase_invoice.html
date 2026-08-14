@@ -23,7 +23,7 @@
                 {% if branches %}
                 <div class="form-group">
                     <label class="form-label">الفرع</label>
-                    <select name="branch_id" class="form-select" required>
+                    <select name="branch_id" id="branchSelect" class="form-select" required onchange="filterWarehouses()">
                         <option value="">اختر الفرع...</option>
                         {% for b in branches %}
                         <option value="{{ b.id }}" {% if posted_data.branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
@@ -49,10 +49,10 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">المستودع</label>
-                    <select name="warehouse_id" class="form-select" required>
+                    <select name="warehouse_id" id="warehouseSelect" class="form-select" required>
                         <option value="">اختر المستودع...</option>
                         {% for wh in warehouses %}
-                        <option value="{{ wh.id }}" {% if posted_data.warehouse_id == wh.id|stringformat:"s" %}selected{% endif %}>{{ wh.name }}</option>
+                        <option value="{{ wh.id }}" data-branch-id="{{ wh.branch_id }}" {% if posted_data.warehouse_id == wh.id|stringformat:"s" %}selected{% endif %}>{{ wh.name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -83,6 +83,13 @@
             </div>
             
             <h4 class="text-neon-cyan mb-3">الأصناف</h4>
+            
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <input type="text" id="barcodeScanner" class="form-control border-primary" placeholder="📷 امسح الباركود هنا لإضافة الصنف تلقائياً..." autofocus onkeypress="handleBarcodeScan(event)">
+                </div>
+            </div>
+            
             <div style="overflow-x: auto;">
                 <table class="data-table mb-4" style="min-width: 600px;">
                     <thead>
@@ -197,6 +204,7 @@ function initTomSelect(element) {
     if (element.tomselect) return;
     new TomSelect(element, {
         create: false,
+        maxOptions: 1000,
         placeholder: "ابحث بالباركود أو اسم الصنف...",
         onChange: function(value) {
             updateUoMs(element);
@@ -204,6 +212,44 @@ function initTomSelect(element) {
             checkSerialRequirement(element);
         }
     });
+}
+
+// خريطة الباركود للأصناف
+const productBarcodeMap = {
+    {% for p in products %}
+    {% if p.barcode %}
+    "{{ p.barcode|escapejs }}": "{{ p.id }}",
+    {% endif %}
+    {% endfor %}
+};
+
+function handleBarcodeScan(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        const barcode = event.target.value.trim();
+        if (!barcode) return;
+        
+        const productId = productBarcodeMap[barcode];
+        if (productId) {
+            // إضافة سطر جديد بالصنف
+            addLineWithData(productId, 1, '');
+            
+            // مسح الحقل للباركود التالي
+            event.target.value = '';
+            
+            // مؤثر بصري للنجاح
+            event.target.style.backgroundColor = '#10b98120';
+            setTimeout(() => {
+                event.target.style.backgroundColor = '';
+            }, 300);
+            
+            calculateTotals();
+        } else {
+            // إذا لم يتم العثور على الصنف
+            alert('❌ لم يتم العثور على صنف بهذا الباركود: ' + barcode);
+            event.target.value = '';
+        }
+    }
 }
 
 function updateUoMs(productSelect, selectedUomId = null) {
@@ -523,6 +569,43 @@ function saveSerials() {
     }
     
     closeSerialModal();
+}
+
+// Add DOMContentLoaded to filter warehouses on page load if branch is selected
+document.addEventListener('DOMContentLoaded', function() {
+    filterWarehouses(false);
+});
+
+function filterWarehouses(resetValue = true) {
+    const branchSelect = document.getElementById('branchSelect');
+    const warehouseSelect = document.getElementById('warehouseSelect');
+    
+    if (!branchSelect || !warehouseSelect) return;
+    
+    const selectedBranchId = branchSelect.value;
+    const options = warehouseSelect.querySelectorAll('option');
+    
+    let hasVisibleOptions = false;
+    options.forEach(opt => {
+        if (!opt.value) return; // Skip placeholder option
+        const whBranchId = opt.getAttribute('data-branch-id');
+        if (selectedBranchId === "" || whBranchId === selectedBranchId) {
+            opt.style.display = '';
+            hasVisibleOptions = true;
+        } else {
+            opt.style.display = 'none';
+        }
+    });
+    
+    if (resetValue) {
+        warehouseSelect.value = '';
+    } else {
+        // If the current value is now hidden, reset it
+        const currentSelected = warehouseSelect.options[warehouseSelect.selectedIndex];
+        if (currentSelected && currentSelected.style.display === 'none') {
+            warehouseSelect.value = '';
+        }
+    }
 }
 </script>
 {% endblock %}

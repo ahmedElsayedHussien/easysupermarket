@@ -12,6 +12,9 @@ import json
 from decimal import Decimal
 from apps.tenant.core.decorators import custom_permission_required
 
+from django.views.decorators.cache import never_cache
+
+@never_cache
 @login_required
 @custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def pos_view(request):
@@ -64,8 +67,10 @@ def pos_view(request):
         p.sale_price = p.get_price_for_branch(current_branch)
         if current_warehouse:
             p.pos_stock = p.get_stock(warehouse=current_warehouse)
+            p.pos_avg_cost = float(p.get_average_cost(warehouse=current_warehouse))
         else:
             p.pos_stock = 0
+            p.pos_avg_cost = float(p.get_average_cost())
     
     from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
     
@@ -99,6 +104,7 @@ def pos_view(request):
     }
     return render(request, 'pos/index.html', context)
 
+@never_cache
 @login_required
 @custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def pos_open_shift(request):
@@ -152,6 +158,7 @@ def pos_open_shift(request):
     return render(request, 'pos/open_shift.html', context)
 
 
+@never_cache
 @login_required
 @custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def pos_close_shift(request):
@@ -161,29 +168,46 @@ def pos_close_shift(request):
         messages.warning(request, 'ليس لديك وردية مفتوحة لإغلاقها.')
         return redirect('invoicing:pos_open_shift')
 
-    # Calculate Expected Closing Balance (Opening + Cash Sales - Cash Refunds)
-    # We sum all CASH invoices linked to this session.
-    cash_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.CASH, status=Invoice.POSTED)
-    total_cash_sales = sum(inv.total_amount for inv in cash_invoices if inv.invoice_type == Invoice.SALE)
-    total_cash_refunds = sum(inv.total_amount for inv in cash_invoices if inv.invoice_type == Invoice.RETURN_SALE)
-    
-    # Calculate non-cash sales for reporting
-    card_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.CARD, status=Invoice.POSTED)
-    total_card_sales = sum(inv.total_amount for inv in card_invoices if inv.invoice_type == Invoice.SALE) - sum(inv.total_amount for inv in card_invoices if inv.invoice_type == Invoice.RETURN_SALE)
-    
-    ewallet_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.EWALLET, status=Invoice.POSTED)
-    total_ewallet_sales = sum(inv.total_amount for inv in ewallet_invoices if inv.invoice_type == Invoice.SALE) - sum(inv.total_amount for inv in ewallet_invoices if inv.invoice_type == Invoice.RETURN_SALE)
-    
-    bank_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.BANK_TRANSFER, status=Invoice.POSTED)
-    total_bank_sales = sum(inv.total_amount for inv in bank_invoices if inv.invoice_type == Invoice.SALE) - sum(inv.total_amount for inv in bank_invoices if inv.invoice_type == Invoice.RETURN_SALE)
-    
-    credit_invoices = Invoice.objects.filter(pos_session=open_session, payment_type=Invoice.CREDIT, status=Invoice.POSTED)
-    total_credit_sales = sum(inv.total_amount for inv in credit_invoices if inv.invoice_type == Invoice.SALE) - sum(inv.total_amount for inv in credit_invoices if inv.invoice_type == Invoice.RETURN_SALE)
+    # Calculate Expected Closing Balance and payment breakdowns (including SPLIT payments)
+    posted_invoices = Invoice.objects.filter(pos_session=open_session, status=Invoice.POSTED)
+
+    total_cash_sales = Decimal('0')
+    total_cash_refunds = Decimal('0')
+    total_card_sales = Decimal('0')
+    total_ewallet_sales = Decimal('0')
+    total_bank_sales = Decimal('0')
+    total_credit_sales = Decimal('0')
+
+    for inv in posted_invoices:
+        mult = Decimal('1') if inv.invoice_type == Invoice.SALE else Decimal('-1')
+
+        if inv.payment_type == Invoice.SPLIT:
+            total_cash_sales += (inv.paid_cash * mult)
+            total_card_sales += (inv.paid_card * mult)
+            total_ewallet_sales += (inv.paid_ewallet * mult)
+            total_bank_sales += (inv.paid_bank * mult)
+            total_credit_sales += (inv.paid_credit * mult)
+        elif inv.payment_type == Invoice.CASH:
+            if inv.invoice_type == Invoice.SALE:
+                total_cash_sales += inv.total_amount
+            else:
+                total_cash_refunds += inv.total_amount
+        elif inv.payment_type == Invoice.CARD:
+            total_card_sales += (inv.total_amount * mult)
+        elif inv.payment_type == Invoice.EWALLET:
+            total_ewallet_sales += (inv.total_amount * mult)
+        elif inv.payment_type == Invoice.BANK_TRANSFER:
+            total_bank_sales += (inv.total_amount * mult)
+        elif inv.payment_type == Invoice.CREDIT:
+            total_credit_sales += (inv.total_amount * mult)
 
     expected_balance = open_session.opening_balance + total_cash_sales - total_cash_refunds
 
     if request.method == 'POST':
-        actual_balance_str = request.POST.get('actual_balance', '0')
+        actual_balance_str = request.POST.get('actual_balance', '').strip()
+        if actual_balance_str == '':
+            messages.error(request, 'يرجى إدخال مبلغ النقدية الفعلية بالدرج أولاً قبل إغلاق الوردية.')
+            return redirect('invoicing:pos_close_shift')
         try:
             actual_balance = Decimal(actual_balance_str)
             difference = actual_balance - expected_balance
@@ -225,15 +249,20 @@ def purchase_invoice_view(request):
     warehouses = Warehouse.objects.filter(is_active=True)
     products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom')
     
+    def normalize_name(name):
+        if not name: return ""
+        return str(name).strip().replace('ة', 'ه').replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').lower()
+
     product_uoms_map = {}
     for p in products:
         base_name = p.get_unit_display()
         uoms = [{'id': '', 'name': base_name}]
-        seen_names = {base_name}
+        seen_normalized = {normalize_name(base_name)}
         for puom in p.uoms.all():
-            if puom.uom.name not in seen_names:
+            norm_name = normalize_name(puom.uom.name)
+            if norm_name not in seen_normalized:
                 uoms.append({'id': puom.id, 'name': puom.uom.name})
-                seen_names.add(puom.uom.name)
+                seen_normalized.add(norm_name)
         product_uoms_map[p.id] = uoms
     product_uoms_json = json.dumps(product_uoms_map)
 
@@ -602,6 +631,15 @@ def complete_sale(request):
             
             # Check if there is an open POSSession for this cashier
             open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+            if not open_session:
+                return JsonResponse({'success': False, 'error': 'يجب فتح وردية أولاً قبل الدخول لنقطة البيع أو إجراء أي عملية بيع.'}, status=400)
+
+            payments = data.get('payments', {})
+            paid_cash = Decimal(str(payments.get('cash', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CASH' else Decimal('0'))
+            paid_card = Decimal(str(payments.get('card', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CARD' else Decimal('0'))
+            paid_ewallet = Decimal(str(payments.get('ewallet', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'EWALLET' else Decimal('0'))
+            paid_bank = Decimal(str(payments.get('bank', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'BANK_TRANSFER' else Decimal('0'))
+            paid_credit = Decimal(str(payments.get('credit', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CREDIT' else Decimal('0'))
 
             # Create Invoice
             invoice = Invoice.objects.create(
@@ -614,6 +652,11 @@ def complete_sale(request):
                 treasury_id=treasury_id if treasury_id else None,
                 ewallet_id=ewallet_id if ewallet_id else None,
                 bank_account_id=bank_account_id if bank_account_id else None,
+                paid_cash=paid_cash,
+                paid_card=paid_card,
+                paid_ewallet=paid_ewallet,
+                paid_bank=paid_bank,
+                paid_credit=paid_credit,
                 status='DRAFT',
                 cashier=request.user,
                 pos_session=open_session,

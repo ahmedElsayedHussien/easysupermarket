@@ -28,5 +28,7 @@ urlpatterns = [
     
     path('adjustments/', views.adjustment_list, name='adjustment_list'),
     path('adjustments/create/', views.adjustment_create, name='adjustment_create'),
+    path('adjustments/<int:pk>/', views.adjustment_detail, name='adjustment_detail'),
     path('adjustments/<int:pk>/confirm/', views.adjustment_confirm, name='adjustment_confirm'),
+    path('adjustments/<int:pk>/delete/', views.adjustment_delete, name='adjustment_delete'),
 ]

@@ -34,7 +34,11 @@ class Warehouse(models.Model):
     )
     name = models.CharField(max_length=200, verbose_name=_('اسم المستودع'))
     code = models.CharField(max_length=20, unique=True, verbose_name=_('كود المستودع'))
-    is_cold_storage = models.BooleanField(default=False, verbose_name=_('تبريد'))
+    is_cold_storage = models.BooleanField(
+        default=False, 
+        verbose_name=_('تبريد'),
+        help_text=_('حدد هذا الخيار إذا كان المستودع مخصصاً للتبريد أو التجميد (مثل الثلاجات)')
+    )
     is_active = models.BooleanField(default=True, verbose_name=_('نشط'))
     description = models.TextField(blank=True, verbose_name=_('وصف'))
     created_at = models.DateTimeField(auto_now_add=True)

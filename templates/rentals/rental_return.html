@@ -2,37 +2,59 @@
 {% block title %}إرجاع المعدة وتسوية الحساب{% endblock %}
 
 {% block content %}
-<div class="glass-container p-4" style="max-width: 600px; margin: 2rem auto;">
+<div class="glass-container p-4" style="max-width: 640px; margin: 2rem auto;">
     <h3 class="text-neon-gold mb-4"><i class="fas fa-undo"></i> إرجاع المعدة وتسوية الحساب</h3>
-    
-    <div class="card p-3 mb-4" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05);">
-        <p><strong>المعدة:</strong> {{ rental.equipment.name }}</p>
-        <p><strong>العميل:</strong> <span class="text-neon-blue">{{ rental.customer.name }}</span></p>
-        <p><strong>إجمالي الإيجار المدفوع:</strong> <span class="text-neon-green">{{ rental.total_amount }} ج.م</span></p>
-        <p><strong>المدة المتفق عليها:</strong> {{ rental.days_rented }} يوم</p>
+
+    <div class="card p-3 mb-4" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.07);">
+        <p class="mb-1"><strong>المعدة:</strong> {{ rental.equipment.name }}</p>
+        <p class="mb-1"><strong>العميل:</strong> <span class="text-neon-blue">{{ rental.customer.name }}</span></p>
+        <p class="mb-1"><strong>إجمالي الإيجار المدفوع:</strong> <span class="text-neon-green">{{ rental.total_amount }} ج.م</span></p>
+        <p class="mb-0"><strong>المدة المتفق عليها:</strong> {{ rental.days_rented }} يوم</p>
     </div>
 
     <form method="POST">
         {% csrf_token %}
-        
+
+        <div class="mb-3">
+            <label class="form-label text-neon-pink">قيمة غرامة التأخير / التلف (إن وجد)</label>
+            <input type="number" name="penalty_amount" id="penalty_amount"
+                   class="form-control bg-dark-glass text-white"
+                   value="0" min="0" step="0.01">
+            <small class="text-muted">أدخل 0 إذا لم يكن هناك أي غرامات.</small>
+        </div>
+
         <div class="mb-3">
             <label class="form-label text-neon-cyan">قيمة المبلغ المرتجع للعميل (إن وجد)</label>
-            <input type="number" name="refund_amount" id="refund_amount" class="form-control bg-dark-glass text-white" value="0" min="0" step="0.01" max="{{ rental.total_amount }}">
+            <input type="number" name="refund_amount" id="refund_amount"
+                   class="form-control bg-dark-glass text-white"
+                   value="0" min="0" step="0.01" max="{{ rental.total_amount }}">
             <small class="text-muted">أدخل 0 إذا لم يتم رد أي مبالغ.</small>
         </div>
 
-        <div id="refund_method_div" class="mb-3" style="display: none;">
-            <label class="form-label text-neon-pink">طريقة تسوية المرتجع</label>
+        <div id="summary_div" class="p-3 mb-3 rounded" style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <strong class="text-white">صافي التسوية:</strong>
+                <span id="net_amount_display" class="fw-bold" style="font-size:1.1rem; color:#aaa;">0.00 ج.م</span>
+                <span id="net_amount_desc" class="badge bg-secondary">أدخل القيم أعلاه</span>
+            </div>
+        </div>
+
+        <div id="refund_method_div" class="mb-3" style="display:none;">
+            <label id="method_label" class="form-label text-neon-pink">طريقة التسوية</label>
             <select name="refund_method" id="refund_method" class="form-select bg-dark-glass text-white">
-                <option value="none">بدون تسوية (بالتراضي ولن ينشأ قيد)</option>
-                <option value="account_balance">إبقاء المبلغ في حساب العميل (تخفيض إيرادات فقط)</option>
-                <option value="cash">رد المبلغ للعميل كاش (تخفيض إيرادات وتخفيض خزينة)</option>
+                <option value="account_balance">تسوية على حساب العميل الآجل (مديونية / دائنية)</option>
+                <option value="cash">تسوية نقدية فورية (خزينة / محفظة)</option>
             </select>
         </div>
 
-        <div id="payment_source_div" style="display: none;">
+        <div id="payment_source_div" class="mb-3 p-3 rounded" style="display:none; border: 1px solid rgba(255,180,0,0.35); background: rgba(255,150,0,0.06);">
+            <p id="payment_source_title" class="text-neon-gold small mb-3 fw-bold">
+                اختر الخزينة أو المحفظة:
+            </p>
+
+            {% if treasuries %}
             <div class="mb-3">
-                <label class="form-label">الخزينة المسترد منها المبلغ</label>
+                <label id="treasury_label" class="form-label">الخزينة</label>
                 <select name="treasury" id="treasury" class="form-select bg-dark-glass text-white">
                     <option value="">-- اختر الخزينة --</option>
                     {% for t in treasuries %}
@@ -40,9 +62,15 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="mb-3 text-center text-muted">أو</div>
-            <div class="mb-3">
-                <label class="form-label">المحفظة المسترد منها المبلغ</label>
+            {% endif %}
+
+            {% if treasuries and ewallets %}
+            <div class="text-center text-muted mb-2">— أو —</div>
+            {% endif %}
+
+            {% if ewallets %}
+            <div class="mb-2">
+                <label id="ewallet_label" class="form-label">المحفظة الإلكترونية</label>
                 <select name="ewallet" id="ewallet" class="form-select bg-dark-glass text-white">
                     <option value="">-- اختر المحفظة --</option>
                     {% for w in ewallets %}
@@ -50,11 +78,20 @@
                     {% endfor %}
                 </select>
             </div>
+            {% endif %}
+
+            {% if not treasuries and not ewallets %}
+            <div class="alert alert-warning py-2 mb-0">
+                <i class="fas fa-exclamation-triangle me-1"></i>
+                لا توجد خزائن أو محافظ مضافة في النظام. يرجى إضافتها أولاً من إعدادات المحاسبة.
+            </div>
+            {% endif %}
         </div>
 
         <div class="mt-4 d-flex" style="gap: 1rem;">
-            <button type="submit" class="btn btn-orange flex-grow-1" onclick="return confirm('هل أنت متأكد من تنفيذ الإرجاع والتسوية؟');">
-                تأكيد الإرجاع والتسوية
+            <button type="submit" class="btn btn-orange flex-grow-1"
+                    onclick="return confirm('هل أنت متأكد من تنفيذ الإرجاع والتسوية؟');">
+                <i class="fas fa-check-circle me-1"></i> تأكيد الإرجاع والتسوية
             </button>
             <a href="{% url 'rentals:rental_list' %}" class="btn btn-secondary">إلغاء</a>
         </div>
@@ -62,50 +99,87 @@
 </div>
 
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const refundAmount = document.getElementById('refund_amount');
-        const refundMethodDiv = document.getElementById('refund_method_div');
-        const refundMethod = document.getElementById('refund_method');
-        const paymentSourceDiv = document.getElementById('payment_source_div');
+document.addEventListener('DOMContentLoaded', function () {
 
-        function toggleFields() {
-            const amount = parseFloat(refundAmount.value) || 0;
-            const noneOption = refundMethod.querySelector('option[value="none"]');
-            
-            if (amount > 0) {
-                refundMethodDiv.style.display = 'block';
-                noneOption.style.display = 'none';
-                if (refundMethod.value === 'none') {
-                    refundMethod.value = 'account_balance';
-                }
-                
-                if (refundMethod.value === 'cash') {
-                    paymentSourceDiv.style.display = 'block';
-                } else {
-                    paymentSourceDiv.style.display = 'none';
-                }
-            } else {
-                refundMethodDiv.style.display = 'none';
-                paymentSourceDiv.style.display = 'none';
-                noneOption.style.display = 'block';
-                refundMethod.value = 'none';
+    var penaltyInput   = document.getElementById('penalty_amount');
+    var refundInput    = document.getElementById('refund_amount');
+    var methodDiv      = document.getElementById('refund_method_div');
+    var methodSelect   = document.getElementById('refund_method');
+    var sourceDiv      = document.getElementById('payment_source_div');
+    var netDisplay     = document.getElementById('net_amount_display');
+    var netDesc        = document.getElementById('net_amount_desc');
+    var methodLabel    = document.getElementById('method_label');
+    var sourceTitleEl  = document.getElementById('payment_source_title');
+    var treasuryLabel  = document.getElementById('treasury_label');
+    var ewalletLabel   = document.getElementById('ewallet_label');
+    var treasurySelect = document.getElementById('treasury');
+    var ewalletSelect  = document.getElementById('ewallet');
+
+    function updateUI() {
+        var refund  = parseFloat(refundInput.value)  || 0;
+        var penalty = parseFloat(penaltyInput.value) || 0;
+        var net     = refund - penalty;
+
+        netDisplay.innerText = Math.abs(net).toFixed(2) + ' ج.م';
+
+        if (net > 0) {
+            netDisplay.style.color  = '#00ff88';
+            netDesc.innerText       = 'مستحق للعميل';
+            netDesc.className       = 'badge bg-success';
+            methodDiv.style.display = 'block';
+            if (methodLabel)    methodLabel.innerText    = 'طريقة رد المبلغ للعميل';
+            if (methodSelect && methodSelect.options.length >= 2) {
+                methodSelect.options[0].text = 'إبقاء المبلغ في حساب العميل كرصيد دائن';
+                methodSelect.options[1].text = 'رد المبلغ نقداً للعميل من الخزينة / المحفظة';
             }
+            if (sourceTitleEl) sourceTitleEl.innerText = 'الخزينة / المحفظة التي سيُرد منها المبلغ للعميل:';
+            if (treasuryLabel) treasuryLabel.innerText = 'الخزينة المدفوع منها للعميل';
+            if (ewalletLabel)  ewalletLabel.innerText  = 'المحفظة المدفوع منها للعميل';
+
+        } else if (net < 0) {
+            netDisplay.style.color  = '#ff4455';
+            netDesc.innerText       = 'مستحق على العميل';
+            netDesc.className       = 'badge bg-danger';
+            methodDiv.style.display = 'block';
+            if (methodLabel)    methodLabel.innerText    = 'طريقة تحصيل المبلغ من العميل';
+            if (methodSelect && methodSelect.options.length >= 2) {
+                methodSelect.options[0].text = 'قيد على حساب العميل الآجل (مديونية)';
+                methodSelect.options[1].text = 'تحصيل نقدي من العميل إلى الخزينة / المحفظة';
+            }
+            if (sourceTitleEl) sourceTitleEl.innerText = 'الخزينة / المحفظة التي سيُحصَّل إليها المبلغ:';
+            if (treasuryLabel) treasuryLabel.innerText = 'الخزينة المحصَّل إليها';
+            if (ewalletLabel)  ewalletLabel.innerText  = 'المحفظة المحصَّل إليها';
+
+        } else {
+            netDisplay.style.color   = '#aaaaaa';
+            netDesc.innerText        = 'لا يوجد فارق';
+            netDesc.className        = 'badge bg-secondary';
+            methodDiv.style.display  = 'none';
+            sourceDiv.style.display  = 'none';
+            return;
         }
 
-        refundAmount.addEventListener('input', toggleFields);
-        refundMethod.addEventListener('change', toggleFields);
-        toggleFields();
-        
-        // Ensure either treasury or ewallet is selected if cash is chosen
-        const treasury = document.getElementById('treasury');
-        const ewallet = document.getElementById('ewallet');
-        
-        treasury.addEventListener('change', function() {
-            if(this.value) ewallet.value = '';
+        if (methodSelect && methodSelect.value === 'cash') {
+            sourceDiv.style.display = 'block';
+        } else {
+            sourceDiv.style.display = 'none';
+        }
+    }
+
+    if (penaltyInput) penaltyInput.addEventListener('input',  updateUI);
+    if (refundInput)  refundInput.addEventListener('input',   updateUI);
+    if (methodSelect) methodSelect.addEventListener('change', updateUI);
+
+    if (treasurySelect && ewalletSelect) {
+        treasurySelect.addEventListener('change', function () {
+            if (this.value) ewalletSelect.value = '';
         });
-        ewallet.addEventListener('change', function() {
-            if(this.value) treasury.value = '';
+        ewalletSelect.addEventListener('change', function () {
+            if (this.value) treasurySelect.value = '';
         });
-    });
+    }
+
+    updateUI();
+});
 </script>
 {% endblock %}

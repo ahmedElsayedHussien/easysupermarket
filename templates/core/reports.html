@@ -22,6 +22,8 @@
         <button class="reports-tab" onclick="switchReportTab('accounting')">💰 تقارير المحاسبة</button>
         {% endif %}
         <button class="reports-tab" onclick="switchReportTab('rentals')">🚜 تقارير التأجير</button>
+        <button class="reports-tab" onclick="switchReportTab('maintenance')">🛠️ تقارير الصيانة</button>
+        <button class="reports-tab" onclick="switchReportTab('hr')">👥 الرواتب والحضور</button>
     </div>
 
     <!-- Tabs Content -->
@@ -227,6 +229,22 @@
                         <a href="{% url 'core:report_item_movement' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
+                <div class="report-card">
+                    <div class="report-icon" style="color: #ff4757;">📋</div>
+                    <div class="report-info">
+                        <h4>التسويات المخزنية (الهالك والعجز)</h4>
+                        <p>سجل حركات تسوية الكميات بالخصم والزيادة وتأثير التالف على التكلفة المالية.</p>
+                        <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-sm btn-orange">عرض التسويات</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon" style="color: var(--neon-cyan);">🚚</div>
+                    <div class="report-info">
+                        <h4>التحويلات المخزنية بين الفروع</h4>
+                        <p>تتبع حركة نقل الكميات والبضائع بين الفروع والمخازن المختلفة.</p>
+                        <a href="{% url 'inventory:transfer_stock' %}" class="btn btn-sm btn-orange">تحويل مخزني</a>
+                    </div>
+                </div>
             </div>
         </div>
         {% endif %}
@@ -234,8 +252,16 @@
         <!-- Accounting Tab -->
         {% if perms.core.view_accounting_reports %}
         <div id="tab-accounting" class="report-tab-pane" style="display: none;">
-            <h3 style="color: var(--neon-gold); margin-bottom: 1rem;">تقارير المحاسبة</h3>
+            <h3 style="color: var(--neon-gold); margin-bottom: 1rem;">تقارير المحاسبة والمالية</h3>
             <div class="reports-grid">
+                <div class="report-card" style="border: 1px solid rgba(255, 184, 0, 0.4); background: linear-gradient(135deg, rgba(255, 184, 0, 0.1), rgba(0,0,0,0.2));">
+                    <div class="report-icon" style="color: var(--neon-gold);">🏛️</div>
+                    <div class="report-info">
+                        <h4 style="color: var(--neon-gold);">الميزانية العمومية (المركز المالي)</h4>
+                        <p>عرض إجمالي الأصول، الخصوم، وحقوق الملكية وتأكيد اتزان الميزانية العمومية للشركة.</p>
+                        <a href="{% url 'accounting:balance_sheet' %}" class="btn btn-sm btn-orange">عرض الميزانية</a>
+                    </div>
+                </div>
                 <div class="report-card">
                     <div class="report-icon">🧾</div>
                     <div class="report-info">
@@ -295,9 +321,10 @@
             </div>
         </div>
         {% endif %}
+
         <!-- Rentals Tab -->
         <div id="tab-rentals" class="report-tab-pane" style="display: none;">
-            <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير التأجير</h3>
+            <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير التأجير والمعدات المؤجرة</h3>
             <div class="reports-grid">
                 <div class="report-card">
                     <div class="report-icon">🚜</div>
@@ -313,6 +340,52 @@
                         <h4 style="color: var(--neon-pink);">المتأخرات (Overdue Rentals)</h4>
                         <p>قائمة بالعقود النشطة التي تجاوزت تاريخ العودة المتوقع ولم يتم تسليمها، لمتابعة العملاء.</p>
                         <a href="{% url 'rentals:report_overdue_rentals' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Maintenance Tab -->
+        <div id="tab-maintenance" class="report-tab-pane" style="display: none;">
+            <h3 style="color: var(--neon-cyan); margin-bottom: 1rem;">تقارير الصيانة وتذاكر الإصلاح</h3>
+            <div class="reports-grid">
+                <div class="report-card">
+                    <div class="report-icon">🛠️</div>
+                    <div class="report-info">
+                        <h4>تذاكر ورش الصيانة</h4>
+                        <p>متابعة تذاكر الصيانة المفتوحة، المنجزة، والمسلّمة وتكلفة قطع الغيار والعمالة.</p>
+                        <a href="{% url 'maintenance:ticket_list' %}" class="btn btn-sm btn-orange">عرض السجل</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">🔧</div>
+                    <div class="report-info">
+                        <h4>فتح تذكرة صيانة جديدة</h4>
+                        <p>تسجيل واستلام جهاز جديد في الصيانة وتحديد العطل وتكلفة الفحص.</p>
+                        <a href="{% url 'maintenance:ticket_create' %}" class="btn btn-sm btn-orange">فتح تذكرة</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HR Tab -->
+        <div id="tab-hr" class="report-tab-pane" style="display: none;">
+            <h3 style="color: var(--neon-green); margin-bottom: 1rem;">تقارير الرواتب والحضور</h3>
+            <div class="reports-grid">
+                <div class="report-card">
+                    <div class="report-icon">💵</div>
+                    <div class="report-info">
+                        <h4>مسيرات الرواتب والاستحقاقات</h4>
+                        <p>تقرير بالرواتب الأساسية، البدلات، الخصومات وصافي الرواتب المستحقة والاعتمادات المحاسبية.</p>
+                        <a href="{% url 'hr:payroll_list' %}" class="btn btn-sm btn-orange">عرض المسيرات</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">📍</div>
+                    <div class="report-info">
+                        <h4>سجل الحضور والانصراف بـ GPS</h4>
+                        <p>متابعة تسجيل الحضور والانصراف اللحظي وتأخيرات وساعات إضافي الموظفين.</p>
+                        <a href="{% url 'hr:attendance_dashboard' %}" class="btn btn-sm btn-orange">عرض السجل</a>
                     </div>
                 </div>
             </div>

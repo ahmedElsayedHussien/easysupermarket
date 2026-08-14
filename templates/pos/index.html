@@ -86,7 +86,27 @@
                     <input type="text" id="productSearch" placeholder="{% trans 'بحث باسم المنتج' %}">
                 </div>
             </div>
-            
+
+            <!-- Product Info Strip: updates on product selection / UOM change -->
+            <div style="display:flex; gap:8px; padding:8px 10px; background:var(--bg-tertiary); border-bottom:1px solid var(--border-default); font-size:0.8rem; flex-wrap:wrap; align-items:center;">
+                <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); border:1px solid var(--border-default); border-radius:6px; padding:4px 10px;">
+                    <span style="color:var(--text-muted);">💵 {% trans 'سعر البيع' %}:</span>
+                    <span id="displayPrice" style="font-weight:700; color:var(--neon-blue);">-</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); border:1px solid rgba(245,158,11,0.5); border-radius:6px; padding:4px 10px;">
+                    <span style="color:var(--text-muted);">💰 {% trans 'التكلفة/وحدة' %}:</span>
+                    <span id="displayCost" style="font-weight:700; color:#f59e0b;">-</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); border:1px solid var(--border-default); border-radius:6px; padding:4px 10px;">
+                    <span style="color:var(--text-muted);">🔢 {% trans 'الكمية' %}:</span>
+                    <span id="displayQty" style="font-weight:700; color:var(--neon-green);">-</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); border:1px solid var(--border-default); border-radius:6px; padding:4px 10px;">
+                    <span style="color:var(--text-muted);">📦 {% trans 'المخزون' %}:</span>
+                    <span id="displayStock" style="font-weight:700; color:var(--neon-cyan);">-</span>
+                </div>
+            </div>
+
             <!-- Products Table -->
             <div class="pos-products-wrapper">
                 <table class="pos-products-table">
@@ -115,7 +135,8 @@
                             data-available-stock="{{ product.pos_stock|stringformat:'f' }}"
                             data-tax-rate="{{ product.tax_rate|stringformat:'f' }}"
                             data-wht-rate="{{ product.withholding_tax_rate|default:0|stringformat:'f' }}"
-                            data-uoms='[{"id":"base", "name":"{{ product.pos_unit_name|escapejs }}", "factor": 1.0}{% for puom in product.uoms.all %}{% if not puom.is_base %}, {"id":{{ puom.id }}, "name":"{{ puom.uom.name|escapejs }}", "factor": {{ puom.conversion_factor|stringformat:"f" }}}{% endif %}{% endfor %}]'>
+                            data-uoms='[{"id":"base", "name":"{{ product.pos_unit_name|escapejs }}", "factor": 1.0}{% for puom in product.uoms.all %}{% if not puom.is_base %}, {"id":{{ puom.id }}, "name":"{{ puom.uom.name|escapejs }}", "factor": {{ puom.conversion_factor|stringformat:"f" }}}{% endif %}{% endfor %}]'
+                            data-avg-cost="{{ product.pos_avg_cost|stringformat:'f' }}">
                             <td>
                                 <div class="product-thumb-placeholder">{% if product.product_type == 'SERVICE' %}🛠️{% else %}📦{% endif %}</div>
                             </td>
@@ -229,6 +250,7 @@
         <div class="pos-actions-right">
             <button class="action-btn action-cash-pay" onclick="POS.processCashPayment()">💵 CASH PAYMENT<br><small>(F11)</small></button>
             <button class="action-btn action-card-pay" onclick="POS.processCardPayment()">💳 CARD PAYMENT<br><small>(F12)</small></button>
+            <button class="action-btn" style="background:#8b5cf6;color:#fff;font-weight:700;" onclick="POS.processSplitPayment()">🔀 SPLIT PAYMENT<br><small>(F9)</small></button>
             <button class="action-btn" style="background:var(--accent);color:#fff;" onclick="POS.processCreditPayment()">💳 CREDIT PAYMENT<br><small>(F10)</small></button>
         </div>
     </div>
@@ -252,6 +274,66 @@
             <div class="modal-actions">
                 <button onclick="POS.confirmCashPayment()" class="btn-confirm">✅ {% trans 'تأكيد' %}</button>
                 <button onclick="document.getElementById('cashModal').style.display='none'" class="btn-cancel-modal">{% trans 'إلغاء' %}</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Split Payment Modal -->
+    <div class="modal" id="splitModal" style="display:none">
+        <div class="modal-content" style="max-width: 520px; text-align: right;">
+            <h3 style="margin-top:0; color:#8b5cf6; display:flex; align-items:center; gap:8px;">🔀 {% trans 'الدفع المتعدد / المركّب' %}</h3>
+            
+            <div class="modal-amount" style="background:var(--bg-tertiary); padding:10px 15px; border-radius:8px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;">
+                <label style="font-weight:600;">{% trans 'إجمالي الفاتورة المطلوب:' %}</label>
+                <div class="amount-display" id="splitModalTotal" style="font-size:1.3rem; font-weight:800; color:var(--neon-blue);">0.00 ج.م</div>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <!-- Cash Input -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
+                    <span style="font-weight:600; flex:1;">💵 {% trans 'كاش (نقدي)' %}:</span>
+                    <input type="number" id="splitCashInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                    <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('cash')">تعبئة المتبقي</button>
+                </div>
+
+                <!-- Card Input -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
+                    <span style="font-weight:600; flex:1;">💳 {% trans 'بطاقة (شبكة / الفيزا)' %}:</span>
+                    <input type="number" id="splitCardInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                    <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('card')">تعبئة المتبقي</button>
+                </div>
+
+                <!-- E-Wallet / InstaPay Input -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
+                    <span style="font-weight:600; flex:1;">📱 {% trans 'محفظة إلكترونية / إنستا باي' %}:</span>
+                    <input type="number" id="splitEwalletInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                    <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('ewallet')">تعبئة المتبقي</button>
+                </div>
+
+                <!-- Bank Transfer Input -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
+                    <span style="font-weight:600; flex:1;">🏛️ {% trans 'تحويل بنكي' %}:</span>
+                    <input type="number" id="splitBankInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                    <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('bank')">تعبئة المتبقي</button>
+                </div>
+
+                <!-- Credit Input -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
+                    <span style="font-weight:600; flex:1;">📋 {% trans 'آجل / حساب العميل' %}:</span>
+                    <input type="number" id="splitCreditInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                    <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('credit')">تعبئة المتبقي</button>
+                </div>
+            </div>
+
+            <!-- Remaining indicator -->
+            <div style="margin-top:15px; padding:10px; border-radius:6px; background:rgba(255,255,255,0.03); display:flex; justify-content:space-between; align-items:center; border:1px solid var(--border-default);">
+                <span style="font-weight:600;">{% trans 'المتبقي للسداد:' %}</span>
+                <span id="splitRemainingAmount" style="font-size:1.2rem; font-weight:800; color:var(--neon-gold);">0.00 ج.م</span>
+            </div>
+
+            <div class="modal-actions" style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end;">
+                <button type="button" onclick="POS.confirmSplitPayment()" class="btn-confirm" style="background:#8b5cf6;">✅ {% trans 'تأكيد الاعتماد' %}</button>
+                <button type="button" onclick="document.getElementById('splitModal').style.display='none'" class="btn-cancel-modal">{% trans 'إلغاء' %}</button>
             </div>
         </div>
     </div>

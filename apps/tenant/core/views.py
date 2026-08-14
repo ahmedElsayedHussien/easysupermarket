@@ -400,7 +400,7 @@ class UserCreateView(AdminRequiredMixin, CreateView):
         from collections import defaultdict
         
         excluded_models = ['logentry', 'contenttype', 'session', 'group', 'permission', 'employee']
-        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners'])\
+        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners', 'maintenance', 'einvoicing', 'hr', 'rentals'])\
                                   .exclude(content_type__model__in=excluded_models)\
                                   .select_related('content_type')
         
@@ -410,6 +410,10 @@ class UserCreateView(AdminRequiredMixin, CreateView):
             'inventory': 'المخزون والأصناف',
             'invoicing': 'المبيعات والمشتريات',
             'partners': 'العملاء والموردين',
+            'maintenance': 'المعدات وتذاكر الصيانة',
+            'einvoicing': 'الفاتورة والضرائب الإلكترونية',
+            'hr': 'الموارد البشرية والرواتب',
+            'rentals': 'تأجير المعدات والمساحات',
         }
         
         grouped = defaultdict(list)
@@ -441,7 +445,7 @@ class UserUpdateView(AdminRequiredMixin, UpdateView):
         from collections import defaultdict
         
         excluded_models = ['logentry', 'contenttype', 'session', 'group', 'permission', 'employee']
-        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners'])\
+        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners', 'maintenance', 'einvoicing', 'hr', 'rentals'])\
                                   .exclude(content_type__model__in=excluded_models)\
                                   .select_related('content_type')
         
@@ -451,6 +455,10 @@ class UserUpdateView(AdminRequiredMixin, UpdateView):
             'inventory': 'المخزون والأصناف',
             'invoicing': 'المبيعات والمشتريات',
             'partners': 'العملاء والموردين',
+            'maintenance': 'المعدات وتذاكر الصيانة',
+            'einvoicing': 'الفاتورة والضرائب الإلكترونية',
+            'hr': 'الموارد البشرية والرواتب',
+            'rentals': 'تأجير المعدات والمساحات',
         }
         
         grouped = defaultdict(list)

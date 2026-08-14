@@ -42,7 +42,15 @@
                     <td>{{ rental.start_date|date:"Y-m-d" }}</td>
                     <td>{{ rental.end_date|date:"Y-m-d" }}</td>
                     <td>{{ rental.get_payment_method_display }}</td>
-                    <td class="text-neon-cyan">{{ rental.total_amount }}</td>
+                    <td>
+                        <div class="text-neon-cyan">{{ rental.total_amount }}</div>
+                        {% if rental.penalty_amount > 0 %}
+                        <small class="text-neon-pink d-block" style="font-size: 0.75rem;">+ غرامة: {{ rental.penalty_amount }}</small>
+                        {% endif %}
+                        {% if rental.refund_amount > 0 %}
+                        <small class="text-muted d-block" style="font-size: 0.75rem;">- مرتجع: {{ rental.refund_amount }}</small>
+                        {% endif %}
+                    </td>
                     <td>
                         {% if rental.status == 'ACTIVE' %}
                         <span class="badge" style="background: rgba(43,255,107,0.2); color: var(--neon-green);">نشط</span>

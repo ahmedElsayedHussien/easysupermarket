@@ -83,7 +83,7 @@
             <div class="mb-4">
                 <label class="form-label text-white fw-bold" for="actual_balance">النقدية الفعلية (بعد الجرد) <span class="text-danger">*</span></label>
                 <div class="input-group input-group-lg">
-                    <input type="number" step="0.01" min="0" class="form-control text-center fw-bold fs-3" id="actual_balance" name="actual_balance" value="0.00" required dir="ltr" style="background-color: var(--bg-input); color: var(--neon-orange); border: 2px solid var(--neon-orange); padding: 15px; box-shadow: 0 0 20px rgba(255, 140, 66, 0.2) inset;">
+                    <input type="number" step="0.01" min="0" class="form-control text-center fw-bold fs-3" id="actual_balance" name="actual_balance" value="" placeholder="0.00" required dir="ltr" autofocus style="background-color: var(--bg-input); color: var(--neon-orange); border: 2px solid var(--neon-orange); padding: 15px; box-shadow: 0 0 20px rgba(255, 140, 66, 0.2) inset;">
                     <span class="input-group-text fw-bold" style="background-color: rgba(255, 140, 66, 0.2); color: var(--neon-orange); border: 2px solid var(--neon-orange); padding: 0 20px;">ج.م</span>
                 </div>
             </div>
@@ -104,11 +104,16 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const actualInput = document.getElementById('actual_balance');
-        const expectedVal = parseFloat(document.getElementById('expectedBalance').getAttribute('data-val'));
+        const expectedVal = parseFloat(document.getElementById('expectedBalance').getAttribute('data-val')) || 0;
         const diffAlert = document.getElementById('diffAlert');
         const diffText = document.getElementById('diffText');
         
         function updateDiff() {
+            if (actualInput.value.trim() === '') {
+                diffAlert.classList.add('d-none');
+                return;
+            }
+
             let actualVal = parseFloat(actualInput.value) || 0;
             let diff = actualVal - expectedVal;
             
@@ -140,7 +145,33 @@
         updateDiff();
         
         document.getElementById('closeShiftForm').addEventListener('submit', function(e) {
-            if (!confirm('هل أنت متأكد من النقدية الفعلية؟ لا يمكن التراجع عن إغلاق الوردية.')) {
+            const rawVal = actualInput.value.trim();
+            if (rawVal === '') {
+                e.preventDefault();
+                alert('⚠️ يرجى إدخال مبلغ النقدية الفعلية الموجود في الدرج أولاً.');
+                actualInput.focus();
+                return;
+            }
+
+            const actualVal = parseFloat(rawVal) || 0;
+            const diff = actualVal - expectedVal;
+
+            let msg = '';
+            if (diff < 0) {
+                msg = `⚠️ تنبيه هام من النظام:\n\nيوجد عجز في النقدية بمقدار: (${Math.abs(diff).toFixed(2)} ج.م)\n- النقدية المتوقعة: ${expectedVal.toFixed(2)} ج.م\n- النقدية المدخلة: ${actualVal.toFixed(2)} ج.م\n\nهل أنت متأكد من الاعتماد وإغلاق الوردية بهذا العجز؟`;
+            } else if (diff > 0) {
+                msg = `⚠️ تنبيه هام من النظام:\n\nيوجد زيادة في النقدية بمقدار: (${Math.abs(diff).toFixed(2)} ج.م)\n\nهل أنت متأكد من الاعتماد وإغلاق الوردية بهذه الزيادة؟`;
+            } else {
+                msg = `✅ النقدية مطابقة تماماً بدون عجز أو زيادة.\n\nهل أنت متأكد من تأكيد الجرد وإغلاق الوردية؟`;
+            }
+
+            if (confirm(msg)) {
+                try {
+                    sessionStorage.removeItem('pos_sessions');
+                    sessionStorage.removeItem('pos_activeSessionId');
+                    sessionStorage.removeItem('pos_nextSessionId');
+                } catch(err) {}
+            } else {
                 e.preventDefault();
             }
         });

@@ -87,6 +87,20 @@ class MaintenanceTicket(models.Model):
     )
 
     # ---- Accounting link (created on delivery) ----
+    PAYMENT_CASH          = 'CASH'
+    PAYMENT_BANK_TRANSFER = 'BANK_TRANSFER'
+    PAYMENT_EWALLET       = 'EWALLET'
+    PAYMENT_CREDIT        = 'CREDIT'
+    PAYMENT_SPLIT         = 'SPLIT'
+
+    PAYMENT_METHOD_CHOICES = [
+        (PAYMENT_CASH,          _('نقدي (كاش)')),
+        (PAYMENT_BANK_TRANSFER, _('تحويل بنكي / انستا باي')),
+        (PAYMENT_EWALLET,       _('محفظة إلكترونية')),
+        (PAYMENT_CREDIT,        _('آجل (على حساب العميل)')),
+        (PAYMENT_SPLIT,         _('سداد جزئي (مباشر + آجل)')),
+    ]
+
     journal_entry = models.ForeignKey(
         'accounting.JournalEntry', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='maintenance_tickets',
@@ -99,10 +113,32 @@ class MaintenanceTicket(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='delivered_tickets', verbose_name=_('سلّمه')
     )
+    payment_method = models.CharField(
+        max_length=20, choices=PAYMENT_METHOD_CHOICES, default=PAYMENT_CASH,
+        verbose_name=_('طريقة الدفع عند التسليم')
+    )
     treasury = models.ForeignKey(
         'accounting.Treasury', on_delete=models.SET_NULL,
         null=True, blank=True, related_name='maintenance_receipts',
         verbose_name=_('الخزينة (لتحصيل المبلغ)')
+    )
+    bank_account = models.ForeignKey(
+        'accounting.BankAccount', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='maintenance_receipts',
+        verbose_name=_('الحساب البنكي (لتحصيل المبلغ)')
+    )
+    ewallet = models.ForeignKey(
+        'accounting.EWallet', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='maintenance_receipts',
+        verbose_name=_('المحفظة الإلكترونية (لتحصيل المبلغ)')
+    )
+    paid_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        verbose_name=_('المبلغ المدفوع فوراً')
+    )
+    remaining_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        verbose_name=_('المبلغ الآجل المتبقي')
     )
 
     notes = models.TextField(blank=True, verbose_name=_('ملاحظات'))
@@ -139,9 +175,9 @@ class MaintenanceTicket(models.Model):
         return self.labor_cost + (self.parts_selling_total - self.parts_cost_total)
 
     # ---- Delivery & accounting ----
-    def deliver(self, user, treasury):
+    def deliver(self, user, payment_method=PAYMENT_CASH, treasury=None, bank_account=None, ewallet=None, paid_amount=None):
         """
-        Mark ticket as DELIVERED, deduct inventory for parts,
+        Mark ticket as DELIVERED, set payment details, deduct inventory for parts,
         and post the accounting journal entry — all in one atomic block.
         """
         from apps.tenant.maintenance.services import post_maintenance_journal
@@ -149,7 +185,23 @@ class MaintenanceTicket(models.Model):
             self.status = self.STATUS_DELIVERED
             self.delivered_at = timezone.now()
             self.delivered_by = user
+            self.payment_method = payment_method
             self.treasury = treasury
+            self.bank_account = bank_account
+            self.ewallet = ewallet
+
+            total = self.total_revenue
+            if payment_method == self.PAYMENT_SPLIT:
+                p_amt = Decimal(str(paid_amount or '0'))
+                self.paid_amount = max(Decimal('0'), min(p_amt, total))
+                self.remaining_amount = max(Decimal('0'), total - self.paid_amount)
+            elif payment_method == self.PAYMENT_CREDIT:
+                self.paid_amount = Decimal('0')
+                self.remaining_amount = total
+            else:
+                self.paid_amount = total
+                self.remaining_amount = Decimal('0')
+
             je = post_maintenance_journal(self, user)
             self.journal_entry = je
             self.save()

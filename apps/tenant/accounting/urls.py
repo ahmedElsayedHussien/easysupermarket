@@ -8,8 +8,10 @@ urlpatterns = [
     path('journals/create/', views.ManualJournalEntryCreateView.as_view(), name='journal_create'),
     path('journals/<int:pk>/', views.JournalEntryDetailView.as_view(), name='journal_detail'),
     
-    # Reports
+    # Reports & Chart of Accounts
     path('chart-of-accounts/', views.chart_of_accounts, name='chart_of_accounts'),
+    path('accounts/create/', views.AccountCreateView.as_view(), name='account_create'),
+    path('accounts/<int:pk>/update/', views.AccountUpdateView.as_view(), name='account_update'),
     path('setup-default-accounts/', views.setup_default_accounts, name='setup_default_accounts'),
     path('trial-balance/', views.trial_balance, name='trial_balance'),
     path('income-statement/', views.income_statement, name='income_statement'),

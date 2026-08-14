@@ -1,11 +1,13 @@
 from django.urls import reverse_lazy
-from django.views.generic import UpdateView
-from django.contrib.auth.mixins import LoginRequiredMixin
+from django.views.generic import UpdateView, ListView
+from django.shortcuts import redirect, get_object_or_404
 from django.contrib import messages
 from .models import TaxIntegrationSettings, EInvoiceLog
-from apps.tenant.core.views import AdminRequiredMixin
+from apps.tenant.core.mixins import CustomPermissionRequiredMixin
+from apps.tenant.core.decorators import custom_permission_required
 
-class TaxIntegrationSettingsUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
+class TaxIntegrationSettingsUpdateView(CustomPermissionRequiredMixin, UpdateView):
+    permission_required = 'einvoicing.change_taxintegrationsettings'
     model = TaxIntegrationSettings
     fields = ['enable_einvoicing', 'client_id', 'client_secret', 'taxpayer_activity_code', 'is_production', 'company_id', 'company_name']
     template_name = 'einvoicing/settings.html'
@@ -23,10 +25,8 @@ class TaxIntegrationSettingsUpdateView(LoginRequiredMixin, AdminRequiredMixin, U
         messages.error(self.request, 'يرجى مراجعة الأخطاء في النموذج.')
         return super().form_invalid(form)
 
-from django.views.generic import ListView
-from django.shortcuts import redirect, get_object_or_404
-
-class InvoiceApprovalListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
+class InvoiceApprovalListView(CustomPermissionRequiredMixin, ListView):
+    permission_required = 'einvoicing.view_einvoicelog'
     model = EInvoiceLog
     template_name = 'einvoicing/invoice_list.html'
     context_object_name = 'logs'
@@ -34,7 +34,8 @@ class InvoiceApprovalListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
     def get_queryset(self):
         return EInvoiceLog.objects.filter(status='WAITING_APPROVAL').order_by('-created_at')
 
-class EInvoiceHistoryListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
+class EInvoiceHistoryListView(CustomPermissionRequiredMixin, ListView):
+    permission_required = 'einvoicing.view_einvoicelog'
     model = EInvoiceLog
     template_name = 'einvoicing/invoice_history.html'
     context_object_name = 'logs'
@@ -43,6 +44,7 @@ class EInvoiceHistoryListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
         # Exclude 'WAITING_APPROVAL' so we only see ones that have entered the pipeline
         return EInvoiceLog.objects.exclude(status='WAITING_APPROVAL').order_by('-updated_at')
 
+@custom_permission_required('einvoicing.change_einvoicelog', redirect_url='core:main_screen')
 def approve_invoice_for_eta(request, log_id):
     if request.method == 'POST':
         log = get_object_or_404(EInvoiceLog, id=log_id)
@@ -54,6 +56,7 @@ def approve_invoice_for_eta(request, log_id):
 
 from .services import submit_to_eta
 
+@custom_permission_required('einvoicing.change_einvoicelog', redirect_url='core:main_screen')
 def confirm_eta_submission(request, log_id):
     if request.method == 'POST':
         log = get_object_or_404(EInvoiceLog, id=log_id)
@@ -93,7 +96,7 @@ def confirm_eta_submission(request, log_id):
             
     return redirect('einvoicing:invoice_history')
 
-
+@custom_permission_required('einvoicing.change_einvoicelog', redirect_url='core:main_screen')
 def resend_invoice(request, log_id):
     if request.method == 'POST':
         log = get_object_or_404(EInvoiceLog, id=log_id)

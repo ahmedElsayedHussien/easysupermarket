@@ -20,12 +20,13 @@
             
             <div class="form-group mb-3">
                 <label class="form-label">من مستودع</label>
-                <select name="from_warehouse" class="form-select" required>
+                <select name="from_warehouse" id="fromWarehouseSelect" class="form-select" required>
                     <option value="">اختر المستودع...</option>
                     {% for w in warehouses %}
                     <option value="{{ w.id }}">{{ w.name }}</option>
                     {% endfor %}
                 </select>
+                <small id="availableStock" class="text-neon-cyan mt-1" style="display: none; font-weight: bold;"></small>
             </div>
             
             <div class="form-group mb-3">
@@ -40,14 +41,49 @@
             
             <div class="form-group mb-4">
                 <label class="form-label">الكمية</label>
-                <input type="number" name="quantity" class="form-control" step="0.01" required>
+                <input type="number" name="quantity" id="quantityInput" class="form-control" step="0.01" required>
             </div>
             
             <div class="d-flex justify-between">
                 <a href="{% url 'inventory:stock_list' %}" class="btn btn-ghost">إلغاء</a>
-                <button type="submit" class="btn btn-neon-cyan">تأكيد التحويل</button>
+                <button type="submit" class="btn btn-orange">تأكيد التحويل</button>
             </div>
         </form>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const productSelect = document.getElementById('productSelect');
+    const fromWarehouseSelect = document.getElementById('fromWarehouseSelect');
+    const availableStockText = document.getElementById('availableStock');
+    const quantityInput = document.getElementById('quantityInput');
+
+    function checkStock() {
+        const productId = productSelect.value;
+        const warehouseId = fromWarehouseSelect.value;
+
+        if (productId && warehouseId) {
+            fetch(`{% url 'inventory:api_stock_level' %}?product_id=${productId}&warehouse_id=${warehouseId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.stock !== undefined) {
+                        availableStockText.style.display = 'block';
+                        availableStockText.textContent = `المتاح في هذا المستودع: ${data.stock}`;
+                        // Optional: Set max quantity based on available stock
+                        quantityInput.max = data.stock;
+                    }
+                })
+                .catch(err => console.error('Error fetching stock:', err));
+        } else {
+            availableStockText.style.display = 'none';
+            availableStockText.textContent = '';
+            quantityInput.removeAttribute('max');
+        }
+    }
+
+    productSelect.addEventListener('change', checkStock);
+    fromWarehouseSelect.addEventListener('change', checkStock);
+});
+</script>
 {% endblock %}

@@ -317,15 +317,15 @@ document.addEventListener('DOMContentLoaded', function() {
 // AUTO-DISMISS MESSAGES
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
-    const alerts = document.querySelectorAll('.alert');
+    const alerts = document.querySelectorAll('.alert:not(.alert-permanent)');
     alerts.forEach(function(alert) {
-        // Auto dismiss after 4 seconds
+        // Doubled auto dismiss time to 8 seconds (8000ms)
         setTimeout(() => {
-            alert.style.transition = 'all 0.4s ease';
+            alert.style.transition = 'all 0.6s ease';
             alert.style.opacity = '0';
             alert.style.transform = 'translateX(30px)';
-            setTimeout(() => alert.remove(), 400);
-        }, 4000);
+            setTimeout(() => alert.remove(), 600);
+        }, 8000);
 
         // Manual close button
         const closeBtn = alert.querySelector('.alert-close');

@@ -9,6 +9,20 @@
         </a>
     </div>
 
+    <!-- كارت إرشادي توضيحي ثابت للمستخدم -->
+    <div class="voucher-guide-banner bg-dark-glass border border-warning p-3 mb-4 rounded-3 text-light" style="border-width: 1.5px !important; box-shadow: 0 0 10px rgba(255, 193, 7, 0.15);">
+        <div class="d-flex align-items-start">
+            <i class="fas fa-lightbulb text-warning fs-4 me-3 mt-1"></i>
+            <div>
+                <strong class="d-block mb-1 text-warning fs-6"><i class="fas fa-info-circle"></i> كيف تعمل سندات القبض والصرف؟</strong>
+                <small class="d-block text-white-50">
+                    • <strong>للتعامل مع عميل أو مورد:</strong> اختر <strong>الشريك</strong> (عميل/مورد)، وسيقوم النظام تلقائياً بتحديد وتوجيه المبلغ لحسابه المحاسبي.<br>
+                    • <strong>للتحويلات الداخلية (بين الخزائن، البنوك، أو المحافظ):</strong> اترك الشريك فارغاً، واختر الجهة المراد التحويل منها وإليها في <strong>الحساب المقابل</strong>.
+                </small>
+            </div>
+        </div>
+    </div>
+
     <form method="post" class="needs-validation" novalidate>
         {% csrf_token %}
         <div class="row g-3">
@@ -23,14 +37,15 @@
                 <div class="text-danger small">{{ form.amount.errors }}</div>
             </div>
             <div class="col-md-6 mb-3">
-                <label class="form-label text-neon-blue">{{ form.partner.label }}</label>
+                <label class="form-label text-neon-blue">{{ form.partner.label }} (عميل / مورد)</label>
                 {{ form.partner }}
+                <small class="text-muted d-block mt-1"><i class="fas fa-user text-info"></i> اختر الشريك في حالة التحصيل من عميل أو السداد لمورد.</small>
                 <div class="text-danger small">{{ form.partner.errors }}</div>
             </div>
             <div class="col-md-6 mb-3">
-                <label class="form-label text-neon-blue">{{ form.account.label }}</label>
+                <label class="form-label text-neon-blue">{{ form.account.label }} (الخزينة/البنك/المحفظة)</label>
                 {{ form.account }}
-                <small class="text-muted">اختر الحساب في حالة عدم اختيار شريك.</small>
+                <small class="text-muted d-block mt-1"><i class="fas fa-exchange-alt text-warning"></i> تُستخدم للتحويل الداخلي فقط عند عدم اختيار شريك.</small>
                 <div class="text-danger small">{{ form.account.errors }}</div>
             </div>
             <div class="col-md-4 mb-3">

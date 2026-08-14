@@ -33,8 +33,11 @@ class Command(BaseCommand):
         Account.objects.get_or_create(code='1140', defaults={'name': 'المخزون', 'account_type': Account.ASSET, 'parent': curr_assets})
         Account.objects.get_or_create(code='1150', defaults={'name': 'عهد نقدية ومصروفات مقدمة', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
         Account.objects.get_or_create(code='1160', defaults={'name': 'المحافظ الإلكترونية', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+        Account.objects.get_or_create(code='1170', defaults={'name': 'ماكينات الدفع الإلكتروني (POS)', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+        Account.objects.get_or_create(code='1180', defaults={'name': 'أوراق قبض (شيكات تحت التحصيل)', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+        
         fix_assets, _ = Account.objects.get_or_create(code='1200', defaults={'name': 'أصول ثابتة', 'account_type': Account.ASSET, 'parent': assets})
-        Account.objects.get_or_create(code='1210', defaults={'name': 'الأصول الثابتة', 'account_type': Account.ASSET, 'parent': fix_assets})
+        Account.objects.get_or_create(code='1210', defaults={'name': 'الأصول الثابتة والآلات', 'account_type': Account.ASSET, 'parent': fix_assets})
         Account.objects.get_or_create(code='1220', defaults={'name': 'مجمع الإهلاك', 'account_type': Account.ASSET, 'parent': fix_assets})
 
         # 2000 LIABILITIES
@@ -44,36 +47,53 @@ class Command(BaseCommand):
         Account.objects.get_or_create(code='2120', defaults={'name': 'ضريبة الخصم والإضافة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
         Account.objects.get_or_create(code='2130', defaults={'name': 'ضريبة القيمة المضافة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
         Account.objects.get_or_create(code='2140', defaults={'name': 'مصروفات مستحقة الدفع', 'account_type': Account.LIABILITY, 'parent': curr_liab})
-        Account.objects.get_or_create(code='2150', defaults={'name': 'أرصدة دائنة أخرى', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+        Account.objects.get_or_create(code='2150', defaults={'name': 'أرصدة دائنة أخرى وتأمينات', 'account_type': Account.LIABILITY, 'parent': curr_liab})
         Account.objects.get_or_create(code='2160', defaults={'name': 'الرواتب والأجور المستحقة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+        Account.objects.get_or_create(code='2170', defaults={'name': 'أوراق دفع (شيكات برسم السداد)', 'account_type': Account.LIABILITY, 'parent': curr_liab, 'allow_reconcile': True})
+
+        long_liab, _ = Account.objects.get_or_create(code='2200', defaults={'name': 'خصوم طويلة الأجل', 'account_type': Account.LIABILITY, 'parent': liab})
+        Account.objects.get_or_create(code='2210', defaults={'name': 'قروض وتسهيلات بنكية طويلة الأجل', 'account_type': Account.LIABILITY, 'parent': long_liab})
 
         # 3000 EQUITY
         equity, _ = Account.objects.get_or_create(code='3000', defaults={'name': 'حقوق الملكية', 'account_type': Account.EQUITY})
         Account.objects.get_or_create(code='3100', defaults={'name': 'رأس المال', 'account_type': Account.EQUITY, 'parent': equity})
         Account.objects.get_or_create(code='3200', defaults={'name': 'أرباح محتجزة', 'account_type': Account.EQUITY, 'parent': equity})
         Account.objects.get_or_create(code='3300', defaults={'name': 'ملخص الدخل', 'account_type': Account.EQUITY, 'parent': equity})
-        Account.objects.get_or_create(code='3400', defaults={'name': 'جاري الشركاء / مسحوبات', 'account_type': Account.EQUITY, 'parent': equity})
+        Account.objects.get_or_create(code='3400', defaults={'name': 'جاري الشركاء / مسحوبات شخصية', 'account_type': Account.EQUITY, 'parent': equity})
 
         # 4000 REVENUE
         rev, _ = Account.objects.get_or_create(code='4000', defaults={'name': 'إيرادات', 'account_type': Account.REVENUE})
         Account.objects.get_or_create(code='4100', defaults={'name': 'المبيعات', 'account_type': Account.REVENUE, 'parent': rev})
         Account.objects.get_or_create(code='4110', defaults={'name': 'إيرادات المصنعيات والخدمات', 'account_type': Account.REVENUE, 'parent': rev})
-        Account.objects.get_or_create(code='4120', defaults={'name': 'مردودات ومسموحات المبيعات', 'account_type': Account.REVENUE, 'parent': rev})
-        Account.objects.get_or_create(code='4130', defaults={'name': 'خصم مسموح به', 'account_type': Account.REVENUE, 'parent': rev})
+        Account.objects.get_or_create(code='4120', defaults={'name': 'مردودات ومسموحات المبيعات', 'account_type': Account.REVENUE, 'parent': rev, 'is_contra_revenue': True})
+        Account.objects.get_or_create(code='4130', defaults={'name': 'خصم مسموح به', 'account_type': Account.REVENUE, 'parent': rev, 'is_contra_revenue': True})
         Account.objects.get_or_create(code='4200', defaults={'name': 'إيرادات أخرى', 'account_type': Account.REVENUE, 'parent': rev})
         Account.objects.get_or_create(code='4210', defaults={'name': 'خصم مكتسب (موردين)', 'account_type': Account.REVENUE, 'parent': rev})
+        Account.objects.get_or_create(code='4220', defaults={'name': 'إيرادات غرامات وتأخيرات', 'account_type': Account.REVENUE, 'parent': rev})
         Account.objects.get_or_create(code='4300', defaults={'name': 'إيرادات الصيانة والمصنعيات', 'account_type': Account.REVENUE, 'parent': rev})
 
         # 5000 EXPENSE
         exp, _ = Account.objects.get_or_create(code='5000', defaults={'name': 'مصروفات', 'account_type': Account.EXPENSE})
-        Account.objects.get_or_create(code='5100', defaults={'name': 'تكلفة البضاعة المباعة', 'account_type': Account.EXPENSE, 'parent': exp})
-        Account.objects.get_or_create(code='5105', defaults={'name': 'تكلفة قطع الغيار المستهلكة في الصيانة', 'account_type': Account.EXPENSE, 'parent': exp})
+        Account.objects.get_or_create(code='5100', defaults={'name': 'تكلفة البضاعة المباعة', 'account_type': Account.EXPENSE, 'parent': exp, 'is_cogs': True})
+        Account.objects.get_or_create(code='5105', defaults={'name': 'تكلفة قطع الغيار المستهلكة في الصيانة', 'account_type': Account.EXPENSE, 'parent': exp, 'is_cogs': True})
         Account.objects.get_or_create(code='5110', defaults={'name': 'مردودات ومسموحات المشتريات', 'account_type': Account.EXPENSE, 'parent': exp})
-        Account.objects.get_or_create(code='5200', defaults={'name': 'مصاريف تشغيلية', 'account_type': Account.EXPENSE, 'parent': exp})
-        Account.objects.get_or_create(code='5210', defaults={'name': 'رواتب وأجور', 'account_type': Account.EXPENSE, 'parent': exp})
-        Account.objects.get_or_create(code='5215', defaults={'name': 'مصروف عمولات الموظفين', 'account_type': Account.EXPENSE, 'parent': exp})
-        Account.objects.get_or_create(code='5220', defaults={'name': 'مصروف الإهلاك', 'account_type': Account.EXPENSE, 'parent': exp})
-        Account.objects.get_or_create(code='5300', defaults={'name': 'مصاريف إدارية', 'account_type': Account.EXPENSE, 'parent': exp})
+        
+        op_exp, _ = Account.objects.get_or_create(code='5200', defaults={'name': 'مصاريف تشغيلية', 'account_type': Account.EXPENSE, 'parent': exp})
+        Account.objects.get_or_create(code='5210', defaults={'name': 'رواتب وأجور', 'account_type': Account.EXPENSE, 'parent': op_exp})
+        Account.objects.get_or_create(code='5215', defaults={'name': 'مصروف عمولات الموظفين', 'account_type': Account.EXPENSE, 'parent': op_exp})
+        Account.objects.get_or_create(code='5220', defaults={'name': 'مصروف الإهلاك', 'account_type': Account.EXPENSE, 'parent': op_exp})
+        Account.objects.get_or_create(code='5230', defaults={'name': 'مصاريف إيجار مقرات ومستودعات', 'account_type': Account.EXPENSE, 'parent': op_exp})
+        Account.objects.get_or_create(code='5240', defaults={'name': 'مصاريف مرافق (كهرباء ومياه وإنترنت)', 'account_type': Account.EXPENSE, 'parent': op_exp})
+        Account.objects.get_or_create(code='5250', defaults={'name': 'مصاريف تالف وهالك مخزون', 'account_type': Account.EXPENSE, 'parent': op_exp})
+        
+        admin_exp, _ = Account.objects.get_or_create(code='5300', defaults={'name': 'مصاريف إدارية وعمولات بنكية', 'account_type': Account.EXPENSE, 'parent': exp})
+        Account.objects.get_or_create(code='5310', defaults={'name': 'مصاريف صيانة ونظافة المقرات', 'account_type': Account.EXPENSE, 'parent': admin_exp})
+        Account.objects.get_or_create(code='5320', defaults={'name': 'مصاريف دعاية وإعلان وتسويق', 'account_type': Account.EXPENSE, 'parent': admin_exp})
+        Account.objects.get_or_create(code='5330', defaults={'name': 'مصاريف ضيافة وبوفيه ومستلزمات', 'account_type': Account.EXPENSE, 'parent': admin_exp})
+        Account.objects.get_or_create(code='5340', defaults={'name': 'تبرعات وإعانات', 'account_type': Account.EXPENSE, 'parent': admin_exp})
+        Account.objects.get_or_create(code='5350', defaults={'name': 'مصاريف انتقالات ومواصلات', 'account_type': Account.EXPENSE, 'parent': admin_exp})
+        Account.objects.get_or_create(code='5360', defaults={'name': 'مصاريف رسوم وااشتراكات حكومية وتراخيص', 'account_type': Account.EXPENSE, 'parent': admin_exp})
+        
         Account.objects.get_or_create(code='5400', defaults={'name': 'عجز وزيادة الخزينة (الورديات)', 'account_type': Account.EXPENSE, 'parent': exp})
         
         Account.objects.rebuild()

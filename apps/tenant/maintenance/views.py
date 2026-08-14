@@ -9,14 +9,15 @@ from decimal import Decimal, InvalidOperation
 from .models import MaintenanceTicket, TicketPart
 from apps.tenant.partners.models import Partner
 from apps.tenant.inventory.models import Product, Warehouse, SerialItem
-from apps.tenant.accounting.models import Treasury
+from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
 from apps.tenant.core.models import Branch
+from apps.tenant.core.decorators import custom_permission_required
 
 
 # ---------------------------------------------------------------------------
 # Ticket List
 # ---------------------------------------------------------------------------
-@login_required
+@custom_permission_required('maintenance.view_maintenanceticket', redirect_url='core:main_screen')
 def ticket_list(request):
     status_filter = request.GET.get('status', '')
     q = request.GET.get('q', '').strip()
@@ -46,7 +47,7 @@ def ticket_list(request):
 # ---------------------------------------------------------------------------
 # Ticket Create
 # ---------------------------------------------------------------------------
-@login_required
+@custom_permission_required('maintenance.add_maintenanceticket', redirect_url='core:main_screen')
 def ticket_create(request):
     branch = getattr(request, 'branch', None)
     customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True).order_by('name')
@@ -105,23 +106,23 @@ def ticket_create(request):
 # ---------------------------------------------------------------------------
 # Ticket Detail
 # ---------------------------------------------------------------------------
-@login_required
+@custom_permission_required('maintenance.view_maintenanceticket', redirect_url='core:main_screen')
 def ticket_detail(request, pk):
     branch = getattr(request, 'branch', None)
     qs = MaintenanceTicket.objects.select_related(
-        'customer', 'technician', 'branch', 'journal_entry', 'treasury'
+        'customer', 'technician', 'branch', 'journal_entry', 'treasury', 'bank_account', 'ewallet'
     )
     if branch:
         qs = qs.filter(branch=branch)
     ticket = get_object_or_404(qs, pk=pk)
     parts = ticket.parts.select_related('product', 'warehouse', 'serial_item')
     
-    # For adding parts
     products = Product.objects.filter(is_active=True).exclude(product_type='SERVICE').order_by('name')
-    products = Product.objects.filter(is_active=True).exclude(product_type='SERVICE').order_by('name')
-    
     warehouses = Warehouse.objects.filter(is_active=True)
     treasuries = Treasury.objects.all()
+    bank_accounts = BankAccount.objects.all()
+    ewallets = EWallet.objects.all()
+
     if branch:
         warehouses = warehouses.filter(branch=branch)
         treasuries = treasuries.filter(branch=branch)
@@ -134,8 +135,11 @@ def ticket_detail(request, pk):
         'products': products,
         'warehouses': warehouses,
         'treasuries': treasuries,
+        'bank_accounts': bank_accounts,
+        'ewallets': ewallets,
         'technicians': technicians,
         'status_choices': MaintenanceTicket.STATUS_CHOICES,
+        'payment_method_choices': MaintenanceTicket.PAYMENT_METHOD_CHOICES,
         'title': f'تذكرة صيانة #{ticket.id}',
     }
     return render(request, 'maintenance/ticket_detail.html', context)
@@ -144,7 +148,7 @@ def ticket_detail(request, pk):
 # ---------------------------------------------------------------------------
 # Ticket Edit (status / labor_cost / notes)
 # ---------------------------------------------------------------------------
-@login_required
+@custom_permission_required('maintenance.change_maintenanceticket', redirect_url='core:main_screen')
 def ticket_edit(request, pk):
     branch = getattr(request, 'branch', None)
     qs = MaintenanceTicket.objects.all()
@@ -180,7 +184,7 @@ def ticket_edit(request, pk):
 # ---------------------------------------------------------------------------
 # Add Part to Ticket (with immediate stock deduction)
 # ---------------------------------------------------------------------------
-@login_required
+@custom_permission_required('maintenance.add_ticketpart', redirect_url='core:main_screen')
 def add_part(request, pk):
     branch = getattr(request, 'branch', None)
     qs = MaintenanceTicket.objects.all()
@@ -228,7 +232,7 @@ def add_part(request, pk):
 # ---------------------------------------------------------------------------
 # Delete Part
 # ---------------------------------------------------------------------------
-@login_required
+@custom_permission_required('maintenance.delete_ticketpart', redirect_url='core:main_screen')
 def delete_part(request, part_pk):
     part = get_object_or_404(TicketPart, pk=part_pk)
     if part.ticket.status == MaintenanceTicket.STATUS_DELIVERED:
@@ -240,7 +244,7 @@ def delete_part(request, part_pk):
 # ---------------------------------------------------------------------------
 # Deliver Ticket (post journal + close ticket)
 # ---------------------------------------------------------------------------
-@login_required
+@custom_permission_required('maintenance.change_maintenanceticket', redirect_url='core:main_screen')
 def deliver_ticket(request, pk):
     branch = getattr(request, 'branch', None)
     qs = MaintenanceTicket.objects.all()
@@ -251,12 +255,62 @@ def deliver_ticket(request, pk):
         return JsonResponse({'error': 'هذه التذكرة مسلّمة بالفعل.'}, status=400)
 
     if request.method == 'POST':
+        payment_method = request.POST.get('payment_method', MaintenanceTicket.PAYMENT_CASH)
         treasury_id = request.POST.get('treasury_id')
-        if not treasury_id:
-            return JsonResponse({'error': 'يجب تحديد الخزينة عند التسليم.'}, status=400)
+        bank_account_id = request.POST.get('bank_account_id')
+        ewallet_id = request.POST.get('ewallet_id')
+        paid_amount_str = request.POST.get('paid_amount', '')
+
+        treasury = None
+        bank_account = None
+        ewallet = None
+        paid_amount = None
+
+        if payment_method == MaintenanceTicket.PAYMENT_CASH:
+            if not treasury_id:
+                return JsonResponse({'error': 'يجب تحديد الخزينة عند الدفع النقدي.'}, status=400)
+            treasury = get_object_or_404(Treasury, id=treasury_id)
+
+        elif payment_method == MaintenanceTicket.PAYMENT_BANK_TRANSFER:
+            if not bank_account_id:
+                return JsonResponse({'error': 'يجب تحديد الحساب البنكي عند السداد بالتحويل/انستا باي.'}, status=400)
+            bank_account = get_object_or_404(BankAccount, id=bank_account_id)
+
+        elif payment_method == MaintenanceTicket.PAYMENT_EWALLET:
+            if not ewallet_id:
+                return JsonResponse({'error': 'يجب تحديد المحفظة الإلكترونية عند السداد بالمحفظة.'}, status=400)
+            ewallet = get_object_or_404(EWallet, id=ewallet_id)
+
+        elif payment_method == MaintenanceTicket.PAYMENT_CREDIT:
+            pass  # Full amount goes on customer account
+
+        elif payment_method == MaintenanceTicket.PAYMENT_SPLIT:
+            try:
+                paid_amount = Decimal(paid_amount_str)
+            except (InvalidOperation, TypeError):
+                paid_amount = Decimal('0')
+
+            if paid_amount > 0:
+                if treasury_id:
+                    treasury = get_object_or_404(Treasury, id=treasury_id)
+                elif bank_account_id:
+                    bank_account = get_object_or_404(BankAccount, id=bank_account_id)
+                elif ewallet_id:
+                    ewallet = get_object_or_404(EWallet, id=ewallet_id)
+                else:
+                    return JsonResponse({'error': 'يجب تحديد الحساب المالي (خزينة/بنك/محفظة) للدفعة الفورية.'}, status=400)
+        else:
+            return JsonResponse({'error': 'طريقة الدفع غير صالحة.'}, status=400)
+
         try:
-            treasury = Treasury.objects.get(id=treasury_id, is_active=True)
-            ticket.deliver(user=request.user, treasury=treasury)
+            ticket.deliver(
+                user=request.user,
+                payment_method=payment_method,
+                treasury=treasury,
+                bank_account=bank_account,
+                ewallet=ewallet,
+                paid_amount=paid_amount
+            )
             return JsonResponse({'success': True, 'redirect': f'/maintenance/{ticket.pk}/'})
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=400)

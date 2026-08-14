@@ -115,6 +115,7 @@ class Rental(models.Model):
     daily_rate = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='سعر اليوم (وقت الإيجار)')
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='إجمالي المبلغ', blank=True, null=True)
     refund_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='المبلغ المسترد')
+    penalty_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='غرامة تأخير / تلف')
     
     payment_method = models.CharField(max_length=10, choices=PAYMENT_CHOICES, default=PAYMENT_CASH, verbose_name='طريقة الدفع')
     treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, blank=True, null=True, verbose_name='الخزينة (للكاش)')
@@ -124,6 +125,9 @@ class Rental(models.Model):
     
     accrual_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_accrual', blank=True, null=True, verbose_name='قيد الاستحقاق')
     payment_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_payment', blank=True, null=True, verbose_name='قيد السداد')
+    penalty_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_penalty', blank=True, null=True, verbose_name='قيد الغرامة')
+    refund_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_refund', blank=True, null=True, verbose_name='قيد المرتجع')
+    settlement_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_settlement', blank=True, null=True, verbose_name='قيد التسوية النقدية')
 
     from django.conf import settings
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, verbose_name='بواسطة')
@@ -224,10 +228,10 @@ class Rental(models.Model):
             
             self.save()
 
-    def return_equipment(self, refund_amount=0, refund_method='none', treasury=None, ewallet=None):
+    def return_equipment(self, refund_amount=0, refund_method='none', treasury=None, ewallet=None, penalty_amount=0):
         from django.core.exceptions import ValidationError
         from django.db import transaction as db_transaction
-        from apps.tenant.accounting.models import JournalEntry, JournalItem
+        from apps.tenant.accounting.models import JournalEntry, JournalItem, Account
         from decimal import Decimal
         import datetime
         
@@ -240,38 +244,73 @@ class Rental(models.Model):
             self.equipment.save()
             
             refund_amount = Decimal(str(refund_amount))
-            self.refund_amount = refund_amount
+            penalty_amount = Decimal(str(penalty_amount))
             
-            if refund_amount > 0 and refund_method != 'none':
-                customer_account = self.customer.receivable_account or self.customer.account
-                revenue_account = self.get_rental_revenue_account()
-                
-                # 1. Reverse Revenue Entry
+            self.refund_amount = refund_amount
+            self.penalty_amount = penalty_amount
+            
+            customer_account = self.customer.receivable_account or self.customer.account
+            revenue_account = self.get_rental_revenue_account()
+            
+            # --- 1. Penalty Entry (if any) ---
+            if penalty_amount > 0:
+                penalty_revenue_acc, _ = Account.objects.get_or_create(
+                    code='4201',
+                    defaults={'name': 'إيرادات غرامات إيجار', 'account_type': Account.REVENUE, 'is_active': True}
+                )
+                penalty_entry = JournalEntry.objects.create(
+                    date=datetime.date.today(),
+                    description=f'غرامة تأخير/تلف معدة ({self.equipment.name}) على العميل {self.customer.name} | مبلغ الغرامة: {penalty_amount} ج.م',
+                    created_by=self.created_by,
+                    status=JournalEntry.DRAFT
+                )
+                JournalItem.objects.create(entry=penalty_entry, account=customer_account, debit=penalty_amount, credit=0)
+                JournalItem.objects.create(entry=penalty_entry, account=penalty_revenue_acc, debit=0, credit=penalty_amount)
+                penalty_entry.post()
+                self.penalty_journal_entry = penalty_entry
+
+            # --- 2. Refund Entry (if any) ---
+            if refund_amount > 0:
                 reverse_entry = JournalEntry.objects.create(
                     date=datetime.date.today(),
-                    description=f'تسوية إيراد مبكر وإرجاع معدة ({self.equipment.name}) للعميل {self.customer.name}',
+                    description=f'تسوية إيراد مبكر وإرجاع معدة ({self.equipment.name}) للعميل {self.customer.name} | مبلغ المرتجع: {refund_amount} ج.م',
                     created_by=self.created_by,
                     status=JournalEntry.DRAFT
                 )
                 JournalItem.objects.create(entry=reverse_entry, account=revenue_account, debit=refund_amount, credit=0)
                 JournalItem.objects.create(entry=reverse_entry, account=customer_account, debit=0, credit=refund_amount)
                 reverse_entry.post()
-                
-                # 2. Refund Cash Entry
-                if refund_method == 'cash':
-                    if not treasury and not ewallet:
-                        raise ValidationError('يجب تحديد خزينة أو محفظة للدفع الكاش.')
-                    payment_account = treasury.account if treasury else ewallet.account
-                    
-                    refund_entry = JournalEntry.objects.create(
+                self.refund_journal_entry = reverse_entry
+
+            # --- 3. Net Cash Settlement ---
+            net_amount = refund_amount - penalty_amount
+            if refund_method == 'cash' and net_amount != 0:
+                if not treasury and not ewallet:
+                    raise ValidationError('يجب تحديد خزينة أو محفظة للسداد النقدي.')
+                payment_account = treasury.account if treasury else ewallet.account
+
+                if net_amount > 0:
+                    cash_entry = JournalEntry.objects.create(
                         date=datetime.date.today(),
-                        description=f'رد مبلغ نقدي استرداد إيجار معدة ({self.equipment.name}) للعميل {self.customer.name}',
+                        description=f'سداد صافي مستحقات إرجاع معدة ({self.equipment.name}) للعميل {self.customer.name} | الصافي: {net_amount} ج.م',
                         created_by=self.created_by,
                         status=JournalEntry.DRAFT
                     )
-                    JournalItem.objects.create(entry=refund_entry, account=customer_account, debit=refund_amount, credit=0)
-                    JournalItem.objects.create(entry=refund_entry, account=payment_account, debit=0, credit=refund_amount)
-                    refund_entry.post()
+                    JournalItem.objects.create(entry=cash_entry, account=customer_account, debit=net_amount, credit=0)
+                    JournalItem.objects.create(entry=cash_entry, account=payment_account, debit=0, credit=net_amount)
+                    cash_entry.post()
+                    self.settlement_journal_entry = cash_entry
+                elif net_amount < 0:
+                    cash_entry = JournalEntry.objects.create(
+                        date=datetime.date.today(),
+                        description=f'تحصيل صافي غرامة إرجاع معدة ({self.equipment.name}) من العميل {self.customer.name} | الصافي: {abs(net_amount)} ج.م',
+                        created_by=self.created_by,
+                        status=JournalEntry.DRAFT
+                    )
+                    JournalItem.objects.create(entry=cash_entry, account=payment_account, debit=abs(net_amount), credit=0)
+                    JournalItem.objects.create(entry=cash_entry, account=customer_account, debit=0, credit=abs(net_amount))
+                    cash_entry.post()
+                    self.settlement_journal_entry = cash_entry
 
             self.save()
 

@@ -1,13 +1,13 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse_lazy
 from django.contrib import messages
-from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.generic import ListView, CreateView, UpdateView, View, DetailView
 from apps.tenant.core.mixins import CustomPermissionRequiredMixin
 from .models import Equipment, Rental
 from .forms import EquipmentForm, RentalForm
 
-class RentalPrintView(LoginRequiredMixin, DetailView):
+class RentalPrintView(CustomPermissionRequiredMixin, DetailView):
+    permission_required = 'rentals.view_rental'
     model = Rental
     template_name = 'rentals/rental_print.html'
     context_object_name = 'rental'
@@ -15,12 +15,14 @@ class RentalPrintView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return Rental.objects.select_related('equipment', 'customer', 'created_by')
 
-class EquipmentListView(LoginRequiredMixin, ListView):
+class EquipmentListView(CustomPermissionRequiredMixin, ListView):
+    permission_required = 'rentals.view_equipment'
     model = Equipment
     template_name = 'rentals/equipment_list.html'
     context_object_name = 'equipments'
 
-class EquipmentCreateView(LoginRequiredMixin, CreateView):
+class EquipmentCreateView(CustomPermissionRequiredMixin, CreateView):
+    permission_required = 'rentals.add_equipment'
     model = Equipment
     form_class = EquipmentForm
     template_name = 'rentals/equipment_form.html'
@@ -35,7 +37,8 @@ class EquipmentCreateView(LoginRequiredMixin, CreateView):
             messages.warning(self.request, f'تمت إضافة المعدة ولكن حدث خطأ في القيد الافتتاحي: {e}')
         return response
 
-class EquipmentUpdateView(LoginRequiredMixin, UpdateView):
+class EquipmentUpdateView(CustomPermissionRequiredMixin, UpdateView):
+    permission_required = 'rentals.change_equipment'
     model = Equipment
     form_class = EquipmentForm
     template_name = 'rentals/equipment_form.html'
@@ -45,7 +48,8 @@ class EquipmentUpdateView(LoginRequiredMixin, UpdateView):
         messages.success(self.request, 'تم تحديث المعدة بنجاح.')
         return super().form_valid(form)
 
-class RentalListView(LoginRequiredMixin, ListView):
+class RentalListView(CustomPermissionRequiredMixin, ListView):
+    permission_required = 'rentals.view_rental'
     model = Rental
     template_name = 'rentals/rental_list.html'
     context_object_name = 'rentals'
@@ -53,7 +57,8 @@ class RentalListView(LoginRequiredMixin, ListView):
     def get_queryset(self):
         return Rental.objects.select_related('equipment', 'customer').order_by('-created_at')
 
-class RentalCreateView(LoginRequiredMixin, CreateView):
+class RentalCreateView(CustomPermissionRequiredMixin, CreateView):
+    permission_required = 'rentals.add_rental'
     model = Rental
     form_class = RentalForm
     template_name = 'rentals/rental_form.html'
@@ -74,12 +79,14 @@ class RentalCreateView(LoginRequiredMixin, CreateView):
             form.add_error(None, str(e))
             return self.form_invalid(form)
 
-class RentalDetailView(LoginRequiredMixin, View):
+class RentalDetailView(CustomPermissionRequiredMixin, View):
+    permission_required = 'rentals.view_rental'
     def get(self, request, pk):
         rental = get_object_or_404(Rental.objects.select_related('equipment', 'customer', 'accrual_journal_entry', 'payment_journal_entry'), pk=pk)
         return render(request, 'rentals/rental_detail.html', {'rental': rental})
 
-class RentalReturnView(LoginRequiredMixin, View):
+class RentalReturnView(CustomPermissionRequiredMixin, View):
+    permission_required = 'rentals.change_rental'
     def get(self, request, pk):
         rental = get_object_or_404(Rental, pk=pk)
         from apps.tenant.accounting.models import Treasury, EWallet
@@ -95,6 +102,7 @@ class RentalReturnView(LoginRequiredMixin, View):
     def post(self, request, pk):
         rental = get_object_or_404(Rental, pk=pk)
         refund_amount = request.POST.get('refund_amount', 0)
+        penalty_amount = request.POST.get('penalty_amount', 0)
         refund_method = request.POST.get('refund_method', 'none')
         treasury_id = request.POST.get('treasury')
         ewallet_id = request.POST.get('ewallet')
@@ -108,7 +116,8 @@ class RentalReturnView(LoginRequiredMixin, View):
                 refund_amount=refund_amount,
                 refund_method=refund_method,
                 treasury=treasury,
-                ewallet=ewallet
+                ewallet=ewallet,
+                penalty_amount=penalty_amount
             )
             messages.success(request, 'تم تسجيل عودة المعدة بنجاح وأصبحت متاحة للإيجار.')
             return redirect('rentals:rental_list')
@@ -118,21 +127,17 @@ class RentalReturnView(LoginRequiredMixin, View):
 
 from django.db.models import Sum, Count
 
-class RentalReportsView(LoginRequiredMixin, View):
+class RentalReportsView(CustomPermissionRequiredMixin, View):
+    permission_required = 'rentals.view_rental'
     def get(self, request):
-        # 1. حالة المعدات
         equipment_status = Equipment.objects.values('status').annotate(count=Count('id'))
-        
-        # 2. الإيجارات النشطة (مواعيد العودة)
         active_rentals = Rental.objects.filter(status=Rental.STATUS_ACTIVE).order_by('end_date')
         
         from django.db.models import F
-        # 3. ربحية المعدات
         equipment_profitability = Equipment.objects.annotate(
             total_revenue=Sum(F('rentals__total_amount') - F('rentals__refund_amount'))
         ).order_by('-total_revenue')
 
-        # 4. إجمالي أرباح الإيجارات
         total_profits = Rental.objects.aggregate(
             total=Sum(F('total_amount') - F('refund_amount'))
         )['total'] or 0
@@ -146,7 +151,8 @@ class RentalReportsView(LoginRequiredMixin, View):
         }
         return render(request, 'rentals/reports.html', context)
 
-class EquipmentUtilizationReportView(LoginRequiredMixin, View):
+class EquipmentUtilizationReportView(CustomPermissionRequiredMixin, View):
+    permission_required = 'rentals.view_equipment'
     def get(self, request):
         import datetime
         today = datetime.date.today()
@@ -159,11 +165,9 @@ class EquipmentUtilizationReportView(LoginRequiredMixin, View):
             actual_rented_days = 0
             for r in eq.rentals.all():
                 if r.status == Rental.STATUS_RETURNED:
-                    # If returned early, the updated_at is the return date
                     days = (r.updated_at.date() - r.start_date).days
                     actual_rented_days += max(1, days)
                 else:
-                    # Still active
                     days = (today - r.start_date).days
                     actual_rented_days += max(0, days)
                     
@@ -183,7 +187,8 @@ class EquipmentUtilizationReportView(LoginRequiredMixin, View):
             'title': 'معدل تشغيل المعدات'
         })
 
-class OverdueRentalsReportView(LoginRequiredMixin, View):
+class OverdueRentalsReportView(CustomPermissionRequiredMixin, View):
+    permission_required = 'rentals.view_rental'
     def get(self, request):
         import datetime
         today = datetime.date.today()

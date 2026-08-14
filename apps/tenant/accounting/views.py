@@ -8,7 +8,9 @@ from apps.tenant.core.decorators import custom_permission_required
 
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, View
 from .models import JournalEntry, Account, PaymentMethod, Treasury, BankAccount, EWallet, Expense, Voucher
-from .forms import TreasuryForm, BankAccountForm, EWalletForm, ExpenseForm, ExpenseItemFormSet, VoucherForm
+from .forms import (
+    TreasuryForm, BankAccountForm, EWalletForm, ExpenseForm, ExpenseItemFormSet, VoucherForm, AccountForm
+)
 from django.db import transaction
 from django.core.exceptions import ValidationError
 
@@ -98,6 +100,8 @@ class TreasuryUpdateView(CustomPermissionRequiredMixin, UpdateView):
     success_url = reverse_lazy('accounting:treasury_list')
     
     def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'تعديل خزينة'
         context['cancel_url'] = self.success_url
         return context
 
@@ -307,6 +311,32 @@ class PaymentMethodUpdateView(CustomPermissionRequiredMixin, UpdateView):
         context['cancel_url'] = self.success_url
         return context
 
+class AccountCreateView(CustomPermissionRequiredMixin, CreateView):
+    permission_required = 'accounting.add_account'
+    model = Account
+    form_class = AccountForm
+    template_name = 'accounting/account_form.html'
+    success_url = reverse_lazy('accounting:chart_of_accounts')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'إضافة حساب جديد في شجرة الحسابات'
+        context['cancel_url'] = self.success_url
+        return context
+
+class AccountUpdateView(CustomPermissionRequiredMixin, UpdateView):
+    permission_required = 'accounting.change_account'
+    model = Account
+    form_class = AccountForm
+    template_name = 'accounting/account_form.html'
+    success_url = reverse_lazy('accounting:chart_of_accounts')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f'تعديل الحساب #{self.object.code}'
+        context['cancel_url'] = self.success_url
+        return context
+
 @login_required
 @custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def chart_of_accounts(request):
@@ -345,97 +375,115 @@ def trial_balance(request):
 @login_required
 @custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def income_statement(request):
-    revenue_accounts = Account.objects.filter(account_type=Account.REVENUE)
-    expense_accounts = Account.objects.filter(account_type=Account.EXPENSE)
-    
-    # Calculate Sales (usually normal revenue accounts)
-    sales_accounts = [acc for acc in revenue_accounts if not acc.has_children and acc.code in ['4100', '4110']]
+    """
+    قائمة الدخل — ديناميكية تماماً، تعتمد على نوع الحساب والأعلام فقط.
+    أي حساب مصروف أو إيراد جديد يُضاف لشجرة الحسابات سيظهر هنا تلقائياً.
+    """
+    from django.db.models import Sum
+    from decimal import Decimal
+
+    # ── تصفية الحسابات بالنوع (لا كودات ثابتة)
+    revenue_leaf_accounts = Account.objects.filter(
+        account_type=Account.REVENUE, is_active=True
+    ).exclude(children__isnull=False)
+
+    expense_leaf_accounts = Account.objects.filter(
+        account_type=Account.EXPENSE, is_active=True
+    ).exclude(children__isnull=False)
+
+    # ── إيرادات المبيعات الأساسية (REVENUE وليس معاكساً)
+    sales_accounts = [acc for acc in revenue_leaf_accounts if not acc.is_contra_revenue]
     total_sales = sum(acc.current_balance for acc in sales_accounts)
-    
-    # Calculate Contra-Revenue (Returns & Discounts)
-    contra_revenue_accounts = [acc for acc in revenue_accounts if not acc.has_children and acc.code in ['4120', '4130']]
-    total_contra_revenue = sum(acc.current_balance for acc in contra_revenue_accounts) # This will naturally be negative
-    
-    # Other Revenues
-    other_revenue_accounts = [acc for acc in revenue_accounts if not acc.has_children and acc.code not in ['4100', '4110', '4120', '4130']]
-    total_other_revenue = sum(acc.current_balance for acc in other_revenue_accounts)
-    
-    net_sales = total_sales + total_contra_revenue
-    total_revenue = net_sales + total_other_revenue
-    
-    # COGS
-    cogs_accounts = [acc for acc in expense_accounts if not acc.has_children and acc.code.startswith('51')]
+
+    # ── الإيرادات المعاكسة (مرتجعات، خصومات)
+    contra_revenue_accounts = [acc for acc in revenue_leaf_accounts if acc.is_contra_revenue]
+    total_contra_revenue = sum(acc.current_balance for acc in contra_revenue_accounts)
+
+    net_sales = total_sales - total_contra_revenue
+
+    # ── تكلفة البضاعة المباعة COGS
+    cogs_accounts = [acc for acc in expense_leaf_accounts if acc.is_cogs]
     total_cogs = sum(acc.current_balance for acc in cogs_accounts)
-    
+
     gross_profit = net_sales - total_cogs
-    
-    # Operating Expenses
-    op_expense_accounts = [acc for acc in expense_accounts if not acc.has_children and not acc.code.startswith('51')]
+
+    # ── مصروفات التشغيل (كل مصروف ليس COGS)
+    op_expense_accounts = [acc for acc in expense_leaf_accounts if not acc.is_cogs]
     total_op_expense = sum(acc.current_balance for acc in op_expense_accounts)
-    
+
     total_expense = total_cogs + total_op_expense
-    net_income = total_revenue - total_expense
+    net_income = net_sales - total_expense
 
     context = {
         'sales_accounts': sales_accounts,
         'contra_revenue_accounts': contra_revenue_accounts,
-        'other_revenue_accounts': other_revenue_accounts,
         'cogs_accounts': cogs_accounts,
         'op_expense_accounts': op_expense_accounts,
         'total_sales': total_sales,
         'total_contra_revenue': total_contra_revenue,
         'net_sales': net_sales,
-        'total_other_revenue': total_other_revenue,
-        'total_revenue': total_revenue,
         'total_cogs': total_cogs,
         'gross_profit': gross_profit,
         'total_op_expense': total_op_expense,
         'total_expense': total_expense,
         'net_income': net_income,
-        'title': 'قائمة الدخل'
+        'title': 'قائمة الدخل',
     }
     return render(request, 'accounting/income_statement.html', context)
 
 @login_required
 @custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def balance_sheet(request):
-    asset_accounts = Account.objects.filter(account_type=Account.ASSET)
-    liability_accounts = Account.objects.filter(account_type=Account.LIABILITY)
-    equity_accounts = Account.objects.filter(account_type=Account.EQUITY)
-    
-    # Group Assets
-    current_assets = [acc for acc in asset_accounts if not acc.has_children and acc.code.startswith('11')]
-    fixed_assets = [acc for acc in asset_accounts if not acc.has_children and acc.code.startswith('12')]
-    total_assets = sum(acc.current_balance for acc in asset_accounts if not acc.has_children)
-    
-    # Group Liabilities
-    current_liabilities = [acc for acc in liability_accounts if not acc.has_children and acc.code.startswith('21')]
-    long_term_liabilities = [acc for acc in liability_accounts if not acc.has_children and acc.code.startswith('22')]
-    total_liabilities = sum(acc.current_balance for acc in liability_accounts if not acc.has_children)
-    
-    total_equity = sum(acc.current_balance for acc in equity_accounts if not acc.has_children)
-    
-    revenue_accounts = Account.objects.filter(account_type=Account.REVENUE)
-    expense_accounts = Account.objects.filter(account_type=Account.EXPENSE)
-    
-    net_income = sum(acc.current_balance for acc in revenue_accounts if not acc.has_children) - sum(acc.current_balance for acc in expense_accounts if not acc.has_children)
-    
+    """
+    الميزانية العمومية — ديناميكية تماماً.
+    أي حساب أصول/خصوم/حقوق ملكية يضاف لشجرة الحسابات يظهر هنا تلقائياً.
+    """
+    # ── جلب الحسابات الطرفية (leaf) فقط لتجنب الازدواجية
+    asset_accounts     = [acc for acc in Account.objects.filter(account_type=Account.ASSET,      is_active=True) if not acc.has_children]
+    liability_accounts = [acc for acc in Account.objects.filter(account_type=Account.LIABILITY,  is_active=True) if not acc.has_children]
+    equity_accounts    = [acc for acc in Account.objects.filter(account_type=Account.EQUITY,     is_active=True) if not acc.has_children]
+    revenue_accounts   = [acc for acc in Account.objects.filter(account_type=Account.REVENUE,    is_active=True) if not acc.has_children]
+    expense_accounts   = [acc for acc in Account.objects.filter(account_type=Account.EXPENSE,    is_active=True) if not acc.has_children]
+
+    # ── تصنيف الأصول بالكود (11xx = متداولة، 12xx = ثابتة، غيرهم = أخرى)
+    current_assets      = [acc for acc in asset_accounts if acc.code.startswith('11')]
+    fixed_assets        = [acc for acc in asset_accounts if acc.code.startswith('12')]
+    other_assets        = [acc for acc in asset_accounts if not acc.code.startswith('11') and not acc.code.startswith('12')]
+
+    # ── تصنيف الخصوم بالكود (21xx = متداولة، 22xx = طويلة الأجل، غيرهم = أخرى)
+    current_liabilities      = [acc for acc in liability_accounts if acc.code.startswith('21')]
+    long_term_liabilities    = [acc for acc in liability_accounts if acc.code.startswith('22')]
+    other_liabilities        = [acc for acc in liability_accounts if not acc.code.startswith('21') and not acc.code.startswith('22')]
+
+    total_assets      = sum(acc.current_balance for acc in asset_accounts)
+    total_liabilities = sum(acc.current_balance for acc in liability_accounts)
+    total_equity      = sum(acc.current_balance for acc in equity_accounts)
+
+    # ── صافي الدخل يُضاف لحقوق الملكية
+    net_income = (
+        sum(acc.current_balance for acc in revenue_accounts) -
+        sum(acc.current_balance for acc in expense_accounts)
+    )
+
     total_liabilities_and_equity = total_liabilities + total_equity + net_income
 
     context = {
         'current_assets': current_assets,
         'fixed_assets': fixed_assets,
+        'other_assets': other_assets,
         'current_liabilities': current_liabilities,
         'long_term_liabilities': long_term_liabilities,
-        'equity_accounts': [acc for acc in equity_accounts if not acc.has_children],
+        'other_liabilities': other_liabilities,
+        'equity_accounts': equity_accounts,
         'total_assets': total_assets,
         'total_liabilities': total_liabilities,
         'total_equity': total_equity,
         'net_income': net_income,
         'total_liabilities_and_equity': total_liabilities_and_equity,
-        'title': 'الميزانية العمومية'
+        'title': 'الميزانية العمومية',
     }
     return render(request, 'accounting/balance_sheet.html', context)
+
 # -----------------------------------------------------------------------------
 # Expenses
 # -----------------------------------------------------------------------------
@@ -492,6 +540,11 @@ class ExpenseCreateView(CustomPermissionRequiredMixin, CreateView):
     form_class = ExpenseForm
     template_name = 'accounting/expense_form.html'
     success_url = reverse_lazy('accounting:expense_list')
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['user'] = self.request.user
+        return kwargs
     
     def get_context_data(self, **kwargs):
         from .forms import ExpenseItemFormSet

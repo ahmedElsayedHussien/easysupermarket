@@ -129,6 +129,7 @@ class Invoice(models.Model):
     CARD = 'CARD'
     EWALLET = 'EWALLET'
     BANK_TRANSFER = 'BANK_TRANSFER'
+    SPLIT = 'SPLIT'
 
     PAYMENT_TYPE_CHOICES = [
         (CASH, 'نقدي'),
@@ -136,6 +137,7 @@ class Invoice(models.Model):
         (CARD, 'بطاقة'),
         (EWALLET, 'محفظة إلكترونية'),
         (BANK_TRANSFER, 'تحويل بنكي'),
+        (SPLIT, 'دفع متعدد/مركب'),
     ]
 
     DRAFT = 'DRAFT'
@@ -211,6 +213,12 @@ class Invoice(models.Model):
         max_length=20, choices=PAYMENT_TYPE_CHOICES, default=CASH,
         verbose_name='طريقة الدفع'
     )
+    paid_cash = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ النقدي')
+    paid_card = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ البطاقة')
+    paid_ewallet = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ المحفظة/إنستا باي')
+    paid_bank = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ التحويل البنكي')
+    paid_credit = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ الآجل')
+
     status = models.CharField(
         max_length=15, choices=STATUS_CHOICES, default=DRAFT, verbose_name='الحالة'
     )

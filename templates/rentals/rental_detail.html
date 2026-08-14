@@ -33,6 +33,12 @@
                 </p>
                 <p><strong>طريقة السداد:</strong> {{ rental.get_payment_method_display }}</p>
                 <p><strong>إجمالي المبلغ:</strong> <span class="text-neon-green">{{ rental.total_amount }} ج.م</span></p>
+                {% if rental.penalty_amount > 0 %}
+                <p><strong>غرامة تأخير/تلف:</strong> <span class="text-neon-pink">{{ rental.penalty_amount }} ج.م</span></p>
+                {% endif %}
+                {% if rental.refund_amount > 0 %}
+                <p><strong>المبلغ المرتجع:</strong> <span class="text-neon-cyan">{{ rental.refund_amount }} ج.م</span></p>
+                {% endif %}
                 {% if rental.treasury %}<p><strong>الخزينة:</strong> {{ rental.treasury.name }}</p>{% endif %}
                 {% if rental.ewallet %}<p><strong>المحفظة:</strong> {{ rental.ewallet.name }}</p>{% endif %}
             </div>
@@ -53,24 +59,79 @@
 
     <!-- Accounting Entries -->
     <div class="card p-3 mb-4" style="background: rgba(13,20,36,0.6); border: 1px solid rgba(255,255,255,0.05);">
-        <h5 class="text-neon-gold mb-3">القيود المحاسبية المرتبطة</h5>
-        
-        {% if rental.accrual_journal_entry %}
-        <div class="d-flex justify-between align-center mb-2" style="border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">
-            <span><strong>قيد الاستحقاق:</strong> {{ rental.accrual_journal_entry.description }}</span>
-            <a href="{% url 'accounting:journal_detail' rental.accrual_journal_entry.pk %}" class="btn-action text-neon-blue btn-sm">عرض القيد</a>
-        </div>
-        {% endif %}
-        
-        {% if rental.payment_journal_entry %}
-        <div class="d-flex justify-between align-center mt-2">
-            <span><strong>قيد السداد:</strong> {{ rental.payment_journal_entry.description }}</span>
-            <a href="{% url 'accounting:journal_detail' rental.payment_journal_entry.pk %}" class="btn-action text-neon-blue btn-sm">عرض القيد</a>
-        </div>
-        {% endif %}
-        
-        {% if not rental.accrual_journal_entry and not rental.payment_journal_entry %}
-        <p class="text-muted m-0">لا توجد قيود محاسبية مرتبطة.</p>
+        <h5 class="text-neon-gold mb-3"><i class="fas fa-book me-1"></i> القيود المحاسبية المرتبطة</h5>
+
+        {% if rental.accrual_journal_entry or rental.payment_journal_entry or rental.penalty_journal_entry or rental.refund_journal_entry or rental.settlement_journal_entry %}
+        <table class="table table-dark table-sm mb-0" style="border-color: rgba(255,255,255,0.08);">
+            <thead>
+                <tr style="border-color: rgba(255,255,255,0.1);">
+                    <th class="text-muted" style="font-size:0.8rem;">نوع القيد</th>
+                    <th class="text-muted" style="font-size:0.8rem;">الوصف</th>
+                    <th class="text-muted text-end" style="font-size:0.8rem;">المبلغ</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if rental.accrual_journal_entry %}
+                <tr style="border-color: rgba(255,255,255,0.06);">
+                    <td><span class="badge" style="background:rgba(0,255,136,0.15);color:#00ff88;">قيد الاستحقاق</span></td>
+                    <td class="text-muted small">{{ rental.accrual_journal_entry.description|truncatechars:50 }}</td>
+                    <td class="text-end text-neon-green small">{{ rental.total_amount }} ج.م</td>
+                    <td class="text-end">
+                        <a href="{% url 'accounting:journal_detail' rental.accrual_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                    </td>
+                </tr>
+                {% endif %}
+
+                {% if rental.payment_journal_entry %}
+                <tr style="border-color: rgba(255,255,255,0.06);">
+                    <td><span class="badge" style="background:rgba(0,136,255,0.15);color:#0088ff;">قيد السداد</span></td>
+                    <td class="text-muted small">{{ rental.payment_journal_entry.description|truncatechars:50 }}</td>
+                    <td class="text-end text-neon-blue small">{{ rental.total_amount }} ج.م</td>
+                    <td class="text-end">
+                        <a href="{% url 'accounting:journal_detail' rental.payment_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                    </td>
+                </tr>
+                {% endif %}
+
+                {% if rental.penalty_journal_entry %}
+                <tr style="border-color: rgba(255,255,255,0.06);">
+                    <td><span class="badge" style="background:rgba(255,68,85,0.15);color:#ff4455;">قيد الغرامة</span></td>
+                    <td class="text-muted small">{{ rental.penalty_journal_entry.description|truncatechars:50 }}</td>
+                    <td class="text-end text-neon-pink small">{{ rental.penalty_amount }} ج.م</td>
+                    <td class="text-end">
+                        <a href="{% url 'accounting:journal_detail' rental.penalty_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                    </td>
+                </tr>
+                {% endif %}
+
+                {% if rental.refund_journal_entry %}
+                <tr style="border-color: rgba(255,255,255,0.06);">
+                    <td><span class="badge" style="background:rgba(255,180,0,0.15);color:#ffb400;">قيد المرتجع</span></td>
+                    <td class="text-muted small">{{ rental.refund_journal_entry.description|truncatechars:50 }}</td>
+                    <td class="text-end text-neon-gold small">{{ rental.refund_amount }} ج.م</td>
+                    <td class="text-end">
+                        <a href="{% url 'accounting:journal_detail' rental.refund_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                    </td>
+                </tr>
+                {% endif %}
+
+                {% if rental.settlement_journal_entry %}
+                {% with net=rental.refund_amount|default:0 %}
+                <tr style="border-color: rgba(255,255,255,0.06);">
+                    <td><span class="badge" style="background:rgba(180,0,255,0.15);color:#b400ff;">قيد التسوية النقدية</span></td>
+                    <td class="text-muted small">{{ rental.settlement_journal_entry.description|truncatechars:50 }}</td>
+                    <td class="text-end text-white small">صافي الإرجاع</td>
+                    <td class="text-end">
+                        <a href="{% url 'accounting:journal_detail' rental.settlement_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                    </td>
+                </tr>
+                {% endwith %}
+                {% endif %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted m-0"><i class="fas fa-info-circle me-1"></i> لا توجد قيود محاسبية مرتبطة.</p>
         {% endif %}
     </div>
 

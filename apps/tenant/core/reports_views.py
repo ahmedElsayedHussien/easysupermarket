@@ -10,15 +10,18 @@ from apps.tenant.core.mixins import CustomPermissionRequiredMixin
 from apps.tenant.invoicing.models import Invoice, InvoiceLine
 from apps.tenant.inventory.models import Product
 from apps.tenant.partners.models import Partner
-import csv
+import io
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 from django.http import HttpResponse
 
 class CsvExportMixin:
     """
-    Mixin to allow exporting any ListView to a CSV file.
-    The view must define `csv_filename`, `get_csv_headers()`, and `get_csv_row(obj)`.
+    Mixin to allow exporting any report View directly to a real Microsoft Excel (.xlsx) file.
+    The view defines `csv_filename`, `get_csv_headers()`, and `get_csv_row(obj)`.
     """
-    csv_filename = "export.csv"
+    csv_filename = "report_export.xlsx"
     
     def get_csv_headers(self):
         return []
@@ -28,28 +31,84 @@ class CsvExportMixin:
 
     def get(self, request, *args, **kwargs):
         if request.GET.get('export') == 'excel':
-            # Need to disable pagination for export
+            # Disable pagination for complete export
             self.paginate_by = None
             
-            # Allow the view to fetch and process the full unpaginated queryset
-            # Some views compute data in get_context_data, so we'll just run 
-            # get_context_data and fetch the data from the context.
             response = super().get(request, *args, **kwargs)
-            context = response.context_data
-            object_list = context.get(self.context_object_name) or context.get('object_list', [])
+            context = getattr(response, 'context_data', {}) or {}
+            obj_name = getattr(self, 'context_object_name', None)
+            object_list = (context.get(obj_name) if obj_name else None) or context.get('object_list') or context.get('transactions') or context.get('report_data') or []
             
-            # Build CSV Response
-            csv_resp = HttpResponse(content_type='text/csv; charset=utf-8-sig')
-            csv_resp['Content-Disposition'] = f'attachment; filename="{self.csv_filename}"'
-            csv_resp.write('\ufeff') # BOM for Excel Arabic support
+            # Create Workbook using openpyxl
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "تقرير"
             
-            writer = csv.writer(csv_resp)
-            writer.writerow(self.get_csv_headers())
+            # Set Right-To-Left view for Arabic text in Excel
+            ws.views.sheetView[0].rightToLeft = True
             
-            for obj in object_list:
-                writer.writerow(self.get_csv_row(obj))
+            # Formatting styles
+            header_font = Font(name='Calibri', size=12, bold=True, color='FFFFFF')
+            header_fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+            data_font = Font(name='Calibri', size=11)
+            alignment_right = Alignment(horizontal='right', vertical='center')
+            alignment_center = Alignment(horizontal='center', vertical='center')
+            thin_border = Border(
+                left=Side(style='thin', color='D9D9D9'),
+                right=Side(style='thin', color='D9D9D9'),
+                top=Side(style='thin', color='D9D9D9'),
+                bottom=Side(style='thin', color='D9D9D9')
+            )
+            
+            # Write Header Row
+            headers = self.get_csv_headers()
+            if headers:
+                ws.append(headers)
+                for col_num, header in enumerate(headers, 1):
+                    cell = ws.cell(row=1, column=col_num)
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = alignment_center
+                    cell.border = thin_border
+            
+            # Write Data Rows
+            for row_idx, obj in enumerate(object_list, start=2):
+                row_data = self.get_csv_row(obj)
+                ws.append(row_data)
+                for col_num, val in enumerate(row_data, 1):
+                    cell = ws.cell(row=row_idx, column=col_num)
+                    cell.font = data_font
+                    cell.alignment = alignment_right
+                    cell.border = thin_border
+            
+            # Auto-fit Column Widths
+            for col in ws.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    val_str = str(cell.value or '')
+                    if len(val_str) > max_len:
+                        max_len = len(val_str)
+                ws.column_dimensions[col_letter].width = max(max_len + 5, 14)
                 
-            return csv_resp
+            # Build filename with .xlsx extension
+            filename = self.csv_filename
+            if filename.endswith('.csv'):
+                filename = filename[:-4] + '.xlsx'
+            elif not filename.endswith('.xlsx'):
+                filename += '.xlsx'
+                
+            # Save Workbook to memory stream
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            
+            excel_resp = HttpResponse(
+                output.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            excel_resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return excel_resp
             
         return super().get(request, *args, **kwargs)
 
@@ -2324,6 +2383,7 @@ class GeneralLedgerReportView(CsvExportMixin, CustomPermissionRequiredMixin, Tem
     permission_required = 'core.view_accounting_reports'
     template_name = 'reports/general_ledger.html'
     csv_filename = "general_ledger_report.csv"
+    context_object_name = 'transactions'
 
     def get_csv_headers(self):
         return ['التاريخ', 'رقم القيد', 'البيان', 'مدين', 'دائن', 'الرصيد التراكمي']

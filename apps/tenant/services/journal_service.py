@@ -250,29 +250,15 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
     entry.post()
     logger.info(f'Journal posted for sale invoice {invoice.invoice_number}: {reference}')
 
-    # --- Create Receipt Entry if Paid Immediately ---
-    if invoice.payment_type in ['CASH', 'CARD', 'EWALLET', 'BANK_TRANSFER'] and total_amount > 0:
-        # Determine Treasury Account
-        if invoice.payment_type == 'EWALLET' and getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id:
-            treasury_account = invoice.ewallet.account
-        elif invoice.payment_type == 'BANK_TRANSFER' and getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id:
-            treasury_account = invoice.bank_account.account
-        elif invoice.payment_type in ['CASH', 'CARD'] and getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id:
-            treasury_account = invoice.treasury.account
-        else:
-            if invoice.payment_type == 'CASH':
-                treasury_account = _get_system_account('1110')
-            elif invoice.payment_type == 'EWALLET':
-                treasury_account = _get_system_account('1160')
-            else:
-                treasury_account = _get_system_account('1120')
-
+    # --- Create Receipt Entry if Paid Immediately or SPLIT ---
+    if (invoice.payment_type in ['CASH', 'CARD', 'EWALLET', 'BANK_TRANSFER', 'SPLIT']) and total_amount > 0:
+        pay_items = []
         pay_reference = _next_reference('PAY')
-        pay_desc = f'تحصيل فاتورة مبيعات نقدية - {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
-        
+        pay_desc = f'تحصيل فاتورة مبيعات - {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
+
         if invoice.invoice_type == 'RETURN_SALE':
             pay_desc = f'استرداد نقدي لمرتجع مبيعات - {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
-            
+
         pay_entry = JournalEntry.objects.create(
             date=invoice.date,
             reference=pay_reference,
@@ -282,20 +268,61 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
         pay_entry.content_type = ContentType.objects.get_for_model(invoice)
         pay_entry.object_id = invoice.id
         pay_entry.save(update_fields=['content_type', 'object_id'])
-        
-        pay_items = []
-        if invoice.invoice_type == 'RETURN_SALE':
-            # Paying cash back to customer
-            pay_items.append(JournalItem(entry=pay_entry, account=debit_account, debit=total_amount, credit=Decimal('0'), description=pay_desc))
-            pay_items.append(JournalItem(entry=pay_entry, account=treasury_account, debit=Decimal('0'), credit=total_amount, description=pay_desc))
+
+        if invoice.payment_type == 'SPLIT':
+            # Multi-payment breakdown
+            cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
+            card_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1120')
+            ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
+            bank_acc = (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
+
+            total_paid_immediate = Decimal('0')
+
+            if invoice.paid_cash > 0:
+                pay_items.append(JournalItem(entry=pay_entry, account=cash_acc, debit=invoice.paid_cash, credit=Decimal('0'), description=f'{pay_desc} (نقدي)'))
+                total_paid_immediate += invoice.paid_cash
+
+            if invoice.paid_card > 0:
+                pay_items.append(JournalItem(entry=pay_entry, account=card_acc, debit=invoice.paid_card, credit=Decimal('0'), description=f'{pay_desc} (بطاقة)'))
+                total_paid_immediate += invoice.paid_card
+
+            if invoice.paid_ewallet > 0:
+                pay_items.append(JournalItem(entry=pay_entry, account=ewallet_acc, debit=invoice.paid_ewallet, credit=Decimal('0'), description=f'{pay_desc} (محفظة/إنستا باي)'))
+                total_paid_immediate += invoice.paid_ewallet
+
+            if invoice.paid_bank > 0:
+                pay_items.append(JournalItem(entry=pay_entry, account=bank_acc, debit=invoice.paid_bank, credit=Decimal('0'), description=f'{pay_desc} (تحويل بنكي)'))
+                total_paid_immediate += invoice.paid_bank
+
+            if total_paid_immediate > 0:
+                pay_items.append(JournalItem(entry=pay_entry, account=debit_account, debit=Decimal('0'), credit=total_paid_immediate, description=pay_desc))
         else:
-            # Receiving cash from customer
-            pay_items.append(JournalItem(entry=pay_entry, account=treasury_account, debit=total_amount, credit=Decimal('0'), description=pay_desc))
-            pay_items.append(JournalItem(entry=pay_entry, account=debit_account, debit=Decimal('0'), credit=total_amount, description=pay_desc))
-            
-        JournalItem.objects.bulk_create(pay_items)
-        pay_entry.post()
-        logger.info(f'Receipt Journal posted for sale invoice {invoice.invoice_number}: {pay_reference}')
+            # Single payment method
+            if invoice.payment_type == 'EWALLET' and getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id:
+                treasury_account = invoice.ewallet.account
+            elif invoice.payment_type == 'BANK_TRANSFER' and getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id:
+                treasury_account = invoice.bank_account.account
+            elif invoice.payment_type in ['CASH', 'CARD'] and getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id:
+                treasury_account = invoice.treasury.account
+            else:
+                if invoice.payment_type == 'CASH':
+                    treasury_account = _get_system_account('1110')
+                elif invoice.payment_type == 'EWALLET':
+                    treasury_account = _get_system_account('1160')
+                else:
+                    treasury_account = _get_system_account('1120')
+
+            if invoice.invoice_type == 'RETURN_SALE':
+                pay_items.append(JournalItem(entry=pay_entry, account=debit_account, debit=total_amount, credit=Decimal('0'), description=pay_desc))
+                pay_items.append(JournalItem(entry=pay_entry, account=treasury_account, debit=Decimal('0'), credit=total_amount, description=pay_desc))
+            else:
+                pay_items.append(JournalItem(entry=pay_entry, account=treasury_account, debit=total_amount, credit=Decimal('0'), description=pay_desc))
+                pay_items.append(JournalItem(entry=pay_entry, account=debit_account, debit=Decimal('0'), credit=total_amount, description=pay_desc))
+
+        if pay_items:
+            JournalItem.objects.bulk_create(pay_items)
+            pay_entry.post()
+            logger.info(f'Receipt Journal posted for sale invoice {invoice.invoice_number}: {pay_reference}')
 
     return entry
 
