@@ -170,7 +170,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     # --- Cr: Revenue ---
     # We must split revenue between normal products and services (Labor).
-    product_revenue_gross = sum(line.subtotal for line in invoice.lines.all() if line.product.product_type == 'PRODUCT')
+    product_revenue_gross = sum(line.subtotal for line in invoice.lines.all() if line.product.product_type != 'SERVICE')
     service_revenue_gross = sum(line.subtotal for line in invoice.lines.all() if line.product.product_type == 'SERVICE')
     total_gross = product_revenue_gross + service_revenue_gross
 

@@ -68,6 +68,11 @@
             sessionStorage.removeItem('pos_sessions');
             sessionStorage.removeItem('pos_activeSessionId');
             sessionStorage.removeItem('pos_nextSessionId');
+            Object.keys(localStorage).forEach(function(key) {
+                if (key.startsWith('pos_saved_customer')) {
+                    localStorage.removeItem(key);
+                }
+            });
         } catch(e) {}
     });
 </script>

@@ -18,4 +18,6 @@ urlpatterns = [
     path('invoice/<int:invoice_id>/', views.invoice_detail, name='invoice_detail'),
     path('receipt/<int:invoice_id>/', views.receipt_view, name='receipt'),
     path('shift-report/', views.shift_report, name='shift_report'),
+    path('sales-returns/', views.sales_returns_dashboard, name='sales_returns_dashboard'),
+    path('sales-returns/create-standalone/', views.create_standalone_sales_return, name='create_standalone_sales_return'),
 ]

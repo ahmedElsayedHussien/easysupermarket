@@ -59,6 +59,7 @@ const POS = {
     
     currentWarehouseId: null,
     currentBranchId: null,
+    currentShiftId: null,
     transactionNumber: '001',
     selectedProductRow: null,
     heldTransactions: [],
@@ -124,6 +125,20 @@ const POS = {
         const urlParams = new URLSearchParams(window.location.search);
         const userSuffix = `_${this.currentUserId || 'default'}`;
         
+        // Reset saved customer if a new shift was opened
+        if (this.currentShiftId || urlParams.has('new_shift')) {
+            const lastShiftKey = `pos_active_shift_id${userSuffix}`;
+            const lastShiftId = localStorage.getItem(lastShiftKey);
+            const isNewShift = urlParams.has('new_shift') || (this.currentShiftId && String(this.currentShiftId) !== lastShiftId);
+            
+            if (isNewShift) {
+                if (this.currentShiftId) {
+                    localStorage.setItem(lastShiftKey, String(this.currentShiftId));
+                }
+                localStorage.removeItem(`pos_saved_customer${userSuffix}`);
+            }
+        }
+        
         // 1. Branch & Warehouse Check
         const branchSelect = document.getElementById('posBranchSelect');
         const warehouseSelect = document.getElementById('posWarehouseSelect');
@@ -169,6 +184,14 @@ const POS = {
                 const savedVal = localStorage.getItem(item.key);
                 if (savedVal && Array.from(selectEl.options).some(opt => opt.value === savedVal)) {
                     selectEl.value = savedVal;
+                    if (item.isSelect2 && typeof $ !== 'undefined') {
+                        $(selectEl).trigger('change');
+                    } else {
+                        selectEl.dispatchEvent(new Event('change'));
+                    }
+                } else if (item.id === 'posCustomer') {
+                    // Default to cash customer ("") if no saved value
+                    selectEl.value = "";
                     if (item.isSelect2 && typeof $ !== 'undefined') {
                         $(selectEl).trigger('change');
                     } else {

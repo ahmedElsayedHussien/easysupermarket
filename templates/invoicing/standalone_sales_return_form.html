@@ -1,0 +1,635 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+<style>
+    /* Select2 Dark Theme Custom Styling */
+    .select2-container--default .select2-selection--single {
+        background-color: rgba(15, 23, 42, 0.8) !important;
+        border: 1px solid var(--border-bright) !important;
+        border-radius: 8px !important;
+        height: 42px !important;
+        padding: 6px 12px !important;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__rendered {
+        color: #ffffff !important;
+        line-height: 28px !important;
+        font-size: 0.95rem;
+    }
+    .select2-container--default .select2-selection--single .select2-selection__arrow {
+        height: 40px !important;
+    }
+    .select2-dropdown {
+        background-color: rgba(15, 23, 42, 0.95) !important;
+        border: 1px solid var(--border-bright) !important;
+        backdrop-filter: blur(10px);
+        z-index: 9999 !important;
+    }
+    .select2-search--dropdown .select2-search__field {
+        background-color: rgba(30, 41, 59, 0.9) !important;
+        color: #ffffff !important;
+        border: 1px solid var(--neon-orange) !important;
+        border-radius: 6px !important;
+        padding: 6px 12px !important;
+    }
+    .select2-results__option {
+        color: var(--text-primary) !important;
+        padding: 8px 12px !important;
+    }
+    .select2-container--default .select2-results__option--selected {
+        background-color: rgba(255, 115, 0, 0.2) !important;
+    }
+    .select2-container--default .select2-results__option--highlighted.select2-results__option--selectable {
+        background-color: var(--neon-orange) !important;
+        color: #ffffff !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem; max-width: 1100px; margin: 0 auto;">
+    <!-- Form Header -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; border-bottom: 2px solid var(--neon-orange); padding-bottom: 1rem;">
+        <div>
+            <h2 style="margin: 0; color: #fff; font-weight: 700;">
+                <i class="fas fa-undo-alt" style="color: var(--neon-orange); margin-left: 0.5rem;"></i> {{ title }}
+            </h2>
+            <p style="color: var(--text-secondary); margin-top: 0.3rem; font-size: 0.9rem;">
+                إدخال مرتجع مبيعات مباشر (لرصيد أول المدة أو مبيعات غير مسجلة بالنظام)
+            </p>
+        </div>
+        <a href="{% url 'invoicing:sales_returns_dashboard' %}" class="btn-ghost" style="padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none;">
+            <i class="fas fa-arrow-right"></i> العودة للمرتجعات
+        </a>
+    </div>
+
+    <form method="POST" id="standaloneReturnForm">
+        {% csrf_token %}
+
+        <!-- Master Header Information -->
+        <div class="row g-3 mb-4" style="background: rgba(30, 41, 59, 0.5); padding: 1.5rem; border-radius: 10px; border: 1px solid var(--border-default);">
+            <!-- Customer -->
+            <div class="col-md-6">
+                <label class="form-label text-white fw-bold">العميل <span class="text-danger">*</span></label>
+                <select name="partner_id" class="form-select select2" required style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright);">
+                    <option value="">-- اختر العميل --</option>
+                    {% for customer in customers %}
+                    <option value="{{ customer.id }}">{{ customer.name }} {% if customer.phone %}({{ customer.phone }}){% endif %}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text text-muted">سيتم إخصام المرتجع من مديونية العميل أو رصيد أول المدة إذا كان نوع السداد آجلاً.</div>
+            </div>
+
+            <!-- Warehouse -->
+            <div class="col-md-6">
+                <label class="form-label text-white fw-bold">المستودع المستلم <span class="text-danger">*</span></label>
+                <select name="warehouse_id" class="form-select" required style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright);">
+                    <option value="">-- اختر المستودع --</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}">{{ wh.name }} (فرع: {{ wh.branch.name|default:"الرئيسي" }})</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text text-muted">المستودع الذي ستدخل إليه الأصناف المرتجعة فعلياً.</div>
+            </div>
+
+            <!-- Payment Type -->
+            <div class="col-md-4">
+                <label class="form-label text-white fw-bold">طريقة تسوية المرتجع <span class="text-danger">*</span></label>
+                <select name="payment_type" id="paymentTypeSelect" class="form-select" onchange="toggleFinancialAccounts()" style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright);">
+                    <option value="CREDIT" selected>📋 آجل (تخفيض مديونية العميل / رصيد أول المدة)</option>
+                    <option value="CASH">💵 نقدي (صرف كاش من الخزينة)</option>
+                    <option value="BANK_TRANSFER">🏛️ تحويل بنكي (خصم من البنك)</option>
+                    <option value="EWALLET">📱 محفظة إلكترونية</option>
+                </select>
+            </div>
+
+            <!-- Treasury (Conditional) -->
+            <div class="col-md-4" id="treasuryWrapper" style="display: none;">
+                <label class="form-label text-white fw-bold">الخزينة المخصم منها النقدية</label>
+                <select name="treasury_id" class="form-select" style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright);">
+                    {% for t in treasuries %}
+                    <option value="{{ t.id }}">{{ t.name }}</option>
+                    {% empty %}
+                    <option value="">لا يوجد خزينة</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Bank (Conditional) -->
+            <div class="col-md-4" id="bankWrapper" style="display: none;">
+                <label class="form-label text-white fw-bold">الحساب البنكي</label>
+                <select name="bank_account_id" class="form-select" style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright);">
+                    {% for b in bank_accounts %}
+                    <option value="{{ b.id }}">{{ b.name }}</option>
+                    {% empty %}
+                    <option value="">لا يوجد حساب بنكي</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- E-Wallet (Conditional) -->
+            <div class="col-md-4" id="ewalletWrapper" style="display: none;">
+                <label class="form-label text-white fw-bold">المحفظة الإلكترونية</label>
+                <select name="ewallet_id" class="form-select" style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright);">
+                    {% for ew in ewallets %}
+                    <option value="{{ ew.id }}">{{ ew.name }}</option>
+                    {% empty %}
+                    <option value="">لا يوجد محفظة</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Notes -->
+            <!-- VAT & WHT Toggle Options -->
+            <div class="col-md-6 d-flex align-items-center gap-4 mt-4">
+                <div class="form-check form-switch" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <input class="form-check-input" type="checkbox" name="apply_vat" id="applyVatCheckbox" {% if settings.apply_vat_by_default %}checked{% endif %} onchange="calculateGrandTotal()" style="cursor: pointer; width: 45px; height: 22px;">
+                    <label class="form-check-label text-white font-weight-bold" for="applyVatCheckbox" style="cursor: pointer; user-select: none;">
+                        🛡️ ضريبة القيمة المضافة (14%)
+                    </label>
+                </div>
+                <div class="form-check form-switch" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <input class="form-check-input" type="checkbox" name="apply_wht" id="applyWhtCheckbox" onchange="calculateGrandTotal()" style="cursor: pointer; width: 45px; height: 22px;">
+                    <label class="form-check-label text-white font-weight-bold" for="applyWhtCheckbox" style="cursor: pointer; user-select: none;">
+                        📉 ضريبة الخصم والإضافة (WHT)
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Products Lines Section -->
+        <div class="glass-card p-3 mb-4" style="background: rgba(15, 23, 42, 0.6);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h4 style="margin: 0; color: #fff; font-size: 1.2rem; font-weight: 700;">
+                    <i class="fas fa-boxes text-orange" style="margin-left: 0.5rem;"></i> الأصناف المرتجعة
+                </h4>
+                <button type="button" class="btn btn-outline-orange btn-sm" onclick="addProductRow()">
+                    <i class="fas fa-plus"></i> إضافة صنف
+                </button>
+            </div>
+
+            <!-- Quick Barcode Scanner Input -->
+            <div class="mb-3" style="display: flex; gap: 0.5rem; align-items: center; background: rgba(30, 41, 59, 0.7); padding: 0.6rem 1rem; border-radius: 8px; border: 1px solid var(--neon-orange);">
+                <span style="font-size: 1.2rem;">📷</span>
+                <input type="text" id="quickBarcodeScan" placeholder="اضغط هنا وقم بمسح الباركود للقارئ اليدوي مباشرة..." class="form-control" style="background: transparent; color: var(--neon-orange); border: none; font-weight: bold; font-size: 1rem; box-shadow: none;">
+            </div>
+
+            <table class="data-table" id="productsTable">
+                <thead>
+                    <tr>
+                        <th style="width: 35%;">الصنف (بحث بالاسم أو الباركود)</th>
+                        <th style="width: 15%;">الوحدة</th>
+                        <th style="width: 15%;">الكمية المرتجعة</th>
+                        <th style="width: 15%;">سعر الوحدة</th>
+                        <th style="width: 15%;">الإجمالي</th>
+                        <th style="width: 5%; text-align: center;">حذف</th>
+                    </tr>
+                </thead>
+                <tbody id="productRows">
+                    <!-- Dynamic rows inserted by JavaScript -->
+                </tbody>
+                <tfoot>
+                    <tr style="background: rgba(15, 23, 42, 0.8);">
+                        <td colspan="4" style="text-align: left; color: #aaa;">الصافي (قبل الضريبة):</td>
+                        <td style="color: #fff; font-weight: bold;" id="subtotalDisplay">0.00 ج.م</td>
+                        <td></td>
+                    </tr>
+                    <tr style="background: rgba(15, 23, 42, 0.8);" id="vatRow">
+                        <td colspan="4" style="text-align: left; color: #aaa;">ضريبة القيمة المضافة:</td>
+                        <td style="color: #38bdf8; font-weight: bold;" id="taxDisplay">0.00 ج.م</td>
+                        <td></td>
+                    </tr>
+                    <tr style="background: rgba(15, 23, 42, 0.8); display:none;" id="whtRow">
+                        <td colspan="4" style="text-align: left; color: #aaa;">خصم ضريبة الخصم والإضافة (WHT):</td>
+                        <td style="color: #ef4444; font-weight: bold;" id="whtDisplay">-0.00 ج.م</td>
+                        <td></td>
+                    </tr>
+                    <tr style="background: rgba(255, 115, 0, 0.15); font-weight: bold;">
+                        <td colspan="4" style="text-align: left; color: #fff; font-size: 1.1rem;">إجمالي المرتجع (النهائي):</td>
+                        <td style="color: var(--neon-orange); font-size: 1.25rem;" id="grandTotalDisplay">0.00 ج.م</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <!-- Action Submit Button (Orange per rule) -->
+        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2rem;">
+            <a href="{% url 'invoicing:sales_returns_dashboard' %}" class="btn-ghost" style="padding: 0.8rem 1.5rem; font-size: 1rem; border-radius: 8px;">إلغاء</a>
+            <button type="submit" class="btn-orange" style="padding: 0.8rem 2.5rem; font-size: 1.1rem; font-weight: 700; border-radius: 8px; box-shadow: 0 0 20px rgba(255, 115, 0, 0.5);">
+                <i class="fas fa-check-circle me-2"></i> حفظ وتأكيد مرتجع المبيعات
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Serial / IMEI Modal -->
+<div class="modal" id="serialModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; justify-content:center; align-items:center;">
+    <div class="modal-content" style="background:#1e293b; border:1px solid var(--neon-orange); border-radius:12px; max-width:650px; width:95%; padding:1.5rem; color:#fff; max-height:85vh; overflow-y:auto; box-shadow: 0 0 25px rgba(255, 115, 0, 0.3);">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-bright); padding-bottom:0.75rem; margin-bottom:1rem;">
+            <h4 style="margin:0; color:var(--neon-orange); font-weight:700;"><i class="fas fa-barcode"></i> إدخال بيانات الأجهزة المرتجعة (S/N / IMEI)</h4>
+            <button type="button" class="btn-close btn-close-white" onclick="closeSerialModal()" style="background:transparent; border:none; color:#fff; font-size:1.2rem; cursor:pointer;">✕</button>
+        </div>
+        <div id="serialModalBody">
+            <!-- Dynamic Serial / IMEI Inputs per unit -->
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:1.5rem;">
+            <button type="button" class="btn btn-secondary" onclick="closeSerialModal()" style="padding:8px 16px; border-radius:6px;">إلغاء</button>
+            <button type="button" class="btn btn-orange" onclick="saveSerials()" style="padding:8px 20px; border-radius:6px;"><i class="fas fa-save"></i> حفظ السيريالات</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- jQuery & Select2 Scripts -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+<script>
+    let currentSerialRowId = null;
+
+    const availableProducts = [
+        {% for p in products %}
+        {
+            id: "{{ p.id }}",
+            name: "{{ p.name|escapejs }}",
+            barcode: "{{ p.barcode|default:'' }}",
+            price: {{ p.sale_price|stringformat:"f"|default:0 }},
+            vat_rate: {{ p.tax_rate|stringformat:"f"|default:14 }},
+            wht_rate: {{ p.withholding_tax_rate|stringformat:"f"|default:0 }},
+            product_type: "{{ p.product_type }}",
+            has_serial: {{ p.has_serial|yesno:"true,false" }},
+            has_imei: {{ p.has_imei|yesno:"true,false" }},
+            uoms: [
+                {% for pu in p.uoms.all %}
+                { id: "{{ pu.id }}", name: "{{ pu.uom.name|escapejs }}", factor: {{ pu.conversion_factor|stringformat:"f" }}, is_base: {{ pu.is_base|yesno:"true,false" }} },
+                {% endfor %}
+            ]
+        },
+        {% endfor %}
+    ];
+
+    function toggleFinancialAccounts() {
+        const pType = document.getElementById('paymentTypeSelect').value;
+        document.getElementById('treasuryWrapper').style.display = (pType === 'CASH') ? 'block' : 'none';
+        document.getElementById('bankWrapper').style.display = (pType === 'BANK_TRANSFER') ? 'block' : 'none';
+        document.getElementById('ewalletWrapper').style.display = (pType === 'EWALLET') ? 'block' : 'none';
+    }
+
+    function customSelect2Matcher(params, data) {
+        if ($.trim(params.term) === '') return data;
+        if (typeof data.text === 'undefined') return null;
+
+        const term = params.term.toLowerCase().trim();
+        const text = data.text.toLowerCase();
+        const barcode = ($(data.element).data('barcode') || '').toString().toLowerCase();
+
+        if (text.indexOf(term) > -1 || barcode.indexOf(term) > -1) {
+            return data;
+        }
+        return null;
+    }
+
+    function addProductRow() {
+        const tbody = document.getElementById('productRows');
+        const rowIndex = tbody.children.length;
+        const rowId = Date.now() + Math.random().toString(36).substr(2, 5);
+        
+        let optionsHtml = '<option value="">-- ابحث بالاسم أو الباركود --</option>';
+        availableProducts.forEach(p => {
+            optionsHtml += `<option value="${p.id}" data-price="${p.price}" data-barcode="${p.barcode}">${p.name} ${p.barcode ? ' 🔍 (' + p.barcode + ')' : ''}</option>`;
+        });
+
+        const tr = document.createElement('tr');
+        tr.id = `row_${rowId}`;
+        tr.dataset.rowIndex = rowIndex;
+        tr.innerHTML = `
+            <td>
+                <select name="product_ids[]" class="form-select product-select" required style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright);">
+                    ${optionsHtml}
+                </select>
+                <div class="serial-btn-wrapper mt-1" style="display:none;">
+                    <button type="button" class="btn btn-sm btn-outline-cyan serial-trigger-btn" onclick="openSerialModal('${rowId}')" style="padding: 2px 8px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--neon-cyan); color: var(--neon-cyan);">
+                        📱 إدخال السيريالات / IMEI
+                    </button>
+                </div>
+                <div class="serial-inputs-container" data-row-idx="${rowIndex}"></div>
+            </td>
+            <td>
+                <select name="uom_ids[]" class="form-select uom-select" onchange="onUomSelected('${rowId}')" style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright);">
+                    <option value="">الافتراضية</option>
+                </select>
+            </td>
+            <td>
+                <input type="number" name="quantities[]" class="form-control qty-input" value="1" min="0.01" step="0.01" required oninput="calculateRowTotal('${rowId}')" style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright); text-align: center;">
+            </td>
+            <td>
+                <input type="number" name="prices[]" class="form-control price-input" value="0.00" min="0" step="0.01" required oninput="calculateRowTotal('${rowId}')" style="background: rgba(15, 23, 42, 0.8); color: #fff; border: 1px solid var(--border-bright); text-align: center;">
+            </td>
+            <td style="color: #fbbf24; font-weight: bold; vertical-align: middle;" class="row-total">
+                0.00 ج.م
+            </td>
+            <td style="text-align: center; vertical-align: middle;">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeProductRow('${rowId}')">✕</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+
+        if (window.jQuery && $.fn.select2) {
+            const $select = $(`#row_${rowId} .product-select`);
+            $select.select2({
+                dir: "rtl",
+                width: '100%',
+                placeholder: "-- ابحث بالاسم أو الباركود --",
+                matcher: customSelect2Matcher
+            }).on('change', function() {
+                onProductSelected(this, rowId);
+            });
+        }
+
+        calculateGrandTotal();
+    }
+
+    function onProductSelected(selectEl, rowId) {
+        const row = document.getElementById(`row_${rowId}`);
+        const priceInput = row.querySelector('.price-input');
+        const uomSelect = row.querySelector('.uom-select');
+        const serialWrapper = row.querySelector('.serial-btn-wrapper');
+        const selectedProdId = selectEl.value;
+
+        const prod = availableProducts.find(p => p.id === selectedProdId);
+        if (prod) {
+            priceInput.value = parseFloat(prod.price).toFixed(2);
+            
+            // Handle SERIALIZED product serial input button display
+            const isSerialized = (prod.product_type === 'SERIALIZED' || prod.has_serial || prod.has_imei);
+            if (serialWrapper) {
+                serialWrapper.style.display = isSerialized ? 'block' : 'none';
+            }
+            
+            // Populate UOM options
+            let uomHtml = '';
+            if (prod.uoms && prod.uoms.length > 0) {
+                prod.uoms.forEach(u => {
+                    const selAttr = u.is_base ? 'selected' : '';
+                    uomHtml += `<option value="${u.id}" data-factor="${u.factor}" ${selAttr}>${u.name} (معامل: ${u.factor})</option>`;
+                });
+            } else {
+                uomHtml = '<option value="">الأساسية</option>';
+            }
+            uomSelect.innerHTML = uomHtml;
+            row.dataset.basePrice = prod.price;
+            onUomSelected(rowId);
+
+            // Auto prompt for serials if serialized product
+            if (isSerialized) {
+                setTimeout(() => openSerialModal(rowId), 200);
+            }
+        } else {
+            uomSelect.innerHTML = '<option value="">الافتراضية</option>';
+            if (serialWrapper) serialWrapper.style.display = 'none';
+        }
+        calculateRowTotal(rowId);
+    }
+
+    function openSerialModal(rowId) {
+        currentSerialRowId = rowId;
+        const row = document.getElementById(`row_${rowId}`);
+        if (!row) return;
+
+        const selectEl = row.querySelector('.product-select');
+        const qtyInput = row.querySelector('.qty-input');
+        const qty = parseInt(parseFloat(qtyInput.value)) || 1;
+        const prod = availableProducts.find(p => p.id === selectEl.value);
+
+        if (!prod) {
+            alert('يرجى اختيار الصنف أولاً.');
+            return;
+        }
+
+        const modalBody = document.getElementById('serialModalBody');
+        const hasImei = prod.has_imei || prod.product_type === 'SERIALIZED';
+        const hasSerial = prod.has_serial || prod.product_type === 'SERIALIZED';
+
+        let html = `<p style="color: var(--text-secondary); margin-bottom: 1rem;">إدخال السيريالات/IMEI للمنتج: <strong style="color:#fff;">${prod.name}</strong> (العدد: ${qty})</p>`;
+
+        for (let i = 0; i < qty; i++) {
+            html += `<div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-bright); border-radius: 8px; margin-bottom: 12px; padding: 12px;">
+                        <h6 style="color: var(--neon-orange); margin-top: 0; margin-bottom: 8px;">الجهاز #${i + 1}</h6>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px;">`;
+            if (hasImei) {
+                html += `<div style="flex: 1; min-width: 180px;">
+                            <label style="color: #fff; margin-bottom: 4px; display: block; font-size: 0.85rem;">IMEI 1</label>
+                            <input type="text" class="form-control modal-imei1" data-index="${i}" placeholder="أدخل IMEI 1" style="background: rgba(30, 41, 59, 0.9); color: #fff; border: 1px solid var(--border-bright);">
+                         </div>
+                         <div style="flex: 1; min-width: 180px;">
+                            <label style="color: #fff; margin-bottom: 4px; display: block; font-size: 0.85rem;">IMEI 2 (اختياري)</label>
+                            <input type="text" class="form-control modal-imei2" data-index="${i}" placeholder="أدخل IMEI 2" style="background: rgba(30, 41, 59, 0.9); color: #fff; border: 1px solid var(--border-bright);">
+                         </div>`;
+            }
+            if (hasSerial) {
+                html += `<div style="flex: 1; min-width: 180px;">
+                            <label style="color: #fff; margin-bottom: 4px; display: block; font-size: 0.85rem;">Serial Number (S/N)</label>
+                            <input type="text" class="form-control modal-serial" data-index="${i}" placeholder="أدخل رقم السيريال" style="background: rgba(30, 41, 59, 0.9); color: #fff; border: 1px solid var(--border-bright);">
+                         </div>`;
+            }
+            html += `   <div style="flex: 1; min-width: 140px;">
+                            <label style="color: #fff; margin-bottom: 4px; display: block; font-size: 0.85rem;">حالة الجهاز</label>
+                            <select class="form-select modal-condition" data-index="${i}" style="background: rgba(30, 41, 59, 0.9); color: #fff; border: 1px solid var(--border-bright);">
+                                <option value="NEW" selected>جديد</option>
+                                <option value="USED">مستعمل</option>
+                            </select>
+                        </div>
+                      </div>
+                     </div>`;
+        }
+
+        modalBody.innerHTML = html;
+
+        // Restore any previously entered serials for this row
+        const container = row.querySelector('.serial-inputs-container');
+        const savedI1 = container.querySelectorAll('input[name^="imei_1_line"]');
+        const savedI2 = container.querySelectorAll('input[name^="imei_2_line"]');
+        const savedSn = container.querySelectorAll('input[name^="serial_line"]');
+        const savedCond = container.querySelectorAll('input[name^="condition_line"]');
+
+        const mI1 = modalBody.querySelectorAll('.modal-imei1');
+        const mI2 = modalBody.querySelectorAll('.modal-imei2');
+        const mSn = modalBody.querySelectorAll('.modal-serial');
+        const mCond = modalBody.querySelectorAll('.modal-condition');
+
+        savedI1.forEach((inp, idx) => { if (mI1[idx]) mI1[idx].value = inp.value; });
+        savedI2.forEach((inp, idx) => { if (mI2[idx]) mI2[idx].value = inp.value; });
+        savedSn.forEach((inp, idx) => { if (mSn[idx]) mSn[idx].value = inp.value; });
+        savedCond.forEach((inp, idx) => { if (mCond[idx]) mCond[idx].value = inp.value; });
+
+        document.getElementById('serialModal').style.display = 'flex';
+    }
+
+    function closeSerialModal() {
+        document.getElementById('serialModal').style.display = 'none';
+        currentSerialRowId = null;
+    }
+
+    function saveSerials() {
+        if (!currentSerialRowId) return;
+        const row = document.getElementById(`row_${currentSerialRowId}`);
+        if (!row) return;
+
+        const rowIdx = Array.from(row.parentNode.children).indexOf(row);
+        const modalBody = document.getElementById('serialModalBody');
+        const mI1 = modalBody.querySelectorAll('.modal-imei1');
+        const mI2 = modalBody.querySelectorAll('.modal-imei2');
+        const mSn = modalBody.querySelectorAll('.modal-serial');
+        const mCond = modalBody.querySelectorAll('.modal-condition');
+
+        const container = row.querySelector('.serial-inputs-container');
+        let hiddenHtml = '';
+
+        const count = Math.max(mI1.length, mSn.length, 1);
+        for (let i = 0; i < count; i++) {
+            if (mI1[i]) hiddenHtml += `<input type="hidden" name="imei_1_line_${rowIdx}[]" value="${mI1[i].value}">`;
+            if (mI2[i]) hiddenHtml += `<input type="hidden" name="imei_2_line_${rowIdx}[]" value="${mI2[i].value}">`;
+            if (mSn[i]) hiddenHtml += `<input type="hidden" name="serial_line_${rowIdx}[]" value="${mSn[i].value}">`;
+            if (mCond[i]) hiddenHtml += `<input type="hidden" name="condition_line_${rowIdx}[]" value="${mCond[i].value}">`;
+        }
+
+        container.innerHTML = hiddenHtml;
+
+        // Change trigger button style to green to show saved state
+        const triggerBtn = row.querySelector('.serial-trigger-btn');
+        if (triggerBtn) {
+            triggerBtn.style.color = '#10b981';
+            triggerBtn.style.borderColor = '#10b981';
+            triggerBtn.innerHTML = '✅ تم إدخال السيريالات';
+        }
+
+        closeSerialModal();
+    }
+
+    function onUomSelected(rowId) {
+        const row = document.getElementById(`row_${rowId}`);
+        if (!row) return;
+        const uomSelect = row.querySelector('.uom-select');
+        const priceInput = row.querySelector('.price-input');
+        const basePrice = parseFloat(row.dataset.basePrice) || 0;
+        const selectedOpt = uomSelect.options[uomSelect.selectedIndex];
+        
+        if (selectedOpt && selectedOpt.dataset.factor) {
+            const factor = parseFloat(selectedOpt.dataset.factor) || 1;
+            priceInput.value = (basePrice * factor).toFixed(2);
+        }
+        calculateRowTotal(rowId);
+    }
+
+    function calculateRowTotal(rowId) {
+        const row = document.getElementById(`row_${rowId}`);
+        if (!row) return;
+        const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+        const price = parseFloat(row.querySelector('.price-input').value) || 0;
+        const total = qty * price;
+        row.querySelector('.row-total').innerText = total.toFixed(2) + ' ج.م';
+        calculateGrandTotal();
+    }
+
+    function removeProductRow(rowId) {
+        const row = document.getElementById(`row_${rowId}`);
+        if (row) {
+            if (window.jQuery && $.fn.select2) {
+                $(row).find('.product-select').select2('destroy');
+            }
+            row.remove();
+        }
+        calculateGrandTotal();
+    }
+
+    function calculateGrandTotal() {
+        let subtotal = 0;
+        let vatTotal = 0;
+        let whtTotal = 0;
+
+        const applyVat = document.getElementById('applyVatCheckbox')?.checked || false;
+        const applyWht = document.getElementById('applyWhtCheckbox')?.checked || false;
+
+        document.querySelectorAll('#productRows tr').forEach(row => {
+            const selectEl = row.querySelector('.product-select');
+            const qty = parseFloat(row.querySelector('.qty-input')?.value) || 0;
+            const price = parseFloat(row.querySelector('.price-input')?.value) || 0;
+            const lineSub = qty * price;
+            subtotal += lineSub;
+
+            if (selectEl && selectEl.value) {
+                const prod = availableProducts.find(p => p.id === selectEl.value);
+                if (prod) {
+                    if (applyVat) vatTotal += lineSub * ((parseFloat(prod.vat_rate) || 14) / 100);
+                    if (applyWht) whtTotal += lineSub * ((parseFloat(prod.wht_rate) || 1) / 100);
+                }
+            }
+        });
+
+        const grandTotal = subtotal + vatTotal - whtTotal;
+
+        const subEl = document.getElementById('subtotalDisplay');
+        const taxEl = document.getElementById('taxDisplay');
+        const whtEl = document.getElementById('whtDisplay');
+        const whtRow = document.getElementById('whtRow');
+        const grandEl = document.getElementById('grandTotalDisplay');
+
+        if (subEl) subEl.innerText = subtotal.toFixed(2) + ' ج.م';
+        if (taxEl) taxEl.innerText = vatTotal.toFixed(2) + ' ج.م';
+        if (whtEl) whtEl.innerText = '-' + whtTotal.toFixed(2) + ' ج.م';
+        if (whtRow) whtRow.style.display = applyWht ? 'table-row' : 'none';
+        if (grandEl) grandEl.innerText = grandTotal.toFixed(2) + ' ج.م';
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        toggleFinancialAccounts();
+
+        if (window.jQuery && $.fn.select2) {
+            $('.select2').select2({
+                dir: "rtl",
+                width: '100%'
+            });
+        }
+
+        const barcodeInput = document.getElementById('quickBarcodeScan');
+        if (barcodeInput) {
+            barcodeInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const code = this.value.trim();
+                    if (!code) return;
+
+                    const prod = availableProducts.find(p => p.barcode && p.barcode.trim() === code);
+                    if (prod) {
+                        let emptyRow = null;
+                        document.querySelectorAll('#productRows tr').forEach(tr => {
+                            const sel = tr.querySelector('.product-select');
+                            if (sel && !sel.value) emptyRow = tr;
+                        });
+
+                        if (!emptyRow) {
+                            addProductRow();
+                            const rows = document.querySelectorAll('#productRows tr');
+                            emptyRow = rows[rows.length - 1];
+                        }
+
+                        const sel = emptyRow.querySelector('.product-select');
+                        $(sel).val(prod.id).trigger('change');
+                        this.value = '';
+                    } else {
+                        alert('⚠️ لم يتم العثور على صنف برقم الباركود: ' + code);
+                        this.value = '';
+                    }
+                }
+            });
+        }
+
+        addProductRow();
+    });
+</script>
+{% endblock %}

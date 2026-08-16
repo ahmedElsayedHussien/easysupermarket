@@ -56,6 +56,10 @@ def consume_fifo_batches(
     """
     from apps.tenant.inventory.models import InventoryBatch, StockMovement
 
+    if getattr(product, 'product_type', None) == 'SERVICE':
+        logger.info(f'Skipping FIFO consumption for SERVICE product: {product.name}')
+        return []
+
     # Lock batches in FIFO order (oldest first via Meta.ordering = ['created_at'])
     batches = InventoryBatch.objects.select_for_update().filter(
         product=product,
@@ -149,6 +153,10 @@ def add_inventory_batch(
         ValueError: If quantity or cost is invalid
     """
     from apps.tenant.inventory.models import InventoryBatch, StockMovement
+
+    if getattr(product, 'product_type', None) == 'SERVICE':
+        logger.info(f'Skipping FIFO batch creation for SERVICE product: {product.name}')
+        return None
 
     if quantity <= Decimal('0'):
         raise ValueError(f'الكمية يجب أن تكون أكبر من صفر. المُدخل: {quantity}')

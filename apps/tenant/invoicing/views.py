@@ -142,7 +142,7 @@ def pos_open_shift(request):
                     status=POSSession.OPEN
                 )
                 messages.success(request, 'تم فتح الوردية بنجاح.')
-                return redirect('invoicing:pos')
+                return redirect('/invoicing/pos/?new_shift=1')
             except Exception as e:
                 messages.error(request, f'حدث خطأ: {str(e)}')
             
@@ -807,3 +807,212 @@ def shift_report(request):
         'title': 'تقرير الوردية (اليوم)'
     }
     return render(request, 'invoicing/shift_report.html', context)
+
+
+@login_required
+@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
+def sales_returns_dashboard(request):
+    """Dashboard view listing all sales returns and summary statistics"""
+    from django.db.models import Sum, Count
+    
+    returns_qs = Invoice.objects.filter(invoice_type=Invoice.RETURN_SALE).select_related('partner', 'warehouse', 'branch', 'treasury').order_by('-date', '-created_at')
+    
+    # Filter by partner if provided
+    partner_id = request.GET.get('partner_id')
+    if partner_id:
+        returns_qs = returns_qs.filter(partner_id=partner_id)
+        
+    payment_type = request.GET.get('payment_type')
+    if payment_type:
+        returns_qs = returns_qs.filter(payment_type=payment_type)
+
+    total_returns_count = returns_qs.count()
+    total_returns_amount = returns_qs.aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+    credit_returns_amount = returns_qs.filter(payment_type=Invoice.CREDIT).aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+    cash_returns_amount = returns_qs.exclude(payment_type=Invoice.CREDIT).aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+
+    customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True)
+
+    context = {
+        'title': 'مركز مرتجعات المبيعات',
+        'returns': returns_qs,
+        'customers': customers,
+        'total_returns_count': total_returns_count,
+        'total_returns_amount': total_returns_amount,
+        'credit_returns_amount': credit_returns_amount,
+        'cash_returns_amount': cash_returns_amount,
+        'selected_partner_id': partner_id,
+        'selected_payment_type': payment_type,
+    }
+    return render(request, 'invoicing/sales_returns_dashboard.html', context)
+
+
+@login_required
+@custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
+def create_standalone_sales_return(request):
+    """View to create a standalone sales return (e.g. for opening balance items) without original invoice"""
+    from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
+    from apps.tenant.services.invoice_service import confirm_invoice
+    
+    if request.method == 'POST':
+        try:
+            partner_id = request.POST.get('partner_id')
+            warehouse_id = request.POST.get('warehouse_id')
+            payment_type = request.POST.get('payment_type', Invoice.CREDIT)
+            treasury_id = request.POST.get('treasury_id')
+            bank_id = request.POST.get('bank_account_id')
+            ewallet_id = request.POST.get('ewallet_id')
+            notes = request.POST.get('notes', '')
+            
+            if not partner_id:
+                messages.error(request, 'يرجى تحديد العميل.')
+                return redirect('invoicing:create_standalone_sales_return')
+                
+            if not warehouse_id:
+                messages.error(request, 'يرجى تحديد المستودع المستلم.')
+                return redirect('invoicing:create_standalone_sales_return')
+
+            partner = Partner.objects.get(id=partner_id)
+            warehouse = Warehouse.objects.get(id=warehouse_id)
+            branch = warehouse.branch or (request.user.employee_profile.branch if hasattr(request.user, 'employee_profile') else Branch.objects.filter(is_active=True).first())
+            
+            treasury = Treasury.objects.filter(id=treasury_id).first() if treasury_id else None
+            bank_account = BankAccount.objects.filter(id=bank_id).first() if bank_id else None
+            ewallet = EWallet.objects.filter(id=ewallet_id).first() if ewallet_id else None
+
+            # Get submitted products
+            product_ids = request.POST.getlist('product_ids[]')
+            quantities = request.POST.getlist('quantities[]')
+            prices = request.POST.getlist('prices[]')
+            
+            if not product_ids:
+                messages.error(request, 'يرجى إضافة صنف واحد على الأقل للمرتجع.')
+                return redirect('invoicing:create_standalone_sales_return')
+                
+            from django.db import transaction
+            with transaction.atomic():
+                return_invoice = Invoice.objects.create(
+                    invoice_type=Invoice.RETURN_SALE,
+                    partner=partner,
+                    branch=branch,
+                    warehouse=warehouse,
+                    treasury=treasury,
+                    bank_account=bank_account,
+                    ewallet=ewallet,
+                    payment_type=payment_type,
+                    status=Invoice.DRAFT,
+                    cashier=request.user,
+                    notes=notes,
+                    date=timezone.now().date(),
+                )
+                
+                from apps.tenant.inventory.models import ProductUoM, SerialItem
+                apply_vat = request.POST.get('apply_vat') in ['true', 'on', '1']
+                apply_wht = request.POST.get('apply_wht') in ['true', 'on', '1']
+                
+                for idx, (pid, qty_str, price_str) in enumerate(zip(product_ids, quantities, prices)):
+                    qty = Decimal(qty_str or '0')
+                    price = Decimal(price_str or '0')
+                    if qty > 0:
+                        prod = Product.objects.get(id=pid)
+                        uom_id = uom_ids[idx] if idx < len(uom_ids) and uom_ids[idx] else None
+                        uom_obj = None
+                        if uom_id:
+                            uom_obj = ProductUoM.objects.filter(id=uom_id, product=prod).first()
+                        if not uom_obj:
+                            uom_obj = prod.uoms.filter(is_base=True).first() or prod.uoms.first()
+                        
+                        line_tax_rate = prod.tax_rate if apply_vat else Decimal('0')
+                        line_wht_rate = prod.withholding_tax_rate if apply_wht else Decimal('0')
+                        
+                        if prod.product_type == 'SERIALIZED':
+                            imei_1_list = request.POST.getlist(f'imei_1_line_{idx}[]')
+                            imei_2_list = request.POST.getlist(f'imei_2_line_{idx}[]')
+                            serial_list = request.POST.getlist(f'serial_line_{idx}[]')
+                            condition_list = request.POST.getlist(f'condition_line_{idx}[]')
+                            
+                            num_items = int(qty)
+                            for j in range(num_items):
+                                sn = serial_list[j] if j < len(serial_list) else ''
+                                i1 = imei_1_list[j] if j < len(imei_1_list) else ''
+                                i2 = imei_2_list[j] if j < len(imei_2_list) else ''
+                                cond = condition_list[j] if j < len(condition_list) else SerialItem.CONDITION_NEW
+                                
+                                serial_item = None
+                                if i1:
+                                    serial_item = SerialItem.objects.filter(product=prod, imei_1=i1).first()
+                                elif sn:
+                                    serial_item = SerialItem.objects.filter(product=prod, serial_number=sn).first()
+                                    
+                                if serial_item:
+                                    serial_item.warehouse = warehouse
+                                    serial_item.is_sold = False
+                                    serial_item.is_returned = False
+                                    serial_item.save()
+                                else:
+                                    serial_item = SerialItem.objects.create(
+                                        product=prod,
+                                        serial_number=sn if sn else None,
+                                        imei_1=i1 if i1 else None,
+                                        imei_2=i2 if i2 else None,
+                                        condition=cond if cond else SerialItem.CONDITION_NEW,
+                                        warehouse=warehouse,
+                                        is_sold=False,
+                                        actual_cost=price,
+                                    )
+                                    
+                                inv_line = InvoiceLine(
+                                    invoice=return_invoice,
+                                    product=prod,
+                                    quantity=Decimal('1'),
+                                    unit_price=price,
+                                    uom=uom_obj,
+                                    serial_item=serial_item,
+                                    tax_rate=line_tax_rate,
+                                    wht_rate=line_wht_rate,
+                                )
+                                inv_line.save()
+                        else:
+                            inv_line = InvoiceLine(
+                                invoice=return_invoice,
+                                product=prod,
+                                quantity=qty,
+                                unit_price=price,
+                                uom=uom_obj,
+                                tax_rate=line_tax_rate,
+                                wht_rate=line_wht_rate,
+                            )
+                            inv_line.save()
+                
+                return_invoice.recalculate_totals()
+                
+                # Confirm and post invoice
+                confirmed_invoice = confirm_invoice(return_invoice.id)
+                messages.success(request, f'تم إنشاء وقيد مرتجع المبيعات بنجاح رقم ({confirmed_invoice.invoice_number}).')
+                return redirect('invoicing:sales_returns_dashboard')
+                
+        except Exception as e:
+            messages.error(request, f'حدث خطأ أثناء حفظ المرتجع: {str(e)}')
+            return redirect('invoicing:create_standalone_sales_return')
+
+    customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True)
+    warehouses = Warehouse.objects.filter(is_active=True)
+    treasuries = Treasury.objects.all()
+    bank_accounts = BankAccount.objects.all()
+    ewallets = EWallet.objects.all()
+    products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom')
+
+    from apps.tenant.core.models import SystemSetting
+
+    context = {
+        'title': 'إضافة مرتجع مبيعات مباشر (رصيد أول المدة)',
+        'customers': customers,
+        'warehouses': warehouses,
+        'treasuries': treasuries,
+        'bank_accounts': bank_accounts,
+        'ewallets': ewallets,
+        'products': products,
+        'settings': SystemSetting.get_settings(),
+    }
+    return render(request, 'invoicing/standalone_sales_return_form.html', context)
+

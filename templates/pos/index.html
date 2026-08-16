@@ -52,7 +52,6 @@
                 <option value="{{ customer.id }}" data-wht-subject="{{ customer.subject_to_withholding_tax|yesno:'true,false' }}">{{ customer.name }}</option>
                 {% endfor %}
             </select>
-            <button id="returnModeToggle" onclick="POS.toggleReturnMode()" style="background-color: transparent; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; padding: 4px 8px; cursor: pointer;">🔄 {% trans 'مرتجع' %}</button>
             <a href="{% url 'invoicing:pos_close_shift' %}" style="background-color: transparent; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; padding: 4px 8px; cursor: pointer; text-decoration: none;">🔒 {% trans 'إغلاق الوردية' %}</a>
             <span>👤 {{ request.user.get_full_name|default:request.user.username }}</span>
             <select id="posBranchSelect" class="form-select" style="width:120px; background-color: #ffffff; color: #000000; font-weight: bold; border: 1px solid #ff8c42; padding: 4px; font-size: 0.85rem; border-radius: 4px; cursor: pointer;" onchange="window.location.href='?branch_id=' + this.value">
@@ -305,7 +304,7 @@
 
                 <!-- E-Wallet / InstaPay Input -->
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
-                    <span style="font-weight:600; flex:1;">📱 {% trans 'محفظة إلكترونية / إنستا باي' %}:</span>
+                    <span style="font-weight:600; flex:1;">📱 {% trans 'محفظة إلكترونية' %}:</span>
                     <input type="number" id="splitEwalletInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
                     <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('ewallet')">تعبئة المتبقي</button>
                 </div>
@@ -368,6 +367,7 @@
         POS.currentUserId = {{ request.user.id|default:'null' }};
         POS.currentWarehouseId = {{ current_warehouse.id|default:'null' }};
         POS.currentBranchId = {{ current_branch.id|default:'null' }};
+        POS.currentShiftId = {{ pos_session.id|default:'null' }};
         POS.allowPriceEdit = {% if settings.allow_pos_price_modification %}true{% else %}false{% endif %};
         POS.priceMarginPercent = {{ settings.pos_price_margin_percent|default:0 }};
         
