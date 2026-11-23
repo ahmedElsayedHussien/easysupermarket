@@ -13,7 +13,7 @@ if exist venv\Scripts\activate.bat (
     call venv\Scripts\activate.bat
 ) else (
     echo [ERROR] Virtual environment 'venv' not found! Run setup_venv.bat first.
-    pause
+    if not defined SETUP_NO_PAUSE pause
     exit /b 1
 )
 
@@ -52,4 +52,4 @@ echo ===================================================
 echo   Setup completed. Start the system with start_server.bat
 echo ===================================================
 echo.
-pause
+if not defined SETUP_NO_PAUSE pause

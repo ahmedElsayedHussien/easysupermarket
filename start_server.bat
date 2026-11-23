@@ -36,6 +36,13 @@ if %errorlevel% neq 0 (
     python -m pip install --timeout 120 --retries 5 -r requirements.txt
 )
 
+if not exist ".env" (
+    echo [FIRST RUN] No .env found - running first-time database setup...
+    set "SETUP_NO_PAUSE=1"
+    call setup_database.bat
+    set "SETUP_NO_PAUSE="
+)
+
 echo Checking and applying database updates...
 findstr /i "DB_ENGINE=postgresql" .env >nul
 if %errorlevel% equ 0 (

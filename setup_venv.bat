@@ -164,9 +164,10 @@ pause
 exit /b 1
 
 :RUN_DJANGO_SETUP
-echo [4/4] Applying database migrations, chart of accounts, and static files...
-venv\Scripts\python.exe manage.py migrate --noinput
-venv\Scripts\python.exe manage.py setup_chart_of_accounts
+echo [4/4] Database setup (.env, migrations, chart of accounts, admin user) and static files...
+set "SETUP_NO_PAUSE=1"
+call setup_database.bat
+set "SETUP_NO_PAUSE="
 venv\Scripts\python.exe manage.py sync_admin_permissions
 venv\Scripts\python.exe manage.py collectstatic --noinput
 
