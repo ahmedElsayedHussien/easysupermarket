@@ -1,36 +1,54 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
-from .models import Product, InventoryBatch, StockMovement, Warehouse
+from .models import Product, ProductUoM, InventoryBatch, StockMovement, Warehouse
 from apps.tenant.core.decorators import custom_permission_required
 from apps.tenant.core.models import SystemSetting
 from apps.tenant.core.access import (
     allowed_branches, get_allowed_branch_ids, get_branch_scope, is_branch_restricted,
 )
 
+PAGE_SIZE_CHOICES = ('25', '50', '100')
+
+
+def _query_without_page(request):
+    """Current GET params (URL-encoded, Arabic-safe) minus 'page', for pagination links."""
+    params = request.GET.copy()
+    params.pop('page', None)
+    return params.urlencode()
+
+
 @login_required
 @custom_permission_required('inventory.view_inventorybatch', redirect_url='core:main_screen')
 def stock_list(request):
     from django.core.paginator import Paginator
-    batches = InventoryBatch.objects.filter(quantity_remaining__gt=0).select_related('product', 'warehouse').order_by('-created_at')
-    warehouses = Warehouse.objects.filter(is_active=True)
-    
+    from apps.tenant.core.access import filter_by_branch
+    batches = filter_by_branch(
+        InventoryBatch.objects.filter(quantity_remaining__gt=0), request, field='warehouse__branch'
+    ).select_related('product', 'warehouse').order_by('-created_at', '-id')
+    warehouses = filter_by_branch(Warehouse.objects.filter(is_active=True), request)
+
     warehouse_filter = request.GET.get('warehouse', '').strip()
     product_search = request.GET.get('q', '').strip()
-    
+
     if warehouse_filter:
         batches = batches.filter(warehouse__name=warehouse_filter)
     if product_search:
         batches = batches.filter(product__name__icontains=product_search)
-        
-    paginator = Paginator(batches, 50)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-    
+
+    page_size = request.GET.get('per_page', '25')
+    page_size = int(page_size) if page_size in PAGE_SIZE_CHOICES else 25
+    paginator = Paginator(batches, page_size)
+    page_obj = paginator.get_page(request.GET.get('page'))
+
     context = {
         'batches': page_obj,
         'page_obj': page_obj,
         'is_paginated': page_obj.has_other_pages(),
+        'page_range': paginator.get_elided_page_range(page_obj.number, on_each_side=2, on_ends=1),
+        'page_query': _query_without_page(request),
+        'per_page': page_size,
+        'page_size_choices': [int(x) for x in PAGE_SIZE_CHOICES],
         'total_count': paginator.count,
         'warehouses': warehouses,
         'selected_warehouse': warehouse_filter,

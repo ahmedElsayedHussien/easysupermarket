@@ -277,29 +277,23 @@ const POS = {
         const warehouseSelect = document.getElementById('posWarehouseSelect');
         
         if (branchSelect && warehouseSelect) {
-            const hasUrlParams = urlParams.has('branch_id') || urlParams.has('warehouse_id');
-            const savedBranch = localStorage.getItem(`pos_saved_branch${userSuffix}`);
+            // The BRANCH comes from the header (server session) — never from localStorage,
+            // otherwise the POS would silently sell from a different branch than the header.
+            localStorage.removeItem(`pos_saved_branch${userSuffix}`);
+            // Only the WAREHOUSE is remembered, and only if it belongs to the current branch.
             const savedWarehouse = localStorage.getItem(`pos_saved_warehouse${userSuffix}`);
-            
-            if (!hasUrlParams && savedBranch) {
-                // If no URL params but we have saved config, redirect immediately to apply them
-                let redirectUrl = '?branch_id=' + savedBranch;
-                if (savedWarehouse) redirectUrl += '&warehouse_id=' + savedWarehouse;
-                window.location.href = redirectUrl;
-                return; // Stop execution to let redirect happen
-            } else {
-                // Save current URL state to localStorage
-                localStorage.setItem(`pos_saved_branch${userSuffix}`, branchSelect.value);
-                localStorage.setItem(`pos_saved_warehouse${userSuffix}`, warehouseSelect.value);
-                
-                branchSelect.addEventListener('change', function() {
-                    localStorage.setItem(`pos_saved_branch${userSuffix}`, this.value);
-                    localStorage.removeItem(`pos_saved_warehouse${userSuffix}`); // Reset warehouse on branch change
-                });
-                warehouseSelect.addEventListener('change', function() {
-                    localStorage.setItem(`pos_saved_warehouse${userSuffix}`, this.value);
-                });
+            const warehouseInBranch = savedWarehouse &&
+                Array.from(warehouseSelect.options).some(o => o.value === savedWarehouse);
+            if (!urlParams.has('warehouse_id') && warehouseInBranch && warehouseSelect.value !== savedWarehouse) {
+                window.location.href = '?warehouse_id=' + encodeURIComponent(savedWarehouse);
+                return; // let the redirect happen
             }
+            if (warehouseSelect.value) {
+                localStorage.setItem(`pos_saved_warehouse${userSuffix}`, warehouseSelect.value);
+            }
+            warehouseSelect.addEventListener('change', function() {
+                localStorage.setItem(`pos_saved_warehouse${userSuffix}`, this.value);
+            });
         }
 
         // 2. Treasury, Bank, Ewallet

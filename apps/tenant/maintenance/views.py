@@ -15,7 +15,7 @@ from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
 from apps.tenant.core.models import Branch
 from apps.tenant.core.decorators import custom_permission_required
 from apps.tenant.core.access import (
-    filter_by_branch, get_branch_scope, is_branch_unassigned, BRANCH_UNASSIGNED_MESSAGE,
+    filter_by_branch, get_branch_scope, get_working_branch, is_branch_unassigned, BRANCH_UNASSIGNED_MESSAGE,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ def ticket_create(request):
     if is_branch_unassigned(request):
         messages.error(request, BRANCH_UNASSIGNED_MESSAGE)
         return redirect('maintenance:ticket_list')
-    branch = get_branch_scope(request)
+    branch = get_working_branch(request)  # header branch (admin) / own branch (user)
     customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True).order_by('name')
     technicians = __import__('django.contrib.auth', fromlist=['get_user_model']).get_user_model().objects.filter(is_active=True)
     parent_id = request.GET.get('parent_id')
@@ -107,7 +107,7 @@ def ticket_create(request):
                     raise ValueError('يجب ملء جميع الحقول المطلوبة (العميل، الجهاز، وصف العطل)')
 
                 ticket = MaintenanceTicket.objects.create(
-                    branch=branch or Branch.objects.first(),
+                    branch=branch,
                     customer_id=customer_id,
                     technician_id=technician_id,
                     device_model=device_model,
@@ -151,6 +151,7 @@ def ticket_detail(request, pk):
     bank_accounts = BankAccount.objects.all()
     ewallets = EWallet.objects.all()
 
+    branch = ticket.branch  # parts/payments come from the ticket's own branch
     if branch:
         warehouses = warehouses.filter(branch=branch)
         treasuries = treasuries.filter(branch=branch)

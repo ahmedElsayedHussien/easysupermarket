@@ -1,3 +1,5 @@
+import logging
+
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, permission_required
 from django.http import JsonResponse
@@ -14,10 +16,12 @@ from decimal import Decimal, InvalidOperation
 from apps.tenant.core.decorators import custom_permission_required, is_admin_user
 from apps.tenant.core.access import (
     BRANCH_UNASSIGNED_MESSAGE, allowed_branches, get_allowed_branch_ids, get_branch_scope,
-    is_branch_restricted, is_branch_unassigned,
+    get_working_branch, is_branch_restricted, is_branch_unassigned, set_header_branch,
 )
 
 from django.views.decorators.cache import never_cache
+
+logger = logging.getLogger(__name__)
 
 
 _JSON_SCRIPT_ESCAPES = {
@@ -91,26 +95,16 @@ def pos_view(request):
     # Get user's branch from Employee profile
     user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
     
-    current_branch = None
-    branch_id = request.GET.get('branch_id')
-    if branch_id and str(branch_id).isdigit():
-        current_branch = Branch.objects.filter(id=int(branch_id), is_active=True).first()
-    
-    if not is_admin and user_branch:
-        # Non-admin: force their branch
-        current_branch = user_branch
-    elif not current_branch:
-        req_branch = get_branch_scope(request)
-        if user_branch and warehouses.filter(branch=user_branch).exists():
-            current_branch = user_branch
-        elif req_branch and warehouses.filter(branch=req_branch).exists():
-            current_branch = req_branch
-        else:
-            first_wh = warehouses.select_related('branch').filter(branch__is_active=True).first()
-            if first_wh and first_wh.branch:
-                current_branch = first_wh.branch
-            else:
-                current_branch = user_branch or req_branch or Branch.objects.filter(is_active=True).first()
+    # The POS always sells from the OPEN SHIFT's branch (its cash goes to that
+    # branch's treasury). The shift was opened on the working branch
+    # (core.access.get_working_branch). If an admin's header is on another
+    # branch, the header follows the shift so header and POS always match.
+    current_branch = open_session.branch if open_session.branch_id else get_working_branch(request)
+    if is_admin and current_branch and getattr(request, 'branch', None) != current_branch:
+        if getattr(request, 'branch', None) is not None:
+            messages.info(request, f'تم ضبط الفرع على "{current_branch.name}" — فرع الوردية المفتوحة. '
+                                   'لتغيير فرع البيع أغلق الوردية ثم افتح وردية في الفرع المطلوب.')
+        set_header_branch(request, current_branch)
         
     current_warehouse = None
     warehouse_id = request.GET.get('warehouse_id')
@@ -235,13 +229,14 @@ def pos_open_shift(request):
         messages.error(request, BRANCH_UNASSIGNED_MESSAGE)
         return redirect('core:main_screen')
     
-    # Determine branch
-    user_branch = None
-    if hasattr(request.user, 'employee_profile'):
-        user_branch = request.user.employee_profile.branch
-    
-    if not user_branch:
-        user_branch = Branch.objects.filter(is_active=True).first()
+    # The shift is opened on the working branch: the header branch for admins,
+    # the employee's own branch for everyone else (core.access.get_working_branch).
+    user_branch = get_working_branch(request)
+    if user_branch is None:
+        messages.error(request, 'لا يوجد فرع نشط لفتح الوردية عليه.')
+        return redirect('core:main_screen')
+    from django.db.models import Q as _Q
+    treasuries = Treasury.objects.filter(_Q(branch=user_branch) | _Q(branch__isnull=True))
 
     if request.method == 'POST':
         opening_balance_str = request.POST.get('opening_balance', '0')
@@ -251,8 +246,8 @@ def pos_open_shift(request):
         else:
             try:
                 opening_balance = Decimal(opening_balance_str)
-                treasury = Treasury.objects.get(id=treasury_id)
-                
+                treasury = treasuries.get(id=treasury_id)
+
                 POSSession.objects.create(
                     branch=user_branch,
                     treasury=treasury,
@@ -262,13 +257,11 @@ def pos_open_shift(request):
                 )
                 messages.success(request, 'تم فتح الوردية بنجاح.')
                 return redirect('/invoicing/pos/?new_shift=1')
+            except Treasury.DoesNotExist:
+                messages.error(request, 'الخزينة المختارة لا تتبع هذا الفرع.')
             except Exception as e:
                 messages.error(request, f'حدث خطأ: {str(e)}')
-            
-    treasuries = Treasury.objects.all()
-    if user_branch and not is_admin_user(request.user):
-        treasuries = treasuries.filter(branch=user_branch)
-        
+
     context = {
         'title': 'فتح وردية كاشير',
         'treasuries': treasuries,
@@ -518,7 +511,9 @@ def purchase_invoice_view(request):
     product_stock_info_json = _safe_json_for_script(product_stock_info)
 
     is_admin = is_admin_user(request.user)
-    user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
+    # Working branch (header branch for admins, own branch for users); admins may
+    # still pick another branch in the form, pre-selected to the header branch.
+    user_branch = get_working_branch(request)
 
     branches = Branch.objects.filter(is_active=True) if is_admin else []
 
@@ -604,9 +599,11 @@ def purchase_invoice_view(request):
 
                 if is_admin:
                     branch_id = request.POST.get('branch_id')
-                    branch = Branch.objects.get(id=branch_id)
+                    branch = Branch.objects.filter(id=branch_id, is_active=True).first() if branch_id else user_branch
                 else:
                     branch = user_branch
+                if branch and warehouse and warehouse.branch_id and warehouse.branch_id != branch.id:
+                    raise ValueError('المستودع المختار لا يتبع الفرع المحدد.')
                     
                 if not branch:
                     raise ValueError("لا يوجد فرع مرتبط بهذا المستخدم. يرجى مراجعة مدير النظام.")
@@ -1250,7 +1247,7 @@ def complete_sale(request):
             branch = Branch.objects.filter(id=branch_id).first() if branch_id else None
             if not branch:
                 raise _SaleAbort('الفرع المحدد غير موجود.')
-            user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
+            user_branch = get_working_branch(request)
             if not is_admin and is_branch_unassigned(request):
                 raise _SaleAbort(BRANCH_UNASSIGNED_MESSAGE, status=403)
             if not is_admin and user_branch and branch.id != user_branch.id:
@@ -1275,6 +1272,9 @@ def complete_sale(request):
             open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
             if not open_session:
                 raise _SaleAbort('يجب فتح وردية أولاً قبل الدخول لنقطة البيع أو إجراء أي عملية بيع.')
+            # A sale always belongs to the open shift's branch (cash → that branch's treasury).
+            if open_session.branch_id and branch.id != open_session.branch_id:
+                raise _SaleAbort('الفرع المرسل لا يطابق فرع الوردية المفتوحة. أعد تحميل نقطة البيع.', status=409)
 
             if not treasury_id and open_session.treasury_id:
                 treasury_id = open_session.treasury_id
@@ -1909,7 +1909,7 @@ def create_standalone_sales_return(request):
             if is_branch_restricted(request) and warehouse.branch_id not in (get_allowed_branch_ids(request) or []):
                 messages.error(request, 'لا يمكنك استلام مرتجع على مستودع خارج فرعك.')
                 return redirect('invoicing:create_standalone_sales_return')
-            branch = warehouse.branch or (request.user.employee_profile.branch if hasattr(request.user, 'employee_profile') else Branch.objects.filter(is_active=True).first())
+            branch = warehouse.branch or get_working_branch(request)
             
             treasury = Treasury.objects.filter(id=treasury_id).first() if treasury_id else None
             bank_account = BankAccount.objects.filter(id=bank_id).first() if bank_id else None

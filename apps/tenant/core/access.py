@@ -147,6 +147,38 @@ def get_branch_scope(request):
     return None
 
 
+def get_working_branch(request):
+    """
+    The single Branch new documents are created in (shift, POS sale, purchase,
+    return...). Central rule, used everywhere:
+
+    - Non-admins: their own (active) employee branch, or None if unassigned.
+    - Admins: the branch selected in the header (request.branch). When the
+      header is on "all branches", fall back to their employee branch, then
+      the first active branch — a document always needs one branch.
+
+    For *reading* data use filter_by_branch()/get_branch_scope() instead
+    (admins on "all branches" see everything there).
+    """
+    from apps.tenant.core.models import Branch
+    user = getattr(request, 'user', None)
+    emp = get_employee(user)
+    emp_branch = None
+    if emp is not None and emp.branch_id:
+        emp_branch = Branch.objects.filter(id=emp.branch_id, is_active=True).first()
+    if not is_tenant_admin(user):
+        return emp_branch
+    return getattr(request, 'branch', None) or emp_branch or Branch.objects.filter(is_active=True).first()
+
+
+def set_header_branch(request, branch):
+    """Make ``branch`` the admin's header branch (session + current request)."""
+    if branch is None or not is_tenant_admin(getattr(request, 'user', None)):
+        return
+    request.session['current_branch_id'] = branch.id
+    request.branch = branch
+
+
 def is_branch_restricted(request):
     """
     True if the user may NOT see company-wide data: any non-admin employee,

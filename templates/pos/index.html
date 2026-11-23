@@ -32,17 +32,15 @@
         </div>
 
         <div class="pos-nav-right">
-            <div class="pos-branch-pill" title="{% trans 'الفرع الحالي' %}">
+            {# The POS sells from the open shift's branch (= header branch). To sell in another #}
+            {# branch: close the shift, switch the branch in the header, open a new shift.     #}
+            <div class="pos-branch-pill" title="{% if is_admin %}{% trans 'فرع الوردية المفتوحة — لتغيير الفرع أغلق الوردية ثم اختر الفرع من الهيدر' %}{% else %}{% trans 'فرعك' %}{% endif %}">
                 <span class="pos-field-label">🏢 {% trans 'الفرع' %}:</span>
-                <select id="posBranchSelect" class="pos-pill-select" onchange="window.location.href='?branch_id=' + this.value">
-                    {% for branch in branches %}
-                    <option value="{{ branch.id }}" {% if current_branch.id == branch.id %}selected{% endif %}>{{ branch.name }}</option>
-                    {% endfor %}
-                </select>
+                <span id="posBranchSelect" class="pos-pill-select" data-branch-id="{{ current_branch.id }}">{{ current_branch.name|default:"—" }}</span>
             </div>
             <div class="pos-warehouse-pill {% if not current_warehouse %}is-empty{% endif %}" title="{% trans 'المستودع النشط' %}">
                 <span class="pos-field-label">🏭 {% trans 'المستودع' %}:</span>
-                <select id="posWarehouseSelect" class="pos-pill-select" onchange="window.location.href='?branch_id={{ current_branch.id }}&warehouse_id=' + this.value">
+                <select id="posWarehouseSelect" class="pos-pill-select" onchange="window.location.href='?warehouse_id=' + this.value">
                     {% for warehouse in warehouses %}
                     <option value="{{ warehouse.id }}" {% if current_warehouse.id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>
                     {% empty %}
@@ -139,7 +137,8 @@
         <span>⚠️ {% trans 'لا يوجد مستودع نشط مرتبط بـ' %} ({{ current_branch.name|default:'الفرع الحالي' }}) — {% trans 'تم عرض الأرصدة صفراً، ولا يمكن إتمام البيع قبل اختيار فرع به مستودع أو إنشاء مستودع.' %}</span>
         <span style="display:inline-flex; align-items:center; gap:8px;">
             {% if fallback_warehouse_branch %}
-            <a href="?branch_id={{ fallback_warehouse_branch.id }}" style="background:#ff7300; color:#fff; padding:3px 10px; border-radius:5px; text-decoration:none; font-weight:700; font-size:0.75rem; box-shadow:0 2px 8px rgba(255,115,0,0.4);">🔄 {% trans 'التبديل إلى' %} {{ fallback_warehouse_branch.name }}</a>
+            {# The POS follows the open shift's branch: switching means closing this shift first #}
+            <a href="{% url 'invoicing:pos_close_shift' %}" style="background:#ff7300; color:#fff; padding:3px 10px; border-radius:5px; text-decoration:none; font-weight:700; font-size:0.75rem; box-shadow:0 2px 8px rgba(255,115,0,0.4);">🔄 {% trans 'إغلاق الوردية للتبديل إلى' %} {{ fallback_warehouse_branch.name }}</a>
             {% endif %}
             {% if is_admin %}
             <a href="{% url 'inventory:warehouse_create' %}" target="_blank" style="background:rgba(56,189,248,0.16); border:1px solid #38bdf8; color:#7dd3fc; padding:3px 10px; border-radius:5px; text-decoration:none; font-weight:700; font-size:0.75rem;">➕ {% trans 'إنشاء مستودع لهذا الفرع' %}</a>

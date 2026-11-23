@@ -26,7 +26,7 @@
                     <select name="branch_id" id="branchSelect" class="form-select" required onchange="filterWarehouses()">
                         <option value="">اختر الفرع...</option>
                         {% for b in branches %}
-                        <option value="{{ b.id }}" {% if posted_data.branch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+                        <option value="{{ b.id }}" {% if posted_data.branch_id == b.id|stringformat:"s" or not posted_data and current_branch and current_branch.id == b.id %}selected{% endif %}>{{ b.name }}</option>
                         {% endfor %}
                     </select>
                 </div>

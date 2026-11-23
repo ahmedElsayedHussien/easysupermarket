@@ -81,18 +81,18 @@
             <!-- Branch Selector -->
             <div class="branch-selector">
                 <span style="font-size:0.75rem;color:var(--text-muted);">🏪</span>
+                {% if is_admin %}
+                {# Admin: the selected branch scopes all data (BranchMiddleware, ?branch=<id>|all) #}
                 <select id="branchSelector" title="{% trans 'اختر الفرع' %}">
-                    {% if current_branch %}
-                        <option value="{{ current_branch.id }}" selected>{{ current_branch.name }}</option>
-                    {% endif %}
+                    <option value="all" {% if not current_branch %}selected{% endif %}>{% trans 'كل الفروع' %}</option>
                     {% for branch in nav_branches %}
-                        {% if branch.id != current_branch.id %}
-                        <option value="{{ branch.id }}">{{ branch.name }}</option>
-                        {% endif %}
-                    {% empty %}
-                        <option value="">{% trans 'كل الفروع' %}</option>
+                        <option value="{{ branch.id }}" {% if current_branch and branch.id == current_branch.id %}selected{% endif %}>{{ branch.name }}</option>
                     {% endfor %}
                 </select>
+                {% else %}
+                {# Users are pinned to their own branch #}
+                <span class="branch-fixed" title="{% trans 'فرعك' %}" style="font-size:0.85rem;font-weight:600;color:var(--text-primary, #f3f4f6);padding:0 0.25rem;white-space:nowrap;">{% if current_branch %}{{ current_branch.name }}{% else %}{% trans 'غير مرتبط بفرع' %}{% endif %}</span>
+                {% endif %}
             </div>
 
             <div class="navbar-divider"></div>
