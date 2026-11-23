@@ -147,6 +147,38 @@ def get_branch_scope(request):
     return None
 
 
+SHIFT_BRANCH_LOCK_MESSAGE = 'لا يمكن تغيير الفرع أثناء وجود وردية مفتوحة على "{branch}". أغلق الوردية أولاً.'
+
+
+def get_open_shift_branch(user):
+    """
+    Branch of the user's OPEN POS shift, or None. While a shift is open the
+    branch is locked to it everywhere (header, POS, documents) until closed.
+    """
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return None
+    try:
+        from apps.tenant.invoicing.models import POSSession
+        session = (POSSession.objects.filter(user=user, status=POSSession.OPEN, branch__is_active=True)
+                   .select_related('branch').first())
+    except Exception:  # table missing on a fresh DB being bootstrapped
+        return None
+    return session.branch if session else None
+
+
+def shift_branch_lock_error(request, branch):
+    """
+    Error message if ``branch`` differs from the branch locked by the user's
+    open shift, else None. Use wherever a form lets the user pick a branch.
+    """
+    if not getattr(request, 'branch_locked_by_shift', False):
+        return None
+    locked = getattr(request, 'branch', None)
+    if locked is not None and branch is not None and branch.id != locked.id:
+        return SHIFT_BRANCH_LOCK_MESSAGE.format(branch=locked.name)
+    return None
+
+
 def get_working_branch(request):
     """
     The single Branch new documents are created in (shift, POS sale, purchase,
@@ -171,10 +203,39 @@ def get_working_branch(request):
     return getattr(request, 'branch', None) or emp_branch or Branch.objects.filter(is_active=True).first()
 
 
+def attach_branch_context(request):
+    """
+    Called by BranchMiddleware on every tenant request: copies the branch
+    rules onto request.user so code that only receives ``user`` (forms) follows
+    the same single rule as views:
+
+      user.branch_read_scope  -> Branch or None (None = all, admins only)
+      user.working_branch     -> Branch money/documents must use, or None
+    """
+    user = getattr(request, 'user', None)
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return
+    try:
+        user.branch_read_scope = get_branch_scope(request)
+        user.working_branch = get_working_branch(request)
+        user.has_branch_context = True
+    except Exception:
+        pass
+
+
+def user_working_branch(user):
+    """(has_context, branch) as attached by attach_branch_context()."""
+    if getattr(user, 'has_branch_context', False):
+        return True, getattr(user, 'working_branch', None)
+    return False, None
+
+
 def set_header_branch(request, branch):
     """Make ``branch`` the admin's header branch (session + current request)."""
     if branch is None or not is_tenant_admin(getattr(request, 'user', None)):
         return
+    if getattr(request, 'branch_locked_by_shift', False):
+        return  # locked to the open shift's branch
     request.session['current_branch_id'] = branch.id
     request.branch = branch
 

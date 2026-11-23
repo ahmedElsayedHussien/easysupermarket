@@ -1,0 +1,60 @@
+{% comment %}
+One tab of the liquidity dashboard. Context: rows, kind (TREASURY|BANK|EWALLET),
+active, show_branch. Each row: obj, balance, bar_pct, last_move, account, branch.
+{% endcomment %}
+<div class="lq-panel{% if active %} active{% endif %}" data-panel="{{ kind }}" role="tabpanel">
+  <div class="lq-scroll">
+    <table class="lq-table">
+      <thead>
+        <tr>
+          <th>الاسم</th>
+          {% if show_branch %}<th>الفرع</th>{% endif %}
+          <th>الرصيد الحالي</th>
+          <th style="width: 22%;"></th>
+          <th>آخر حركة</th>
+          <th>حساب الدليل</th>
+          <th>إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td style="font-weight: 700;">{{ r.obj.name }}</td>
+          {% if show_branch %}<td style="color: var(--lq-text-2);">{{ r.branch.name|default:"—" }}</td>{% endif %}
+          <td class="num{% if r.balance < 0 %} neg{% endif %}"><bdi dir="ltr">{{ r.balance|money }}</bdi> <small style="color:var(--lq-muted);font-weight:400">ج.م</small></td>
+          <td><div class="lq-bar" title="{{ r.balance|money }} ج.م"><i style="width: {{ r.bar_pct|floatformat:"1u" }}%;"></i></div></td>
+          <td style="color: var(--lq-text-2); white-space: nowrap;">{{ r.last_move|date:"Y-m-d"|default:"—" }}</td>
+          <td style="color: var(--lq-muted); font-size: 0.8rem;">{% if r.account %}{{ r.account.code }}{% else %}—{% endif %}</td>
+          <td>
+            <div class="lq-row-actions">
+              {% if r.account %}<a href="{% url 'core:report_general_ledger' %}?account_id={{ r.account.id }}" title="كشف حساب">📄 كشف حساب</a>{% endif %}
+              {% if perms.accounting.add_internaltransfer %}
+                <a href="{% url 'accounting:transfer_create' %}?from_type={{ kind }}&from_id={{ r.obj.pk }}" title="تحويل من هذا الحساب">↗ تحويل منه</a>
+                <a href="{% url 'accounting:transfer_create' %}?to_type={{ kind }}&to_id={{ r.obj.pk }}" title="تحويل إلى هذا الحساب">↙ تحويل إليه</a>
+              {% endif %}
+              {% if kind == 'TREASURY' %}
+                {% if perms.accounting.change_treasury %}<a href="{% url 'accounting:treasury_update' r.obj.pk %}">✏️ تعديل</a>{% endif %}
+                {% if perms.accounting.delete_treasury %}
+                <form action="{% url 'accounting:treasury_delete' r.obj.pk %}" method="POST" style="display:inline" onsubmit="return confirm('حذف الخزينة؟ سيتم منع الحذف إذا كان عليها حركات مالية.');">{% csrf_token %}<button type="submit" class="danger">🗑</button></form>
+                {% endif %}
+              {% elif kind == 'BANK' %}
+                {% if perms.accounting.change_bankaccount %}<a href="{% url 'accounting:bank_update' r.obj.pk %}">✏️ تعديل</a>{% endif %}
+                {% if perms.accounting.delete_bankaccount %}
+                <form action="{% url 'accounting:bank_delete' r.obj.pk %}" method="POST" style="display:inline" onsubmit="return confirm('حذف الحساب البنكي؟ سيتم منع الحذف إذا كان عليه حركات مالية.');">{% csrf_token %}<button type="submit" class="danger">🗑</button></form>
+                {% endif %}
+              {% else %}
+                {% if perms.accounting.change_ewallet %}<a href="{% url 'accounting:ewallet_update' r.obj.pk %}">✏️ تعديل</a>{% endif %}
+                {% if perms.accounting.delete_ewallet %}
+                <form action="{% url 'accounting:ewallet_delete' r.obj.pk %}" method="POST" style="display:inline" onsubmit="return confirm('حذف المحفظة؟ سيتم منع الحذف إذا كان عليها حركات مالية.');">{% csrf_token %}<button type="submit" class="danger">🗑</button></form>
+                {% endif %}
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="{% if show_branch %}7{% else %}6{% endif %}" class="lq-empty">لا توجد حسابات من هذا النوع</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

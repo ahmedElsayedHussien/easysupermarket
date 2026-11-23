@@ -312,6 +312,7 @@ def _process_purchase_invoice(invoice, lines):
             warehouse=invoice.warehouse,
             quantity=base_quantity,
             unit_cost=unit_cost,
+            expiry_date=None if is_return_sale else getattr(line, 'expiry_date', None),
             invoice_line=line,
             reference=invoice.invoice_number,
             movement_type=m_type,
@@ -405,10 +406,12 @@ def update_invoice_payment_method(
     invoice.paid_card = paid_card
     invoice.paid_ewallet = paid_ewallet
     invoice.paid_bank = paid_bank
+    # The amounts are re-entered manually here: the POS cash rounding no longer applies.
+    invoice.rounding_amount = Decimal('0')
 
     invoice.save(update_fields=[
         'partner', 'payment_type', 'treasury_id', 'bank_account_id', 'insta_bank_account_id', 'ewallet_id',
-        'paid_cash', 'paid_card', 'paid_ewallet', 'paid_bank', 'updated_at'
+        'paid_cash', 'paid_card', 'paid_ewallet', 'paid_bank', 'rounding_amount', 'updated_at'
     ])
 
     # 3. If POSTED, post a fresh unified journal entry matching the updated payment method

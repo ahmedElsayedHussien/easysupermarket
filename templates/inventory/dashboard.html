@@ -1,0 +1,256 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/panels.css' %}">
+
+<div class="glass-container lq-root" style="padding: 1.5rem;">
+  <!-- Header -->
+  <div class="lq-head">
+    <div>
+      <h2>📦 {{ title }}</h2>
+      <span class="lq-scope">المستودعات: {{ scope_label }} · {{ warehouses_count }} مستودع</span>
+    </div>
+    <div class="lq-actions">
+      {% if perms.inventory.add_stockadjustment %}<a class="lq-btn primary" href="{% url 'inventory:stocktake' %}">📋 جرد فعلي وتسوية</a>{% endif %}
+      {% if perms.inventory.add_product %}<a class="lq-btn" href="{% url 'inventory:product_create' %}">＋ صنف جديد</a>{% endif %}
+    </div>
+  </div>
+
+  {% if not warehouses_count %}
+  <div style="background: rgba(250,178,25,0.08); border: 1px solid rgba(250,178,25,0.35); border-radius: 10px; padding: 0.75rem 1rem; margin-bottom: 1.25rem; color: var(--lq-text);">
+    ⚠️ لا توجد مستودعات نشطة في <b>{{ scope_label }}</b>، لذلك الأرقام صفر.
+    {% if branch_locked_by_shift %}الفرع مقفول على فرع الوردية المفتوحة — أغلق الوردية لعرض فرع آخر أو كل الفروع.{% elif is_admin %}اختر فرعاً آخر أو «كل الفروع» من الهيدر، أو{% endif %}
+    {% if perms.inventory.add_warehouse %}<a href="{% url 'inventory:warehouse_create' %}" style="color:#00e5ff">أنشئ مستودعاً لهذا الفرع</a>.{% endif %}
+  </div>
+  {% endif %}
+
+  <!-- Every inventory page, grouped (replaces the crowded side menu) -->
+  <div class="lq-groups">
+    <div class="lq-group"><h4>العمليات اليومية</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'inventory:stock_list' %}">📦 تتبع المخزون FIFO</a>
+      <a class="lq-btn" href="{% url 'inventory:stocktake' %}">📋 الجرد الفعلي</a>
+      <a class="lq-btn" href="{% url 'inventory:adjustment_list' %}">⚖️ التسويات والإعدام{% if draft_adjustments %} <span class="lq-badge">{{ draft_adjustments }}</span>{% endif %}</a>
+      <a class="lq-btn" href="{% url 'inventory:transfer_stock' %}">🔄 تحويل مخزني</a>
+      <a class="lq-btn" href="{% url 'inventory:stock_transfer_list' %}">📜 سجل التحويلات</a>
+    </div></div>
+    <div class="lq-group"><h4>الأصناف</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'inventory:product_list' %}">🏷️ الأصناف</a>
+      <a class="lq-btn" href="{% url 'inventory:product_bulk_import' %}">📥 استيراد إكسيل</a>
+      <a class="lq-btn" href="{% url 'inventory:opening_stock_list' %}">🧮 أرصدة أول المدة</a>
+    </div></div>
+    <div class="lq-group"><h4>الإعدادات</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'inventory:warehouse_list' %}">🏭 المستودعات</a>
+      <a class="lq-btn" href="{% url 'inventory:category_list' %}">🗂️ الفئات ({{ categories_count }})</a>
+      <a class="lq-btn" href="{% url 'inventory:uom_list' %}">📐 وحدات القياس</a>
+    </div></div>
+    <div class="lq-group"><h4>التقارير</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'inventory:valuation_report' %}">💰 تقييم المخزون</a>
+      {% if expiry_tracking %}<a class="lq-btn" href="{% url 'inventory:expiry_report' %}">⏳ الصلاحية</a>{% endif %}
+    </div></div>
+  </div>
+
+  <!-- KPI tiles -->
+  <div class="lq-tiles">
+    <div class="lq-tile hero">
+      <div class="k">قيمة المخزون (بالتكلفة)</div>
+      <div class="v"><bdi dir="ltr">{{ total_value|money }}</bdi> <small style="font-size:0.75rem;color:var(--lq-muted)">ج.م</small></div>
+      <div class="s">{{ in_stock_count }} صنف متوفر من {{ products_count }}</div>
+    </div>
+    <div class="lq-tile"><div class="k">وارد آخر {{ flow_days }} يوم</div>
+      <div class="v"><bdi dir="ltr">{{ total_in|money }}</bdi></div><div class="s">شراء وتسويات وأرصدة افتتاحية</div></div>
+    <div class="lq-tile"><div class="k">صادر آخر {{ flow_days }} يوم</div>
+      <div class="v"><bdi dir="ltr">{{ total_out|money }}</bdi></div><div class="s">مبيعات وإعدام ومرتجعات</div></div>
+    <div class="lq-tile"><div class="k">تغطية المخزون</div>
+      <div class="v">{% if days_cover is not None %}{{ days_cover|floatformat:"0u" }} <small style="font-size:0.75rem;color:var(--lq-muted)">يوم</small>{% else %}—{% endif %}</div>
+      <div class="s">بمعدل الصرف الحالي</div></div>
+  </div>
+
+  <!-- Health alerts (status color + icon + label) -->
+  <div class="lq-alerts">
+    <a class="lq-alert st-warning{% if not low_stock_count %} is-zero{% endif %}" href="#inv-low">
+      <div class="k">⚠️ تحت حد الطلب</div><div class="v">{{ low_stock_count }}</div><div class="s">صنف وصل للحد الأدنى</div></a>
+    <a class="lq-alert st-serious{% if not out_of_stock_count %} is-zero{% endif %}" href="{% url 'inventory:product_list' %}">
+      <div class="k">⛔ نفد من المخزون</div><div class="v">{{ out_of_stock_count }}</div><div class="s">صنف رصيده صفر</div></a>
+    <a class="lq-alert st-critical{% if not negative_count %} is-zero{% endif %}" href="#inv-negative">
+      <div class="k">❗ رصيد بالسالب</div><div class="v">{{ negative_count }}</div><div class="s">يحتاج جرد / تسوية</div></a>
+    {% if expiry_tracking %}
+    <a class="lq-alert st-critical{% if not expired_count %} is-zero{% endif %}" href="{% url 'inventory:expiry_report' %}">
+      <div class="k">☠️ منتهي الصلاحية</div><div class="v">{{ expired_count }}</div><div class="s">دفعة · <bdi dir="ltr">{{ expired_value|money }}</bdi></div></a>
+    <a class="lq-alert st-warning{% if not expiring_soon_count %} is-zero{% endif %}" href="{% url 'inventory:expiry_report' %}">
+      <div class="k">⏳ ينتهي خلال {{ expiry_days }} يوم</div><div class="v">{{ expiring_soon_count }}</div><div class="s">دفعة · <bdi dir="ltr">{{ expiring_soon_value|money }}</bdi></div></a>
+    {% endif %}
+    <a class="lq-alert st-warning{% if not stagnant_count %} is-zero{% endif %}" href="#inv-top">
+      <div class="k">🐢 راكد ({{ stagnant_days }} يوم بدون صرف)</div><div class="v">{{ stagnant_count }}</div><div class="s">صنف · <bdi dir="ltr">{{ stagnant_value|money }}</bdi></div></a>
+  </div>
+
+  <div class="lq-grid2">
+    <!-- Value by category -->
+    <section class="lq-card" aria-labelledby="inv-cat-title">
+      <h3 id="inv-cat-title">قيمة المخزون حسب الفئة <small>بالتكلفة</small></h3>
+      <ul class="lq-hbars">
+        {% for c in categories %}
+        <li class="{% if c.other %}other{% endif %}" title="{{ c.label }}: {{ c.value|money }} ج.م ({{ c.share|floatformat:'1u' }}%)">
+          <span class="lbl">{{ c.label }}</span>
+          <span class="trk"><i style="width: {{ c.pct_of_max|floatformat:'1u' }}%;"></i></span>
+          <span class="val"><bdi dir="ltr">{{ c.value|money }}</bdi><small>{{ c.share|floatformat:"0u" }}%</small></span>
+        </li>
+        {% empty %}
+        <li class="lq-empty" style="display:block">لا يوجد مخزون</li>
+        {% endfor %}
+      </ul>
+
+      <h3 style="margin-top: 1.4rem;">حسب المستودع</h3>
+      <ul class="lq-hbars">
+        {% for r in wh_rows %}
+        <li title="{{ r.obj.name }}: {{ r.value|money }} ج.م — {{ r.items }} صنف">
+          <span class="lbl">{{ r.obj.name }}{% if scope_label == 'كل الفروع' and r.obj.branch %} <small style="color:var(--lq-muted)">· {{ r.obj.branch.name }}</small>{% endif %}</span>
+          <span class="trk"><i style="width: {{ r.pct|floatformat:'1u' }}%;"></i></span>
+          <span class="val"><bdi dir="ltr">{{ r.value|money }}</bdi><small>{{ r.items }} صنف</small></span>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <!-- 30-day in / out -->
+    <section class="lq-card" aria-labelledby="inv-flow-title">
+      <h3 id="inv-flow-title">حركة المخزون آخر {{ flow_days }} يوم <small>بالتكلفة</small>
+        <span class="lq-flow-legend"><span><span class="lq-dot" style="background:var(--flow-in)"></span>وارد</span><span><span class="lq-dot" style="background:var(--flow-out)"></span>صادر</span></span>
+      </h3>
+      <div class="lq-chart"><canvas id="invFlowChart" role="img" aria-label="حركة المخزون اليومية: وارد وصادر"></canvas></div>
+      <div class="lq-flow-sum">
+        <span>إجمالي الوارد <b><bdi dir="ltr">{{ total_in|money }}</bdi></b></span>
+        <span>إجمالي الصادر <b><bdi dir="ltr">{{ total_out|money }}</bdi></b></span>
+        <span style="color:var(--lq-muted)">التحويلات بين المستودعات غير محسوبة</span>
+      </div>
+      <details class="lq-table-view"><summary>عرض كجدول</summary>
+        <div class="lq-scroll"><table class="lq-table" id="invFlowTable"><thead><tr><th>اليوم</th><th>وارد</th><th>صادر</th></tr></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+  </div>
+
+  <div class="lq-grid2" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr);">
+    <!-- Low stock -->
+    <section class="lq-card" id="inv-low">
+      <h3>⚠️ أصناف تحت حد الطلب <small>{{ low_stock_count }}</small></h3>
+      <div class="lq-scroll"><table class="lq-table">
+        <thead><tr><th>الصنف</th><th>الرصيد</th><th>الحد الأدنى</th><th></th></tr></thead>
+        <tbody>
+          {% for p, q, level in low_stock %}
+          <tr>
+            <td>{{ p.name }}</td>
+            <td class="num{% if q <= 0 %} neg{% endif %}"><bdi dir="ltr">{{ q|floatformat:"-2u" }}</bdi></td>
+            <td class="num" style="font-weight:400">{{ level|floatformat:"-2u" }}</td>
+            <td><div class="lq-row-actions"><a href="{% url 'invoicing:purchase_invoice' %}">🛒 شراء</a></div></td>
+          </tr>
+          {% empty %}<tr><td colspan="4" class="lq-empty">لا توجد أصناف تحت حد الطلب 👍</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+      {% if negative %}
+      <h3 id="inv-negative" style="margin-top: 1.2rem;">❗ أرصدة بالسالب <small>{{ negative_count }}</small></h3>
+      <div class="lq-scroll"><table class="lq-table">
+        <tbody>
+          {% for p, q in negative %}
+          <tr><td>{{ p.name }}</td><td class="num neg"><bdi dir="ltr">{{ q|floatformat:"-2u" }}</bdi></td>
+              <td><div class="lq-row-actions"><a href="{% url 'inventory:stocktake' %}">📋 جرد</a></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
+    </section>
+
+    <!-- Top items by value -->
+    <section class="lq-card" id="inv-top">
+      <h3>أعلى 10 أصناف قيمةً <small>بالتكلفة</small></h3>
+      <div class="lq-scroll"><table class="lq-table">
+        <thead><tr><th>الصنف</th><th>الكمية</th><th>القيمة</th></tr></thead>
+        <tbody>
+          {% for it in top_items %}
+          <tr><td>{{ it.product__name }}</td><td class="num" style="font-weight:400"><bdi dir="ltr">{{ it.q|floatformat:"-2u" }}</bdi></td>
+              <td class="num"><bdi dir="ltr">{{ it.v|money }}</bdi></td></tr>
+          {% empty %}<tr><td colspan="3" class="lq-empty">لا يوجد مخزون</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+      {% if expiring_list %}
+      <h3 style="margin-top: 1.2rem;">⏳ صلاحية قريبة / منتهية</h3>
+      <div class="lq-scroll"><table class="lq-table"><tbody>
+        {% for b in expiring_list %}
+        <tr><td>{{ b.product.name }}</td><td style="color:var(--lq-text-2)">{{ b.warehouse.name }}</td>
+            <td class="num{% if b.expiry_date < today %} neg{% endif %}" style="font-weight:400">{{ b.expiry_date|date:"Y-m-d" }}</td>
+            <td class="num"><bdi dir="ltr">{{ b.quantity_remaining|floatformat:"-2u" }}</bdi></td></tr>
+        {% endfor %}
+      </tbody></table></div>
+      {% endif %}
+    </section>
+  </div>
+
+  <!-- Recent adjustments -->
+  <section class="lq-card">
+    <h3>آخر التسويات والجرد {% if draft_adjustments %}<small>📝 {{ draft_adjustments }} مسودة لم تُرحّل</small>{% endif %}</h3>
+    <div class="lq-scroll"><table class="lq-table">
+      <thead><tr><th>#</th><th>التاريخ</th><th>النوع</th><th>المستودع</th><th>البيان</th><th>الحالة</th></tr></thead>
+      <tbody>
+        {% for a in recent_adjustments %}
+        <tr>
+          <td><a href="{% url 'inventory:adjustment_detail' a.pk %}" style="color:#00e5ff">{{ a.pk }}</a></td>
+          <td class="num" style="font-weight:400">{{ a.date|date:"Y-m-d" }}</td>
+          <td>{{ a.get_adjustment_type_display }}</td>
+          <td style="color:var(--lq-text-2)">{{ a.warehouse.name }}</td>
+          <td style="color:var(--lq-text-2); max-width: 320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="{{ a.reason }}">{{ a.reason }}</td>
+          <td>{% if a.status == 'DRAFT' %}<span style="color:var(--st-warning)">📝 مسودة</span>{% else %}<span style="color:var(--lq-text-2)">✓ مرحل</span>{% endif %}</td>
+        </tr>
+        {% empty %}<tr><td colspan="6" class="lq-empty">لا توجد تسويات بعد</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+</div>
+
+{{ flow_data|json_script:"inv-flow-data" }}
+<script>
+(function () {
+  var data = JSON.parse(document.getElementById('inv-flow-data').textContent);
+  var root = document.querySelector('.lq-root');
+  var css = function (v) { return getComputedStyle(root).getPropertyValue(v).trim(); };
+  var fmt = function (n) { return Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+  var tbody = document.querySelector('#invFlowTable tbody');
+  data.labels.forEach(function (d, i) {
+    if (!data.inflow[i] && !data.outflow[i]) return;
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td class="num" style="font-weight:400">' + d + '</td><td class="num">' + fmt(data.inflow[i]) +
+                   '</td><td class="num neg">' + fmt(data.outflow[i]) + '</td>';
+    tbody.appendChild(tr);
+  });
+  if (!tbody.children.length) tbody.innerHTML = '<tr><td colspan="3" class="lq-empty">لا توجد حركة</td></tr>';
+
+  if (typeof Chart === 'undefined') return;
+  new Chart(document.getElementById('invFlowChart'), {
+    type: 'bar',
+    data: {
+      labels: data.labels,
+      datasets: [
+        { label: 'وارد', data: data.inflow, backgroundColor: css('--flow-in'), borderRadius: { topLeft: 4, topRight: 4 },
+          borderSkipped: 'bottom', maxBarThickness: 14, stack: 'flow' },
+        { label: 'صادر', data: data.outflow.map(function (v) { return -v; }), backgroundColor: css('--flow-out'),
+          borderRadius: { bottomLeft: 4, bottomRight: 4 }, borderSkipped: 'top', maxBarThickness: 14, stack: 'flow' }
+      ]
+    },
+    options: {
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { rtl: true, textDirection: 'rtl',
+          callbacks: { label: function (ctx) { return ctx.dataset.label + ': ' + fmt(ctx.parsed.y) + ' ج.م'; } } }
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: css('--lq-muted'), maxRotation: 0, autoSkipPadding: 12, font: { size: 10 } } },
+        y: { stacked: true, grid: { color: css('--lq-grid') }, border: { display: false },
+             ticks: { color: css('--lq-muted'), font: { size: 10 }, callback: function (v) { return Math.abs(v).toLocaleString('en-US'); } } }
+      }
+    }
+  });
+})();
+</script>
+{% endblock %}

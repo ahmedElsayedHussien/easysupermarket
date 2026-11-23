@@ -51,6 +51,10 @@ if %errorlevel% equ 0 (
     python manage.py migrate --noinput
 )
 
+echo Running automatic backup (if enabled in settings)...
+python manage.py auto_backup
+if %errorlevel% neq 0 echo [WARNING] Automatic backup failed - the server will start anyway.
+
 echo Building static files (CSS/JS)...
 python manage.py collectstatic --noinput >nul
 

@@ -49,6 +49,96 @@ def _ensure_pos_session_open(pos_session, action_label='تعديل'):
 
 
 # ---------------------------------------------------------------------------
+# Accounting period lock (SystemSetting.accounting_lock_date)
+# ---------------------------------------------------------------------------
+# A journal entry dated on/before the lock date is frozen: it can't be created,
+# have its date/status changed, be deleted, or have its lines created / changed /
+# deleted. Enforced here at the model layer (save/delete/post + queryset
+# update/delete/bulk_create) so every app and service follows it.
+# Cancelling / editing a document of a closed period still works when it is done
+# by reversal: the reversal is a NEW entry dated today (open period) and the
+# original entry row is never written.
+
+def _lock_date():
+    from apps.tenant.core.settings_helpers import accounting_lock_date
+    return accounting_lock_date()
+
+
+def _as_date(value):
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    return value if isinstance(value, datetime.date) else None
+
+
+def _period_locked_error(date):
+    from apps.tenant.core.settings_helpers import lock_error_message
+    return ValidationError(lock_error_message(_as_date(date)))
+
+
+def ensure_open_period(date):
+    """Raise ValidationError (Arabic) if ``date`` falls in the closed accounting period."""
+    lock = _lock_date()
+    d = _as_date(date)
+    if lock and d is not None and d <= lock:
+        raise _period_locked_error(d)
+
+
+class JournalEntryQuerySet(models.QuerySet):
+    LOCKED_FIELDS = frozenset({'date', 'status'})
+
+    def _raise_if_any_locked(self):
+        lock = _lock_date()
+        if not lock:
+            return
+        locked_date = self.filter(date__lte=lock).values_list('date', flat=True).first()
+        if locked_date is not None:
+            raise _period_locked_error(locked_date)
+
+    def delete(self):
+        self._raise_if_any_locked()
+        return super().delete()
+
+    def update(self, **kwargs):
+        if self.LOCKED_FIELDS & set(kwargs):
+            self._raise_if_any_locked()
+            if 'date' in kwargs:
+                ensure_open_period(kwargs['date'])
+        return super().update(**kwargs)
+
+
+class JournalItemQuerySet(models.QuerySet):
+    def _raise_if_any_locked(self):
+        lock = _lock_date()
+        if not lock:
+            return
+        locked_date = self.filter(entry__date__lte=lock).values_list('entry__date', flat=True).first()
+        if locked_date is not None:
+            raise _period_locked_error(locked_date)
+
+    def delete(self):
+        self._raise_if_any_locked()
+        return super().delete()
+
+    def update(self, **kwargs):
+        self._raise_if_any_locked()
+        if 'entry' in kwargs or 'entry_id' in kwargs:
+            target = kwargs.get('entry', kwargs.get('entry_id'))
+            target_id = getattr(target, 'pk', target)
+            if target_id and _lock_date():
+                ensure_open_period(
+                    JournalEntry.objects.filter(pk=target_id).values_list('date', flat=True).first())
+        return super().update(**kwargs)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        objs = list(objs)
+        if _lock_date():
+            entry_ids = {o.entry_id for o in objs if o.entry_id}
+            for d in JournalEntry.objects.filter(pk__in=entry_ids).values_list('date', flat=True):
+                ensure_open_period(d)
+        return super().bulk_create(objs, *args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
 # Account (Chart of Accounts) - MPTT tree
 # ---------------------------------------------------------------------------
 
@@ -241,12 +331,39 @@ class JournalEntry(models.Model):
         verbose_name='قيد عكسي لـ'
     )
 
+    objects = JournalEntryQuerySet.as_manager()
+
     class Meta:
         verbose_name = 'قيد يومية'
         verbose_name_plural = 'قيود اليومية'
         ordering = ['-date', '-created_at']
 
+    def _check_period_lock(self, update_fields=None):
+        """
+        New entry: its date must be in the open period.
+        Existing entry: changing its date or status is refused when the stored or the
+        new date is locked. Other fields (description, source-document link...) may
+        still be updated: they don't change any balance.
+        """
+        lock = _lock_date()
+        if not lock:
+            return
+        old = None
+        if self.pk and not self._state.adding:
+            old = JournalEntry.objects.filter(pk=self.pk).values('date', 'status').first()
+        if old is None:
+            ensure_open_period(self.date)
+            return
+        changed = {f for f in ('date', 'status') if old[f] != getattr(self, f)}
+        if update_fields is not None:
+            changed &= set(update_fields)
+        if not changed:
+            return
+        ensure_open_period(old['date'])
+        ensure_open_period(self.date)
+
     def save(self, *args, **kwargs):
+        self._check_period_lock(kwargs.get('update_fields'))
         if not self.reference:
             year = self.date.year if self.date else datetime.date.today().year
             prefix = f"JE-MANUAL-{year}-"
@@ -255,6 +372,12 @@ class JournalEntry(models.Model):
                 super().save(*args, **kwargs)
             return
         super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.pk and _lock_date():
+            stored = JournalEntry.objects.filter(pk=self.pk).values_list('date', flat=True).first()
+            ensure_open_period(stored if stored is not None else self.date)
+        return super().delete(*args, **kwargs)
 
     def __str__(self):
         return f'{self.reference} - {self.date} [{self.get_status_display()}]'
@@ -302,8 +425,10 @@ class JournalEntry(models.Model):
     def post(self):
         """
         Post the journal entry after validating balance.
-        Raises ValidationError if the entry is not balanced.
+        Raises ValidationError if the entry is not balanced or its date is in the
+        closed accounting period.
         """
+        ensure_open_period(self.date)
         if not self.is_balanced():
             debit = self.get_total_debit()
             credit = self.get_total_credit()
@@ -353,6 +478,8 @@ class JournalItem(models.Model):
         max_length=500, blank=True, verbose_name='البيان'
     )
 
+    objects = JournalItemQuerySet.as_manager()
+
     class Meta:
         verbose_name = 'بند قيد'
         verbose_name_plural = 'بنود القيد'
@@ -375,6 +502,25 @@ class JournalItem(models.Model):
         if self.debit > 0:
             return f'{self.account} | مدين: {self.debit:.4f}'
         return f'{self.account} | دائن: {self.credit:.4f}'
+
+    def _check_period_lock(self):
+        """A line can't be added to / changed in / removed from a closed-period entry."""
+        if not _lock_date():
+            return
+        if self.entry_id:
+            ensure_open_period(
+                JournalEntry.objects.filter(pk=self.entry_id).values_list('date', flat=True).first())
+        if self.pk and not self._state.adding:
+            old_entry_date = JournalItem.objects.filter(pk=self.pk).values_list('entry__date', flat=True).first()
+            ensure_open_period(old_entry_date)
+
+    def save(self, *args, **kwargs):
+        self._check_period_lock()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        self._check_period_lock()
+        return super().delete(*args, **kwargs)
 
     def clean(self):
         """Ensure a journal item has either debit or credit, not both."""
@@ -1016,15 +1162,30 @@ class Voucher(models.Model):
         super().save(*args, **kwargs)
 
     @property
+    def document_branch(self):
+        """The branch this voucher belongs to (explicit, else its shift's / treasury's)."""
+        if self.branch_id:
+            return self.branch
+        if self.pos_session_id and self.pos_session and self.pos_session.branch_id:
+            return self.pos_session.branch
+        if self.treasury_id and self.treasury and self.treasury.branch_id:
+            return self.treasury.branch
+        return None
+
+    def _pos_defaults(self):
+        """Per-branch default treasury / bank / instapay / e-wallet for this voucher."""
+        from apps.tenant.core.settings_helpers import get_pos_defaults
+        return get_pos_defaults(self.document_branch)
+
+    @property
     def payment_account(self):
         if self.payment_method == self.CASH:
             if not self.treasury:
-                from apps.tenant.core.models import SystemSetting
-                sys_setting = SystemSetting.get_settings()
+                defaults = self._pos_defaults()
                 if self.pos_session and self.pos_session.treasury:
                     self.treasury = self.pos_session.treasury
-                elif sys_setting and sys_setting.default_pos_treasury:
-                    self.treasury = sys_setting.default_pos_treasury
+                elif defaults['treasury']:
+                    self.treasury = defaults['treasury']
                 elif Treasury.objects.exists():
                     self.treasury = Treasury.objects.first()
                 if self.treasury and self.pk:
@@ -1039,14 +1200,13 @@ class Voucher(models.Model):
                 self.bank_account = self.transfer_bank_account
 
             if not self.bank_account:
-                from apps.tenant.core.models import SystemSetting
-                sys_setting = SystemSetting.get_settings()
-                if self.payment_method == self.CARD and sys_setting and sys_setting.default_pos_bank_account:
-                    self.bank_account = sys_setting.default_pos_bank_account
-                elif self.payment_method == self.BANK_TRANSFER and sys_setting and sys_setting.default_pos_instapay_account:
-                    self.bank_account = sys_setting.default_pos_instapay_account
-                elif self.payment_method == self.BANK_TRANSFER and sys_setting and sys_setting.default_pos_bank_account:
-                    self.bank_account = sys_setting.default_pos_bank_account
+                defaults = self._pos_defaults()
+                if self.payment_method == self.CARD and defaults['bank_account']:
+                    self.bank_account = defaults['bank_account']
+                elif self.payment_method == self.BANK_TRANSFER and defaults['instapay_account']:
+                    self.bank_account = defaults['instapay_account']
+                elif self.payment_method == self.BANK_TRANSFER and defaults['bank_account']:
+                    self.bank_account = defaults['bank_account']
                 elif BankAccount.objects.exists():
                     self.bank_account = BankAccount.objects.first()
                 if self.bank_account and self.pk:
@@ -1058,10 +1218,9 @@ class Voucher(models.Model):
 
         elif self.payment_method == self.EWALLET:
             if not self.ewallet:
-                from apps.tenant.core.models import SystemSetting
-                sys_setting = SystemSetting.get_settings()
-                if sys_setting and sys_setting.default_pos_ewallet:
-                    self.ewallet = sys_setting.default_pos_ewallet
+                defaults = self._pos_defaults()
+                if defaults['ewallet']:
+                    self.ewallet = defaults['ewallet']
                 elif EWallet.objects.exists():
                     self.ewallet = EWallet.objects.first()
                 if self.ewallet and self.pk:
@@ -1111,9 +1270,7 @@ class Voucher(models.Model):
 
                 if self.paid_cash > 0:
                     if not self.treasury:
-                        from apps.tenant.core.models import SystemSetting
-                        sys_setting = SystemSetting.get_settings()
-                        self.treasury = (sys_setting.default_pos_treasury if sys_setting else None) or Treasury.objects.first()
+                        self.treasury = self._pos_defaults()['treasury'] or Treasury.objects.first()
                         if self.treasury and self.pk:
                             Voucher.objects.filter(pk=self.pk).update(treasury=self.treasury)
                     if not self.treasury or not self.treasury.ensure_account():
@@ -1121,9 +1278,7 @@ class Voucher(models.Model):
 
                 if self.paid_card > 0:
                     if not self.bank_account:
-                        from apps.tenant.core.models import SystemSetting
-                        sys_setting = SystemSetting.get_settings()
-                        self.bank_account = (sys_setting.default_pos_bank_account if sys_setting else None) or BankAccount.objects.first()
+                        self.bank_account = self._pos_defaults()['bank_account'] or BankAccount.objects.first()
                         if self.bank_account and self.pk:
                             Voucher.objects.filter(pk=self.pk).update(bank_account=self.bank_account)
                     if not self.bank_account or not self.bank_account.ensure_account():
@@ -1131,9 +1286,7 @@ class Voucher(models.Model):
 
                 if self.paid_ewallet > 0:
                     if not self.ewallet:
-                        from apps.tenant.core.models import SystemSetting
-                        sys_setting = SystemSetting.get_settings()
-                        self.ewallet = (sys_setting.default_pos_ewallet if sys_setting else None) or EWallet.objects.first()
+                        self.ewallet = self._pos_defaults()['ewallet'] or EWallet.objects.first()
                         if self.ewallet and self.pk:
                             Voucher.objects.filter(pk=self.pk).update(ewallet=self.ewallet)
                     if not self.ewallet or not self.ewallet.ensure_account():
@@ -1142,9 +1295,8 @@ class Voucher(models.Model):
                 trans_acc = self.transfer_bank_account or self.bank_account
                 if self.paid_bank > 0:
                     if not trans_acc:
-                        from apps.tenant.core.models import SystemSetting
-                        sys_setting = SystemSetting.get_settings()
-                        trans_acc = (sys_setting.default_pos_instapay_account if sys_setting else None) or (sys_setting.default_pos_bank_account if sys_setting else None) or BankAccount.objects.first()
+                        defaults = self._pos_defaults()
+                        trans_acc = defaults['instapay_account'] or defaults['bank_account'] or BankAccount.objects.first()
                         if trans_acc and self.pk:
                             Voucher.objects.filter(pk=self.pk).update(transfer_bank_account=trans_acc)
                     if not trans_acc or not trans_acc.ensure_account():
@@ -1615,14 +1767,21 @@ class InternalTransfer(models.Model):
     ]
 
     DRAFT = 'DRAFT'
+    IN_TRANSIT = 'IN_TRANSIT'   # inter-branch: sent, waiting for the receiving branch
     POSTED = 'POSTED'
+    REJECTED = 'REJECTED'       # inter-branch: refused by the receiving branch, money returned
     CANCELLED = 'CANCELLED'
 
     STATUS_CHOICES = [
         (DRAFT, 'مسودة'),
+        (IN_TRANSIT, 'مُرسل - بالطريق'),
         (POSTED, 'مُرحل'),
+        (REJECTED, 'مرفوض - أُعيد للمرسل'),
         (CANCELLED, 'ملغي'),
     ]
+
+    TRANSIT_ACCOUNT_CODE = '1195'     # نقدية بالطريق بين الفروع
+    SHORTAGE_ACCOUNT_CODE = '5400'    # عجز وزيادة الخزينة
 
     transfer_number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم سند التحويل')
     date = models.DateField(default=datetime.date.today, verbose_name='تاريخ التحويل')
@@ -1647,6 +1806,23 @@ class InternalTransfer(models.Model):
         JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='internal_transfer', verbose_name='قيد اليومية'
     )
+    # Inter-branch (two-step) transfers
+    send_entry = models.OneToOneField(
+        JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='internal_transfer_send', verbose_name='قيد الإرسال (نقدية بالطريق)'
+    )
+    sent_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='internal_transfers_sent', verbose_name='أرسله'
+    )
+    sent_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الإرسال')
+    received_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, verbose_name='المبلغ المستلم فعلياً')
+    received_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='internal_transfers_received', verbose_name='استلمه / رفضه'
+    )
+    received_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الاستلام / الرفض')
+    receive_note = models.TextField(blank=True, default='', verbose_name='ملاحظات الاستلام / سبب الرفض')
     pos_session = models.ForeignKey(
         'invoicing.POSSession', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='transfers', verbose_name='الوردية المرتبطة'
@@ -1718,8 +1894,110 @@ class InternalTransfer(models.Model):
         obj = self.destination_object
         return obj.account if (obj and hasattr(obj, 'account')) else None
 
-    def confirm_transfer(self):
-        """Generates accounting entry and marks transfer as POSTED."""
+    @property
+    def source_branch(self):
+        t = self.from_treasury if self.from_account_type == self.TREASURY else None
+        return t.branch if t else None
+
+    @property
+    def destination_branch(self):
+        t = self.to_treasury if self.to_account_type == self.TREASURY else None
+        return t.branch if t else None
+
+    @property
+    def is_inter_branch(self):
+        """Treasury -> treasury of ANOTHER branch: two-step (send, then receive)."""
+        src, dst = self.source_branch, self.destination_branch
+        return bool(src and dst and src.pk != dst.pk)
+
+    @staticmethod
+    def _system_account(code, name, account_type, parent_code):
+        acc = Account.objects.filter(code=code).first()
+        if acc:
+            return acc
+        parent = Account.objects.filter(code=parent_code).first()
+        acc, _ = Account.objects.get_or_create(
+            code=code, defaults={'name': name, 'account_type': account_type, 'parent': parent})
+        return acc
+
+    def transit_account(self):
+        return self._system_account(self.TRANSIT_ACCOUNT_CODE, 'نقدية بالطريق بين الفروع', Account.ASSET, '1100')
+
+    def shortage_account(self):
+        return self._system_account(self.SHORTAGE_ACCOUNT_CODE, 'عجز وزيادة الخزينة (الورديات)', Account.EXPENSE, '5000')
+
+    def _post_entry(self, reference, description, lines, date=None):
+        """lines: [(account, debit, credit)] -> a POSTED balanced journal entry."""
+        from apps.tenant.services.journal_service import unique_reference
+        entry = JournalEntry.objects.create(
+            date=date or datetime.date.today(), reference=unique_reference(reference),
+            description=description, status=JournalEntry.POSTED,
+        )
+        for account, debit, credit in lines:
+            if debit or credit:
+                JournalItem.objects.create(entry=entry, account=account, debit=debit, credit=credit)
+        entry.post()
+        return entry
+
+    def receive_transfer(self, user=None, received_amount=None, note=''):
+        """
+        Step 2 of an inter-branch transfer (receiving branch): money leaves
+        'cash in transit' and enters the destination treasury. A shortfall
+        (received < sent) is booked to the cash over/short account.
+        """
+        from django.core.exceptions import ValidationError
+        from django.utils import timezone
+        with transaction.atomic():
+            locked = InternalTransfer.objects.select_for_update().get(pk=self.pk)
+            if locked.status != self.IN_TRANSIT:
+                raise ValidationError('لا يمكن استلام إلا تحويل بحالة "مُرسل - بالطريق".')
+            amount = locked.amount if received_amount in (None, '') else Decimal(str(received_amount))
+            if amount <= 0:
+                raise ValidationError('المبلغ المستلم يجب أن يكون أكبر من صفر. لرفض التحويل استخدم زر الرفض.')
+            if amount > locked.amount:
+                raise ValidationError(f'المبلغ المستلم لا يمكن أن يزيد عن المبلغ المرسل ({locked.amount:,.2f} ج.م).')
+            dst_acc = locked.destination_gl_account
+            if not dst_acc:
+                raise ValidationError('الخزينة المحول إليها غير مرتبطة بحساب في الشجرة.')
+            shortage = locked.amount - amount
+            lines = [(dst_acc, amount, Decimal('0'))]
+            if shortage > 0:
+                lines.append((locked.shortage_account(), shortage, Decimal('0')))
+            lines.append((locked.transit_account(), Decimal('0'), locked.amount))
+            desc = (f'استلام تحويل {locked.transfer_number} من {locked.source_name} '
+                    f'({locked.source_branch}) إلى {locked.destination_name}')
+            if shortage > 0:
+                desc += f' | عجز {shortage:,.2f} ج.م'
+            entry = locked._post_entry(f'{locked.transfer_number}-RCV', desc, lines)
+            self.journal_entry = entry
+            self.received_amount = amount
+            self.received_by = user
+            self.received_at = timezone.now()
+            self.receive_note = note or ''
+            self.status = self.POSTED
+            self.save(update_fields=['journal_entry', 'received_amount', 'received_by', 'received_at',
+                                     'receive_note', 'status', 'updated_at'])
+
+    def reject_transfer(self, user=None, note=''):
+        """Receiving branch refuses: the send entry is reversed, money goes back to the source."""
+        from django.core.exceptions import ValidationError
+        from django.utils import timezone
+        from apps.tenant.services.journal_service import reverse_entry_if_active
+        with transaction.atomic():
+            locked = InternalTransfer.objects.select_for_update().select_related('send_entry').get(pk=self.pk)
+            if locked.status != self.IN_TRANSIT:
+                raise ValidationError('لا يمكن رفض إلا تحويل بحالة "مُرسل - بالطريق".')
+            if locked.send_entry_id:
+                reverse_entry_if_active(locked.send_entry, reason=f'رفض استلام التحويل {locked.transfer_number}', user=user)
+            self.received_by = user
+            self.received_at = timezone.now()
+            self.receive_note = note or ''
+            self.status = self.REJECTED
+            self.save(update_fields=['received_by', 'received_at', 'receive_note', 'status', 'updated_at'])
+
+    def confirm_transfer(self, user=None):
+        """Generates accounting entry and marks transfer as POSTED
+        (inter-branch: only SENDS it -> IN_TRANSIT; the other branch receives it)."""
         from django.db import transaction
         from django.core.exceptions import ValidationError
 
@@ -1758,6 +2036,25 @@ class InternalTransfer(models.Model):
             from apps.tenant.services.journal_service import delete_orphan_entries, unique_reference
             delete_orphan_entries(self.transfer_number)
 
+            if self.is_inter_branch:
+                # Step 1 (sending branch): source -> cash in transit; the receiving
+                # branch confirms receipt later (receive_transfer).
+                from django.utils import timezone
+                entry = self._post_entry(
+                    f'{self.transfer_number}-SND',
+                    f'إرسال تحويل {self.transfer_number} من {self.source_name} ({self.source_branch}) '
+                    f'إلى {self.destination_name} ({self.destination_branch}) - نقدية بالطريق',
+                    [(self.transit_account(), self.amount, Decimal('0')),
+                     (src_acc, Decimal('0'), self.amount)],
+                    date=self.date,
+                )
+                self.send_entry = entry
+                self.sent_by = user
+                self.sent_at = timezone.now()
+                self.status = self.IN_TRANSIT
+                self.save()
+                return
+
             entry = JournalEntry.objects.create(
                 date=self.date,
                 reference=unique_reference(self.transfer_number),
@@ -1787,14 +2084,18 @@ class InternalTransfer(models.Model):
 
         with transaction.atomic():
             locked = InternalTransfer.objects.select_for_update().select_related('pos_session', 'journal_entry').get(pk=self.pk)
-            if locked.status == self.CANCELLED:
+            if locked.status in (self.CANCELLED, self.REJECTED):
                 raise ValidationError("التحويل ملغي بالفعل.")
-            if locked.status == self.POSTED:
+            if locked.status in (self.POSTED, self.IN_TRANSIT):
                 _ensure_pos_session_open(locked.pos_session, 'إلغاء')
 
             if locked.journal_entry_id:
                 reverse_entry_if_active(
                     locked.journal_entry, reason=f'إلغاء التحويل {locked.transfer_number}', user=user
+                )
+            if locked.send_entry_id:  # inter-branch: also undo the "cash in transit" step
+                reverse_entry_if_active(
+                    locked.send_entry, reason=f'إلغاء إرسال التحويل {locked.transfer_number}', user=user
                 )
 
             self.journal_entry = None

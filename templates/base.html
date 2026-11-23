@@ -81,7 +81,10 @@
             <!-- Branch Selector -->
             <div class="branch-selector">
                 <span style="font-size:0.75rem;color:var(--text-muted);">🏪</span>
-                {% if is_admin %}
+                {% if branch_locked_by_shift %}
+                {# Open POS shift: branch locked until the shift is closed #}
+                <span class="branch-fixed" title="{% trans 'الفرع مقفول بسبب وردية مفتوحة — أغلق الوردية لتغيير الفرع' %}" style="font-size:0.85rem;font-weight:600;color:var(--text-primary, #f3f4f6);padding:0 0.25rem;white-space:nowrap;">{{ current_branch.name }} 🔒</span>
+                {% elif is_admin %}
                 {# Admin: the selected branch scopes all data (BranchMiddleware, ?branch=<id>|all) #}
                 <select id="branchSelector" title="{% trans 'اختر الفرع' %}">
                     <option value="all" {% if not current_branch %}selected{% endif %}>{% trans 'كل الفروع' %}</option>
@@ -228,51 +231,13 @@
             {% endif %}
             {% endif %}
 
-            {% if system_setting is None or system_setting.show_nav_inventory_fifo or system_setting.show_nav_stocktake or system_setting.show_nav_adjustments or system_setting.show_nav_products or system_setting.show_nav_uom %}
+            {% if system_setting is None or system_setting.show_nav_inventory_dashboard %}
             <p class="nav-section-title">{% trans 'المخزون' %}</p>
-
-            {% if system_setting is None or system_setting.show_nav_inventory_fifo %}
-            <a href="{% url 'inventory:stock_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'stock_list' %}active{% endif %}">
+            {# FIFO, stocktake, adjustments, products, import, opening stock, units, warehouses: all inside the dashboard #}
+            <a href="{% url 'inventory:dashboard' %}" class="nav-link nav-cyan {% if request.resolver_match.app_name == 'inventory' %}active{% endif %}">
                 <span class="nav-icon">📦</span>
-                <span class="nav-text">{% trans 'تتبع المخزون FIFO' %}</span>
+                <span class="nav-text">{% trans 'لوحة المخزون' %}</span>
             </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_stocktake %}
-            <a href="{% url 'inventory:stocktake' %}" class="nav-link nav-orange {% if request.resolver_match.url_name == 'stocktake' %}active{% endif %}">
-                <span class="nav-icon">📋</span>
-                <span class="nav-text">{% trans 'الجرد الفعلي والتسوية' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_adjustments %}
-            <a href="{% url 'inventory:adjustment_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name in 'adjustment_list,adjustment_detail,adjustment_create' %}active{% endif %}">
-                <span class="nav-icon">⚖️</span>
-                <span class="nav-text">{% trans 'تسويات المخزون' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_products %}
-            <a href="{% url 'inventory:product_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'product_list' %}active{% endif %}">
-                <span class="nav-icon">🏷️</span>
-                <span class="nav-text">{% trans 'الأصناف' %}</span>
-            </a>
-            <a href="{% url 'inventory:product_bulk_import' %}" class="nav-link nav-orange {% if request.resolver_match.url_name == 'product_bulk_import' %}active{% endif %}">
-                <span class="nav-icon">📥</span>
-                <span class="nav-text">{% trans 'استيراد الأصناف (إكسيل)' %}</span>
-            </a>
-            <a href="{% url 'inventory:opening_stock_list' %}" class="nav-link nav-orange {% if request.resolver_match.url_name == 'opening_stock_list' %}active{% endif %}">
-                <span class="nav-icon">📦</span>
-                <span class="nav-text">{% trans 'أرصدة أول المدة' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_uom %}
-            <a href="{% url 'inventory:uom_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'uom_list' %}active{% endif %}">
-                <span class="nav-icon">📐</span>
-                <span class="nav-text">{% trans 'وحدات القياس' %}</span>
-            </a>
-            {% endif %}
             {% endif %}
 
             {% if system_setting is None or system_setting.show_nav_rentals_equipment or system_setting.show_nav_rentals_contracts or system_setting.show_nav_rentals_reports %}
@@ -345,39 +310,16 @@
             {% endif %}
             {% endif %}
 
-            {% if system_setting is None or system_setting.show_nav_suppliers or system_setting.show_nav_customers or system_setting.show_nav_sectors or system_setting.show_nav_partners_report %}
+            {% if system_setting is None or system_setting.show_nav_partners_dashboard %}
             <p class="nav-section-title">{% trans 'الشركاء' %}</p>
-
-            {% if system_setting is None or system_setting.show_nav_suppliers %}
-            <a href="{% url 'partners:supplier_list' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'supplier_list' %}active{% endif %}">
-                <span class="nav-icon">🚚</span>
-                <span class="nav-text">{% trans 'الموردون' %}</span>
+            {# customers, suppliers, sectors, partner ledger & report: all inside the dashboard #}
+            <a href="{% url 'partners:dashboard' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'partners' or request.resolver_match.app_name == 'pricing' and 'sector' in request.resolver_match.url_name or 'report_partners' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">🤝</span>
+                <span class="nav-text">{% trans 'لوحة الشركاء' %}</span>
             </a>
             {% endif %}
 
-            {% if system_setting is None or system_setting.show_nav_customers %}
-            <a href="{% url 'partners:customer_list' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'customer_list' %}active{% endif %}">
-                <span class="nav-icon">👥</span>
-                <span class="nav-text">{% trans 'العملاء' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_sectors %}
-            <a href="{% url 'pricing:sector_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'pricing' and 'sector' in request.resolver_match.url_name %}active{% endif %}">
-                <span class="nav-icon">🏢</span>
-                <span class="nav-text">{% trans 'قطاعات العملاء' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_partners_report %}
-            <a href="{% url 'core:report_partners' %}" class="nav-link nav-blue {% if 'report_partners' in request.resolver_match.url_name or 'ledger' in request.resolver_match.url_name %}active{% endif %}">
-                <span class="nav-icon">📑</span>
-                <span class="nav-text">{% trans 'تقرير وحسابات الشركاء' %}</span>
-            </a>
-            {% endif %}
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_expenses or system_setting.show_nav_receipts or system_setting.show_nav_payments or system_setting.show_nav_transfers or system_setting.show_nav_cheques or system_setting.show_nav_fixed_assets or system_setting.show_nav_loans or system_setting.show_nav_journals or system_setting.show_nav_chart_of_accounts or system_setting.show_nav_treasuries or system_setting.show_nav_banks or system_setting.show_nav_ewallets %}
+            {% if system_setting is None or system_setting.show_nav_expenses or system_setting.show_nav_receipts or system_setting.show_nav_payments or system_setting.show_nav_transfers or system_setting.show_nav_cheques or system_setting.show_nav_fixed_assets or system_setting.show_nav_loans or system_setting.show_nav_journals or system_setting.show_nav_chart_of_accounts or system_setting.show_nav_liquidity_dashboard %}
             <p class="nav-section-title">{% trans 'المحاسبة' %}</p>
 
             {% if system_setting is None or system_setting.show_nav_expenses %}
@@ -402,7 +344,7 @@
             {% endif %}
 
             {% if system_setting is None or system_setting.show_nav_transfers %}
-            <a href="{% url 'accounting:transfer_list' %}" class="nav-link nav-gold {% if 'transfer' in request.resolver_match.url_name %}active{% endif %}">
+            <a href="{% url 'accounting:transfer_list' %}" class="nav-link nav-gold {% if request.resolver_match.app_name == 'accounting' and 'transfer' in request.resolver_match.url_name %}active{% endif %}">
                 <span class="nav-icon">🔄</span>
                 <span class="nav-text">{% trans 'تحويل الأموال' %}</span>
             </a>
@@ -446,24 +388,11 @@
             </a>
             {% endif %}
 
-            {% if system_setting is None or system_setting.show_nav_treasuries %}
-            <a href="{% url 'accounting:treasury_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'treasury_list' %}active{% endif %}">
-                <span class="nav-icon">💰</span>
-                <span class="nav-text">{% trans 'الخزائن' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_banks %}
-            <a href="{% url 'accounting:bank_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'bank_list' %}active{% endif %}">
-                <span class="nav-icon">🏦</span>
-                <span class="nav-text">{% trans 'حسابات البنوك' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_ewallets %}
-            <a href="{% url 'accounting:ewallet_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'ewallet_list' %}active{% endif %}">
-                <span class="nav-icon">📱</span>
-                <span class="nav-text">{% trans 'المحافظ الإلكترونية' %}</span>
+            {% if system_setting is None or system_setting.show_nav_liquidity_dashboard %}
+            {# Treasuries + bank accounts + e-wallets + transfers in one place #}
+            <a href="{% url 'accounting:liquidity_dashboard' %}" class="nav-link nav-gold {% if request.resolver_match.url_name in 'liquidity_dashboard,treasury_list,bank_list,ewallet_list,treasury_create,bank_create,ewallet_create,treasury_update,bank_update,ewallet_update' %}active{% endif %}">
+                <span class="nav-icon">💧</span>
+                <span class="nav-text">{% trans 'إدارة السيولة' %}</span>
             </a>
             {% endif %}
             {% endif %}

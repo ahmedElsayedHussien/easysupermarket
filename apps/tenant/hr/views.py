@@ -22,10 +22,48 @@ from apps.tenant.core.usernames import display_username
 # started within this window, so overnight shifts work; older forgotten ones are ignored.
 OPEN_ATTENDANCE_WINDOW_HOURS = 24
 
-# Payroll absence-deduction defaults. The models have no per-employee weekly-off / calendar
-# settings, so these are assumptions (Friday = weekly off day).
-WEEKLY_OFF_WEEKDAYS = {4}        # Python weekday(): Mon=0 ... Fri=4
-PAYROLL_DAYS_PER_MONTH = 30      # daily rate = base_salary / 30
+# Payroll defaults (company-wide, from SystemSetting via settings_helpers):
+#   weekly_off_days    -> weekly off weekdays (default Friday)
+#   payroll_day_basis  -> CALENDAR_30: daily rate = base_salary / 30 (default)
+#                         WORKING_DAYS: daily rate = base_salary / working days of that month
+#   late_grace_minutes -> minutes of each day's delay that are not deducted (default 0)
+PAYROLL_DAYS_PER_MONTH = 30
+
+
+def _weekly_off():
+    from apps.tenant.core.settings_helpers import weekly_off_weekdays
+    return weekly_off_weekdays()
+
+
+def _payroll_settings():
+    from apps.tenant.core.settings_helpers import setting
+    try:
+        grace = max(0, int(setting('late_grace_minutes', 0) or 0))
+    except (TypeError, ValueError):
+        grace = 0
+    return {
+        'weekly_off': _weekly_off(),
+        'day_basis': setting('payroll_day_basis', 'CALENDAR_30') or 'CALENDAR_30',
+        'grace_hours': Decimal(grace) / Decimal(60),
+    }
+
+
+def _daily_rate(base_salary, year, month, day_basis, weekly_off):
+    if day_basis == 'WORKING_DAYS':
+        days = len(_working_days(year, month, weekly_off=weekly_off))
+        if days > 0:
+            return base_salary / Decimal(days)
+    return base_salary / Decimal(PAYROLL_DAYS_PER_MONTH)
+
+
+def _deductible_delay(delays, grace_hours):
+    """Sum of each day's delay minus the grace (a delay within the grace costs nothing)."""
+    total = Decimal('0.00')
+    for d in delays:
+        d = d or Decimal('0')
+        if d > grace_hours:
+            total += d - grace_hours
+    return total.quantize(Decimal('0.01'))
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -175,8 +213,10 @@ def api_attendance_check(request):
     return JsonResponse({'error': 'عملية غير معروفة.'}, status=400)
 
 
-def _working_days(year, month, until=None, since=None):
+def _working_days(year, month, until=None, since=None, weekly_off=None):
     """Dates of the month that are working days (not weekly off), bounded by [since, until]."""
+    if weekly_off is None:
+        weekly_off = _weekly_off()
     first = date(year, month, 1)
     last = date(year, month, calendar.monthrange(year, month)[1])
     if until and until < last:
@@ -186,7 +226,7 @@ def _working_days(year, month, until=None, since=None):
     days = []
     d = first
     while d <= last:
-        if d.weekday() not in WEEKLY_OFF_WEEKDAYS:
+        if d.weekday() not in weekly_off:
             days.append(d)
         d += timedelta(days=1)
     return days
@@ -218,10 +258,14 @@ def payroll_process(request):
 
     Absence deduction (assumption - no per-employee calendar exists in the models):
       working days = days of the month (only up to today for the current month, and only
-                     from the user's date_joined if later) excluding WEEKLY_OFF_WEEKDAYS (Friday)
+                     from the user's date_joined if later) excluding the weekly off days
+                     (SystemSetting.weekly_off_days, default Friday)
       covered days = distinct dates with a check-in + dates whose status is 'leave' (excused)
       absent days  = working days - covered days
-      absence deduction = absent days * base_salary / PAYROLL_DAYS_PER_MONTH
+      absence deduction = absent days * daily rate, where daily rate = base_salary / 30
+                          (payroll_day_basis CALENDAR_30) or / working days of the whole month
+                          (WORKING_DAYS)
+      delay deduction   = sum over days of max(0, delay - late_grace_minutes) * deduction_per_hour
     net = base - delay deductions - absence deduction + overtime, clamped at 0 (with a warning).
     Payrolls already paid / posted to a journal entry are never overwritten.
     """
@@ -240,6 +284,7 @@ def payroll_process(request):
         return redirect('hr:payroll_list')
 
     employees = _scope_by_branch(Employee.objects.select_related('user', 'branch'), request.user, 'branch')
+    cfg = _payroll_settings()
 
     count = 0
     skipped = []
@@ -256,18 +301,18 @@ def payroll_process(request):
 
             attendances = Attendance.objects.filter(employee=emp, date__year=year, date__month=month)
             att_agg = attendances.aggregate(
-                total_delay=Coalesce(Sum('delay_hours'), Decimal('0.00')),
                 total_overtime=Coalesce(Sum('overtime_hours'), Decimal('0.00'))
             )
-            total_delay = att_agg['total_delay']
+            # deductible delay: each day's delay minus the grace period
+            total_delay = _deductible_delay(attendances.values_list('delay_hours', flat=True), cfg['grace_hours'])
             total_overtime = att_agg['total_overtime']
 
             joined = timezone.localdate(emp.user.date_joined) if emp.user.date_joined else None
-            working_days = _working_days(year, month, until=today, since=joined)
+            working_days = _working_days(year, month, until=today, since=joined, weekly_off=cfg['weekly_off'])
             present_dates = set(attendances.filter(check_in__isnull=False).values_list('date', flat=True))
             leave_dates = set(attendances.filter(status='leave').values_list('date', flat=True))
             absent_days = sum(1 for d in working_days if d not in present_dates and d not in leave_dates)
-            daily_rate = emp.base_salary / Decimal(PAYROLL_DAYS_PER_MONTH)
+            daily_rate = _daily_rate(emp.base_salary, year, month, cfg['day_basis'], cfg['weekly_off'])
             absence_deduction = (daily_rate * absent_days).quantize(Decimal('0.01'))
 
             deductions = (total_delay * emp.deduction_per_hour + absence_deduction).quantize(Decimal('0.01'))

@@ -316,6 +316,14 @@
         consumedQty: 0
     };
 
+    // Expiry date of the opening batch: shown only when SystemSetting.enable_expiry_tracking
+    function setModalExpiry(data) {
+        const wrap = document.getElementById('opExpiryWrap');
+        if (!wrap) return;
+        wrap.style.display = data.expiry_tracking ? '' : 'none';
+        document.getElementById('opExpiryDate').value = data.expiry_date || '';
+    }
+
     function openOpeningStockModal(productId, productName, barcode) {
         document.getElementById('opModalProductName').textContent = productName;
         document.getElementById('opModalBarcode').textContent = barcode ? `(${barcode})` : '';
@@ -365,6 +373,7 @@
                 inputQty.value = parseFloat(data.quantity || 0).toFixed(2);
                 inputCost.value = parseFloat(defaultCost || 0).toFixed(2);
                 inputQty.min = parseFloat(data.consumed_quantity || 0).toFixed(2);
+                setModalExpiry(data);
 
                 calculateModalDiff();
             } else {
@@ -405,6 +414,7 @@
                 inputQty.value = parseFloat(data.quantity || 0).toFixed(2);
                 inputCost.value = parseFloat(defaultCost || 0).toFixed(2);
                 inputQty.min = parseFloat(data.consumed_quantity || 0).toFixed(2);
+                setModalExpiry(data);
 
                 calculateModalDiff();
             }
@@ -464,6 +474,10 @@
         formData.append('quantity', qty);
         formData.append('unit_cost', cost);
         formData.append('reason', reason);
+        const expiryWrap = document.getElementById('opExpiryWrap');
+        if (expiryWrap && expiryWrap.style.display !== 'none') {
+            formData.append('expiry_date', document.getElementById('opExpiryDate').value || '');
+        }
 
         // Get CSRF Token
         const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]') ? 
@@ -587,6 +601,11 @@
                     <label style="font-size: 0.85rem; color: #38bdf8; font-weight: 800;">سعر التكلفة للوحدة (مستدعى)</label>
                     <input type="number" step="0.01" id="opNewCost" class="form-control" oninput="calculateModalDiff()" style="font-size: 1.1rem; font-weight: bold; background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(14,165,233,0.5);">
                 </div>
+            </div>
+
+            <div class="form-group mb-3" id="opExpiryWrap" style="display: none;">
+                <label style="font-size: 0.82rem; color: #cbd5e1;">تاريخ الصلاحية للرصيد الافتتاحي (اختياري):</label>
+                <input type="date" id="opExpiryDate" class="form-control" style="font-size: 0.85rem; background: rgba(0,0,0,0.3); color: #fff;">
             </div>
 
             <div class="form-group mb-3">

@@ -1,8 +1,11 @@
 from django.urls import path
 from . import views
+from . import dashboard_views
+from . import stock_transfer_views
 
 app_name = 'inventory'
 urlpatterns = [
+    path('dashboard/', dashboard_views.inventory_dashboard, name='dashboard'),
     path('stock/', views.stock_list, name='stock_list'),
     path('products/', views.product_list, name='product_list'),
     path('products/bulk-import/', views.product_bulk_import, name='product_bulk_import'),
@@ -12,7 +15,9 @@ urlpatterns = [
     path('products/<int:pk>/opening-stock/', views.product_opening_stock_view, name='product_opening_stock'),
     path('api/products/<int:pk>/opening-stock/', views.api_product_opening_stock, name='api_product_opening_stock'),
     path('opening-stock/', views.opening_stock_list_view, name='opening_stock_list'),
-    path('transfer/', views.transfer_stock, name='transfer_stock'),
+    path('transfer/', stock_transfer_views.stock_transfer_create, name='transfer_stock'),
+    path('transfers/', stock_transfer_views.stock_transfer_list, name='stock_transfer_list'),
+    path('transfers/<int:pk>/', stock_transfer_views.stock_transfer_detail, name='stock_transfer_detail'),
     path('api/stock-level/', views.api_stock_level, name='api_stock_level'),
     path('api/products/', views.api_products, name='api_products'),
     path('valuation-report/', views.valuation_report, name='valuation_report'),

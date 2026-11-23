@@ -1,0 +1,192 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/panels.css' %}">
+
+<div class="glass-container lq-root" style="padding: 1.5rem;">
+  <!-- Header + actions -->
+  <div class="lq-head">
+    <div>
+      <h2>💧 {{ title }}</h2>
+      <span class="lq-scope">الخزائن: {{ scope_label }} · البنوك والمحافظ: كل الشركة</span>
+    </div>
+    <div class="lq-actions">
+      {% if perms.accounting.add_internaltransfer %}<a class="lq-btn primary" href="{% url 'accounting:transfer_create' %}">🔄 تحويل جديد</a>{% endif %}
+      {% if perms.accounting.view_internaltransfer %}<a class="lq-btn" href="{% url 'accounting:transfer_list' %}?incoming=1">📥 تحويلات واردة{% if incoming_count %} <span class="lq-badge">{{ incoming_count }}</span>{% endif %}</a>{% endif %}
+      {% if perms.accounting.add_voucher %}
+        <a class="lq-btn" href="{% url 'accounting:receipt_create' %}">⬇️ سند قبض</a>
+        <a class="lq-btn" href="{% url 'accounting:payment_create' %}">⬆️ سند صرف</a>
+      {% endif %}
+      {% if perms.accounting.add_treasury %}<a class="lq-btn" href="{% url 'accounting:treasury_create' %}">＋ خزينة</a>{% endif %}
+      {% if perms.accounting.add_bankaccount %}<a class="lq-btn" href="{% url 'accounting:bank_create' %}">＋ حساب بنكي</a>{% endif %}
+      {% if perms.accounting.add_ewallet %}<a class="lq-btn" href="{% url 'accounting:ewallet_create' %}">＋ محفظة</a>{% endif %}
+    </div>
+  </div>
+
+  <!-- KPI tiles -->
+  <div class="lq-tiles">
+    <div class="lq-tile hero">
+      <div class="k">إجمالي السيولة</div>
+      <div class="v"><bdi dir="ltr">{{ grand_total|money }}</bdi> <small style="font-size:0.75rem;color:var(--lq-muted)">ج.م</small></div>
+      <div class="s">{{ treasury_rows|length }} خزينة · {{ bank_rows|length }} بنك · {{ ewallet_rows|length }} محفظة</div>
+    </div>
+    <div class="lq-tile"><div class="k"><span class="lq-dot" style="background:var(--series-1)"></span>نقدية بالخزائن</div>
+      <div class="v"><bdi dir="ltr">{{ totals.TREASURY|money }}</bdi></div></div>
+    <div class="lq-tile"><div class="k"><span class="lq-dot" style="background:var(--series-2)"></span>حسابات البنوك</div>
+      <div class="v"><bdi dir="ltr">{{ totals.BANK|money }}</bdi></div></div>
+    <div class="lq-tile"><div class="k"><span class="lq-dot" style="background:var(--series-3)"></span>المحافظ الإلكترونية</div>
+      <div class="v"><bdi dir="ltr">{{ totals.EWALLET|money }}</bdi></div></div>
+    <div class="lq-tile"><div class="k">صافي الحركة ({{ flow_days }} يوم)</div>
+      <div class="v" {% if net_flow < 0 %}style="color:var(--flow-out)"{% endif %}><bdi dir="ltr">{% if net_flow > 0 %}+{% endif %}{{ net_flow|money }}</bdi></div>
+      <div class="s">بدون التحويلات الداخلية</div></div>
+    <div class="lq-tile"><div class="k">🚚 بالطريق بين الفروع</div>
+      <div class="v">{{ incoming_count|add:outgoing_count }}</div>
+      <div class="s">وارد {{ incoming_total|money }} · صادر {{ outgoing_total|money }}</div></div>
+  </div>
+
+  <div class="lq-grid2">
+    <!-- Composition -->
+    <section class="lq-card" aria-labelledby="lq-comp-title">
+      <h3 id="lq-comp-title">توزيع السيولة <small>حسب النوع</small></h3>
+      <div class="lq-stack" role="img" aria-label="توزيع السيولة: {% for c in composition %}{{ c.label }} {{ c.pct|floatformat:"0u" }}%{% if not forloop.last %}، {% endif %}{% endfor %}">
+        {% for c in composition %}{% if c.pct > 0 %}<span style="width: {{ c.pct|floatformat:"2u" }}%; background: var(--series-{{ c.series }});" title="{{ c.label }}: {{ c.value|money }} ج.م ({{ c.pct|floatformat:"1u" }}%)"></span>{% endif %}{% endfor %}
+      </div>
+      <ul class="lq-legend">
+        {% for c in composition %}
+        <li><span class="lq-dot" style="background: var(--series-{{ c.series }});"></span>{{ c.label }}<b><bdi dir="ltr">{{ c.value|money }}</bdi></b><span class="pct">{{ c.pct|floatformat:"1u" }}%</span></li>
+        {% endfor %}
+      </ul>
+
+      <!-- Inter-branch transfers in transit -->
+      <div class="lq-transit" style="margin-top: 1.25rem;">
+        <h3 style="font-size: 0.92rem;">🚚 تحويلات بين الفروع بالطريق</h3>
+        <ul>
+          {% for t in incoming_transfers %}
+          <li><span>📥 من {{ t.from_treasury.branch }} → {{ t.destination_name }}</span>
+              <a href="{% url 'accounting:transfer_detail' t.pk %}" style="color:#00e5ff">{{ t.amount|money }} · استلام</a></li>
+          {% endfor %}
+          {% for t in outgoing_transfers %}
+          <li><span>📤 إلى {{ t.to_treasury.branch }} ({{ t.destination_name }})</span>
+              <a href="{% url 'accounting:transfer_detail' t.pk %}" style="color:var(--lq-text-2)">{{ t.amount|money }} · بانتظار الاستلام</a></li>
+          {% endfor %}
+          {% if not incoming_transfers and not outgoing_transfers %}<li class="lq-empty" style="justify-content:center">لا توجد تحويلات معلقة</li>{% endif %}
+        </ul>
+        {% if draft_transfers %}<p style="color:var(--lq-muted);font-size:0.78rem;margin:0.5rem 0 0">📝 {{ draft_transfers }} تحويل مسودة لم يُعتمد بعد — <a href="{% url 'accounting:transfer_list' %}" style="color:#00e5ff">عرض</a></p>{% endif %}
+      </div>
+    </section>
+
+    <!-- 30-day cash in / out -->
+    <section class="lq-card" aria-labelledby="lq-flow-title">
+      <h3 id="lq-flow-title">حركة السيولة آخر {{ flow_days }} يوم
+        <span class="lq-flow-legend"><span><span class="lq-dot" style="background:var(--flow-in)"></span>داخل</span><span><span class="lq-dot" style="background:var(--flow-out)"></span>خارج</span></span>
+      </h3>
+      <div class="lq-chart"><canvas id="lqFlowChart" aria-label="حركة السيولة اليومية: داخل وخارج" role="img"></canvas></div>
+      <div class="lq-flow-sum">
+        <span>إجمالي الداخل <b>{{ total_in|money }}</b></span>
+        <span>إجمالي الخارج <b>{{ total_out|money }}</b></span>
+        <span>الصافي <b {% if net_flow < 0 %}style="color:var(--flow-out)"{% endif %}><bdi dir="ltr">{{ net_flow|money }}</bdi></b></span>
+      </div>
+      <details class="lq-table-view"><summary>عرض كجدول</summary>
+        <div class="lq-scroll"><table class="lq-table" id="lqFlowTable"><thead><tr><th>اليوم</th><th>داخل</th><th>خارج</th></tr></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+  </div>
+
+  <!-- Accounts -->
+  <section class="lq-card" style="margin-bottom: 1.25rem;">
+    <div class="lq-tabs" role="tablist">
+      <button class="lq-tab active" data-tab="TREASURY" role="tab">💰 الخزائن ({{ treasury_rows|length }})</button>
+      <button class="lq-tab" data-tab="BANK" role="tab">🏦 حسابات البنوك ({{ bank_rows|length }})</button>
+      <button class="lq-tab" data-tab="EWALLET" role="tab">📱 المحافظ الإلكترونية ({{ ewallet_rows|length }})</button>
+    </div>
+    {% include "accounting/_liquidity_accounts_table.html" with rows=treasury_rows kind="TREASURY" active=True show_branch=True %}
+    {% include "accounting/_liquidity_accounts_table.html" with rows=bank_rows kind="BANK" %}
+    {% include "accounting/_liquidity_accounts_table.html" with rows=ewallet_rows kind="EWALLET" %}
+  </section>
+
+  <!-- Recent movements -->
+  <section class="lq-card">
+    <h3>آخر الحركات <small>على الخزائن والبنوك والمحافظ</small></h3>
+    <div class="lq-scroll">
+      <table class="lq-table">
+        <thead><tr><th>التاريخ</th><th>الحساب</th><th>البيان</th><th>داخل</th><th>خارج</th><th>القيد</th></tr></thead>
+        <tbody>
+          {% for r in recent_rows %}
+          <tr>
+            <td class="num" style="font-weight:400">{{ r.item.entry.date|date:"Y-m-d" }}</td>
+            <td>{{ r.name }}</td>
+            <td style="color:var(--lq-text-2); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ r.item.entry.description }}">{{ r.item.entry.description|default:"-" }}</td>
+            <td class="num">{% if r.item.debit %}{{ r.item.debit|money }}{% else %}<span style="color:var(--lq-muted)">—</span>{% endif %}</td>
+            <td class="num">{% if r.item.credit %}<span class="neg">{{ r.item.credit|money }}</span>{% else %}<span style="color:var(--lq-muted)">—</span>{% endif %}</td>
+            <td>{% if is_admin %}<a href="{% url 'accounting:journal_detail' r.item.entry_id %}" style="color:#00e5ff">{{ r.item.entry.reference }}</a>{% else %}{{ r.item.entry.reference }}{% endif %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="lq-empty">لا توجد حركات بعد</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+{{ flow_data|json_script:"lq-flow-data" }}
+<script>
+(function () {
+  // Tabs
+  document.querySelectorAll('.lq-tab').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.lq-tab').forEach(function (b) { b.classList.toggle('active', b === btn); });
+      document.querySelectorAll('.lq-panel').forEach(function (p) { p.classList.toggle('active', p.dataset.panel === btn.dataset.tab); });
+    });
+  });
+
+  // 30-day flow: inflow above zero, outflow below (diverging poles), one axis
+  var data = JSON.parse(document.getElementById('lq-flow-data').textContent);
+  var root = document.querySelector('.lq-root');
+  var css = function (v) { return getComputedStyle(root).getPropertyValue(v).trim(); };
+  var fmt = function (n) { return Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+  var tbody = document.querySelector('#lqFlowTable tbody');
+  data.labels.forEach(function (d, i) {
+    if (!data.inflow[i] && !data.outflow[i]) return;
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td class="num" style="font-weight:400">' + d + '</td><td class="num">' + fmt(data.inflow[i]) +
+                   '</td><td class="num neg">' + fmt(data.outflow[i]) + '</td>';
+    tbody.appendChild(tr);
+  });
+  if (!tbody.children.length) tbody.innerHTML = '<tr><td colspan="3" class="lq-empty">لا توجد حركة</td></tr>';
+
+  if (typeof Chart === 'undefined') return;
+  new Chart(document.getElementById('lqFlowChart'), {
+    type: 'bar',
+    data: {
+      labels: data.labels,
+      datasets: [
+        { label: 'داخل', data: data.inflow, backgroundColor: css('--flow-in'), borderRadius: { topLeft: 4, topRight: 4 },
+          borderSkipped: 'bottom', maxBarThickness: 14, stack: 'flow' },
+        { label: 'خارج', data: data.outflow.map(function (v) { return -v; }), backgroundColor: css('--flow-out'),
+          borderRadius: { bottomLeft: 4, bottomRight: 4 }, borderSkipped: 'top', maxBarThickness: 14, stack: 'flow' }
+      ]
+    },
+    options: {
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },  // legend rendered in the card header
+        tooltip: {
+          rtl: true, textDirection: 'rtl',
+          callbacks: { label: function (ctx) { return ctx.dataset.label + ': ' + fmt(ctx.parsed.y) + ' ج.م'; } }
+        }
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { color: css('--lq-muted'), maxRotation: 0, autoSkipPadding: 12, font: { size: 10 } } },
+        y: { stacked: true, grid: { color: css('--lq-grid') }, border: { display: false },
+             ticks: { color: css('--lq-muted'), font: { size: 10 }, callback: function (v) { return Math.abs(v).toLocaleString('en-US'); } } }
+      }
+    }
+  });
+})();
+</script>
+{% endblock %}

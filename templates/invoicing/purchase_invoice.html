@@ -124,6 +124,7 @@
                             <th style="min-width: 250px;">الصنف</th>
                             <th style="width: 140px;">الوحدة</th>
                             <th style="width: 110px;">الكمية</th>
+                            {% if expiry_tracking_enabled %}<th style="width: 150px;" title="اختياري — يُسجل على دفعة المخزون">تاريخ الصلاحية</th>{% endif %}
                             <th style="width: 150px;">سعر الوحدة</th>
                             <th style="width: 130px;">الإجمالي</th>
                             <th style="width: 50px;"></th>
@@ -149,7 +150,7 @@
                                     <option value="">اختر الصنف أولاً</option>
                                 </select>
                             </td>
-                            <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+                            <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>{% if expiry_tracking_enabled %}<td><input type="date" name="expiry_date[]" class="form-control expiry-input" value="" title="تاريخ الصلاحية (اختياري)"></td>{% endif %}
                             <td>
                                 <input type="number" name="price[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()">
                                 <div class="last-price-info mt-1" style="display: none; align-items: center; gap: 4px; font-size: 0.76rem;">
@@ -562,7 +563,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (postedLines.length > 0) {
         tbody.innerHTML = ''; // clear the default blank line
         postedLines.forEach(line => {
-            addLineWithData(line.product_id, line.quantity, line.price, line.uom_id);
+            addLineWithData(line.product_id, line.quantity, line.price, line.uom_id, line.expiry_date || '');
         });
         calculateTotals();
     }
@@ -591,7 +592,7 @@ function addLine() {
                 <option value="">اختر الصنف أولاً</option>
             </select>
         </td>
-        <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+        <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>{% if expiry_tracking_enabled %}<td><input type="date" name="expiry_date[]" class="form-control expiry-input" value="" title="تاريخ الصلاحية (اختياري)"></td>{% endif %}
         <td>
             <input type="number" name="price[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()">
             <div class="last-price-info mt-1" style="display: none; align-items: center; gap: 4px; font-size: 0.76rem;">
@@ -608,7 +609,7 @@ function addLine() {
     initTomSelect(row.querySelector('.product-select'));
 }
 
-function addLineWithData(productId, qty, price, uomId = null) {
+function addLineWithData(productId, qty, price, uomId = null, expiryDate = '') {
     const tbody = document.getElementById('purchaseLines');
     const row = document.createElement('tr');
     row.innerHTML = `
@@ -630,7 +631,7 @@ function addLineWithData(productId, qty, price, uomId = null) {
                 <option value="">اختر الصنف أولاً</option>
             </select>
         </td>
-        <td><input type="number" name="quantity[]" class="form-control" step="0.01" value="${qty}" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+        <td><input type="number" name="quantity[]" class="form-control" step="0.01" value="${qty}" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>{% if expiry_tracking_enabled %}<td><input type="date" name="expiry_date[]" class="form-control expiry-input" value="${expiryDate || ''}" title="تاريخ الصلاحية (اختياري)"></td>{% endif %}
         <td>
             <input type="number" name="price[]" class="form-control" step="0.01" value="${price}" onchange="calculateTotals()" onkeyup="calculateTotals()">
             <div class="last-price-info mt-1" style="display: none; align-items: center; gap: 4px; font-size: 0.76rem;">

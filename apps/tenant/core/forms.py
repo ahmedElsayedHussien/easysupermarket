@@ -1,4 +1,8 @@
+from decimal import Decimal
+
 from django import forms
+from django.core.files.uploadedfile import UploadedFile
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.contrib.auth.models import User
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
 from django.contrib.auth.models import Permission
@@ -34,7 +38,59 @@ def _clean_tenant_username(form, entered, exclude_pk=None):
         raise forms.ValidationError(USERNAME_TAKEN_MSG)
     return internal
 
+# Weekday numbers follow python's date.weekday() (Mon=0 .. Sun=6); listed Saturday-first (Egypt).
+WEEKDAY_CHOICES = [
+    ('5', 'السبت'), ('6', 'الأحد'), ('0', 'الاثنين'), ('1', 'الثلاثاء'),
+    ('2', 'الأربعاء'), ('3', 'الخميس'), ('4', 'الجمعة'),
+]
+
+LOGO_MAX_BYTES = 2 * 1024 * 1024
+LOGO_ALLOWED_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
+LOGO_ALLOWED_EXTS = ('.png', '.jpg', '.jpeg', '.webp')
+
+_CHECK = {'class': 'form-check-input'}
+_SELECT = {'class': 'form-select'}
+
+
+def _num(**attrs):
+    return forms.NumberInput(attrs={'class': 'form-control', **attrs})
+
+
+def parse_weekday_csv(raw):
+    """'4,5' -> ['4', '5'] (ignores junk / out-of-range values)."""
+    out = []
+    for part in str(raw or '').replace('،', ',').split(','):
+        part = part.strip()
+        if part.isdigit() and 0 <= int(part) <= 6 and part not in out:
+            out.append(part)
+    return out
+
+
 class SystemSettingForm(forms.ModelForm):
+    # (min, max) enforced server side and mirrored on the <input min/max>.
+    RANGES = {
+        'low_stock_threshold': (0, 1_000_000),
+        'stagnant_stock_days': (1, 3650),
+        'expiry_warning_days': (1, 3650),
+        'dormant_debt_days': (1, 3650),
+        'credit_limit_warning_percent': (1, 100),
+        'late_grace_minutes': (0, 240),
+        'session_timeout_hours': (1, 720),
+        'login_max_attempts': (3, 50),
+        'login_lockout_minutes': (1, 1440),
+        'auto_backup_retention': (1, 365),
+        'pos_price_margin_percent': (0, 100),
+        'max_pos_discount_percentage': (0, 100),
+        'large_amount_requires_customer': (0, None),
+    }
+
+    weekly_off_days = forms.MultipleChoiceField(
+        choices=WEEKDAY_CHOICES, required=False,
+        widget=forms.CheckboxSelectMultiple(attrs=_CHECK),
+        label='أيام الإجازة الأسبوعية',
+        help_text='تُستخدم في حساب الحضور والغياب والمرتبات. يمكن اختيار أكثر من يوم أو عدم اختيار أي يوم.',
+    )
+
     class Meta:
         model = SystemSetting
         fields = '__all__'
@@ -43,22 +99,44 @@ class SystemSettingForm(forms.ModelForm):
             'tax_number': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'الرقم الضريبي (إن وجد)'}),
             'commercial_register': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'السجل التجاري (إن وجد)'}),
             'receipt_footer': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'placeholder': 'مثال: البضاعة المباعة لا ترد ولا تستبدل إلا خلال 14 يوم...'}),
-            'large_amount_requires_customer': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'step': 'any'}),
-            'low_stock_threshold': forms.NumberInput(attrs={'class': 'form-control', 'min': 1}),
-            'allow_negative_stock': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-            'auto_print_receipt': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-            'allow_pos_price_modification': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-            'show_pos_cost': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-            'pos_price_margin_percent': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'step': '0.01'}),
-            'max_pos_discount_percentage': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'max': 100, 'step': '0.01'}),
-            'apply_vat_by_default': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-            'default_pos_treasury': forms.Select(attrs={'class': 'form-select'}),
-            'default_pos_bank_account': forms.Select(attrs={'class': 'form-select'}),
-            'default_pos_instapay_account': forms.Select(attrs={'class': 'form-select'}),
-            'default_pos_ewallet': forms.Select(attrs={'class': 'form-select'}),
-            'lock_pos_payment_accounts': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-            'enable_expiry_tracking': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
-            'auto_post_journals': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'company_logo': forms.ClearableFileInput(attrs={'class': 'form-control', 'accept': 'image/png,image/jpeg,image/webp'}),
+            'receipt_paper_width': forms.Select(attrs=_SELECT),
+            'show_branch_info_on_receipt': forms.CheckboxInput(attrs=_CHECK),
+            'large_amount_requires_customer': _num(step='any'),
+            'low_stock_threshold': _num(),
+            'allow_negative_stock': forms.CheckboxInput(attrs=_CHECK),
+            'auto_print_receipt': forms.CheckboxInput(attrs=_CHECK),
+            'allow_pos_price_modification': forms.CheckboxInput(attrs=_CHECK),
+            'show_pos_cost': forms.CheckboxInput(attrs=_CHECK),
+            'pos_price_margin_percent': _num(step='0.01'),
+            'max_pos_discount_percentage': _num(step='0.01'),
+            'apply_vat_by_default': forms.CheckboxInput(attrs=_CHECK),
+            'pos_cash_rounding': forms.Select(attrs=_SELECT),
+            'default_pos_treasury': forms.Select(attrs=_SELECT),
+            'default_pos_bank_account': forms.Select(attrs=_SELECT),
+            'default_pos_instapay_account': forms.Select(attrs=_SELECT),
+            'default_pos_ewallet': forms.Select(attrs=_SELECT),
+            'lock_pos_payment_accounts': forms.CheckboxInput(attrs=_CHECK),
+            'enable_expiry_tracking': forms.CheckboxInput(attrs=_CHECK),
+            'stagnant_stock_days': _num(),
+            'expiry_warning_days': _num(),
+            'auto_post_journals': forms.CheckboxInput(attrs=_CHECK),
+            'accounting_lock_date': forms.DateInput(attrs={'class': 'form-control', 'type': 'date'}, format='%Y-%m-%d'),
+            'dormant_debt_days': _num(),
+            'credit_limit_warning_percent': _num(),
+            'payroll_day_basis': forms.Select(attrs=_SELECT),
+            'late_grace_minutes': _num(),
+            'session_timeout_hours': _num(),
+            'login_max_attempts': _num(),
+            'login_lockout_minutes': _num(),
+            'auto_backup_enabled': forms.CheckboxInput(attrs=_CHECK),
+            'auto_backup_retention': _num(),
+        }
+        help_texts = {
+            'low_stock_threshold': 'حد طلب افتراضي للأصناف التي ليس لها حد خاص',
+            'company_logo': 'صورة PNG أو JPG أو WEBP بحجم أقصى 2 ميجابايت.',
+            'session_timeout_hours': 'يتم تسجيل خروج المستخدم تلقائياً بعد هذه المدة من آخر دخول.',
+            'auto_backup_retention': 'عند تجاوز هذا العدد تُحذف أقدم النسخ التلقائية.',
         }
 
     def __init__(self, *args, **kwargs):
@@ -67,6 +145,97 @@ class SystemSettingForm(forms.ModelForm):
         for field_name, field in self.fields.items():
             if field_name.startswith('show_nav_'):
                 field.widget = forms.RadioSelect(choices=radio_choices)
+
+        for name, (lo, hi) in self.RANGES.items():
+            field = self.fields.get(name)
+            if field is None:
+                continue
+            if lo is not None:
+                field.validators.append(MinValueValidator(lo))
+                field.widget.attrs['min'] = lo
+            if hi is not None:
+                field.validators.append(MaxValueValidator(hi))
+                field.widget.attrs['max'] = hi
+
+        if not self.is_bound:
+            # CSV in the model <-> list of checkbox values in the form
+            self.initial['weekly_off_days'] = parse_weekday_csv(getattr(self.instance, 'weekly_off_days', ''))
+            # Decimal('0') must render as the '0.00' option to be pre-selected.
+            rounding = self.initial.get('pos_cash_rounding')
+            if rounding is not None:
+                self.initial['pos_cash_rounding'] = Decimal(str(rounding)).quantize(Decimal('0.01'))
+
+        treasury = self.fields.get('default_pos_treasury')
+        if treasury is not None:
+            treasury.queryset = treasury.queryset.select_related('branch').order_by('branch__name', 'name')
+            treasury.label_from_instance = lambda t: f'{t.name} — {t.branch.name}' if t.branch_id else t.name
+
+    def clean_weekly_off_days(self):
+        days = sorted({int(d) for d in self.cleaned_data.get('weekly_off_days') or []})
+        if len(days) == 7:
+            raise forms.ValidationError('لا يمكن جعل كل أيام الأسبوع إجازة.')
+        return ','.join(str(d) for d in days)
+
+    def clean_company_logo(self):
+        logo = self.cleaned_data.get('company_logo')
+        if logo and isinstance(logo, UploadedFile):
+            if logo.size > LOGO_MAX_BYTES:
+                raise forms.ValidationError('حجم الشعار يجب ألا يتجاوز 2 ميجابايت.')
+            content_type = getattr(logo, 'content_type', '') or ''
+            if content_type not in LOGO_ALLOWED_TYPES or not logo.name.lower().endswith(LOGO_ALLOWED_EXTS):
+                raise forms.ValidationError('صيغة الشعار غير مدعومة. المسموح: PNG أو JPG أو WEBP.')
+        return logo
+
+
+class BranchForm(forms.ModelForm):
+    """Branch create / update, incl. the per-branch POS payment defaults."""
+    POS_FIELDS = ('default_pos_treasury', 'default_pos_bank_account',
+                  'default_pos_instapay_account', 'default_pos_ewallet')
+
+    class Meta:
+        model = Branch
+        fields = ['name', 'code', 'address', 'phone', 'is_active',
+                  'default_pos_treasury', 'default_pos_bank_account',
+                  'default_pos_instapay_account', 'default_pos_ewallet']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'code': forms.TextInput(attrs={'class': 'form-control'}),
+            'address': forms.Textarea(attrs={'class': 'form-control', 'rows': 2}),
+            'phone': forms.TextInput(attrs={'class': 'form-control'}),
+            'is_active': forms.CheckboxInput(attrs=_CHECK),
+            'default_pos_treasury': forms.Select(attrs=_SELECT),
+            'default_pos_bank_account': forms.Select(attrs=_SELECT),
+            'default_pos_instapay_account': forms.Select(attrs=_SELECT),
+            'default_pos_ewallet': forms.Select(attrs=_SELECT),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from apps.tenant.accounting.models import Treasury
+        treasury = self.fields['default_pos_treasury']
+        if self.instance.pk:
+            treasury.queryset = Treasury.objects.filter(branch=self.instance).order_by('name')
+            treasury.help_text = 'خزائن هذا الفرع فقط. اتركه فارغاً لاستخدام الافتراضي العام.'
+        else:
+            treasury.queryset = Treasury.objects.none()
+            treasury.disabled = True
+            treasury.help_text = 'احفظ الفرع أولاً ثم أضف خزينته'
+        for name in self.POS_FIELDS[1:]:
+            self.fields[name].help_text = 'اتركه فارغاً لاستخدام الافتراضي العام من إعدادات النظام.'
+
+    @property
+    def general_fields(self):
+        return [self[n] for n in self.Meta.fields if n not in self.POS_FIELDS]
+
+    @property
+    def pos_fields(self):
+        return [self[n] for n in self.POS_FIELDS]
+
+    def clean_default_pos_treasury(self):
+        treasury = self.cleaned_data.get('default_pos_treasury')
+        if treasury is not None and (not self.instance.pk or treasury.branch_id != self.instance.pk):
+            raise forms.ValidationError('الخزينة المختارة لا تتبع هذا الفرع.')
+        return treasury
 
 
 class EmployeeUserCreationForm(UserCreationForm):

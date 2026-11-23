@@ -104,35 +104,6 @@ def product_list(request):
     return render(request, 'inventory/products.html', context)
 
 @login_required
-@custom_permission_required('inventory.change_inventorybatch', redirect_url='core:main_screen')
-def transfer_stock(request):
-    if request.method == 'POST':
-        product_id = request.POST.get('product_id')
-        from_wh_id = request.POST.get('from_warehouse')
-        to_wh_id = request.POST.get('to_warehouse')
-        quantity = request.POST.get('quantity')
-        
-        from apps.tenant.services.fifo_engine import transfer_stock as ts
-        from decimal import Decimal, InvalidOperation
-        from django.contrib import messages
-        
-        try:
-            qty = Decimal(quantity)
-            product = Product.objects.get(id=product_id)
-            from_wh = Warehouse.objects.get(id=from_wh_id)
-            to_wh = Warehouse.objects.get(id=to_wh_id)
-            
-            ts(product, from_wh, to_wh, qty)
-            messages.success(request, 'تم تحويل المخزون بنجاح')
-            return redirect('inventory:stock_list')
-        except Exception as e:
-            messages.error(request, str(e))
-    products = Product.objects.filter(is_active=True)
-    warehouses = Warehouse.objects.filter(is_active=True)
-    context = {'products': products, 'warehouses': warehouses, 'title': 'تحويل مخزني'}
-    return render(request, 'inventory/transfer.html', context)
-
-@login_required
 def api_stock_level(request):
     product_id = request.GET.get('product_id')
     warehouse_id = request.GET.get('warehouse_id')
@@ -164,9 +135,11 @@ def valuation_report(request):
 def expiry_report(request):
     import datetime
     today = datetime.date.today()
-    warning_date = today + datetime.timedelta(days=30)
+    from apps.tenant.core.settings_helpers import setting
+    warning_days = int(setting('expiry_warning_days', 30) or 30)
+    warning_date = today + datetime.timedelta(days=warning_days)
     batches = InventoryBatch.objects.filter(quantity_remaining__gt=0, expiry_date__lte=warning_date).select_related('product', 'warehouse').order_by('expiry_date')
-    context = {'batches': batches, 'title': 'تقرير الصلاحية والتوالف'}
+    context = {'batches': batches, 'title': 'تقرير الصلاحية والتوالف', 'warning_days': warning_days}
     return render(request, 'inventory/expiry_report.html', context)
 
 
@@ -833,6 +806,43 @@ def product_bulk_import(request):
     })
 
 
+# --- Opening stock: optional expiry date (only when SystemSetting.enable_expiry_tracking) ---
+def _expiry_tracking_enabled():
+    from apps.tenant.core.settings_helpers import setting
+    return bool(setting('enable_expiry_tracking', False))
+
+
+_NO_EXPIRY_INPUT = object()
+
+
+def _parse_opening_expiry(post, field='opening_expiry_date'):
+    """Expiry date typed for the opening batch (validated BEFORE saving the stock).
+    Returns _NO_EXPIRY_INPUT when tracking is off or the form did not send the field;
+    None when sent empty (clears it)."""
+    if field not in post or not _expiry_tracking_enabled():
+        return _NO_EXPIRY_INPUT
+    from django.utils.dateparse import parse_date
+    raw = (post.get(field) or '').strip()
+    if not raw:
+        return None
+    try:
+        expiry = parse_date(raw)
+    except ValueError:
+        expiry = None
+    if expiry is None:
+        raise ValidationError('تاريخ الصلاحية غير صالح.')
+    return expiry
+
+
+def _apply_opening_expiry(res, expiry):
+    if expiry is _NO_EXPIRY_INPUT or not res or not res.get('batch'):
+        return
+    batch = res['batch']
+    if batch.expiry_date != expiry:
+        batch.expiry_date = expiry
+        batch.save(update_fields=['expiry_date'])
+
+
 # --- Product Generic Views (List view already exists) ---
 class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
     model = Product
@@ -845,6 +855,7 @@ class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
         context = super().get_context_data(**kwargs)
         context['title'] = 'إضافة منتج جديد'
         context['cancel_url'] = reverse_lazy('inventory:product_list')
+        context['expiry_tracking'] = _expiry_tracking_enabled()
         context['warehouses'] = Warehouse.objects.filter(is_active=True)
         if self.request.POST:
             context['uom_formset'] = ProductUoMFormSet(self.request.POST)
@@ -867,6 +878,7 @@ class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
             if op_qty_str and op_wh_id:
                 try:
                     op_qty = Decimal(op_qty_str).quantize(Decimal('0.01'))
+                    op_expiry = _parse_opening_expiry(self.request.POST)
                     wh = Warehouse.objects.filter(id=op_wh_id, is_active=True).first()
                     op_cost = (Decimal(op_cost_str) if op_cost_str else (self.object.last_purchase_price or Decimal('0.00'))).quantize(Decimal('0.01'))
                     if wh and op_qty > Decimal('0'):
@@ -879,6 +891,7 @@ class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
                             user=self.request.user,
                             reason=self.request.POST.get('opening_reason', '') or 'رصيد افتتاحي عند إنشاء المنتج'
                         )
+                        _apply_opening_expiry(res, op_expiry)
                         je_ref = res['journal_entry'].reference if res.get('journal_entry') else 'قيد مسجل'
                         messages.success(self.request, f'تم إدخال رصيد أول المدة ({op_qty} وحدة) وترحيل القيد المحاسبي ({je_ref}).')
                 except Exception as e:
@@ -900,6 +913,7 @@ class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
         context = super().get_context_data(**kwargs)
         context['title'] = 'تعديل منتج'
         context['cancel_url'] = reverse_lazy('inventory:product_list')
+        context['expiry_tracking'] = _expiry_tracking_enabled()
         warehouses = Warehouse.objects.filter(is_active=True)
         context['warehouses'] = warehouses
         default_wh = warehouses.first()
@@ -925,6 +939,7 @@ class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
             if op_qty_str != '' and op_wh_id:
                 try:
                     op_qty = Decimal(op_qty_str).quantize(Decimal('0.01'))
+                    op_expiry = _parse_opening_expiry(self.request.POST)
                     wh = Warehouse.objects.filter(id=op_wh_id, is_active=True).first()
                     op_cost = (Decimal(op_cost_str) if op_cost_str else (self.object.last_purchase_price or Decimal('0.00'))).quantize(Decimal('0.01'))
                     if wh:
@@ -937,6 +952,7 @@ class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
                             user=self.request.user,
                             reason=self.request.POST.get('opening_reason', '') or 'تعديل رصيد أول المدة من شاشة تعديل المنتج'
                         )
+                        _apply_opening_expiry(res, op_expiry)
                         je_ref = res['journal_entry'].reference if res.get('journal_entry') else 'قيد مسجل'
                         if res.get('action') == 'updated' and res.get('delta_quantity') != Decimal('0'):
                             messages.success(self.request, f'تم تحديث رصيد أول المدة بنجاح ({res["old_quantity"]} ⬅️ {res["new_quantity"]}) وترحيل القيد المحاسبي ({je_ref}).')
@@ -1638,6 +1654,9 @@ def api_product_opening_stock(request, pk):
             'total_cost': _fmt_dec2(info['total_cost']),
             'journal_entry_ref': info['journal_entry_ref'] or 'غير مسجل بعد',
             'current_stock': _fmt_dec2(product.get_stock(warehouse=warehouse)),
+            'expiry_tracking': _expiry_tracking_enabled(),
+            'expiry_date': (info['batch'].expiry_date.isoformat()
+                            if info.get('batch') is not None and info['batch'].expiry_date else ''),
         })
 
     elif request.method == 'POST':
@@ -1666,6 +1685,7 @@ def api_product_opening_stock(request, pk):
         try:
             qty = Decimal(qty_str).quantize(Decimal('0.01')) if qty_str else Decimal('0.00')
             cost = Decimal(cost_str).quantize(Decimal('0.01')) if cost_str else Decimal('0.00')
+            op_expiry = _parse_opening_expiry(request.POST, field='expiry_date')
             if cost <= Decimal('0.00'):
                 cost = (product.last_purchase_price or Decimal('0.00')).quantize(Decimal('0.01'))
             res = update_or_create_product_opening_stock(
@@ -1676,6 +1696,7 @@ def api_product_opening_stock(request, pk):
                 user=request.user,
                 reason=reason
             )
+            _apply_opening_expiry(res, op_expiry)
             je_ref = res['journal_entry'].reference if res.get('journal_entry') else 'قيد مسجل'
             return JsonResponse({
                 'status': 'success',
@@ -1717,6 +1738,7 @@ def product_opening_stock_view(request, pk):
         try:
             qty = Decimal(qty_str).quantize(Decimal('0.01')) if qty_str else Decimal('0.00')
             cost = Decimal(cost_str).quantize(Decimal('0.01')) if cost_str else Decimal('0.00')
+            op_expiry = _parse_opening_expiry(request.POST, field='expiry_date')
             if cost <= Decimal('0.00'):
                 cost = (product.last_purchase_price or Decimal('0.00')).quantize(Decimal('0.01'))
             res = update_or_create_product_opening_stock(
@@ -1727,6 +1749,7 @@ def product_opening_stock_view(request, pk):
                 user=request.user,
                 reason=reason
             )
+            _apply_opening_expiry(res, op_expiry)
             je_ref = res['journal_entry'].reference if res.get('journal_entry') else 'قيد مسجل'
             messages.success(request, f'تم تحديث رصيد أول المدة لصنف "{product.name}" بنجاح إلى {res["new_quantity"]} وحدة، وتم ترحيل القيد المحاسبي ({je_ref}).')
             return redirect('inventory:product_opening_stock', pk=product.id)
@@ -1750,6 +1773,7 @@ def product_opening_stock_view(request, pk):
         'opening_info': opening_info,
         'opening_movements': opening_movements,
         'title': f'تعديل رصيد أول المدة - {product.name}',
+        'expiry_tracking': _expiry_tracking_enabled(),
     }
     return render(request, 'inventory/product_opening_stock.html', context)
 

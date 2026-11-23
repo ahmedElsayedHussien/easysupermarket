@@ -11,8 +11,12 @@
             <div style="margin-top: 0.5rem;">
                 {% if transfer.status == 'DRAFT' %}
                     <span class="badge-status badge-warning" style="background: rgba(255,193,7,0.2); color: #ffc107; padding: 4px 12px; border-radius: 6px; font-weight: bold;">مسودة (غير مرحل)</span>
+                {% elif transfer.status == 'IN_TRANSIT' %}
+                    <span class="badge-status" style="background: rgba(0,229,255,0.15); color: #00e5ff; padding: 4px 12px; border-radius: 6px; font-weight: bold;">🚚 مُرسل - بالطريق (بانتظار استلام {{ transfer.destination_branch }})</span>
                 {% elif transfer.status == 'POSTED' %}
-                    <span class="badge-status badge-success" style="background: rgba(40,167,69,0.2); color: #28a745; padding: 4px 12px; border-radius: 6px; font-weight: bold;">مرحل للقيود المحاسبية</span>
+                    <span class="badge-status badge-success" style="background: rgba(40,167,69,0.2); color: #28a745; padding: 4px 12px; border-radius: 6px; font-weight: bold;">{% if transfer.send_entry_id %}تم الاستلام ✓{% else %}مرحل للقيود المحاسبية{% endif %}</span>
+                {% elif transfer.status == 'REJECTED' %}
+                    <span class="badge-status badge-danger" style="background: rgba(220,53,69,0.2); color: #dc3545; padding: 4px 12px; border-radius: 6px; font-weight: bold;">مرفوض - أُعيد المبلغ للفرع المرسل</span>
                 {% else %}
                     <span class="badge-status badge-danger" style="background: rgba(220,53,69,0.2); color: #dc3545; padding: 4px 12px; border-radius: 6px; font-weight: bold;">ملغي</span>
                 {% endif %}
@@ -58,6 +62,7 @@
             </h4>
             <p style="margin: 0.3rem 0; color: #ddd;"><strong>نوع الحساب:</strong> {{ transfer.get_from_account_type_display }}</p>
             <p style="margin: 0.3rem 0; color: #fff; font-size: 1.1rem;"><strong>الاسم:</strong> {{ transfer.source_name }}</p>
+            {% if transfer.source_branch %}<p style="margin: 0.3rem 0; color: #ddd;"><strong>الفرع:</strong> {{ transfer.source_branch }}</p>{% endif %}
             {% if transfer.source_object %}
                 <p style="margin: 0.3rem 0; color: #00e5ff; font-weight: bold;"><strong>الرصيد الحالي بالحساب:</strong> {{ transfer.source_object.current_balance|floatformat:2 }} ج.م</p>
             {% endif %}
@@ -73,6 +78,7 @@
             </h4>
             <p style="margin: 0.3rem 0; color: #ddd;"><strong>نوع الحساب:</strong> {{ transfer.get_to_account_type_display }}</p>
             <p style="margin: 0.3rem 0; color: #fff; font-size: 1.1rem;"><strong>الاسم:</strong> {{ transfer.destination_name }}</p>
+            {% if transfer.destination_branch %}<p style="margin: 0.3rem 0; color: #ddd;"><strong>الفرع:</strong> {{ transfer.destination_branch }}</p>{% endif %}
             {% if transfer.destination_object %}
                 <p style="margin: 0.3rem 0; color: #28a745; font-weight: bold;"><strong>الرصيد الحالي بالحساب:</strong> {{ transfer.destination_object.current_balance|floatformat:2 }} ج.م</p>
             {% endif %}
@@ -96,6 +102,49 @@
     </div>
     {% endif %}
 
+    {% if transfer.send_entry_id or transfer.received_at %}
+    <!-- Inter-branch transfer trail -->
+    <div style="background: rgba(0,229,255,0.04); border: 1px solid rgba(0,229,255,0.18); border-radius: 12px; padding: 1.25rem; margin-bottom: 2rem; color: #ddd;">
+        <h4 style="color: #00e5ff; margin: 0 0 0.75rem 0;"><i class="fas fa-route"></i> مسار التحويل بين الفروع</h4>
+        {% if transfer.sent_at %}<p style="margin: 0.3rem 0;">🚚 <strong>أُرسل:</strong> {{ transfer.sent_at|date:"Y-m-d H:i" }} بواسطة {{ transfer.sent_by|display_name|default:"-" }} — قيد {{ transfer.send_entry.reference|default:"-" }}</p>{% endif %}
+        {% if transfer.status == 'POSTED' and transfer.received_at %}
+            <p style="margin: 0.3rem 0;">✅ <strong>استُلم:</strong> {{ transfer.received_at|date:"Y-m-d H:i" }} بواسطة {{ transfer.received_by|display_name|default:"-" }} — المبلغ المستلم <strong>{{ transfer.received_amount|floatformat:2 }} ج.م</strong></p>
+            {% if transfer.received_amount < transfer.amount %}<p style="margin: 0.3rem 0; color: #ff6b6b;">⚠️ عجز مسجل على حساب عجز وزيادة الخزينة.</p>{% endif %}
+        {% elif transfer.status == 'REJECTED' %}
+            <p style="margin: 0.3rem 0; color: #ff6b6b;">↩️ <strong>رُفض:</strong> {{ transfer.received_at|date:"Y-m-d H:i" }} بواسطة {{ transfer.received_by|display_name|default:"-" }}</p>
+        {% endif %}
+        {% if transfer.receive_note %}<p style="margin: 0.3rem 0;"><strong>ملاحظات الاستلام / سبب الرفض:</strong> {{ transfer.receive_note }}</p>{% endif %}
+    </div>
+    {% endif %}
+
+    {% if can_receive %}
+    <!-- Receiving branch: confirm or reject -->
+    <div style="background: rgba(40,167,69,0.06); border: 1px solid rgba(40,167,69,0.3); border-radius: 12px; padding: 1.25rem; margin-bottom: 2rem;">
+        <h4 style="color: #28a745; margin: 0 0 1rem 0;"><i class="fas fa-hand-holding-usd"></i> استلام التحويل في {{ transfer.destination_branch }}</h4>
+        <form method="post" action="{% url 'accounting:transfer_receive' transfer.pk %}" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; align-items: end;">
+            {% csrf_token %}
+            <label style="color: #ddd;">المبلغ المستلم فعلياً
+                <input type="number" name="received_amount" step="0.01" min="0.01" max="{{ transfer.amount|stringformat:'s' }}" value="{{ transfer.amount|stringformat:'s' }}" class="form-control" required>
+            </label>
+            <label style="color: #ddd;">ملاحظات (اختياري)
+                <input type="text" name="receive_note" class="form-control" placeholder="مثال: استلمه أحمد من المندوب">
+            </label>
+            <button type="submit" class="btn-orange" style="padding: 0.7rem 1.4rem; font-weight: bold; border: none; cursor: pointer;"
+                    onclick="return confirm('تأكيد استلام المبلغ وإضافته لخزينة {{ transfer.destination_name|escapejs }}؟ لو المبلغ أقل من المرسل سيُسجل الفرق كعجز.');">
+                <i class="fas fa-check"></i> تأكيد الاستلام
+            </button>
+        </form>
+        <form method="post" action="{% url 'accounting:transfer_reject' transfer.pk %}" style="display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap;">
+            {% csrf_token %}
+            <input type="text" name="receive_note" class="form-control" placeholder="سبب الرفض (مطلوب)" required style="flex: 1; min-width: 220px;">
+            <button type="submit" style="background: rgba(220,53,69,0.8); color: #fff; padding: 0.6rem 1.2rem; border-radius: 8px; border: none; cursor: pointer; font-weight: bold;"
+                    onclick="return confirm('رفض التحويل وإعادة المبلغ لخزينة الفرع المرسل؟');">
+                <i class="fas fa-undo"></i> رفض وإعادة للمرسل
+            </button>
+        </form>
+    </div>
+    {% endif %}
+
     {% if transfer.journal_entry %}
     <div style="background: rgba(0,229,255,0.05); border: 1px solid rgba(0,229,255,0.2); border-radius: 12px; padding: 1.25rem; margin-bottom: 2rem;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -116,16 +165,16 @@
 
     <!-- Action Buttons -->
     <div style="display: flex; gap: 1rem; justify-content: flex-end; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1.5rem;">
-        {% if transfer.status == 'DRAFT' %}
+        {% if transfer.status == 'DRAFT' and is_sender_branch %}
             <form method="post" action="{% url 'accounting:transfer_confirm' transfer.pk %}">
                 {% csrf_token %}
                 <button type="submit" class="btn-orange" style="padding: 0.7rem 1.8rem; font-weight: bold; border: none; cursor: pointer;">
-                    <i class="fas fa-check-circle"></i> اعتماد وترحيل التحويل
+                    {% if transfer.is_inter_branch %}<i class="fas fa-truck"></i> إرسال التحويل إلى {{ transfer.destination_branch }}{% else %}<i class="fas fa-check-circle"></i> اعتماد وترحيل التحويل{% endif %}
                 </button>
             </form>
         {% endif %}
 
-        {% if transfer.status != 'CANCELLED' %}
+        {% if transfer.status == 'DRAFT' or transfer.status == 'POSTED' or transfer.status == 'IN_TRANSIT' and is_sender_branch %}
             <form method="post" action="{% url 'accounting:transfer_cancel' transfer.pk %}" onsubmit="return confirm('هل أنت متأكد من رغبتك في إلغاء هذا التحويل؟ سيتم تسجيل قيد عكسي للقيد المربوط به.');">
                 {% csrf_token %}
                 <button type="submit" style="background: rgba(220,53,69,0.8); color: #fff; padding: 0.7rem 1.5rem; border-radius: 8px; border: none; cursor: pointer; font-weight: bold;">

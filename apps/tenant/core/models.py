@@ -3,6 +3,7 @@ Core models - Branch.
 The Branch is the fundamental organizational unit within each tenant.
 """
 from django.core.validators import MinValueValidator, MaxValueValidator
+from decimal import Decimal
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils.translation import gettext_lazy as _
@@ -74,6 +75,17 @@ class Branch(models.Model):
     longitude = models.DecimalField(max_digits=18, decimal_places=15, null=True, blank=True, verbose_name=_('خط الطول (Longitude)'))
     allowed_radius = models.IntegerField(default=50, verbose_name=_('نطاق السماح (بالمتر)'))
 
+    # Per-branch POS payment defaults (fall back to SystemSetting when empty).
+    # Use apps.tenant.core.settings_helpers.get_pos_defaults(branch) — never read these directly.
+    default_pos_treasury = models.ForeignKey('accounting.Treasury', on_delete=models.SET_NULL, null=True, blank=True,
+                                             related_name='default_for_branch_pos', verbose_name=_('الخزينة الافتراضية لنقطة البيع بالفرع'))
+    default_pos_bank_account = models.ForeignKey('accounting.BankAccount', on_delete=models.SET_NULL, null=True, blank=True,
+                                                 related_name='default_card_for_branch_pos', verbose_name=_('حساب الفيزا الافتراضي بالفرع'))
+    default_pos_instapay_account = models.ForeignKey('accounting.BankAccount', on_delete=models.SET_NULL, null=True, blank=True,
+                                                     related_name='default_instapay_for_branch_pos', verbose_name=_('حساب إنستاباي الافتراضي بالفرع'))
+    default_pos_ewallet = models.ForeignKey('accounting.EWallet', on_delete=models.SET_NULL, null=True, blank=True,
+                                            related_name='default_for_branch_pos', verbose_name=_('المحفظة الافتراضية بالفرع'))
+
     is_active = models.BooleanField(default=True, verbose_name=_('نشط'))
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -126,6 +138,52 @@ class SystemSetting(models.Model):
     tax_number = models.CharField(max_length=100, blank=True, verbose_name=_('الرقم الضريبي'))
     commercial_register = models.CharField(max_length=100, blank=True, verbose_name=_('السجل التجاري'))
     receipt_footer = models.TextField(blank=True, verbose_name=_('رسالة أسفل الإيصال'))
+    company_logo = models.ImageField(upload_to='company/', null=True, blank=True, verbose_name=_('شعار الشركة (للإيصال والتقارير)'))
+    receipt_paper_width = models.CharField(max_length=2, choices=[('58', '58 مم'), ('80', '80 مم')], default='80',
+                                           verbose_name=_('مقاس ورق طابعة الإيصال'))
+    show_branch_info_on_receipt = models.BooleanField(default=True, verbose_name=_('إظهار عنوان وتليفون الفرع على الإيصال'))
+
+    # --- Accounting ---
+    accounting_lock_date = models.DateField(
+        null=True, blank=True, verbose_name=_('تاريخ قفل الفترة المحاسبية'),
+        help_text=_('لا يمكن إضافة أو تعديل أو إلغاء قيود بتاريخ في هذا اليوم أو قبله. اتركه فارغاً لعدم القفل.'))
+    pos_cash_rounding = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0'),
+        choices=[(Decimal('0.00'), 'بدون تقريب'), (Decimal('0.25'), 'لأقرب 0.25 ج.م'),
+                 (Decimal('0.50'), 'لأقرب 0.50 ج.م'), (Decimal('1.00'), 'لأقرب 1 ج.م')],
+        verbose_name=_('تقريب المدفوع نقداً في نقطة البيع'),
+        help_text=_('الفرق يُسجل على حساب فروق تقريب نقطة البيع (5115).'))
+
+    # --- Thresholds used by the dashboards ---
+    stagnant_stock_days = models.PositiveIntegerField(default=60, verbose_name=_('أيام اعتبار الصنف راكداً (بدون صرف)'))
+    expiry_warning_days = models.PositiveIntegerField(default=30, verbose_name=_('التنبيه قبل انتهاء الصلاحية بـ (يوم)'))
+    dormant_debt_days = models.PositiveIntegerField(default=60, verbose_name=_('أيام اعتبار المديونية راكدة (بلا حركة)'))
+    credit_limit_warning_percent = models.PositiveIntegerField(
+        default=80, validators=[MinValueValidator(1), MaxValueValidator(100)],
+        verbose_name=_('نسبة التحذير من حد الائتمان (%)'))
+
+    # --- HR ---
+    weekly_off_days = models.CharField(
+        max_length=20, default='4', blank=True, verbose_name=_('أيام الإجازة الأسبوعية'),
+        help_text=_('أرقام أيام الأسبوع مفصولة بفاصلة: 0=الاثنين 1=الثلاثاء 2=الأربعاء 3=الخميس 4=الجمعة 5=السبت 6=الأحد'))
+    payroll_day_basis = models.CharField(
+        max_length=15, default='CALENDAR_30',
+        choices=[('CALENDAR_30', 'أجر اليوم = المرتب ÷ 30'), ('WORKING_DAYS', 'أجر اليوم = المرتب ÷ أيام العمل الفعلية بالشهر')],
+        verbose_name=_('طريقة حساب أجر اليوم'))
+    late_grace_minutes = models.PositiveIntegerField(default=0, verbose_name=_('سماحية التأخير قبل الخصم (دقيقة)'))
+
+    # --- Security ---
+    session_timeout_hours = models.PositiveIntegerField(
+        default=12, validators=[MinValueValidator(1), MaxValueValidator(720)], verbose_name=_('مدة بقاء الجلسة (ساعة)'))
+    login_max_attempts = models.PositiveIntegerField(
+        default=5, validators=[MinValueValidator(3), MaxValueValidator(50)], verbose_name=_('عدد محاولات الدخول الخاطئة قبل القفل'))
+    login_lockout_minutes = models.PositiveIntegerField(
+        default=15, validators=[MinValueValidator(1), MaxValueValidator(1440)], verbose_name=_('مدة قفل الدخول (دقيقة)'))
+
+    # --- Backups ---
+    auto_backup_enabled = models.BooleanField(default=False, verbose_name=_('نسخ احتياطي تلقائي يومي'))
+    auto_backup_retention = models.PositiveIntegerField(
+        default=7, validators=[MinValueValidator(1), MaxValueValidator(365)], verbose_name=_('عدد النسخ التلقائية المحفوظة'))
     
     # Sidebar Navigation Visibility Settings
     # Quick Navigation
@@ -142,11 +200,6 @@ class SystemSetting(models.Model):
     show_nav_create_purchase = models.BooleanField(default=True, verbose_name=_('إنشاء فاتورة مشتريات'))
 
     # Inventory
-    show_nav_inventory_fifo = models.BooleanField(default=True, verbose_name=_('تتبع المخزون FIFO'))
-    show_nav_stocktake = models.BooleanField(default=True, verbose_name=_('الجرد الفعلي والتسوية'))
-    show_nav_adjustments = models.BooleanField(default=True, verbose_name=_('تسويات المخزون'))
-    show_nav_products = models.BooleanField(default=True, verbose_name=_('الأصناف'))
-    show_nav_uom = models.BooleanField(default=True, verbose_name=_('وحدات القياس'))
 
     # Rentals
     show_nav_rentals_equipment = models.BooleanField(default=True, verbose_name=_('المعدات (إيجارات)'))
@@ -165,10 +218,6 @@ class SystemSetting(models.Model):
     show_nav_hr_payroll = models.BooleanField(default=True, verbose_name=_('مسير الرواتب'))
 
     # Partners
-    show_nav_suppliers = models.BooleanField(default=True, verbose_name=_('الموردون'))
-    show_nav_customers = models.BooleanField(default=True, verbose_name=_('العملاء'))
-    show_nav_sectors = models.BooleanField(default=True, verbose_name=_('قطاعات العملاء'))
-    show_nav_partners_report = models.BooleanField(default=True, verbose_name=_('تقرير وحسابات الشركاء'))
 
     # Accounting
     show_nav_expenses = models.BooleanField(default=True, verbose_name=_('المصروفات'))
@@ -180,9 +229,6 @@ class SystemSetting(models.Model):
     show_nav_loans = models.BooleanField(default=True, verbose_name=_('القروض والتمويل'))
     show_nav_journals = models.BooleanField(default=True, verbose_name=_('قيود اليومية'))
     show_nav_chart_of_accounts = models.BooleanField(default=True, verbose_name=_('دليل الحسابات'))
-    show_nav_treasuries = models.BooleanField(default=True, verbose_name=_('الخزائن'))
-    show_nav_banks = models.BooleanField(default=True, verbose_name=_('حسابات البنوك'))
-    show_nav_ewallets = models.BooleanField(default=True, verbose_name=_('المحافظ الإلكترونية'))
 
     # Administration
     show_nav_admin_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المدير'))
@@ -194,6 +240,9 @@ class SystemSetting(models.Model):
     show_nav_einvoice_approval = models.BooleanField(default=True, verbose_name=_('إرسال للتوقيع'))
     show_nav_einvoice_history = models.BooleanField(default=True, verbose_name=_('سجل الفواتير المرسلة'))
     show_nav_tax_settings = models.BooleanField(default=True, verbose_name=_('إعدادات الضرائب'))
+    show_nav_inventory_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المخزون'))
+    show_nav_partners_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة الشركاء'))
+    show_nav_liquidity_dashboard = models.BooleanField(default=True, verbose_name=_('إدارة السيولة'))
     
     class Meta:
         verbose_name = _('إعدادات النظام')

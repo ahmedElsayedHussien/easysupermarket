@@ -166,8 +166,10 @@ AUTHENTICATION_BACKENDS = [
 # =============================================================================
 
 AXES_ENABLED = True
-AXES_FAILURE_LIMIT = 5
-AXES_COOLOFF_TIME = 0.25  # hours (15 minutes)
+# Read per tenant from SystemSetting.login_max_attempts / login_lockout_minutes
+# (defaults 5 attempts / 15 minutes when the table is unavailable, e.g. public schema).
+AXES_FAILURE_LIMIT = 'apps.tenant.core.settings_helpers.axes_failure_limit'
+AXES_COOLOFF_TIME = 'apps.tenant.core.settings_helpers.axes_cooloff_time'
 AXES_LOCKOUT_PARAMETERS = [['username', 'ip_address']]
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_TEMPLATE = 'auth/lockout.html'

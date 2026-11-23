@@ -33,6 +33,9 @@
 
     <form method="post" class="needs-validation" novalidate>
         {% csrf_token %}
+        {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">{% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}</div>
+        {% endif %}
         <div class="row g-3">
             <div class="col-md-6 mb-3">
                 <label class="form-label text-neon-blue">{{ form.date.label }}</label>

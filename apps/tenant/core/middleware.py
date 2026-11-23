@@ -4,6 +4,7 @@ from apps.tenant.core.models import Branch
 from apps.tenant.core.access import (
     is_public_request, is_tenant_member, is_tenant_admin, get_employee,
     is_branch_unassigned, BRANCH_UNASSIGNED_MESSAGE,
+    get_open_shift_branch, SHIFT_BRANCH_LOCK_MESSAGE, attach_branch_context,
 )
 
 
@@ -34,6 +35,21 @@ def _add_unassigned_notice(request):
     messages.warning(request, BRANCH_UNASSIGNED_MESSAGE)
 
 
+def _apply_session_timeout(request):
+    """Session lifetime from SystemSetting.session_timeout_hours (only written when it changes)."""
+    session = getattr(request, 'session', None)
+    if session is None:
+        return
+    from apps.tenant.core.settings_helpers import setting
+    try:
+        hours = int(setting('session_timeout_hours', 12) or 12)
+    except (TypeError, ValueError):
+        return
+    seconds = max(1, hours) * 3600
+    if session.get('_session_expiry') != seconds:
+        session.set_expiry(seconds)
+
+
 class BranchMiddleware:
     """
     1. Tenant membership guard: auth_user is shared by all tenants, so a session
@@ -54,6 +70,7 @@ class BranchMiddleware:
         request.branch_restricted = False
         request.allowed_branch_ids = None
         request.branch_unassigned = False
+        request.branch_locked_by_shift = False
         if is_public_request(request):
             return self.get_response(request)
 
@@ -65,6 +82,8 @@ class BranchMiddleware:
         if user is None or not user.is_authenticated:
             request.branch = None
             return self.get_response(request)
+
+        _apply_session_timeout(request)
 
         if is_tenant_admin(user):
             self._select_admin_branch(request)
@@ -88,11 +107,26 @@ class BranchMiddleware:
                 if _wants_html_page(request):
                     _add_unassigned_notice(request)
 
+        # Forms only receive `user`: give them the same branch rule as views.
+        attach_branch_context(request)
         return self.get_response(request)
 
     def _select_admin_branch(self, request):
         allowed_branches = Branch.objects.filter(is_active=True)
         branch_id = request.GET.get('branch')
+
+        # While the user has an OPEN shift, the branch is locked to the shift's
+        # branch — no switching (header, ?branch=, "all") until the shift is closed.
+        shift_branch = get_open_shift_branch(request.user)
+        if shift_branch is not None:
+            request.branch = shift_branch
+            request.branch_locked_by_shift = True
+            if request.session.get('current_branch_id') != shift_branch.id:
+                request.session['current_branch_id'] = shift_branch.id
+            if branch_id and branch_id != str(shift_branch.id) and _wants_html_page(request):
+                from django.contrib import messages
+                messages.warning(request, SHIFT_BRANCH_LOCK_MESSAGE.format(branch=shift_branch.name))
+            return
 
         if branch_id:
             if branch_id == 'all':

@@ -147,6 +147,13 @@
                     </small>
                 </div>
 
+                {% if expiry_tracking %}
+                <div class="col-md-6 form-group">
+                    <label style="font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">تاريخ الصلاحية للدفعة الافتتاحية (اختياري)</label>
+                    <input type="date" class="form-control" name="expiry_date" value="{{ opening_info.batch.expiry_date|date:'Y-m-d' }}" style="background: rgba(0,0,0,0.2); color: #fff;">
+                </div>
+                {% endif %}
+
                 <div class="col-12 form-group">
                     <label style="font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">ملاحظات / سبب التعديل (اختياري)</label>
                     <input type="text" class="form-control" name="reason" placeholder="مثال: تصحيح خطأ جرد أولي، تعديل كمية الدفعة الافتتاحية..." style="background: rgba(0,0,0,0.2); color: #fff;">

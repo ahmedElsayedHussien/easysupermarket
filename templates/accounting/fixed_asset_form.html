@@ -17,6 +17,9 @@
 
     <form method="post" id="assetForm">
         {% csrf_token %}
+        {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">{% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}</div>
+        {% endif %}
 
         {% if form.errors %}
         <div class="alert alert-danger mb-4" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5;">

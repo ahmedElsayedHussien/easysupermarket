@@ -165,6 +165,17 @@
 .border-neon-blue { border: 1px solid rgba(0, 243, 255, 0.2); }
 .border-neon-green { border: 1px solid rgba(57, 255, 20, 0.2); }
 .border-neon-gold { border: 1px solid rgba(255, 215, 0, 0.2); }
+
+/* Weekly off-day checkboxes */
+.weekday-group { display: flex; flex-wrap: wrap; gap: 8px; }
+.weekday-pill {
+    display: inline-flex; align-items: center; gap: 6px; margin: 0; cursor: pointer;
+    padding: 0.35rem 0.8rem; border-radius: 20px; border: 1px solid #334155;
+    background: rgba(255, 255, 255, 0.04); color: #cbd5e1; font-weight: 600; font-size: 0.9rem;
+}
+.weekday-pill input { accent-color: #ff7300; margin: 0; }
+.weekday-pill:has(input:checked) { border-color: #ff7300; background: rgba(255, 115, 0, 0.15); color: #ff9a3d; }
+.field-error { font-weight: 600; margin-top: 0.25rem; }
 </style>
 {% endblock %}
 
@@ -189,118 +200,299 @@
         </button>
     </div>
 
-    <form method="POST" class="needs-validation" novalidate>
+    <form method="POST" class="needs-validation" enctype="multipart/form-data" novalidate>
         {% csrf_token %}
+
+        {% if form.non_field_errors %}
+        <div class="alert alert-danger mb-4">{% for err in form.non_field_errors %}<div>{{ err }}</div>{% endfor %}</div>
+        {% endif %}
         
         <!-- TAB 1: GENERAL SYSTEM SETTINGS -->
         <div id="tabPanelGeneral" class="tab-content-panel active">
             <div class="row">
-                <!-- اعدادات نقطة البيع -->
                 <div class="col-md-6 mb-4">
                     <div class="card p-4 h-100 border-neon-blue" style="background:#0f1929;">
                         <h4 class="text-neon-blue mb-4">🛒 إعدادات نقطة البيع (POS)</h4>
-                        
                         <div class="form-check form-switch mb-3 custom-switch">
                             {{ form.allow_negative_stock }}
                             <label class="form-check-label ms-2" for="{{ form.allow_negative_stock.id_for_label }}">السماح بالبيع بالسالب (بدون رصيد)</label>
                             <small class="text-muted d-block mt-1 ms-4">تفعيل هذا الخيار يسمح للكاشير بإتمام عمليات البيع على نقطة البيع (POS) حتى لو كان رصيد الصنف صفر أو غير كافٍ، مع تسجيل العجز المخزني والتكلفة آلياً.</small>
+                            {% for err in form.allow_negative_stock.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-check form-switch mb-3 custom-switch">
                             {{ form.auto_print_receipt }}
                             <label class="form-check-label ms-2" for="{{ form.auto_print_receipt.id_for_label }}">الطباعة التلقائية للإيصال بعد السداد</label>
+                            {% if form.auto_print_receipt.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.auto_print_receipt.help_text }}</small>{% endif %}
+                            {% for err in form.auto_print_receipt.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-check form-switch mb-3 custom-switch">
                             {{ form.allow_pos_price_modification }}
                             <label class="form-check-label ms-2" for="{{ form.allow_pos_price_modification.id_for_label }}">السماح بتعديل أسعار المنتجات في نقطة البيع</label>
+                            {% if form.allow_pos_price_modification.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.allow_pos_price_modification.help_text }}</small>{% endif %}
+                            {% for err in form.allow_pos_price_modification.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-group mb-3 ms-4" id="marginPercentContainer">
-                            <label class="form-label text-muted">{{ form.pos_price_margin_percent.label }}</label>
+                            <label class="form-label text-muted" for="{{ form.pos_price_margin_percent.id_for_label }}">{{ form.pos_price_margin_percent.label }}</label>
                             {{ form.pos_price_margin_percent }}
-                            <small class="text-muted d-block mt-1">{{ form.pos_price_margin_percent.help_text }}</small>
+                            {% if form.pos_price_margin_percent.help_text %}<small class="text-muted d-block mt-1">{{ form.pos_price_margin_percent.help_text }}</small>{% endif %}
+                            {% for err in form.pos_price_margin_percent.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-group mb-3">
                             <label class="form-label text-muted" for="{{ form.max_pos_discount_percentage.id_for_label }}">{{ form.max_pos_discount_percentage.label }}</label>
                             {{ form.max_pos_discount_percentage }}
-                            <small class="text-muted d-block mt-1">{{ form.max_pos_discount_percentage.help_text }}</small>
-                            {% for err in form.max_pos_discount_percentage.errors %}<small class="text-danger d-block">{{ err }}</small>{% endfor %}
+                            {% if form.max_pos_discount_percentage.help_text %}<small class="text-muted d-block mt-1">{{ form.max_pos_discount_percentage.help_text }}</small>{% endif %}
+                            {% for err in form.max_pos_discount_percentage.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-check form-switch mb-3 custom-switch">
                             {{ form.apply_vat_by_default }}
                             <label class="form-check-label ms-2" for="{{ form.apply_vat_by_default.id_for_label }}">تطبيق الضريبة الافتراضي على الفواتير</label>
+                            {% if form.apply_vat_by_default.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.apply_vat_by_default.help_text }}</small>{% endif %}
+                            {% for err in form.apply_vat_by_default.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-check form-switch mb-3 custom-switch">
                             {{ form.show_pos_cost }}
                             <label class="form-check-label ms-2" for="{{ form.show_pos_cost.id_for_label }}">{{ form.show_pos_cost.label }}</label>
-                            <small class="text-muted d-block mt-1 ms-4">{{ form.show_pos_cost.help_text }}</small>
+                            {% if form.show_pos_cost.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.show_pos_cost.help_text }}</small>{% endif %}
+                            {% for err in form.show_pos_cost.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
-                        <div class="form-group mt-4">
-                            <label class="form-label text-muted">{{ form.large_amount_requires_customer.label }}</label>
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.large_amount_requires_customer.id_for_label }}">{{ form.large_amount_requires_customer.label }}</label>
                             {{ form.large_amount_requires_customer }}
-                            <small class="text-muted d-block mt-1">{{ form.large_amount_requires_customer.help_text }}</small>
+                            {% if form.large_amount_requires_customer.help_text %}<small class="text-muted d-block mt-1">{{ form.large_amount_requires_customer.help_text }}</small>{% endif %}
+                            {% for err in form.large_amount_requires_customer.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.pos_cash_rounding.id_for_label }}">{{ form.pos_cash_rounding.label }}</label>
+                            {{ form.pos_cash_rounding }}
+                            {% if form.pos_cash_rounding.help_text %}<small class="text-muted d-block mt-1">{{ form.pos_cash_rounding.help_text }}</small>{% endif %}
+                            {% for err in form.pos_cash_rounding.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
                     </div>
                 </div>
 
-                <!-- إعدادات المخازن والحسابات -->
+                <div class="col-md-6 mb-4">
+                    <div class="card p-4 h-100 border-neon-gold" style="background:#0f1929;">
+                        <h4 class="text-neon-gold mb-4">🖨️ الهوية والطباعة</h4>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-group mb-3">
+                                    <label class="form-label text-muted" for="{{ form.store_name.id_for_label }}">{{ form.store_name.label }}</label>
+                                    {{ form.store_name }}
+                                    {% if form.store_name.help_text %}<small class="text-muted d-block mt-1">{{ form.store_name.help_text }}</small>{% endif %}
+                                    {% for err in form.store_name.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group mb-3">
+                                    <label class="form-label text-muted" for="{{ form.tax_number.id_for_label }}">{{ form.tax_number.label }}</label>
+                                    {{ form.tax_number }}
+                                    {% if form.tax_number.help_text %}<small class="text-muted d-block mt-1">{{ form.tax_number.help_text }}</small>{% endif %}
+                                    {% for err in form.tax_number.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group mb-3">
+                                    <label class="form-label text-muted" for="{{ form.commercial_register.id_for_label }}">{{ form.commercial_register.label }}</label>
+                                    {{ form.commercial_register }}
+                                    {% if form.commercial_register.help_text %}<small class="text-muted d-block mt-1">{{ form.commercial_register.help_text }}</small>{% endif %}
+                                    {% for err in form.commercial_register.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.receipt_footer.id_for_label }}">{{ form.receipt_footer.label }}</label>
+                            {{ form.receipt_footer }}
+                            {% if form.receipt_footer.help_text %}<small class="text-muted d-block mt-1">{{ form.receipt_footer.help_text }}</small>{% endif %}
+                            {% for err in form.receipt_footer.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group mb-3">
+                                    <label class="form-label text-muted" for="{{ form.company_logo.id_for_label }}">{{ form.company_logo.label }}</label>
+                                    <div class="mb-2" id="logoPreviewWrap"{% if not form.instance.company_logo %} style="display:none;"{% endif %}><img id="logoPreview" src="{% if form.instance.company_logo %}{{ form.instance.company_logo.url }}{% endif %}" alt="شعار الشركة" style="max-height:90px;max-width:220px;background:#fff;padding:6px;border-radius:8px;"></div>
+                                    {{ form.company_logo }}
+                                    {% if form.company_logo.help_text %}<small class="text-muted d-block mt-1">{{ form.company_logo.help_text }}</small>{% endif %}
+                                    {% for err in form.company_logo.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group mb-3">
+                                    <label class="form-label text-muted" for="{{ form.receipt_paper_width.id_for_label }}">{{ form.receipt_paper_width.label }}</label>
+                                    {{ form.receipt_paper_width }}
+                                    {% if form.receipt_paper_width.help_text %}<small class="text-muted d-block mt-1">{{ form.receipt_paper_width.help_text }}</small>{% endif %}
+                                    {% for err in form.receipt_paper_width.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                                </div>
+                                <div class="form-check form-switch mb-3 custom-switch">
+                                    {{ form.show_branch_info_on_receipt }}
+                                    <label class="form-check-label ms-2" for="{{ form.show_branch_info_on_receipt.id_for_label }}">{{ form.show_branch_info_on_receipt.label }}</label>
+                                    {% if form.show_branch_info_on_receipt.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.show_branch_info_on_receipt.help_text }}</small>{% endif %}
+                                    {% for err in form.show_branch_info_on_receipt.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="col-md-6 mb-4">
                     <div class="card p-4 h-100 border-neon-green" style="background:#0f1929;">
-                        <h4 class="text-neon-green mb-4">📦 إعدادات المخازن والحسابات</h4>
-                        
-                        <div class="form-check form-switch mb-3 custom-switch">
-                            {{ form.enable_expiry_tracking }}
-                            <label class="form-check-label ms-2" for="{{ form.enable_expiry_tracking.id_for_label }}">تتبع تواريخ الصلاحية</label>
-                        </div>
-
-                        <div class="form-group mb-4">
-                            <label class="form-label text-muted">{{ form.low_stock_threshold.label }}</label>
-                            {{ form.low_stock_threshold }}
-                        </div>
-
-                        <hr class="border-secondary my-4">
-
+                        <h4 class="text-neon-green mb-4">📒 المحاسبة</h4>
                         <div class="form-check form-switch mb-3 custom-switch">
                             {{ form.auto_post_journals }}
                             <label class="form-check-label ms-2" for="{{ form.auto_post_journals.id_for_label }}">الترحيل التلقائي للقيود المحاسبية</label>
+                            {% if form.auto_post_journals.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.auto_post_journals.help_text }}</small>{% endif %}
+                            {% for err in form.auto_post_journals.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.accounting_lock_date.id_for_label }}">{{ form.accounting_lock_date.label }}</label>
+                            {{ form.accounting_lock_date }}
+                            {% if form.accounting_lock_date.help_text %}<small class="text-muted d-block mt-1">{{ form.accounting_lock_date.help_text }}</small>{% endif %}
+                            {% for err in form.accounting_lock_date.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="alert mb-0 p-3" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.35); color: #fca5a5; border-radius: 10px;">
+                            ⚠️ <strong>تنبيه:</strong> بعد تحديد تاريخ القفل لن يتمكن أي مستخدم من إضافة أو تعديل أو إلغاء أي قيد أو مستند مالي (فواتير، سندات، مصروفات...) بتاريخ في هذا اليوم أو قبله. استخدمه بعد إقفال الفترة ومراجعتها فقط، واتركه فارغاً لإلغاء القفل.
                         </div>
                     </div>
                 </div>
 
-                <!-- الهوية والطباعة -->
-                <div class="col-md-12 mb-4">
-                    <div class="card p-4 border-neon-gold" style="background:#0f1929;">
-                        <h4 class="text-neon-gold mb-4">🖨️ الهوية والطباعة</h4>
-                        
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label class="form-label text-muted">{{ form.store_name.label }}</label>
-                                    {{ form.store_name }}
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label class="form-label text-muted">{{ form.tax_number.label }}</label>
-                                    {{ form.tax_number }}
-                                </div>
-                            </div>
-                            <div class="col-md-4">
-                                <div class="form-group">
-                                    <label class="form-label text-muted">{{ form.commercial_register.label }}</label>
-                                    {{ form.commercial_register }}
-                                </div>
-                            </div>
+                <div class="col-md-6 mb-4">
+                    <div class="card p-4 h-100 border-neon-blue" style="background:#0f1929;">
+                        <h4 class="text-neon-blue mb-4">📦 المخزون</h4>
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.enable_expiry_tracking }}
+                            <label class="form-check-label ms-2" for="{{ form.enable_expiry_tracking.id_for_label }}">تتبع تواريخ الصلاحية</label>
+                            {% if form.enable_expiry_tracking.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.enable_expiry_tracking.help_text }}</small>{% endif %}
+                            {% for err in form.enable_expiry_tracking.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
-                        
-                        <div class="form-group mt-3">
-                            <label class="form-label text-muted">{{ form.receipt_footer.label }}</label>
-                            {{ form.receipt_footer }}
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.low_stock_threshold.id_for_label }}">{{ form.low_stock_threshold.label }}</label>
+                            {{ form.low_stock_threshold }}
+                            {% if form.low_stock_threshold.help_text %}<small class="text-muted d-block mt-1">{{ form.low_stock_threshold.help_text }}</small>{% endif %}
+                            {% for err in form.low_stock_threshold.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.stagnant_stock_days.id_for_label }}">{{ form.stagnant_stock_days.label }}</label>
+                            {{ form.stagnant_stock_days }}
+                            {% if form.stagnant_stock_days.help_text %}<small class="text-muted d-block mt-1">{{ form.stagnant_stock_days.help_text }}</small>{% endif %}
+                            {% for err in form.stagnant_stock_days.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.expiry_warning_days.id_for_label }}">{{ form.expiry_warning_days.label }}</label>
+                            {{ form.expiry_warning_days }}
+                            {% if form.expiry_warning_days.help_text %}<small class="text-muted d-block mt-1">{{ form.expiry_warning_days.help_text }}</small>{% endif %}
+                            {% for err in form.expiry_warning_days.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6 mb-4">
+                    <div class="card p-4 h-100 border-neon-gold" style="background:#0f1929;">
+                        <h4 class="text-neon-gold mb-4">👥 الشركاء</h4>
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.dormant_debt_days.id_for_label }}">{{ form.dormant_debt_days.label }}</label>
+                            {{ form.dormant_debt_days }}
+                            <small class="text-muted d-block mt-1">يظهر العميل في لوحة الشركاء كمديونية راكدة إذا لم يحدث على حسابه أي حركة خلال هذه المدة.</small>
+                            {% for err in form.dormant_debt_days.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.credit_limit_warning_percent.id_for_label }}">{{ form.credit_limit_warning_percent.label }}</label>
+                            {{ form.credit_limit_warning_percent }}
+                            <small class="text-muted d-block mt-1">يتم التنبيه عندما يصل رصيد العميل إلى هذه النسبة من حد الائتمان الخاص به.</small>
+                            {% for err in form.credit_limit_warning_percent.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6 mb-4">
+                    <div class="card p-4 h-100 border-neon-green" style="background:#0f1929;">
+                        <h4 class="text-neon-green mb-4">⏰ الموارد البشرية</h4>
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted d-block">{{ form.weekly_off_days.label }}</label>
+                            <div class="weekday-group">
+                                {% for cb in form.weekly_off_days %}
+                                <label class="weekday-pill" for="{{ cb.id_for_label }}">{{ cb.tag }}<span>{{ cb.choice_label }}</span></label>
+                                {% endfor %}
+                            </div>
+                            {% if form.weekly_off_days.help_text %}<small class="text-muted d-block mt-1">{{ form.weekly_off_days.help_text }}</small>{% endif %}
+                            {% for err in form.weekly_off_days.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.payroll_day_basis.id_for_label }}">{{ form.payroll_day_basis.label }}</label>
+                            {{ form.payroll_day_basis }}
+                            {% if form.payroll_day_basis.help_text %}<small class="text-muted d-block mt-1">{{ form.payroll_day_basis.help_text }}</small>{% endif %}
+                            {% for err in form.payroll_day_basis.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.late_grace_minutes.id_for_label }}">{{ form.late_grace_minutes.label }}</label>
+                            {{ form.late_grace_minutes }}
+                            {% if form.late_grace_minutes.help_text %}<small class="text-muted d-block mt-1">{{ form.late_grace_minutes.help_text }}</small>{% endif %}
+                            {% for err in form.late_grace_minutes.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6 mb-4">
+                    <div class="card p-4 h-100 border-neon-blue" style="background:#0f1929;">
+                        <h4 class="text-neon-blue mb-4">🔐 الأمان</h4>
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.session_timeout_hours.id_for_label }}">{{ form.session_timeout_hours.label }}</label>
+                            {{ form.session_timeout_hours }}
+                            {% if form.session_timeout_hours.help_text %}<small class="text-muted d-block mt-1">{{ form.session_timeout_hours.help_text }}</small>{% endif %}
+                            {% for err in form.session_timeout_hours.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.login_max_attempts.id_for_label }}">{{ form.login_max_attempts.label }}</label>
+                            {{ form.login_max_attempts }}
+                            {% if form.login_max_attempts.help_text %}<small class="text-muted d-block mt-1">{{ form.login_max_attempts.help_text }}</small>{% endif %}
+                            {% for err in form.login_max_attempts.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.login_lockout_minutes.id_for_label }}">{{ form.login_lockout_minutes.label }}</label>
+                            {{ form.login_lockout_minutes }}
+                            {% if form.login_lockout_minutes.help_text %}<small class="text-muted d-block mt-1">{{ form.login_lockout_minutes.help_text }}</small>{% endif %}
+                            {% for err in form.login_lockout_minutes.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-6 mb-4">
+                    <div class="card p-4 h-100 border-neon-gold" style="background:#0f1929;">
+                        <h4 class="text-neon-gold mb-4">💾 النسخ الاحتياطي</h4>
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.auto_backup_enabled }}
+                            <label class="form-check-label ms-2" for="{{ form.auto_backup_enabled.id_for_label }}">{{ form.auto_backup_enabled.label }}</label>
+                            {% if form.auto_backup_enabled.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.auto_backup_enabled.help_text }}</small>{% endif %}
+                            {% for err in form.auto_backup_enabled.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.auto_backup_retention.id_for_label }}">{{ form.auto_backup_retention.label }}</label>
+                            {{ form.auto_backup_retention }}
+                            {% if form.auto_backup_retention.help_text %}<small class="text-muted d-block mt-1">{{ form.auto_backup_retention.help_text }}</small>{% endif %}
+                            {% for err in form.auto_backup_retention.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
+                        <div class="alert mb-0 p-3" style="background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.3); color: #7dd3fc; border-radius: 10px;">
+                            💡 يتم أخذ النسخة الاحتياطية التلقائية عند تشغيل البرنامج من <code>start_server.bat</code> (مرة واحدة يومياً).
+                            وإذا كان الجهاز يعمل لفترات طويلة دون إعادة تشغيل، شغّل <code>schedule_backup.bat</code> مرة واحدة كمسؤول لجدولة نسخة يومية من مُجدول مهام ويندوز.
+                            يمكنك أيضاً أخذ نسخة يدوية من <a href="{% url 'core:database_backup' %}" style="color:#ff7300;">شاشة النسخ الاحتياطي</a>.
                         </div>
                     </div>
                 </div>
@@ -326,7 +518,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -340,7 +532,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -361,7 +553,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -375,7 +567,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -389,7 +581,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -410,7 +602,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -424,7 +616,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -439,74 +631,19 @@
                         <div class="nav-toggle-card-title">📦 المخزون</div>
                         
                         <div class="nav-item-row">
-                            <span class="nav-item-label">📦 {{ form.show_nav_inventory_fifo.label }}</span>
+                            <span class="nav-item-label">📊 {{ form.show_nav_inventory_dashboard.label }}</span>
                             <div class="nav-radio-group">
-                                {% for radio in form.show_nav_inventory_fifo %}
+                                {% for radio in form.show_nav_inventory_dashboard %}
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
                             </div>
                         </div>
-
-                        <div class="nav-item-row">
-                            <span class="nav-item-label">📋 {{ form.show_nav_stocktake.label }}</span>
-                            <div class="nav-radio-group">
-                                {% for radio in form.show_nav_stocktake %}
-                                    <label>
-                                        {{ radio.tag }}
-                                        <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                        </span>
-                                    </label>
-                                {% endfor %}
-                            </div>
-                        </div>
-
-                        <div class="nav-item-row">
-                            <span class="nav-item-label">⚖️ {{ form.show_nav_adjustments.label }}</span>
-                            <div class="nav-radio-group">
-                                {% for radio in form.show_nav_adjustments %}
-                                    <label>
-                                        {{ radio.tag }}
-                                        <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                        </span>
-                                    </label>
-                                {% endfor %}
-                            </div>
-                        </div>
-
-                        <div class="nav-item-row">
-                            <span class="nav-item-label">🏷️ {{ form.show_nav_products.label }}</span>
-                            <div class="nav-radio-group">
-                                {% for radio in form.show_nav_products %}
-                                    <label>
-                                        {{ radio.tag }}
-                                        <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                        </span>
-                                    </label>
-                                {% endfor %}
-                            </div>
-                        </div>
-
-                        <div class="nav-item-row">
-                            <span class="nav-item-label">📐 {{ form.show_nav_uom.label }}</span>
-                            <div class="nav-radio-group">
-                                {% for radio in form.show_nav_uom %}
-                                    <label>
-                                        {{ radio.tag }}
-                                        <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                        </span>
-                                    </label>
-                                {% endfor %}
-                            </div>
-                        </div>
+                        
                     </div>
                 </div>
 
@@ -522,7 +659,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -536,7 +673,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -550,7 +687,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -571,7 +708,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -592,7 +729,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -606,7 +743,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -627,7 +764,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -641,7 +778,7 @@
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
@@ -656,60 +793,19 @@
                         <div class="nav-toggle-card-title">👥 الشركاء</div>
                         
                         <div class="nav-item-row">
-                            <span class="nav-item-label">🚚 {{ form.show_nav_suppliers.label }}</span>
+                            <span class="nav-item-label">📊 {{ form.show_nav_partners_dashboard.label }}</span>
                             <div class="nav-radio-group">
-                                {% for radio in form.show_nav_suppliers %}
+                                {% for radio in form.show_nav_partners_dashboard %}
                                     <label>
                                         {{ radio.tag }}
                                         <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                            {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                         </span>
                                     </label>
                                 {% endfor %}
                             </div>
                         </div>
-
-                        <div class="nav-item-row">
-                            <span class="nav-item-label">👥 {{ form.show_nav_customers.label }}</span>
-                            <div class="nav-radio-group">
-                                {% for radio in form.show_nav_customers %}
-                                    <label>
-                                        {{ radio.tag }}
-                                        <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                        </span>
-                                    </label>
-                                {% endfor %}
-                            </div>
-                        </div>
-
-                        <div class="nav-item-row">
-                            <span class="nav-item-label">🏢 {{ form.show_nav_sectors.label }}</span>
-                            <div class="nav-radio-group">
-                                {% for radio in form.show_nav_sectors %}
-                                    <label>
-                                        {{ radio.tag }}
-                                        <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                        </span>
-                                    </label>
-                                {% endfor %}
-                            </div>
-                        </div>
-
-                        <div class="nav-item-row">
-                            <span class="nav-item-label">📑 {{ form.show_nav_partners_report.label }}</span>
-                            <div class="nav-radio-group">
-                                {% for radio in form.show_nav_partners_report %}
-                                    <label>
-                                        {{ radio.tag }}
-                                        <span class="nav-radio-pill">
-                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                        </span>
-                                    </label>
-                                {% endfor %}
-                            </div>
-                        </div>
+                        
                     </div>
                 </div>
 
@@ -721,13 +817,28 @@
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="nav-item-row">
+                                    <span class="nav-item-label">💧 {{ form.show_nav_liquidity_dashboard.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_liquidity_dashboard %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
                                     <span class="nav-item-label">🧾 {{ form.show_nav_expenses.label }}</span>
                                     <div class="nav-radio-group">
                                         {% for radio in form.show_nav_expenses %}
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -742,7 +853,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -757,7 +868,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -772,7 +883,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -787,52 +898,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                                </span>
-                                            </label>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="nav-item-row">
-                                    <span class="nav-item-label">💰 {{ form.show_nav_treasuries.label }}</span>
-                                    <div class="nav-radio-group">
-                                        {% for radio in form.show_nav_treasuries %}
-                                            <label>
-                                                {{ radio.tag }}
-                                                <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                                </span>
-                                            </label>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="nav-item-row">
-                                    <span class="nav-item-label">🏦 {{ form.show_nav_banks.label }}</span>
-                                    <div class="nav-radio-group">
-                                        {% for radio in form.show_nav_banks %}
-                                            <label>
-                                                {{ radio.tag }}
-                                                <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
-                                                </span>
-                                            </label>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="nav-item-row">
-                                    <span class="nav-item-label">📱 {{ form.show_nav_ewallets.label }}</span>
-                                    <div class="nav-radio-group">
-                                        {% for radio in form.show_nav_ewallets %}
-                                            <label>
-                                                {{ radio.tag }}
-                                                <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -847,7 +913,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -862,7 +928,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -877,7 +943,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -892,7 +958,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -917,7 +983,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -932,7 +998,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -947,7 +1013,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -962,7 +1028,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -987,7 +1053,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -1002,7 +1068,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -1017,7 +1083,7 @@
                                             <label>
                                                 {{ radio.tag }}
                                                 <span class="nav-radio-pill">
-                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
                                                 </span>
                                             </label>
                                         {% endfor %}
@@ -1037,30 +1103,40 @@
                 <div class="col-md-8 mx-auto mb-4">
                     <div class="card p-4 border-neon-gold" style="background:#0f1929;">
                         <h4 class="text-neon-gold mb-3">💳 إعدادات حسابات الدفع الافتراضية لنقطة البيع</h4>
-                        <p class="text-muted mb-4">قم بتحديد الخزينة الحسابية، الحساب البنكي، والمحفظة الإلكترونية الافتراضية التي يتم اختيارها تلقائياً في شاشة نقطة البيع. يمكنك أيضاً تجميد/قفل الاختيار لمنع الكاشير من تغيير هذه الحسابات.</p>
+                        <p class="text-muted mb-3">قم بتحديد الخزينة الحسابية، الحساب البنكي، والمحفظة الإلكترونية الافتراضية التي يتم اختيارها تلقائياً في شاشة نقطة البيع. يمكنك أيضاً تجميد/قفل الاختيار لمنع الكاشير من تغيير هذه الحسابات.</p>
+                        <div class="alert mb-4 p-3" style="background: rgba(255, 115, 0, 0.08); border: 1px solid rgba(255, 115, 0, 0.35); color: #fdba74; border-radius: 10px;">
+                            <strong>الافتراضي العام (يُستخدم عند عدم تحديد افتراضي للفرع)</strong><br>
+                            الحسابات التالية تُستخدم لأي فرع لم يُحدَّد له افتراضي خاص. لتحديد خزينة وحسابات افتراضية لكل فرع على حدة افتح
+                            <a href="{% url 'core:branch_list' %}" style="color:#ff7300; font-weight:700;">صفحة الفروع</a> ثم «إدارة الفرع».
+                            لاحظ أن الخزينة العامة لا تُستخدم إلا في الفرع الذي تتبعه.
+                        </div>
                         
                         <div class="form-group mb-4">
-                            <label class="form-label text-light fw-bold">🏛️ {{ form.default_pos_treasury.label }}</label>
+                            <label class="form-label text-light fw-bold" for="{{ form.default_pos_treasury.id_for_label }}">🏛️ {{ form.default_pos_treasury.label }} <span class="text-muted fw-normal">— الافتراضي العام</span></label>
                             {{ form.default_pos_treasury }}
-                            <small class="text-muted d-block mt-1">{{ form.default_pos_treasury.help_text }}</small>
+                            {% if form.default_pos_treasury.help_text %}<small class="text-muted d-block mt-1">{{ form.default_pos_treasury.help_text }}</small>{% endif %}
+                            {% for err in form.default_pos_treasury.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-group mb-4">
-                            <label class="form-label text-light fw-bold">💳 {{ form.default_pos_bank_account.label }}</label>
+                            <label class="form-label text-light fw-bold" for="{{ form.default_pos_bank_account.id_for_label }}">💳 {{ form.default_pos_bank_account.label }} <span class="text-muted fw-normal">— الافتراضي العام</span></label>
                             {{ form.default_pos_bank_account }}
-                            <small class="text-muted d-block mt-1">{{ form.default_pos_bank_account.help_text }}</small>
+                            {% if form.default_pos_bank_account.help_text %}<small class="text-muted d-block mt-1">{{ form.default_pos_bank_account.help_text }}</small>{% endif %}
+                            {% for err in form.default_pos_bank_account.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-group mb-4">
-                            <label class="form-label text-light fw-bold">⚡ {{ form.default_pos_instapay_account.label }}</label>
+                            <label class="form-label text-light fw-bold" for="{{ form.default_pos_instapay_account.id_for_label }}">⚡ {{ form.default_pos_instapay_account.label }} <span class="text-muted fw-normal">— الافتراضي العام</span></label>
                             {{ form.default_pos_instapay_account }}
-                            <small class="text-muted d-block mt-1">{{ form.default_pos_instapay_account.help_text }}</small>
+                            {% if form.default_pos_instapay_account.help_text %}<small class="text-muted d-block mt-1">{{ form.default_pos_instapay_account.help_text }}</small>{% endif %}
+                            {% for err in form.default_pos_instapay_account.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <div class="form-group mb-4">
-                            <label class="form-label text-light fw-bold">📱 {{ form.default_pos_ewallet.label }}</label>
+                            <label class="form-label text-light fw-bold" for="{{ form.default_pos_ewallet.id_for_label }}">📱 {{ form.default_pos_ewallet.label }} <span class="text-muted fw-normal">— الافتراضي العام</span></label>
                             {{ form.default_pos_ewallet }}
-                            <small class="text-muted d-block mt-1">{{ form.default_pos_ewallet.help_text }}</small>
+                            {% if form.default_pos_ewallet.help_text %}<small class="text-muted d-block mt-1">{{ form.default_pos_ewallet.help_text }}</small>{% endif %}
+                            {% for err in form.default_pos_ewallet.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
                         <hr class="border-secondary my-4">
@@ -1070,7 +1146,7 @@
                             <label class="form-check-label ms-2 text-danger fw-bold" for="{{ form.lock_pos_payment_accounts.id_for_label }}">
                                 🔒 {{ form.lock_pos_payment_accounts.label }}
                             </label>
-                            <small class="text-muted d-block mt-1 ms-4">{{ form.lock_pos_payment_accounts.help_text }}</small>
+                            {% if form.lock_pos_payment_accounts.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.lock_pos_payment_accounts.help_text }}</small>{% endif %}
                         </div>
                     </div>
                 </div>
@@ -1130,6 +1206,29 @@ document.addEventListener('DOMContentLoaded', function() {
     if (allowEditCheckbox) {
         allowEditCheckbox.addEventListener('change', toggleMargin);
         toggleMargin();
+    }
+
+    // Open the tab that holds the first validation error.
+    const firstError = document.querySelector('.field-error');
+    if (firstError) {
+        const panel = firstError.closest('.tab-content-panel');
+        if (panel) {
+            switchTab({tabPanelSidebar: 'sidebar', tabPanelPosAccounts: 'posAccounts'}[panel.id] || 'general');
+        }
+        firstError.scrollIntoView({block: 'center'});
+    }
+
+    // Live preview of a newly chosen logo.
+    const logoInput = document.getElementById('{{ form.company_logo.id_for_label }}');
+    const logoPreview = document.getElementById('logoPreview');
+    const logoWrap = document.getElementById('logoPreviewWrap');
+    if (logoInput && logoPreview && logoWrap) {
+        logoInput.addEventListener('change', function () {
+            const file = logoInput.files && logoInput.files[0];
+            if (!file) return;
+            logoPreview.src = URL.createObjectURL(file);
+            logoWrap.style.display = 'block';
+        });
     }
 });
 </script>

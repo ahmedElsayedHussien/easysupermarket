@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/panels.css' %}">
+<div class="glass-container lq-root" style="padding: 1.5rem;">
+  <div class="lq-head">
+    <h2>📜 {{ title }}</h2>
+    <div class="lq-actions">
+      {% if perms.inventory.change_inventorybatch %}<a class="lq-btn primary" href="{% url 'inventory:transfer_stock' %}">🔄 تحويل جديد</a>{% endif %}
+      <a class="lq-btn" href="{% url 'inventory:dashboard' %}">📦 لوحة المخزون</a>
+    </div>
+  </div>
+
+  <form method="GET" class="lq-card" style="display:flex; gap:0.6rem; margin-bottom:1rem; padding:0.75rem;">
+    <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="بحث برقم التحويل أو اسم الصنف أو الملاحظات..." style="flex:1">
+    <button type="submit" class="lq-btn primary" style="border:none;cursor:pointer">🔍 بحث</button>
+    {% if q %}<a class="lq-btn" href="{% url 'inventory:stock_transfer_list' %}">إلغاء</a>{% endif %}
+  </form>
+
+  <section class="lq-card">
+    <div class="lq-scroll"><table class="lq-table">
+      <thead><tr><th>الرقم</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>التكلفة</th><th>بواسطة</th></tr></thead>
+      <tbody>
+        {% for t in transfers %}
+        <tr>
+          <td><a href="{% url 'inventory:stock_transfer_detail' t.pk %}" style="color:#00e5ff; font-weight:700">{{ t.number }}</a></td>
+          <td class="num" style="font-weight:400">{{ t.date|date:"Y-m-d" }}</td>
+          <td>{{ t.from_warehouse.name }} <small style="color:var(--lq-muted)">{{ t.from_warehouse.branch.name }}</small></td>
+          <td>{{ t.to_warehouse.name }} <small style="color:var(--lq-muted)">{{ t.to_warehouse.branch.name }}</small>
+              {% if t.from_warehouse.branch_id != t.to_warehouse.branch_id %} <span title="بين فرعين">🚚</span>{% endif %}</td>
+          <td class="num" style="font-weight:400">{{ t.n_lines }}</td>
+          <td class="num"><bdi dir="ltr">{{ t.total_cost|money }}</bdi></td>
+          <td style="color:var(--lq-text-2)">{{ t.created_by|display_name|default:"-" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="lq-empty">لا توجد تحويلات بعد</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% include "includes/pagination.html" with item_label="تحويل" %}
+  </section>
+</div>
+{% endblock %}

@@ -34,5 +34,7 @@ def global_context(request):
         'db_engine_name': db_engine_name,
         # Non-admin account not linked to a branch: sees no branch data.
         'branch_unassigned': getattr(request, 'branch_unassigned', False),
+        # Open POS shift: branch switching is locked until the shift is closed.
+        'branch_locked_by_shift': getattr(request, 'branch_locked_by_shift', False),
         'branch_unassigned_message': BRANCH_UNASSIGNED_MESSAGE,
     }

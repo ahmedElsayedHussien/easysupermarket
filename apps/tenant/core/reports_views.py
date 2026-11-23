@@ -2946,7 +2946,7 @@ def get_pos_session_details(session):
         total_cash_sales=Coalesce(Sum(
             Case(
                 When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount') + F('rounding_amount')),  # cash actually collected (POS rounding)
                 default=Decimal('0.00'),
                 output_field=models.DecimalField(max_digits=18, decimal_places=4)
             )

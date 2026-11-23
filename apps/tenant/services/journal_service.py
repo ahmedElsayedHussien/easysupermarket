@@ -42,12 +42,15 @@ INPUT_VAT_CODE = '1190'
 OUTPUT_VAT_CODE = '2130'
 # عمولات ماكينات الدفع والمحافظ والبنوك
 PAYMENT_FEES_CODE = '5305'
+# فروق تقريب النقدية في نقطة البيع (Invoice.rounding_amount): دائن = مكسب، مدين = خسارة
+POS_ROUNDING_CODE = '5115'
 
 # Lazily created system accounts: code -> (name, account_type, parent codes in preference order, extra)
 _LAZY_ACCOUNTS = {
     WHT_RECEIVABLE_CODE: ('ضريبة خصم من المنبع لنا (مدينة)', 'ASSET', ('1100', '1000'), {'allow_reconcile': True}),
     INPUT_VAT_CODE: ('ضريبة القيمة المضافة - مدخلات (مشتريات)', 'ASSET', ('1100', '1000'), {}),
     PAYMENT_FEES_CODE: ('عمولات ماكينات الدفع والمحافظ والبنوك', 'EXPENSE', ('5300', '5000'), {'allow_direct_payment': False}),
+    POS_ROUNDING_CODE: ('فروق تقريب نقطة البيع', 'EXPENSE', ('5000',), {'allow_direct_payment': False}),
 }
 
 
@@ -450,16 +453,12 @@ def _payment_money_account(payment):
     Falls back to the parent 1110 / 1120 with a warning when ambiguous.
     """
     from apps.tenant.accounting.models import BankAccount
-    try:
-        from apps.tenant.core.models import SystemSetting
-        settings_obj = SystemSetting.get_settings()
-    except Exception:  # settings table not available
-        settings_obj = None
+    from apps.tenant.core.settings_helpers import get_pos_defaults
+    branch = payment.branch if getattr(payment, 'branch_id', None) else None
+    defaults = get_pos_defaults(branch)  # per-branch defaults, then global; never another branch's treasury
     ctx = f'payment {payment.reference}'
     if payment.method == 'CASH':
-        default_tr = getattr(settings_obj, 'default_pos_treasury', None) if settings_obj else None
-        if default_tr is not None and getattr(payment, 'branch_id', None) and default_tr.branch_id != payment.branch_id:
-            default_tr = None
+        default_tr = defaults['treasury']
         return _money_account(
             [
                 getattr(payment, 'treasury', None),
@@ -471,7 +470,7 @@ def _payment_money_account(payment):
     return _money_account(
         [
             getattr(payment, 'bank_account', None),
-            getattr(settings_obj, 'default_pos_bank_account', None) if settings_obj else None,
+            defaults['bank_account'],
             _single(BankAccount.objects.order_by('pk')),
         ],
         '1120', ctx,
@@ -500,6 +499,10 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
     vat_amount = invoice.tax_amount
     wht_amount = invoice.wht_amount
     total_amount = invoice.total_amount
+    # POS cash rounding: cash actually collected = exact due + rounding_amount (+/-).
+    rounding_amount = Decimal(str(getattr(invoice, 'rounding_amount', None) or 0))
+    if invoice.payment_type not in ('CASH', 'SPLIT') or (invoice.payment_type == 'SPLIT' and (invoice.paid_cash or 0) <= 0):
+        rounding_amount = Decimal('0')
 
     # Total COGS from all lines
     from django.db.models import Sum
@@ -540,7 +543,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
         ]
         active_splits = [[acc, amt, desc] for acc, amt, desc in splits if amt > 0]
         split_sum = sum((item[1] for item in active_splits), Decimal('0'))
-        diff = total_amount - split_sum
+        diff = total_amount + rounding_amount - split_sum
         if diff != 0 and abs(diff) <= Decimal('0.05') and active_splits:
             active_splits[0][1] += diff
 
@@ -558,7 +561,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
         items_to_create.append(JournalItem(
             entry=entry,
             account=cash_acc,
-            debit=total_amount,
+            debit=total_amount + rounding_amount,
             credit=Decimal('0'),
             description=f'مبيعات نقدية - {invoice.invoice_number}'
         ))
@@ -590,6 +593,18 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
                 credit=Decimal('0'),
                 description=f'استحقاق مبيعات (عميل) - {invoice.invoice_number}'
             ))
+
+    # POS cash rounding difference: collected more than due -> Cr 5115 (gain);
+    # collected less -> Dr 5115 (loss). Keeps the entry balanced.
+    if rounding_amount != 0:
+        rounding_account = _get_system_account(POS_ROUNDING_CODE)
+        items_to_create.append(JournalItem(
+            entry=entry,
+            account=rounding_account,
+            debit=-rounding_amount if rounding_amount < 0 else Decimal('0'),
+            credit=rounding_amount if rounding_amount > 0 else Decimal('0'),
+            description=f'فروق تقريب نقطة البيع - {invoice.invoice_number}'
+        ))
 
     # Dr: WHT (Tax Withheld by customer)
     if wht_amount > 0:

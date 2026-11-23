@@ -38,9 +38,13 @@ def _user_branch(user):
 
 
 def _branch_scoped(qs, user, make_q):
-    """Admins see everything; other users only rows matching make_q(branch) (none without a branch)."""
+    """
+    Reading lists: admins follow the header branch (all rows when the header is
+    on "all branches"); other users only their own branch (none without one).
+    """
     if is_admin_user(user):
-        return qs
+        scope = getattr(user, 'branch_read_scope', None) if getattr(user, 'has_branch_context', False) else None
+        return qs.filter(make_q(scope)).distinct() if scope is not None else qs
     branch = _user_branch(user)
     if branch is None:
         return qs.none()
@@ -63,7 +67,60 @@ def scope_transfers(qs, user):
 
 
 def scope_treasuries(qs, user):
-    return _branch_scoped(qs, user, lambda b: Q(branch=b))
+    """Treasuries usable for a money operation: the current branch's only."""
+    from .forms import scoped_treasuries
+    return qs.filter(pk__in=scoped_treasuries(user).values('pk'))
+
+
+TREASURY_BRANCH_ERROR = 'لا يمكن استخدام خزينة خارج الفرع الحالي. اختر خزينة من خزائن الفرع المفتوح.'
+
+
+def _check_treasury_branch(user, treasuries=(), accounts=()):
+    """Raise ValidationError if any treasury (or treasury-backed ledger account)
+    is not in the current branch (core.access working branch)."""
+    from .forms import scoped_treasuries
+    allowed = scoped_treasuries(user)
+    found = [t for t in treasuries if t is not None]
+    for acc in accounts:
+        if acc is not None:
+            found.extend(Treasury.objects.filter(account=acc))
+    for t in found:
+        if not allowed.filter(pk=t.pk).exists():
+            raise ValidationError(TREASURY_BRANCH_ERROR)
+
+
+def _pos_defaults(request):
+    """Per-branch POS payment defaults of the request's working branch
+    (branch override, else the global SystemSetting default)."""
+    from apps.tenant.core.access import get_working_branch
+    from apps.tenant.core.settings_helpers import get_pos_defaults
+    return get_pos_defaults(get_working_branch(request))
+
+
+def _default_cash_treasury(request, defaults=None):
+    """Default cash treasury for a voucher: the working branch's default (per-branch,
+    else global) only if it is usable in the current branch, else the branch's only
+    treasury, else None (user must pick)."""
+    allowed = scope_treasuries(Treasury.objects.all(), request.user)
+    default = (defaults if defaults is not None else _pos_defaults(request))['treasury']
+    if default is not None and allowed.filter(pk=default.pk).exists():
+        return default
+    return allowed.first() if allowed.count() == 1 else None
+
+
+DRAFT_SAVED_MESSAGE = 'تم الحفظ كمسودة — اعتمده من صفحة التفاصيل.'
+
+
+def _auto_post_enabled():
+    """SystemSetting.auto_post_journals: confirm/post vouchers and expenses right after saving."""
+    from apps.tenant.core.settings_helpers import setting
+    return bool(setting('auto_post_journals', True))
+
+
+def _lock_context():
+    """{'lock_date': date|None} for templates showing the closed-period notice."""
+    from apps.tenant.core.settings_helpers import accounting_lock_date
+    return {'lock_date': accounting_lock_date()}
 
 
 def _error_text(exc):
@@ -125,6 +182,7 @@ class JournalEntryListView(CustomPermissionRequiredMixin, ListView):
         context['start_date'] = self.request.GET.get('start_date', '')
         context['end_date'] = self.request.GET.get('end_date', '')
         context['search_query'] = self.request.GET.get('search_query', '')
+        context.update(_lock_context())
         return context
 
 class JournalEntryDetailView(CustomPermissionRequiredMixin, DetailView):
@@ -147,6 +205,9 @@ class JournalEntryDetailView(CustomPermissionRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = f'تفاصيل القيد {self.object.reference}'
+        context.update(_lock_context())
+        from apps.tenant.core.settings_helpers import is_date_locked
+        context['entry_locked'] = is_date_locked(self.object.date)
         return context
 
 # Treasury Views
@@ -168,7 +229,7 @@ class TreasuryCreateView(CustomPermissionRequiredMixin, CreateView):
     model = Treasury
     form_class = TreasuryForm
     template_name = 'accounting/treasury_form.html'
-    success_url = reverse_lazy('accounting:treasury_list')
+    success_url = reverse_lazy('accounting:liquidity_dashboard')
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -182,7 +243,7 @@ class TreasuryUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = Treasury
     form_class = TreasuryForm
     template_name = 'accounting/treasury_form.html'
-    success_url = reverse_lazy('accounting:treasury_list')
+    success_url = reverse_lazy('accounting:liquidity_dashboard')
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -213,9 +274,9 @@ class TreasuryDeleteView(CustomPermissionRequiredMixin, View):
             except ProtectedError:
                 messages.error(request, 'لا يمكن حذف الخزينة لارتباطها بمستندات أو حركات أخرى في النظام.')
             except Exception as e:
-                messages.error(request, f'حدث خطأ أثناء الحذف: {str(e)}')
+                messages.error(request, f'حدث خطأ أثناء الحذف: {_error_text(e)}')
                 
-        return redirect('accounting:treasury_list')
+        return redirect('accounting:liquidity_dashboard')
 
 # BankAccount Views
 class BankAccountListView(CustomPermissionRequiredMixin, ListView):
@@ -236,7 +297,7 @@ class BankAccountCreateView(CustomPermissionRequiredMixin, CreateView):
     model = BankAccount
     form_class = BankAccountForm
     template_name = 'accounting/bank_form.html'
-    success_url = reverse_lazy('accounting:bank_list')
+    success_url = reverse_lazy('accounting:liquidity_dashboard')
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -250,7 +311,7 @@ class BankAccountUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = BankAccount
     form_class = BankAccountForm
     template_name = 'accounting/bank_form.html'
-    success_url = reverse_lazy('accounting:bank_list')
+    success_url = reverse_lazy('accounting:liquidity_dashboard')
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -281,9 +342,9 @@ class BankAccountDeleteView(CustomPermissionRequiredMixin, View):
             except ProtectedError:
                 messages.error(request, 'لا يمكن حذف الحساب البنكي لارتباطه بمستندات أو حركات أخرى في النظام.')
             except Exception as e:
-                messages.error(request, f'حدث خطأ أثناء الحذف: {str(e)}')
+                messages.error(request, f'حدث خطأ أثناء الحذف: {_error_text(e)}')
                 
-        return redirect('accounting:bank_list')
+        return redirect('accounting:liquidity_dashboard')
 
 # EWallet Views
 class EWalletListView(CustomPermissionRequiredMixin, ListView):
@@ -304,7 +365,7 @@ class EWalletCreateView(CustomPermissionRequiredMixin, CreateView):
     model = EWallet
     form_class = EWalletForm
     template_name = 'accounting/ewallet_form.html'
-    success_url = reverse_lazy('accounting:ewallet_list')
+    success_url = reverse_lazy('accounting:liquidity_dashboard')
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -318,7 +379,7 @@ class EWalletUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = EWallet
     form_class = EWalletForm
     template_name = 'accounting/ewallet_form.html'
-    success_url = reverse_lazy('accounting:ewallet_list')
+    success_url = reverse_lazy('accounting:liquidity_dashboard')
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -349,9 +410,9 @@ class EWalletDeleteView(CustomPermissionRequiredMixin, View):
             except ProtectedError:
                 messages.error(request, 'لا يمكن حذف المحفظة لارتباطها بمستندات أو حركات أخرى في النظام.')
             except Exception as e:
-                messages.error(request, f'حدث خطأ أثناء الحذف: {str(e)}')
+                messages.error(request, f'حدث خطأ أثناء الحذف: {_error_text(e)}')
                 
-        return redirect('accounting:ewallet_list')
+        return redirect('accounting:liquidity_dashboard')
 
 # Payment Method Views
 class PaymentMethodListView(CustomPermissionRequiredMixin, ListView):
@@ -445,7 +506,7 @@ def setup_default_accounts(request):
         setup_chart_of_accounts_data()
         messages.success(request, 'تم زراعة شجرة الحسابات الافتراضية بنجاح!')
     except Exception as e:
-        messages.error(request, f'حدث خطأ أثناء الإنشاء: {str(e)}')
+        messages.error(request, f'حدث خطأ أثناء الإنشاء: {_error_text(e)}')
         
     return redirect('accounting:chart_of_accounts')
 
@@ -744,9 +805,19 @@ class ExpenseCreateView(CustomPermissionRequiredMixin, CreateView):
             
             # Re-save to trigger tax calculations in Expense.save() based on new amount
             self.object.save()
-            
-            messages.success(self.request, 'تم إنشاء مسودة المصروف بنجاح.')
-            return redirect(self.success_url)
+
+            # SystemSetting.auto_post_journals: approve + post right away, else keep the DRAFT
+            if not _auto_post_enabled():
+                messages.success(self.request, DRAFT_SAVED_MESSAGE)
+                return redirect('accounting:expense_detail', pk=self.object.pk)
+            try:
+                _check_treasury_branch(self.request.user, accounts=[self.object.payment_account])
+                self.object.confirm_expense()
+                messages.success(self.request, 'تم حفظ واعتماد المصروف وترحيل القيد المحاسبي بنجاح.')
+            except Exception as e:
+                self.object.refresh_from_db()
+                messages.warning(self.request, f'تم حفظ المصروف كمسودة ولكن تعذر الترحيل التلقائي: {_error_text(e)}')
+            return redirect('accounting:expense_detail', pk=self.object.pk)
         else:
             return self.render_to_response(self.get_context_data(form=form))
 
@@ -757,10 +828,11 @@ class ExpenseConfirmView(CustomPermissionRequiredMixin, View):
         expense = get_object_or_404(scope_expenses(Expense.objects.all(), request.user), pk=pk)
         if expense.status == Expense.DRAFT:
             try:
+                _check_treasury_branch(request.user, accounts=[expense.payment_account])
                 expense.confirm_expense()
                 messages.success(request, 'تم اعتماد المصروف وتوليد القيد المحاسبي بنجاح.')
             except Exception as e:
-                messages.error(request, f'خطأ أثناء اعتماد المصروف: {str(e)}')
+                messages.error(request, f'خطأ أثناء اعتماد المصروف: {_error_text(e)}')
         return redirect('accounting:expense_detail', pk=expense.pk)
 
 class ExpenseDeleteView(CustomPermissionRequiredMixin, View):
@@ -830,6 +902,14 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
         kwargs['user'] = self.request.user
         return kwargs
 
+    def get_initial(self):
+        """?partner=<id> pre-selects the partner (e.g. "collect" from the partners dashboard)."""
+        initial = super().get_initial()
+        partner_id = self.request.GET.get('partner', '')
+        if partner_id.isdigit():
+            initial['partner'] = int(partner_id)
+        return initial
+
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
         form.voucher_type = self.get_voucher_type()
@@ -846,8 +926,7 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
     def form_valid(self, form):
         form.instance.voucher_type = self.get_voucher_type()
         from apps.tenant.invoicing.models import POSSession
-        from apps.tenant.core.models import SystemSetting
-        sys_setting = SystemSetting.get_settings()
+        defaults = _pos_defaults(self.request)
 
         open_session = POSSession.objects.filter(user=self.request.user, status=POSSession.OPEN).first()
         if open_session:
@@ -856,14 +935,12 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
                 form.instance.treasury = open_session.treasury
 
         if not form.instance.treasury and form.instance.payment_method == Voucher.CASH:
-            if sys_setting and sys_setting.default_pos_treasury:
-                form.instance.treasury = sys_setting.default_pos_treasury
-            elif Treasury.objects.count() == 1:
-                form.instance.treasury = Treasury.objects.first()
+            if _default_cash_treasury(self.request, defaults):
+                form.instance.treasury = _default_cash_treasury(self.request, defaults)
 
         if not form.instance.bank_account and form.instance.payment_method == Voucher.CARD:
-            if sys_setting and sys_setting.default_pos_bank_account:
-                form.instance.bank_account = sys_setting.default_pos_bank_account
+            if defaults['bank_account']:
+                form.instance.bank_account = defaults['bank_account']
             elif BankAccount.objects.count() == 1:
                 form.instance.bank_account = BankAccount.objects.first()
 
@@ -874,20 +951,20 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
                 form.instance.transfer_bank_account = form.instance.bank_account
 
             if not form.instance.bank_account:
-                if sys_setting and sys_setting.default_pos_instapay_account:
-                    form.instance.bank_account = sys_setting.default_pos_instapay_account
-                    form.instance.transfer_bank_account = sys_setting.default_pos_instapay_account
-                elif sys_setting and sys_setting.default_pos_bank_account:
-                    form.instance.bank_account = sys_setting.default_pos_bank_account
-                    form.instance.transfer_bank_account = sys_setting.default_pos_bank_account
+                if defaults['instapay_account']:
+                    form.instance.bank_account = defaults['instapay_account']
+                    form.instance.transfer_bank_account = defaults['instapay_account']
+                elif defaults['bank_account']:
+                    form.instance.bank_account = defaults['bank_account']
+                    form.instance.transfer_bank_account = defaults['bank_account']
                 elif BankAccount.objects.count() == 1:
                     first_bank = BankAccount.objects.first()
                     form.instance.bank_account = first_bank
                     form.instance.transfer_bank_account = first_bank
 
         if not form.instance.ewallet and form.instance.payment_method == Voucher.EWALLET:
-            if sys_setting and sys_setting.default_pos_ewallet:
-                form.instance.ewallet = sys_setting.default_pos_ewallet
+            if defaults['ewallet']:
+                form.instance.ewallet = defaults['ewallet']
             elif EWallet.objects.count() == 1:
                 form.instance.ewallet = EWallet.objects.first()
 
@@ -895,28 +972,26 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
             if form.instance.paid_cash > 0 and not form.instance.treasury:
                 if open_session and open_session.treasury:
                     form.instance.treasury = open_session.treasury
-                elif sys_setting and sys_setting.default_pos_treasury:
-                    form.instance.treasury = sys_setting.default_pos_treasury
-                elif Treasury.objects.count() == 1:
-                    form.instance.treasury = Treasury.objects.first()
+                elif _default_cash_treasury(self.request, defaults):
+                    form.instance.treasury = _default_cash_treasury(self.request, defaults)
 
             if form.instance.paid_card > 0 and not form.instance.bank_account:
-                if sys_setting and sys_setting.default_pos_bank_account:
-                    form.instance.bank_account = sys_setting.default_pos_bank_account
+                if defaults['bank_account']:
+                    form.instance.bank_account = defaults['bank_account']
                 elif BankAccount.objects.count() == 1:
                     form.instance.bank_account = BankAccount.objects.first()
 
             if form.instance.paid_ewallet > 0 and not form.instance.ewallet:
-                if sys_setting and sys_setting.default_pos_ewallet:
-                    form.instance.ewallet = sys_setting.default_pos_ewallet
+                if defaults['ewallet']:
+                    form.instance.ewallet = defaults['ewallet']
                 elif EWallet.objects.count() == 1:
                     form.instance.ewallet = EWallet.objects.first()
 
             if form.instance.paid_bank > 0 and not form.instance.transfer_bank_account:
-                if sys_setting and sys_setting.default_pos_instapay_account:
-                    form.instance.transfer_bank_account = sys_setting.default_pos_instapay_account
-                elif sys_setting and sys_setting.default_pos_bank_account:
-                    form.instance.transfer_bank_account = sys_setting.default_pos_bank_account
+                if defaults['instapay_account']:
+                    form.instance.transfer_bank_account = defaults['instapay_account']
+                elif defaults['bank_account']:
+                    form.instance.transfer_bank_account = defaults['bank_account']
                 elif BankAccount.objects.count() == 1:
                     form.instance.transfer_bank_account = BankAccount.objects.first()
 
@@ -932,7 +1007,11 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
 
         response = super().form_valid(form)
 
-        # Auto-confirm and post the voucher if valid so it immediately reflects in the shift
+        # SystemSetting.auto_post_journals: confirm and post right away (so it immediately
+        # reflects in the shift), or leave a DRAFT to be approved from the detail page.
+        if not _auto_post_enabled():
+            messages.success(self.request, DRAFT_SAVED_MESSAGE)
+            return response
         try:
             if self.object.status == Voucher.DRAFT and self.object.payment_account:
                 self.object.confirm_voucher()
@@ -940,7 +1019,7 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
             else:
                 messages.success(self.request, 'تم حفظ مسودة السند بنجاح.')
         except Exception as e:
-            messages.warning(self.request, f'تم حفظ السند كمسودة ولكن تعذر الترحيل التلقائي: {str(e)}')
+            messages.warning(self.request, f'تم حفظ السند كمسودة ولكن تعذر الترحيل التلقائي: {_error_text(e)}')
 
         return response
 
@@ -980,8 +1059,7 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
         voucher = get_object_or_404(scope_vouchers(Voucher.objects.all(), request.user), pk=pk)
         if voucher.status == Voucher.DRAFT:
             try:
-                from apps.tenant.core.models import SystemSetting
-                sys_setting = SystemSetting.get_settings()
+                defaults = _pos_defaults(request)
 
                 # If cash voucher is missing a treasury, attempt auto-assign fallback
                 if voucher.payment_method == Voucher.CASH and not voucher.treasury:
@@ -990,16 +1068,13 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
                     if open_session and open_session.treasury:
                         voucher.treasury = open_session.treasury
                         voucher.save(update_fields=['treasury'])
-                    elif sys_setting and sys_setting.default_pos_treasury:
-                        voucher.treasury = sys_setting.default_pos_treasury
-                        voucher.save(update_fields=['treasury'])
-                    elif Treasury.objects.count() == 1:
-                        voucher.treasury = Treasury.objects.first()
+                    elif _default_cash_treasury(request, defaults):
+                        voucher.treasury = _default_cash_treasury(request, defaults)
                         voucher.save(update_fields=['treasury'])
 
                 if voucher.payment_method == Voucher.CARD and not voucher.bank_account:
-                    if sys_setting and sys_setting.default_pos_bank_account:
-                        voucher.bank_account = sys_setting.default_pos_bank_account
+                    if defaults['bank_account']:
+                        voucher.bank_account = defaults['bank_account']
                         voucher.save(update_fields=['bank_account'])
                     elif BankAccount.objects.count() == 1:
                         voucher.bank_account = BankAccount.objects.first()
@@ -1014,13 +1089,13 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
                         voucher.save(update_fields=['transfer_bank_account'])
 
                     if not voucher.bank_account:
-                        if sys_setting and sys_setting.default_pos_instapay_account:
-                            voucher.bank_account = sys_setting.default_pos_instapay_account
-                            voucher.transfer_bank_account = sys_setting.default_pos_instapay_account
+                        if defaults['instapay_account']:
+                            voucher.bank_account = defaults['instapay_account']
+                            voucher.transfer_bank_account = defaults['instapay_account']
                             voucher.save(update_fields=['bank_account', 'transfer_bank_account'])
-                        elif sys_setting and sys_setting.default_pos_bank_account:
-                            voucher.bank_account = sys_setting.default_pos_bank_account
-                            voucher.transfer_bank_account = sys_setting.default_pos_bank_account
+                        elif defaults['bank_account']:
+                            voucher.bank_account = defaults['bank_account']
+                            voucher.transfer_bank_account = defaults['bank_account']
                             voucher.save(update_fields=['bank_account', 'transfer_bank_account'])
                         elif BankAccount.objects.count() == 1:
                             first_bank = BankAccount.objects.first()
@@ -1029,8 +1104,8 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
                             voucher.save(update_fields=['bank_account', 'transfer_bank_account'])
 
                 if voucher.payment_method == Voucher.EWALLET and not voucher.ewallet:
-                    if sys_setting and sys_setting.default_pos_ewallet:
-                        voucher.ewallet = sys_setting.default_pos_ewallet
+                    if defaults['ewallet']:
+                        voucher.ewallet = defaults['ewallet']
                         voucher.save(update_fields=['ewallet'])
                     elif EWallet.objects.count() == 1:
                         voucher.ewallet = EWallet.objects.first()
@@ -1044,35 +1119,32 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
                         if open_session and open_session.treasury:
                             voucher.treasury = open_session.treasury
                             updated_fields.append('treasury')
-                        elif sys_setting and sys_setting.default_pos_treasury:
-                            voucher.treasury = sys_setting.default_pos_treasury
-                            updated_fields.append('treasury')
-                        elif Treasury.objects.count() == 1:
-                            voucher.treasury = Treasury.objects.first()
+                        elif _default_cash_treasury(request, defaults):
+                            voucher.treasury = _default_cash_treasury(request, defaults)
                             updated_fields.append('treasury')
 
                     if voucher.paid_card > 0 and not voucher.bank_account:
-                        if sys_setting and sys_setting.default_pos_bank_account:
-                            voucher.bank_account = sys_setting.default_pos_bank_account
+                        if defaults['bank_account']:
+                            voucher.bank_account = defaults['bank_account']
                             updated_fields.append('bank_account')
                         elif BankAccount.objects.count() == 1:
                             voucher.bank_account = BankAccount.objects.first()
                             updated_fields.append('bank_account')
 
                     if voucher.paid_ewallet > 0 and not voucher.ewallet:
-                        if sys_setting and sys_setting.default_pos_ewallet:
-                            voucher.ewallet = sys_setting.default_pos_ewallet
+                        if defaults['ewallet']:
+                            voucher.ewallet = defaults['ewallet']
                             updated_fields.append('ewallet')
                         elif EWallet.objects.count() == 1:
                             voucher.ewallet = EWallet.objects.first()
                             updated_fields.append('ewallet')
 
                     if voucher.paid_bank > 0 and not voucher.transfer_bank_account:
-                        if sys_setting and sys_setting.default_pos_instapay_account:
-                            voucher.transfer_bank_account = sys_setting.default_pos_instapay_account
+                        if defaults['instapay_account']:
+                            voucher.transfer_bank_account = defaults['instapay_account']
                             updated_fields.append('transfer_bank_account')
-                        elif sys_setting and sys_setting.default_pos_bank_account:
-                            voucher.transfer_bank_account = sys_setting.default_pos_bank_account
+                        elif defaults['bank_account']:
+                            voucher.transfer_bank_account = defaults['bank_account']
                             updated_fields.append('transfer_bank_account')
                         elif BankAccount.objects.count() == 1:
                             voucher.transfer_bank_account = BankAccount.objects.first()
@@ -1084,10 +1156,11 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
                 if not voucher.payment_account:
                     raise ValidationError("برجاء الضغط على 'تعديل السند' وتحديد خزينة أو وسيلة السداد أولاً.")
 
+                _check_treasury_branch(request.user, treasuries=[voucher.treasury])
                 voucher.confirm_voucher()
                 messages.success(request, 'تم اعتماد السند وتوليد القيد بنجاح.')
             except Exception as e:
-                messages.error(request, f'حدث خطأ أثناء اعتماد السند: {str(e)}')
+                messages.error(request, f'حدث خطأ أثناء اعتماد السند: {_error_text(e)}')
         return redirect('accounting:voucher_detail', pk=voucher.pk)
 
 class VoucherUpdateView(CustomPermissionRequiredMixin, UpdateView):
@@ -1132,6 +1205,10 @@ class VoucherUpdateView(CustomPermissionRequiredMixin, UpdateView):
                     raise ValidationError('لا يمكن تعديل سند ملغي.')
                 was_posted = (locked.status == Voucher.POSTED)
                 if was_posted:
+                    # a posted voucher of a closed accounting period can't be edited (only cancelled
+                    # by a reversal dated today)
+                    from .models import ensure_open_period
+                    ensure_open_period(locked.date)
                     _ensure_pos_session_open(locked.pos_session, 'تعديل')
                     if locked.journal_entry_id:
                         reverse_entry_if_active(
@@ -1170,7 +1247,7 @@ class VoucherCancelView(CustomPermissionRequiredMixin, View):
             voucher.cancel_voucher(user=request.user)
             messages.success(request, 'تم إلغاء السند وتسجيل قيد عكسي للقيد المحاسبي المربوط به بنجاح.')
         except Exception as e:
-            messages.error(request, f'حدث خطأ أثناء إلغاء السند: {str(e)}')
+            messages.error(request, f'حدث خطأ أثناء إلغاء السند: {_error_text(e)}')
         return redirect('accounting:voucher_detail', pk=voucher.pk)
 
 
@@ -1220,7 +1297,7 @@ def pos_machine_create(request):
                 messages.success(request, f'تم إنشاء الماكينة "{machine.name}" بنجاح وتم إنشاء حسابها المحاسبي تلقائياً.')
                 return redirect('accounting:pos_machine_list')
             except Exception as e:
-                messages.error(request, f'حدث خطأ: {str(e)}')
+                messages.error(request, f'حدث خطأ: {_error_text(e)}')
     context = {
         'branches': branches,
         'machine_types': POSMachine.MACHINE_TYPE_CHOICES,
@@ -1257,9 +1334,11 @@ def eservice_center(request):
     from .models import POSMachine, EWallet, Treasury, EServiceTransaction
 
     machines = POSMachine.objects.filter(is_active=True).select_related('branch')
-    if not is_admin_user(request.user):
-        user_branch = _user_branch(request.user)
-        machines = machines.filter(branch=user_branch) if user_branch else machines.none()
+    # Money operations use the CURRENT branch only (header / open shift / own branch).
+    from .forms import _branch_scope
+    restricted, current = _branch_scope(request.user)
+    if restricted:
+        machines = machines.filter(branch=current) if current else machines.none()
     ewallets = EWallet.objects.all()
     treasuries = scope_treasuries(Treasury.objects.all(), request.user)
 
@@ -1335,7 +1414,7 @@ def eservice_center(request):
             except ValidationError as e:
                 messages.error(request, _error_text(e))
             except Exception as e:
-                messages.error(request, f'حدث خطأ: {str(e)}')
+                messages.error(request, f'حدث خطأ: {_error_text(e)}')
 
     context = {
         'machines': machines,
@@ -1387,7 +1466,7 @@ def eservice_post(request, pk):
         except ValidationError as e:
             messages.error(request, str(e.message))
         except Exception as e:
-            messages.error(request, f'حدث خطأ أثناء الترحيل: {str(e)}')
+            messages.error(request, f'حدث خطأ أثناء الترحيل: {_error_text(e)}')
     return redirect('accounting:eservice_history')
 
 from decimal import Decimal
@@ -1422,22 +1501,29 @@ class ManualJournalEntryCreateView(CustomPermissionRequiredMixin, CreateView):
         context = self.get_context_data()
         items_formset = context['items_formset']
         if items_formset.is_valid():
-            with transaction.atomic():
-                self.object = form.save(commit=False)
-                self.object.created_by = self.request.user
-                self.object.status = JournalEntry.DRAFT
-                self.object.save()
-                items_formset.instance = self.object
-                items_formset.save()
-                
-                if self.object.is_balanced():
-                    try:
-                        self.object.post()
-                        messages.success(self.request, f'تم حفظ وترحيل القيد المحاسبي {self.object.reference} بنجاح.')
-                    except ValidationError as e:
-                        messages.warning(self.request, f'تم حفظ القيد كمسودة. تعذر الترحيل التلقائي: {str(e.message)}')
-                else:
-                    messages.warning(self.request, 'تم حفظ القيد كمسودة نظراً لعدم اتزان المدين والدائن.')
+            try:
+                with transaction.atomic():
+                    self.object = form.save(commit=False)
+                    self.object.created_by = self.request.user
+                    self.object.status = JournalEntry.DRAFT
+                    self.object.save()
+                    items_formset.instance = self.object
+                    items_formset.save()
+
+                    if self.object.is_balanced():
+                        try:
+                            with transaction.atomic():
+                                self.object.post()
+                            messages.success(self.request, f'تم حفظ وترحيل القيد المحاسبي {self.object.reference} بنجاح.')
+                        except ValidationError as e:
+                            self.object.status = JournalEntry.DRAFT
+                            messages.warning(self.request, f'تم حفظ القيد كمسودة. تعذر الترحيل التلقائي: {_error_text(e)}')
+                    else:
+                        messages.warning(self.request, 'تم حفظ القيد كمسودة نظراً لعدم اتزان المدين والدائن.')
+            except ValidationError as e:
+                # e.g. the date is in the closed accounting period (model-level lock)
+                form.add_error(None, _error_text(e))
+                return self.form_invalid(form)
             return super().form_valid(form)
         else:
             return self.form_invalid(form)
@@ -1455,11 +1541,15 @@ class InternalTransferListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
+        if self.request.GET.get('incoming'):
+            return incoming_transfers(self.request.user).order_by('-date', '-created_at')
         return scope_transfers(InternalTransfer.objects.all(), self.request.user).order_by('-date', '-created_at')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['title'] = 'تحويلات الأموال بين الحسابات'
+        context['incoming_only'] = bool(self.request.GET.get('incoming'))
+        context['incoming_count'] = incoming_transfers(self.request.user).count()
+        context['title'] = 'تحويلات واردة بانتظار الاستلام' if context['incoming_only'] else 'تحويلات الأموال بين الحسابات'
         return context
 
 
@@ -1473,6 +1563,19 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
         kwargs = super().get_form_kwargs()
         kwargs['user'] = self.request.user
         return kwargs
+
+    def get_initial(self):
+        """Pre-fill from the liquidity dashboard: ?from_type=TREASURY&from_id=3 / ?to_type=...&to_id=..."""
+        initial = super().get_initial()
+        field_for = {InternalTransfer.TREASURY: 'treasury', InternalTransfer.BANK: 'bank_account',
+                     InternalTransfer.EWALLET: 'ewallet'}
+        for side in ('from', 'to'):
+            kind = self.request.GET.get(f'{side}_type')
+            obj_id = self.request.GET.get(f'{side}_id')
+            if kind in field_for and obj_id and obj_id.isdigit():
+                initial[f'{side}_account_type'] = kind
+                initial[f'{side}_{field_for[kind]}'] = int(obj_id)
+        return initial
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1528,6 +1631,14 @@ class InternalTransferDetailView(CustomPermissionRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = f"تفاصيل التحويل المالي #{self.object.transfer_number}"
+        t = self.object
+        from .forms import scoped_treasuries
+        mine = scoped_treasuries(self.request.user)
+        is_sender = t.from_account_type != InternalTransfer.TREASURY or mine.filter(pk=t.from_treasury_id).exists()
+        is_receiver = t.to_account_type == InternalTransfer.TREASURY and mine.filter(pk=t.to_treasury_id).exists()
+        context['is_sender_branch'] = is_sender
+        context['is_receiver_branch'] = is_receiver
+        context['can_receive'] = t.status == InternalTransfer.IN_TRANSIT and is_receiver
         return context
 
 
@@ -1538,10 +1649,15 @@ class InternalTransferConfirmView(CustomPermissionRequiredMixin, View):
         transfer = get_object_or_404(scope_transfers(InternalTransfer.objects.all(), request.user), pk=pk)
         if transfer.status == InternalTransfer.DRAFT:
             try:
-                transfer.confirm_transfer()
-                messages.success(request, 'تم اعتماد التحويل وتوليد القيد المحاسبي بنجاح.')
+                if transfer.from_account_type == InternalTransfer.TREASURY:
+                    _check_treasury_branch(request.user, treasuries=[transfer.from_treasury])
+                transfer.confirm_transfer(user=request.user)
+                if transfer.status == InternalTransfer.IN_TRANSIT:
+                    messages.success(request, f'تم إرسال التحويل إلى {transfer.destination_branch} — المبلغ الآن "نقدية بالطريق" حتى يؤكد الفرع المستلم الاستلام.')
+                else:
+                    messages.success(request, 'تم اعتماد التحويل وتوليد القيد المحاسبي بنجاح.')
             except Exception as e:
-                messages.error(request, f'حدث خطأ أثناء الاعتماد: {str(e)}')
+                messages.error(request, f'حدث خطأ أثناء الاعتماد: {_error_text(e)}')
         return redirect('accounting:transfer_detail', pk=transfer.pk)
 
 
@@ -1551,10 +1667,68 @@ class InternalTransferCancelView(CustomPermissionRequiredMixin, View):
     def post(self, request, pk):
         transfer = get_object_or_404(scope_transfers(InternalTransfer.objects.all(), request.user), pk=pk)
         try:
+            if transfer.status == InternalTransfer.IN_TRANSIT and transfer.from_account_type == InternalTransfer.TREASURY:
+                _check_treasury_branch(request.user, treasuries=[transfer.from_treasury])
             transfer.cancel_transfer(user=request.user)
             messages.success(request, 'تم إلغاء التحويل وتسجيل قيد عكسي للقيد المحاسبي المربوط به بنجاح.')
         except Exception as e:
-            messages.error(request, f'حدث خطأ أثناء الإلغاء: {str(e)}')
+            messages.error(request, f'حدث خطأ أثناء الإلغاء: {_error_text(e)}')
+        return redirect('accounting:transfer_detail', pk=transfer.pk)
+
+
+def incoming_transfers(user):
+    """Inter-branch transfers waiting for THIS branch (current branch's treasuries) to receive."""
+    from .forms import scoped_treasuries
+    return InternalTransfer.objects.filter(
+        status=InternalTransfer.IN_TRANSIT,
+        to_account_type=InternalTransfer.TREASURY,
+        to_treasury__in=scoped_treasuries(user),
+    ).select_related('from_treasury__branch', 'to_treasury__branch')
+
+
+def _receiving_transfer_or_404(request, pk):
+    return get_object_or_404(incoming_transfers(request.user), pk=pk)
+
+
+class InternalTransferReceiveView(CustomPermissionRequiredMixin, View):
+    """Receiving branch confirms the cash arrived (optionally a smaller amount)."""
+    permission_required = 'accounting.change_internaltransfer'
+
+    def post(self, request, pk):
+        transfer = _receiving_transfer_or_404(request, pk)
+        raw = (request.POST.get('received_amount') or '').strip().replace(',', '')
+        note = (request.POST.get('receive_note') or '').strip()
+        try:
+            amount = Decimal(raw) if raw else None
+        except Exception:
+            messages.error(request, 'المبلغ المستلم غير صالح.')
+            return redirect('accounting:transfer_detail', pk=transfer.pk)
+        try:
+            transfer.receive_transfer(user=request.user, received_amount=amount, note=note)
+            if transfer.received_amount is not None and transfer.received_amount < transfer.amount:
+                messages.warning(request, f'تم الاستلام مع تسجيل عجز {transfer.amount - transfer.received_amount:,.2f} ج.م.')
+            else:
+                messages.success(request, 'تم تأكيد استلام التحويل وإضافة المبلغ للخزينة.')
+        except Exception as e:
+            messages.error(request, f'تعذر تأكيد الاستلام: {_error_text(e)}')
+        return redirect('accounting:transfer_detail', pk=transfer.pk)
+
+
+class InternalTransferRejectView(CustomPermissionRequiredMixin, View):
+    """Receiving branch refuses: the money goes back to the sending treasury."""
+    permission_required = 'accounting.change_internaltransfer'
+
+    def post(self, request, pk):
+        transfer = _receiving_transfer_or_404(request, pk)
+        note = (request.POST.get('receive_note') or '').strip()
+        if not note:
+            messages.error(request, 'برجاء كتابة سبب الرفض.')
+            return redirect('accounting:transfer_detail', pk=transfer.pk)
+        try:
+            transfer.reject_transfer(user=request.user, note=note)
+            messages.success(request, 'تم رفض التحويل وإعادة المبلغ لخزينة الفرع المرسل.')
+        except Exception as e:
+            messages.error(request, f'تعذر رفض التحويل: {_error_text(e)}')
         return redirect('accounting:transfer_detail', pk=transfer.pk)
 
 
@@ -1691,7 +1865,7 @@ class ReceivableChequeCreateView(CustomPermissionRequiredMixin, CreateView):
             cheque.action_receive(user=self.request.user)
             messages.success(self.request, f"تم استلام ورقة القبض شيك #{cheque.cheque_number} بمبلغ {cheque.amount:,.2f} ج.م وإثبات القيد المحاسبي بنجاح.")
         except Exception as e:
-            messages.error(self.request, f"تم حفظ الشيك ولكن تعذر إنشاء القيد المحاسبي: {str(e)}")
+            messages.error(self.request, f"تم حفظ الشيك ولكن تعذر إنشاء القيد المحاسبي: {_error_text(e)}")
         return redirect('accounting:cheque_detail', pk=cheque.pk)
 
 
@@ -1716,7 +1890,7 @@ class PayableChequeCreateView(CustomPermissionRequiredMixin, CreateView):
             cheque.action_issue(user=self.request.user)
             messages.success(self.request, f"تم تحرير ورقة الدفع شيك #{cheque.cheque_number} بمبلغ {cheque.amount:,.2f} ج.م للمورد {cheque.partner.name} وتوليد القيد بنجاح.")
         except Exception as e:
-            messages.error(self.request, f"تم حفظ الشيك ولكن تعذر توليد القيد المحاسبي: {str(e)}")
+            messages.error(self.request, f"تم حفظ الشيك ولكن تعذر توليد القيد المحاسبي: {_error_text(e)}")
         return redirect('accounting:cheque_detail', pk=cheque.pk)
 
 
@@ -1758,7 +1932,7 @@ class ChequeCollectActionView(CustomPermissionRequiredMixin, View):
                 dest_name = destination.name if destination else "الحساب المحدد"
                 messages.success(request, f"تم تحصيل الشيك #{cheque.cheque_number} وإيداعه بنجاح في {dest_name} وإقفال الحساب الوسيط.")
             except Exception as e:
-                messages.error(request, f"تعذر تنفيذ التحصيل: {str(e)}")
+                messages.error(request, f"تعذر تنفيذ التحصيل: {_error_text(e)}")
         else:
             errors = " | ".join([f"{f}: {e[0]}" for f, e in form.errors.items()])
             messages.error(request, f"بيانات التحصيل غير صالحة: {errors}")
@@ -1778,7 +1952,7 @@ class ChequeBounceActionView(CustomPermissionRequiredMixin, View):
                 cheque.action_bounce(bounce_reason=reason, bounce_date=date, user=request.user)
                 messages.warning(request, f"تم إثبات ارتداد الشيك #{cheque.cheque_number} وإعادة فتح مديونية العميل {cheque.partner.name} بالقيد المحاسبي.")
             except Exception as e:
-                messages.error(request, f"تعذر إثبات الارتداد: {str(e)}")
+                messages.error(request, f"تعذر إثبات الارتداد: {_error_text(e)}")
         else:
             messages.error(request, "برجاء كتابة سبب الارتداد وتاريخه بشكل صحيح.")
         return redirect('accounting:cheque_detail', pk=cheque.pk)
@@ -1796,7 +1970,7 @@ class ChequeClearPayableActionView(CustomPermissionRequiredMixin, View):
                 cheque.action_clear_payable(clearance_date=date, user=request.user)
                 messages.success(request, f"تم إثبات صرف الشيك وخصمه من رصيد بنك {cheque.bank_account.name} وإقفال أوراق الدفع بالقيد المحاسبي.")
             except Exception as e:
-                messages.error(request, f"تعذر إثبات صرف الشيك: {str(e)}")
+                messages.error(request, f"تعذر إثبات صرف الشيك: {_error_text(e)}")
         else:
             messages.error(request, "تاريخ الصرف غير صالح.")
         return redirect('accounting:cheque_detail', pk=cheque.pk)
@@ -1816,7 +1990,7 @@ class ChequeCancelPayableActionView(CustomPermissionRequiredMixin, View):
             cheque.action_cancel_payable(cancel_reason=reason, user=request.user)
             messages.warning(request, f"تم إلغاء شيك الدفع وإعادة إثبات التزام المورد {cheque.partner.name} بالقيد المحاسبي.")
         except Exception as e:
-            messages.error(request, f"تعذر إلغاء الشيك: {str(e)}")
+            messages.error(request, f"تعذر إلغاء الشيك: {_error_text(e)}")
         return redirect('accounting:cheque_detail', pk=cheque.pk)
 
 
@@ -1925,6 +2099,13 @@ class FixedAssetCreateView(CustomPermissionRequiredMixin, CreateView):
         return context
 
     def form_valid(self, form):
+        try:
+            return self._form_valid_unlocked(form)
+        except ValidationError as e:  # e.g. purchase date in the closed accounting period
+            form.add_error(None, _error_text(e))
+            return self.form_invalid(form)
+
+    def _form_valid_unlocked(self, form):
         from apps.tenant.services.journal_service import _get_system_account
         from django.utils import timezone
 
@@ -2017,6 +2198,13 @@ class FixedAssetDisposalView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.change_fixedasset'
 
     def post(self, request, pk):
+        try:
+            return self._post_unlocked(request, pk)
+        except ValidationError as e:  # e.g. disposal date in the closed accounting period
+            messages.error(request, _error_text(e))
+            return redirect('accounting:fixed_asset_detail', pk=pk)
+
+    def _post_unlocked(self, request, pk):
         from apps.tenant.services.journal_service import _get_system_account
         from django.utils import timezone
 
@@ -2181,6 +2369,13 @@ class FixedAssetDepreciationRunView(CustomPermissionRequiredMixin, View):
         return render(request, self.template_name, context)
 
     def post(self, request):
+        try:
+            return self._post_unlocked(request)
+        except ValidationError as e:  # e.g. run date in the closed accounting period
+            messages.error(request, _error_text(e))
+            return redirect('accounting:fixed_asset_depreciation_run')
+
+    def _post_unlocked(self, request):
         from django.utils import timezone
 
         form = FixedAssetDepreciationRunForm(request.POST)
@@ -2369,6 +2564,13 @@ class LoanCreateView(CustomPermissionRequiredMixin, CreateView):
         return context
 
     def form_valid(self, form):
+        try:
+            return self._form_valid_unlocked(form)
+        except ValidationError as e:  # e.g. start date in the closed accounting period
+            form.add_error(None, _error_text(e))
+            return self.form_invalid(form)
+
+    def _form_valid_unlocked(self, form):
         from apps.tenant.services.journal_service import _get_system_account
         from django.utils import timezone
 
@@ -2451,6 +2653,14 @@ class LoanInstallmentPayView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.change_loan'
 
     def post(self, request, pk):
+        try:
+            return self._post_unlocked(request, pk)
+        except ValidationError as e:  # e.g. payment date in the closed accounting period
+            messages.error(request, _error_text(e))
+            installment = get_object_or_404(LoanInstallment, pk=pk)
+            return redirect('accounting:loan_detail', pk=installment.loan_id)
+
+    def _post_unlocked(self, request, pk):
         installment = get_object_or_404(LoanInstallment, pk=pk)
         loan = installment.loan
 

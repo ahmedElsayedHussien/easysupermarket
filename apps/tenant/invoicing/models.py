@@ -226,6 +226,11 @@ class Invoice(models.Model):
     paid_ewallet = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ المحفظة/إنستا باي')
     paid_bank = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ التحويل البنكي')
     paid_credit = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ الآجل')
+    # POS cash rounding (SystemSetting.pos_cash_rounding): rounded cash due - exact cash due
+    # (+ = collected more than due, - = less). total_amount stays exact; paid_cash is what
+    # was actually collected; the difference is posted to account 5115.
+    rounding_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'),
+                                          verbose_name='فرق تقريب النقدية')
 
     status = models.CharField(
         max_length=15, choices=STATUS_CHOICES, default=DRAFT, verbose_name='الحالة'
@@ -474,6 +479,9 @@ class InvoiceLine(models.Model):
         on_delete=models.SET_NULL,
         verbose_name='وحدة القياس'
     )
+    # Optional expiry date entered on the purchase screen (SystemSetting.enable_expiry_tracking);
+    # copied onto the InventoryBatch created when the purchase is confirmed.
+    expiry_date = models.DateField(null=True, blank=True, verbose_name='تاريخ الصلاحية')
     discount_amount = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم'

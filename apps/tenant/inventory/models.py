@@ -664,3 +664,73 @@ class SerialItem(models.Model):
 
     def __str__(self):
         return f"{self.product.name} - {self.serial_number} ({self.get_condition_display()})"
+
+
+class StockTransfer(models.Model):
+    """
+    Multi-item stock transfer document between two warehouses (same or another
+    branch). Posting moves every line with FIFO cost (fifo_engine.transfer_stock)
+    in ONE transaction: either all lines move or none.
+    """
+    STATUS_POSTED = 'POSTED'
+    STATUS_CHOICES = [(STATUS_POSTED, _('مرحل'))]
+
+    number = models.CharField(max_length=30, unique=True, editable=False, verbose_name=_('رقم التحويل'))
+    date = models.DateField(default=datetime.date.today, verbose_name=_('التاريخ'))
+    from_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name='stock_transfers_out',
+                                       verbose_name=_('من مستودع'))
+    to_warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name='stock_transfers_in',
+                                     verbose_name=_('إلى مستودع'))
+    notes = models.TextField(blank=True, default='', verbose_name=_('ملاحظات'))
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_POSTED, verbose_name=_('الحالة'))
+    total_cost = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name=_('إجمالي التكلفة'))
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name='stock_transfers', verbose_name=_('بواسطة'))
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('تحويل مخزني')
+        verbose_name_plural = _('التحويلات المخزنية')
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return self.number
+
+    @property
+    def is_inter_branch(self):
+        return bool(self.from_warehouse.branch_id and self.to_warehouse.branch_id
+                    and self.from_warehouse.branch_id != self.to_warehouse.branch_id)
+
+    def save(self, *args, **kwargs):
+        if not self.number:
+            from django.db import transaction
+            from apps.tenant.core.sequences import max_numeric_suffix, next_sequence
+            prefix = f'STK-{(self.date or datetime.date.today()).year}-'
+            with transaction.atomic():
+                n = next_sequence(f'stock_transfer:{prefix}',
+                                  seed=lambda: max_numeric_suffix(StockTransfer.objects.all(), 'number', prefix))
+                self.number = f'{prefix}{n:05d}'
+                return super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
+
+
+class StockTransferLine(models.Model):
+    transfer = models.ForeignKey(StockTransfer, on_delete=models.CASCADE, related_name='lines', verbose_name=_('التحويل'))
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name='stock_transfer_lines', verbose_name=_('الصنف'))
+    uom = models.ForeignKey(ProductUoM, on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_('الوحدة'))
+    quantity = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('الكمية (بالوحدة المختارة)'))
+    conversion_factor = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('1'), verbose_name=_('معامل التحويل'))
+    base_quantity = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('الكمية بالوحدة الأساسية'))
+    unit_cost = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('متوسط تكلفة الوحدة الأساسية'))
+
+    class Meta:
+        verbose_name = _('بند تحويل مخزني')
+        verbose_name_plural = _('بنود التحويل المخزني')
+
+    @property
+    def line_cost(self):
+        return (self.base_quantity or Decimal('0')) * (self.unit_cost or Decimal('0'))
+
+    @property
+    def uom_name(self):
+        return self.uom.uom.name if self.uom_id else self.product.pos_unit_name

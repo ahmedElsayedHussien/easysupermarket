@@ -13,12 +13,22 @@ from apps.tenant.partners.models import Partner
 
 def _branch_scope(user):
     """
-    Returns (restricted, branch).
-    Admins (and forms built without a user context) are unrestricted; any other user is
-    restricted to `user.employee_profile.branch` (None -> sees no branch-bound treasuries).
+    Returns (restricted, branch) for MONEY operations (which treasury may be used).
+
+    Inside a request (BranchMiddleware attached the context) everyone — admins
+    included — is restricted to the CURRENT working branch: the header branch for
+    admins (locked to the open shift's branch while a shift is open), the own
+    branch for users. A voucher/expense/transfer can't use another branch's treasury.
+
+    Without request context (management commands, tests building forms directly):
+    admins unrestricted, users limited to their employee branch (legacy rule).
     """
     if user is None:
         return False, None
+    from apps.tenant.core.access import user_working_branch
+    has_context, branch = user_working_branch(user)
+    if has_context:
+        return True, branch
     from apps.tenant.core.decorators import is_admin_user
     if is_admin_user(user):
         return False, None
@@ -26,13 +36,40 @@ def _branch_scope(user):
     return True, (getattr(emp, 'branch', None) if emp else None)
 
 
+def working_branch_of(user):
+    """The branch new money documents of ``user`` go to (see core.access.get_working_branch)."""
+    if user is None:
+        return None
+    from apps.tenant.core.access import user_working_branch
+    has_context, branch = user_working_branch(user)
+    if has_context:
+        return branch
+    emp = getattr(user, 'employee_profile', None)
+    return getattr(emp, 'branch', None) if emp else None
+
+
+def pos_defaults_for(user):
+    """Per-branch POS payment defaults for the user's working branch (settings_helpers.get_pos_defaults)."""
+    from apps.tenant.core.settings_helpers import get_pos_defaults
+    return get_pos_defaults(working_branch_of(user))
+
+
 def scoped_treasuries(user):
-    """Treasuries the user may see / move money from (own branch only for non-admins)."""
+    """Treasuries the user may move money from/into: the current branch's only."""
     restricted, branch = _branch_scope(user)
     qs = Treasury.objects.all()
     if restricted:
         qs = qs.filter(branch=branch) if branch else qs.none()
     return qs
+
+
+def destination_treasuries(user):
+    """
+    Target treasuries of an internal transfer: any branch's treasury. Sending to
+    another branch is a two-step transfer — the money sits in "cash in transit"
+    until the RECEIVING branch confirms it (InternalTransfer.receive_transfer).
+    """
+    return Treasury.objects.all()
 
 
 class BaseGlassForm(forms.ModelForm):
@@ -49,6 +86,17 @@ class BaseGlassForm(forms.ModelForm):
             if field_name == 'opening_balance' and self.instance and self.instance.pk:
                 field.disabled = True
                 field.help_text = 'لا يمكن تعديل الرصيد الافتتاحي بعد الإنشاء. قم بعمل قيد تسوية بدلاً من ذلك.'
+
+class OpenPeriodDateMixin:
+    """clean_date(): refuse a date inside the closed accounting period (SystemSetting.accounting_lock_date)."""
+
+    def clean_date(self):
+        date = self.cleaned_data.get('date')
+        from apps.tenant.core.settings_helpers import is_date_locked, lock_error_message
+        if date and is_date_locked(date):
+            raise forms.ValidationError(lock_error_message(date))
+        return date
+
 
 class AccountForm(BaseGlassForm):
     class Meta:
@@ -106,7 +154,7 @@ ExpenseItemFormSet = inlineformset_factory(
     can_delete=True
 )
 
-class ExpenseForm(BaseGlassForm):
+class ExpenseForm(OpenPeriodDateMixin, BaseGlassForm):
     class Meta:
         model = Expense
         fields = ['date', 'branch', 'expense_account', 'payment_account', 'amount', 'vat_percent', 'withholding_tax_percent', 'description']
@@ -133,6 +181,13 @@ class ExpenseForm(BaseGlassForm):
                 emp = self.user.employee_profile
                 is_admin = emp.is_admin()
                 user_branch = emp.branch
+
+        # Inside a request everyone works on the CURRENT branch (header / open shift).
+        from apps.tenant.core.access import user_working_branch
+        has_context, working_branch = user_working_branch(self.user)
+        if has_context:
+            is_admin = False
+            user_branch = working_branch
 
         if is_admin:
             self.fields['branch'].queryset = Branch.objects.filter(is_active=True)
@@ -227,7 +282,7 @@ class EWalletForm(BaseGlassForm):
         model = EWallet
         fields = ['name', 'opening_balance']
 
-class VoucherForm(BaseGlassForm):
+class VoucherForm(OpenPeriodDateMixin, BaseGlassForm):
     expense_account = forms.ModelChoiceField(
         queryset=Account.objects.none(),
         required=False,
@@ -315,30 +370,29 @@ class VoucherForm(BaseGlassForm):
         if not self.instance.pk:
             from apps.tenant.invoicing.models import POSSession
             open_session = POSSession.objects.filter(user=self.user, status=POSSession.OPEN).first() if self.user else None
-            from apps.tenant.core.models import SystemSetting
-            sys_setting = SystemSetting.get_settings()
+            defaults = pos_defaults_for(self.user)
 
             if open_session and open_session.treasury:
                 self.fields['treasury'].initial = open_session.treasury
-            elif sys_setting and sys_setting.default_pos_treasury:
-                self.fields['treasury'].initial = sys_setting.default_pos_treasury
+            elif defaults['treasury'] and self.fields['treasury'].queryset.filter(pk=defaults['treasury'].pk).exists():
+                self.fields['treasury'].initial = defaults['treasury']
             elif self.fields['treasury'].queryset.count() == 1:
                 self.fields['treasury'].initial = self.fields['treasury'].queryset.first()
 
-            if sys_setting and sys_setting.default_pos_bank_account:
-                self.fields['bank_account'].initial = sys_setting.default_pos_bank_account
+            if defaults['bank_account']:
+                self.fields['bank_account'].initial = defaults['bank_account']
             elif BankAccount.objects.count() == 1:
                 self.fields['bank_account'].initial = BankAccount.objects.first()
 
-            if sys_setting and sys_setting.default_pos_instapay_account:
-                self.fields['transfer_bank_account'].initial = sys_setting.default_pos_instapay_account
-            elif sys_setting and sys_setting.default_pos_bank_account:
-                self.fields['transfer_bank_account'].initial = sys_setting.default_pos_bank_account
+            if defaults['instapay_account']:
+                self.fields['transfer_bank_account'].initial = defaults['instapay_account']
+            elif defaults['bank_account']:
+                self.fields['transfer_bank_account'].initial = defaults['bank_account']
             elif BankAccount.objects.count() == 1:
                 self.fields['transfer_bank_account'].initial = BankAccount.objects.first()
 
-            if sys_setting and sys_setting.default_pos_ewallet:
-                self.fields['ewallet'].initial = sys_setting.default_pos_ewallet
+            if defaults['ewallet']:
+                self.fields['ewallet'].initial = defaults['ewallet']
             elif EWallet.objects.count() == 1:
                 self.fields['ewallet'].initial = EWallet.objects.first()
 
@@ -420,8 +474,11 @@ class VoucherForm(BaseGlassForm):
             if not treasury:
                 from apps.tenant.invoicing.models import POSSession
                 open_session = POSSession.objects.filter(user=self.user, status=POSSession.OPEN).first() if self.user else None
+                default_treasury = pos_defaults_for(self.user)['treasury']
                 if open_session and open_session.treasury:
                     cleaned_data['treasury'] = open_session.treasury
+                elif default_treasury and self.fields['treasury'].queryset.filter(pk=default_treasury.pk).exists():
+                    cleaned_data['treasury'] = default_treasury  # the working branch's default
                 elif self.fields['treasury'].queryset.count() == 1:
                     cleaned_data['treasury'] = self.fields['treasury'].queryset.first()
                 else:
@@ -443,16 +500,15 @@ class VoucherForm(BaseGlassForm):
                     cleaned_data['transfer_bank_account'] = bank_account
 
             if not bank_account:
-                from apps.tenant.core.models import SystemSetting
-                sys_setting = SystemSetting.get_settings()
-                if payment_method == Voucher.CARD and sys_setting and sys_setting.default_pos_bank_account:
-                    cleaned_data['bank_account'] = sys_setting.default_pos_bank_account
-                elif payment_method == Voucher.BANK_TRANSFER and sys_setting and sys_setting.default_pos_instapay_account:
-                    cleaned_data['bank_account'] = sys_setting.default_pos_instapay_account
-                    cleaned_data['transfer_bank_account'] = sys_setting.default_pos_instapay_account
-                elif payment_method == Voucher.BANK_TRANSFER and sys_setting and sys_setting.default_pos_bank_account:
-                    cleaned_data['bank_account'] = sys_setting.default_pos_bank_account
-                    cleaned_data['transfer_bank_account'] = sys_setting.default_pos_bank_account
+                defaults = pos_defaults_for(self.user)
+                if payment_method == Voucher.CARD and defaults['bank_account']:
+                    cleaned_data['bank_account'] = defaults['bank_account']
+                elif payment_method == Voucher.BANK_TRANSFER and defaults['instapay_account']:
+                    cleaned_data['bank_account'] = defaults['instapay_account']
+                    cleaned_data['transfer_bank_account'] = defaults['instapay_account']
+                elif payment_method == Voucher.BANK_TRANSFER and defaults['bank_account']:
+                    cleaned_data['bank_account'] = defaults['bank_account']
+                    cleaned_data['transfer_bank_account'] = defaults['bank_account']
                 elif BankAccount.objects.count() == 1:
                     first_bank = BankAccount.objects.first()
                     cleaned_data['bank_account'] = first_bank
@@ -466,10 +522,9 @@ class VoucherForm(BaseGlassForm):
 
         elif payment_method == Voucher.EWALLET:
             if not ewallet:
-                from apps.tenant.core.models import SystemSetting
-                sys_setting = SystemSetting.get_settings()
-                if sys_setting and sys_setting.default_pos_ewallet:
-                    cleaned_data['ewallet'] = sys_setting.default_pos_ewallet
+                defaults = pos_defaults_for(self.user)
+                if defaults['ewallet']:
+                    cleaned_data['ewallet'] = defaults['ewallet']
                 elif EWallet.objects.count() == 1:
                     cleaned_data['ewallet'] = EWallet.objects.first()
                 else:
@@ -490,32 +545,31 @@ class VoucherForm(BaseGlassForm):
             if abs(sum_paid - amount) > Decimal('0.05'):
                 raise forms.ValidationError(f'إجمالي مبالغ السداد المقسم ({sum_paid}) لا يساوي إجمالي مبلغ السند ({amount}).')
 
-            from apps.tenant.core.models import SystemSetting
-            sys_setting = SystemSetting.get_settings()
+            defaults = pos_defaults_for(self.user)
 
             if paid_cash > 0 and not treasury:
                 from apps.tenant.invoicing.models import POSSession
                 open_session = POSSession.objects.filter(user=self.user, status=POSSession.OPEN).first() if self.user else None
                 if open_session and open_session.treasury:
                     cleaned_data['treasury'] = open_session.treasury
-                elif sys_setting and sys_setting.default_pos_treasury:
-                    cleaned_data['treasury'] = sys_setting.default_pos_treasury
+                elif defaults['treasury']:
+                    cleaned_data['treasury'] = defaults['treasury']
                 elif self.fields['treasury'].queryset.count() == 1:
                     cleaned_data['treasury'] = self.fields['treasury'].queryset.first()
                 else:
                     self.add_error('treasury', 'برجاء اختيار الخزينة للجزء النقدي.')
 
             if paid_card > 0 and not bank_account:
-                if sys_setting and sys_setting.default_pos_bank_account:
-                    cleaned_data['bank_account'] = sys_setting.default_pos_bank_account
+                if defaults['bank_account']:
+                    cleaned_data['bank_account'] = defaults['bank_account']
                 elif BankAccount.objects.count() == 1:
                     cleaned_data['bank_account'] = BankAccount.objects.first()
                 else:
                     self.add_error('bank_account', 'برجاء اختيار ماكينة الفيزا / الحساب البنكي لجزء البطاقة.')
 
             if paid_ewallet > 0 and not ewallet:
-                if sys_setting and sys_setting.default_pos_ewallet:
-                    cleaned_data['ewallet'] = sys_setting.default_pos_ewallet
+                if defaults['ewallet']:
+                    cleaned_data['ewallet'] = defaults['ewallet']
                 elif EWallet.objects.count() == 1:
                     cleaned_data['ewallet'] = EWallet.objects.first()
                 else:
@@ -523,10 +577,10 @@ class VoucherForm(BaseGlassForm):
 
             transfer_bank_account = cleaned_data.get('transfer_bank_account')
             if paid_bank > 0 and not transfer_bank_account:
-                if sys_setting and sys_setting.default_pos_instapay_account:
-                    cleaned_data['transfer_bank_account'] = sys_setting.default_pos_instapay_account
-                elif sys_setting and sys_setting.default_pos_bank_account:
-                    cleaned_data['transfer_bank_account'] = sys_setting.default_pos_bank_account
+                if defaults['instapay_account']:
+                    cleaned_data['transfer_bank_account'] = defaults['instapay_account']
+                elif defaults['bank_account']:
+                    cleaned_data['transfer_bank_account'] = defaults['bank_account']
                 elif BankAccount.objects.count() == 1:
                     cleaned_data['transfer_bank_account'] = BankAccount.objects.first()
                 else:
@@ -537,7 +591,7 @@ class VoucherForm(BaseGlassForm):
 from .models import JournalEntry, JournalItem
 from django.db.models import F
 
-class JournalEntryForm(BaseGlassForm):
+class JournalEntryForm(OpenPeriodDateMixin, BaseGlassForm):
     date = forms.DateField(
         label='التاريخ',
         widget=forms.DateInput(attrs={'type': 'date'}),
@@ -629,7 +683,7 @@ JournalItemFormSet = inlineformset_factory(
 )
 
 
-class InternalTransferForm(BaseGlassForm):
+class InternalTransferForm(OpenPeriodDateMixin, BaseGlassForm):
     class Meta:
         model = InternalTransfer
         fields = [
@@ -659,7 +713,7 @@ class InternalTransferForm(BaseGlassForm):
         self.fields['from_bank_account'].queryset = BankAccount.objects.all()
         self.fields['from_ewallet'].queryset = EWallet.objects.all()
 
-        self.fields['to_treasury'].queryset = scoped_treasuries(self.user)
+        self.fields['to_treasury'].queryset = destination_treasuries(self.user)  # admins: any branch (inter-branch transfer)
         self.fields['to_bank_account'].queryset = BankAccount.objects.all()
         self.fields['to_ewallet'].queryset = EWallet.objects.all()
 

@@ -1,89 +1,237 @@
 {% extends 'base.html' %}
-{% block title %}تحويل مخزني{% endblock %}
+{% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <h2 class="text-neon-cyan mb-4">تحويل مخزني (Stock Transfer)</h2>
-    
-    <div class="card p-4" style="max-width: 600px; margin: auto;">
-        <form method="POST">
-            {% csrf_token %}
-            <div class="form-group mb-3">
-                <label class="form-label">المنتج</label>
-                <select name="product_id" class="form-select" required id="productSelect">
-                    <option value="">اختر المنتج...</option>
-                    {% for p in products %}
-                    <option value="{{ p.id }}">{{ p.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            
-            <div class="form-group mb-3">
-                <label class="form-label">من مستودع</label>
-                <select name="from_warehouse" id="fromWarehouseSelect" class="form-select" required>
-                    <option value="">اختر المستودع...</option>
-                    {% for w in warehouses %}
-                    <option value="{{ w.id }}">{{ w.name }}</option>
-                    {% endfor %}
-                </select>
-                <small id="availableStock" class="text-neon-cyan mt-1" style="display: none; font-weight: bold;"></small>
-            </div>
-            
-            <div class="form-group mb-3">
-                <label class="form-label">إلى مستودع</label>
-                <select name="to_warehouse" class="form-select" required>
-                    <option value="">اختر المستودع...</option>
-                    {% for w in warehouses %}
-                    <option value="{{ w.id }}">{{ w.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            
-            <div class="form-group mb-4">
-                <label class="form-label">الكمية</label>
-                <input type="number" name="quantity" id="quantityInput" class="form-control" step="0.01" required>
-            </div>
-            
-            <div class="d-flex justify-between">
-                <a href="{% url 'inventory:stock_list' %}" class="btn btn-ghost">إلغاء</a>
-                <button type="submit" class="btn btn-orange">تأكيد التحويل</button>
-            </div>
-        </form>
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/panels.css' %}">
+<style>
+  .st-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.9rem; }
+  .st-form label { display: block; color: var(--lq-text-2); font-size: 0.82rem; margin-bottom: 0.3rem; }
+  .st-search { position: relative; }
+  .st-results { position: absolute; z-index: 30; inset-inline: 0; top: 100%; margin-top: 4px; max-height: 320px; overflow-y: auto;
+    background: #111827; border: 1px solid var(--lq-border); border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,0.5); display: none; }
+  .st-results button { display: flex; justify-content: space-between; gap: 1rem; width: 100%; text-align: right; background: none; border: none;
+    color: var(--lq-text); padding: 0.55rem 0.8rem; cursor: pointer; font-family: inherit; font-size: 0.88rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .st-results button:hover, .st-results button.active { background: rgba(255,115,0,0.12); }
+  .st-results small { color: var(--lq-muted); white-space: nowrap; }
+  .st-lines input, .st-lines select { width: 100%; min-width: 0; }
+  .st-lines td { vertical-align: middle; }
+  .st-over { color: var(--st-critical); font-size: 0.75rem; display: block; }
+  .st-remove { background: none; border: 1px solid var(--lq-border); color: var(--lq-text-2); border-radius: 6px; cursor: pointer; padding: 0.25rem 0.55rem; }
+  .st-remove:hover { border-color: var(--st-critical); color: var(--st-critical); }
+  .st-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
+  .st-note { background: rgba(0,229,255,0.07); border: 1px solid rgba(0,229,255,0.25); border-radius: 8px; padding: 0.55rem 0.8rem; color: #7dd3fc; font-size: 0.85rem; display: none; }
+</style>
+
+<div class="glass-container lq-root" style="padding: 1.5rem;">
+  <div class="lq-head">
+    <div>
+      <h2>🔄 {{ title }}</h2>
+      <span class="lq-scope">أصناف متعددة في تحويل واحد · المصدر من مستودعات الفرع الحالي · الوجهة أي مستودع</span>
     </div>
+    <div class="lq-actions">
+      <a class="lq-btn" href="{% url 'inventory:stock_transfer_list' %}">📜 سجل التحويلات</a>
+      <a class="lq-btn" href="{% url 'inventory:dashboard' %}">📦 لوحة المخزون</a>
+    </div>
+  </div>
+
+  <form method="POST" id="stForm" autocomplete="off">
+    {% csrf_token %}
+    <section class="lq-card" style="margin-bottom: 1rem;">
+      <div class="st-form">
+        <div>
+          <label for="fromWarehouse">من مستودع *</label>
+          <select name="from_warehouse" id="fromWarehouse" class="form-select" required>
+            <option value="">اختر مستودع المصدر...</option>
+            {% for w in sources %}<option value="{{ w.id }}" data-branch="{{ w.branch_id }}" {% if posted.from_warehouse == w.id|stringformat:"s" %}selected{% endif %}>{{ w.name }}{% if w.branch %} — {{ w.branch.name }}{% endif %}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="toWarehouse">إلى مستودع *</label>
+          <select name="to_warehouse" id="toWarehouse" class="form-select" required>
+            <option value="">اختر مستودع الوجهة...</option>
+            {% for w in destinations %}<option value="{{ w.id }}" data-branch="{{ w.branch_id }}" {% if posted.to_warehouse == w.id|stringformat:"s" %}selected{% endif %}>{{ w.name }}{% if w.branch %} — {{ w.branch.name }}{% endif %}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="trDate">التاريخ</label>
+          <input type="date" name="date" id="trDate" class="form-control" value="{{ posted.date|default:'' }}">
+        </div>
+        <div>
+          <label for="trNotes">ملاحظات</label>
+          <input type="text" name="notes" id="trNotes" class="form-control" placeholder="مثال: تغذية فرع 2 بالبضاعة" value="{{ posted.notes|default:'' }}">
+        </div>
+      </div>
+      <div class="st-note" id="interBranchNote" style="margin-top: 0.9rem;">🚚 تحويل بين فرعين مختلفين.</div>
+    </section>
+
+    <section class="lq-card">
+      <h3>الأصناف <small id="lineCount">0 صنف</small></h3>
+      <div class="st-search" style="margin-bottom: 0.9rem;">
+        <input type="text" id="productSearch" class="form-control" placeholder="🔍 ابحث باسم الصنف أو امسح الباركود ثم Enter... (اختر مستودع المصدر أولاً)">
+        <div class="st-results" id="searchResults" role="listbox"></div>
+      </div>
+
+      <div class="lq-scroll">
+        <table class="lq-table st-lines">
+          <thead><tr><th style="width:34%">الصنف</th><th style="width:16%">الوحدة</th><th style="width:16%">المتاح بالمصدر</th><th style="width:18%">الكمية المحولة</th><th style="width:6%"></th></tr></thead>
+          <tbody id="linesBody">
+            <tr id="emptyRow"><td colspan="5" class="lq-empty">ابحث عن صنف بالأعلى لإضافته — يمكن إضافة حتى {{ max_lines }} صنف</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="st-footer">
+        <a class="lq-btn" href="{% url 'inventory:dashboard' %}">إلغاء</a>
+        <button type="submit" class="lq-btn primary" id="submitBtn" style="border:none; cursor:pointer;" disabled>✔ تنفيذ التحويل</button>
+      </div>
+    </section>
+  </form>
 </div>
 
+{{ posted_rows|json_script:"posted-rows" }}
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const productSelect = document.getElementById('productSelect');
-    const fromWarehouseSelect = document.getElementById('fromWarehouseSelect');
-    const availableStockText = document.getElementById('availableStock');
-    const quantityInput = document.getElementById('quantityInput');
+(function () {
+  var fromSel = document.getElementById('fromWarehouse');
+  var toSel = document.getElementById('toWarehouse');
+  var search = document.getElementById('productSearch');
+  var results = document.getElementById('searchResults');
+  var body = document.getElementById('linesBody');
+  var emptyRow = document.getElementById('emptyRow');
+  var submitBtn = document.getElementById('submitBtn');
+  var countEl = document.getElementById('lineCount');
+  var note = document.getElementById('interBranchNote');
+  var MAX = {{ max_lines }};
+  var found = [];
+  var activeIdx = -1;
+  var timer = null;
 
-    function checkStock() {
-        const productId = productSelect.value;
-        const warehouseId = fromWarehouseSelect.value;
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function num(v) { var n = parseFloat(String(v).replace(/,/g, '')); return isNaN(n) ? 0 : n; }
+  function fmt(n) { return (Math.round(n * 1000) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }); }
 
-        if (productId && warehouseId) {
-            fetch(`{% url 'inventory:api_stock_level' %}?product_id=${productId}&warehouse_id=${warehouseId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.stock !== undefined) {
-                        availableStockText.style.display = 'block';
-                        availableStockText.textContent = `المتاح في هذا المستودع: ${data.stock}`;
-                        // Optional: Set max quantity based on available stock
-                        quantityInput.max = data.stock;
-                    }
-                })
-                .catch(err => console.error('Error fetching stock:', err));
-        } else {
-            availableStockText.style.display = 'none';
-            availableStockText.textContent = '';
-            quantityInput.removeAttribute('max');
-        }
+  function refreshState() {
+    var rows = body.querySelectorAll('tr.st-row');
+    emptyRow.style.display = rows.length ? 'none' : '';
+    countEl.textContent = rows.length + ' صنف';
+    var over = body.querySelectorAll('.st-over:not([hidden])').length;
+    submitBtn.disabled = !rows.length || !fromSel.value || !toSel.value || fromSel.value === toSel.value || over > 0;
+    var fb = fromSel.selectedOptions[0] && fromSel.selectedOptions[0].dataset.branch;
+    var tb = toSel.selectedOptions[0] && toSel.selectedOptions[0].dataset.branch;
+    note.style.display = (fb && tb && fb !== tb) ? 'block' : 'none';
+    search.disabled = !fromSel.value;
+  }
+
+  function updateRow(tr) {
+    var sel = tr.querySelector('select');
+    var factor = num(sel.selectedOptions[0].dataset.factor) || 1;
+    var availBase = num(tr.dataset.availBase);
+    var avail = availBase / factor;
+    tr.querySelector('.st-avail').textContent = tr.dataset.loading === '1' ? '…' : fmt(avail);
+    var qty = num(tr.querySelector('input[name="quantity[]"]').value);
+    var overEl = tr.querySelector('.st-over');
+    overEl.hidden = !(qty > avail + 1e-9);
+    overEl.textContent = 'أكبر من المتاح (' + fmt(avail) + ')';
+    refreshState();
+  }
+
+  function loadStock(tr) {
+    if (!fromSel.value) { tr.dataset.availBase = 0; updateRow(tr); return; }
+    tr.dataset.loading = '1'; updateRow(tr);
+    fetch('{% url "inventory:api_stock_level" %}?product_id=' + tr.dataset.product + '&warehouse_id=' + fromSel.value)
+      .then(function (r) { return r.json(); })
+      .then(function (d) { tr.dataset.availBase = num(d.stock); })
+      .catch(function () { tr.dataset.availBase = 0; })
+      .finally(function () { tr.dataset.loading = '0'; updateRow(tr); });
+  }
+
+  function addRow(p, qty, uomId) {
+    var existing = body.querySelector('tr.st-row[data-product="' + p.id + '"]');
+    if (existing) {
+      var inp = existing.querySelector('input[name="quantity[]"]');
+      inp.value = num(inp.value) + 1; updateRow(existing); inp.focus(); return;
     }
+    if (body.querySelectorAll('tr.st-row').length >= MAX) { alert('الحد الأقصى ' + MAX + ' صنف.'); return; }
+    var tr = document.createElement('tr');
+    tr.className = 'st-row';
+    tr.dataset.product = p.id;
+    tr.dataset.availBase = p.available_stock != null ? p.available_stock : 0;
+    var opts = (p.uoms || [{ id: 'base', name: 'الوحدة', factor: 1 }]).map(function (u) {
+      return '<option value="' + esc(u.id) + '" data-factor="' + esc(u.factor) + '"' + (String(u.id) === String(uomId) ? ' selected' : '') + '>' + esc(u.name) + '</option>';
+    }).join('');
+    tr.innerHTML =
+      '<td><input type="hidden" name="product_id[]" value="' + esc(p.id) + '"><b>' + esc(p.name) + '</b>' +
+      (p.barcode ? ' <small style="color:var(--lq-muted)">' + esc(p.barcode) + '</small>' : '') + '</td>' +
+      '<td><select name="uom_id[]" class="form-select">' + opts + '</select></td>' +
+      '<td class="num st-avail">…</td>' +
+      '<td><input type="number" name="quantity[]" class="form-control" min="0.001" step="any" required value="' + esc(qty || 1) + '">' +
+      '<span class="st-over" hidden></span></td>' +
+      '<td><button type="button" class="st-remove" title="حذف السطر">✕</button></td>';
+    body.appendChild(tr);
+    tr.querySelector('select').addEventListener('change', function () { updateRow(tr); });
+    tr.querySelector('input[name="quantity[]"]').addEventListener('input', function () { updateRow(tr); });
+    tr.querySelector('.st-remove').addEventListener('click', function () { tr.remove(); refreshState(); });
+    if (p.available_stock == null) loadStock(tr); else updateRow(tr);
+    var q = tr.querySelector('input[name="quantity[]"]'); q.focus(); q.select();
+  }
 
-    productSelect.addEventListener('change', checkStock);
-    fromWarehouseSelect.addEventListener('change', checkStock);
-});
+  function closeResults() { results.style.display = 'none'; activeIdx = -1; }
+  function render() {
+    if (!found.length) { results.innerHTML = '<div class="lq-empty">لا توجد نتائج</div>'; results.style.display = 'block'; return; }
+    results.innerHTML = found.map(function (p, i) {
+      return '<button type="button" data-i="' + i + '" class="' + (i === activeIdx ? 'active' : '') + '"><span>' + esc(p.name) +
+        (p.barcode ? ' <small>' + esc(p.barcode) + '</small>' : '') + '</span><small>متاح: ' + fmt(p.available_stock) + ' ' + esc(p.unit_display || '') + '</small></button>';
+    }).join('');
+    results.style.display = 'block';
+  }
+  function pick(i) {
+    var p = found[i]; if (!p) return;
+    addRow(p); search.value = ''; closeResults();
+  }
+  function doSearch(q, autoPickExact) {
+    fetch('{% url "inventory:api_products" %}?q=' + encodeURIComponent(q) + '&warehouse_id=' + encodeURIComponent(fromSel.value))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        found = (d.products || []).filter(function (p) { return p.product_type !== 'SERVICE'; });
+        var exact = found.filter(function (p) { return p.barcode && p.barcode === q; });
+        if (autoPickExact && exact.length === 1) { addRow(exact[0]); search.value = ''; closeResults(); return; }
+        activeIdx = found.length ? 0 : -1; render();
+      });
+  }
+
+  search.addEventListener('input', function () {
+    clearTimeout(timer);
+    var q = search.value.trim();
+    if (q.length < 2) { closeResults(); return; }
+    timer = setTimeout(function () { doSearch(q, false); }, 250);
+  });
+  search.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (results.style.display === 'block' && activeIdx >= 0) { pick(activeIdx); return; }
+      var q = search.value.trim(); if (q) doSearch(q, true);   // barcode scanner
+    } else if (e.key === 'ArrowDown' && found.length) { e.preventDefault(); activeIdx = (activeIdx + 1) % found.length; render(); }
+    else if (e.key === 'ArrowUp' && found.length) { e.preventDefault(); activeIdx = (activeIdx - 1 + found.length) % found.length; render(); }
+    else if (e.key === 'Escape') { closeResults(); }
+  });
+  results.addEventListener('click', function (e) { var b = e.target.closest('button[data-i]'); if (b) pick(+b.dataset.i); });
+  document.addEventListener('click', function (e) { if (!e.target.closest('.st-search')) closeResults(); });
+
+  fromSel.addEventListener('change', function () {
+    body.querySelectorAll('tr.st-row').forEach(loadStock);
+    refreshState();
+  });
+  toSel.addEventListener('change', refreshState);
+  document.getElementById('stForm').addEventListener('submit', function (e) {
+    if (fromSel.value === toSel.value) { e.preventDefault(); alert('لا يمكن التحويل من وإلى نفس المستودع.'); return; }
+    submitBtn.disabled = true; submitBtn.textContent = '⏳ جاري التحويل...';
+  });
+
+  // restore rows after a failed submit
+  JSON.parse(document.getElementById('posted-rows').textContent).forEach(function (r) {
+    addRow({ id: r.id, name: r.name, barcode: r.barcode, uoms: r.uoms, available_stock: null }, r.quantity, r.uom_id);
+  });
+  refreshState();
+})();
 </script>
 {% endblock %}

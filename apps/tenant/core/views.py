@@ -16,7 +16,7 @@ from django.views.generic import UpdateView, ListView, CreateView, View
 from django.contrib.auth.models import User
 from django.http import Http404
 from .models import SystemSetting
-from .forms import SystemSettingForm, EmployeeUserCreationForm, EmployeeUserUpdateForm
+from .forms import SystemSettingForm, BranchForm, EmployeeUserCreationForm, EmployeeUserUpdateForm
 from .decorators import custom_permission_required, is_admin_user
 from .access import allowed_branches as _allowed_branches
 from .usernames import display_username
@@ -149,13 +149,27 @@ def main_screen(request):
             total=Sum('quantity_remaining')
         ).values('total')
 
-        low_stock_count = Product.objects.filter(
-            is_active=True,
-            min_stock_level__gt=0
-        ).annotate(
-            current_stock=Coalesce(Subquery(batch_stock_subquery), Decimal('0'))
+        # Reorder level: the product's own min_stock_level when set (> 0), else the
+        # global SystemSetting.low_stock_threshold. Products whose effective level
+        # is 0 are not tracked. Still a single COUNT query.
+        from django.db.models import Value
+        from .settings_helpers import setting
+        try:
+            default_threshold = Decimal(str(setting('low_stock_threshold', 0) or 0))
+        except Exception:
+            default_threshold = Decimal('0')
+        low_stock_qs = Product.objects.filter(is_active=True)
+        if default_threshold <= 0:
+            low_stock_qs = low_stock_qs.filter(min_stock_level__gt=0)
+        low_stock_count = low_stock_qs.annotate(
+            current_stock=Coalesce(Subquery(batch_stock_subquery), Decimal('0')),
+            reorder_level=Case(
+                When(min_stock_level__gt=0, then=F('min_stock_level')),
+                default=Value(default_threshold),
+                output_field=DecimalField(max_digits=15, decimal_places=4),
+            ),
         ).filter(
-            current_stock__lte=F('min_stock_level')
+            current_stock__lte=F('reorder_level')
         ).count()
 
     context = {
@@ -643,8 +657,8 @@ class BranchListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
 
 class BranchCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
     model = Branch
-    fields = ['name', 'code', 'address', 'phone', 'is_active']
-    template_name = 'core/generic_form.html'
+    form_class = BranchForm
+    template_name = 'core/branch_form.html'
     success_url = reverse_lazy('core:branch_list')
 
     def get_context_data(self, **kwargs):
@@ -659,8 +673,8 @@ class BranchCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
 
 class BranchUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
     model = Branch
-    fields = ['name', 'code', 'address', 'phone', 'is_active']
-    template_name = 'core/generic_form.html'
+    form_class = BranchForm
+    template_name = 'core/branch_form.html'
     success_url = reverse_lazy('core:branch_list')
 
     def get_context_data(self, **kwargs):

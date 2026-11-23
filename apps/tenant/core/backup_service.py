@@ -227,11 +227,17 @@ def verify_signature(path, sig_data=None):
 # Create / list / delete
 # ---------------------------------------------------------------------------
 
-def create_backup():
+AUTO_PREFIX = 'auto_'
+
+
+def create_backup(auto=False):
     """
     Creates a signed backup of the current tenant in its folder.
+    ``auto=True`` (scheduled ``manage.py auto_backup``) names the file ``auto_backup_...``
+    so retention pruning only ever touches automatic backups.
     Returns (success: bool, filename_or_error: str, filepath: str)
     """
+    prefix = AUTO_PREFIX if auto else ''
     try:
         b_dir = get_backup_dir()
         schema = current_schema_name()
@@ -244,7 +250,7 @@ def create_backup():
         if not pg_dump_exe:
             return False, 'لم يتم العثور على أداة pg_dump في مسارات PostgreSQL المعتادة.', ''
         db = get_current_db_info()
-        filename = f'backup_{schema}_{now_str}.sql'
+        filename = f'{prefix}backup_{schema}_{now_str}.sql'
         filepath = os.path.join(b_dir, filename)
         cmd = [
             pg_dump_exe,
@@ -270,7 +276,7 @@ def create_backup():
 
     # SQLite (single-instance mode): the whole file is the tenant.
     import sqlite3
-    filename = f'backup_sqlite_{now_str}.db'
+    filename = f'{prefix}backup_sqlite_{now_str}.db'
     filepath = os.path.join(b_dir, filename)
     source_db = connection.settings_dict.get('NAME')
     try:
@@ -321,6 +327,24 @@ def list_backups():
         })
     files.sort(key=lambda x: x['created_at'], reverse=True)
     return files
+
+
+def list_auto_backups():
+    """The current tenant's automatic backups (``auto_`` prefix), newest first."""
+    autos = [b for b in list_backups() if b['filename'].startswith(AUTO_PREFIX)]
+    autos.sort(key=lambda b: (b['created_at'], b['filename']), reverse=True)
+    return autos
+
+
+def prune_auto_backups(keep):
+    """Keep the newest ``keep`` automatic backups; delete older ones (+ their .sig).
+    Manual backups are never touched. Returns the deleted filenames."""
+    keep = max(1, int(keep or 1))
+    removed = []
+    for b in list_auto_backups()[keep:]:
+        _safe_remove(b['filepath'])
+        removed.append(b['filename'])
+    return removed
 
 
 def delete_backup(filename):

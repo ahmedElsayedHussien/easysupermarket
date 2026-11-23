@@ -60,7 +60,7 @@ const POS = {
                 this.activeSessionId = parseInt(sessionStorage.getItem('pos_activeSessionId')) || this.sessions[0]?.id || 1;
                 this.nextSessionId = parseInt(sessionStorage.getItem('pos_nextSessionId')) || 2;
                 if (this.sessions.length === 0) {
-                    this.sessions = [{id: 1, name: 'فاتورة 1', cart: [], discountVal: 0, discountPct: 0, discountMode: 'pct', customerId: '', notes: '', applyTax: false, applyWht: false}];
+                    this.sessions = [{id: 1, name: 'فاتورة 1', cart: [], discountVal: 0, discountPct: 0, discountMode: 'pct', customerId: '', notes: '', applyTax: !!this.applyVatByDefault, applyWht: false}];
                     this.activeSessionId = 1;
                     this.nextSessionId = 2;
                 }
@@ -94,12 +94,64 @@ const POS = {
             sessionStorage.removeItem('pos_sessions');
             sessionStorage.removeItem('pos_activeSessionId');
             sessionStorage.removeItem('pos_nextSessionId');
-            this.sessions = [{id: 1, name: 'فاتورة 1', cart: [], discountVal: 0, discountPct: 0, discountMode: 'pct', customerId: '', notes: '', applyTax: false, applyWht: false}];
+            this.sessions = [{id: 1, name: 'فاتورة 1', cart: [], discountVal: 0, discountPct: 0, discountMode: 'pct', customerId: '', notes: '', applyTax: !!this.applyVatByDefault, applyWht: false}];
             this.activeSessionId = 1;
             this.nextSessionId = 2;
         } catch(e) { /* ignore */ }
     },
     
+    // Set by templates/pos/index.html from SystemSetting
+    applyVatByDefault: false,          // apply_vat_by_default
+    autoPrintReceipt: false,           // auto_print_receipt
+    largeAmountRequiresCustomer: 0,    // large_amount_requires_customer (0 = off)
+    cashRounding: 0,                   // pos_cash_rounding step (0 = no rounding)
+    receiptPaperWidth: '80mm',         // receipt_paper_width
+
+    // Round a cash amount to the configured step (half-up), like settings_helpers.round_cash.
+    // Display only: the server recomputes the rounding.
+    roundCash(amount) {
+        const step = parseFloat(this.cashRounding) || 0;
+        const value = parseFloat(amount) || 0;
+        if (step <= 0) return Math.round(value * 100) / 100;
+        const units = Math.floor(value / step + 0.5 + 1e-9);
+        return Math.round(units * step * 100) / 100;
+    },
+
+    // Cash due after rounding when `nonCash` is paid by other means.
+    cashDueAfterRounding(total, nonCash = 0) {
+        const exact = Math.max(0, (parseFloat(total) || 0) - (parseFloat(nonCash) || 0));
+        return exact > 0 ? this.roundCash(exact) : 0;
+    },
+
+    // large_amount_requires_customer: block a big sale to the walk-in cash customer.
+    checkLargeAmountCustomer(total) {
+        const threshold = parseFloat(this.largeAmountRequiresCustomer) || 0;
+        if (threshold <= 0 || this.isReturnMode) return true;
+        if ((parseFloat(total) || 0) + 1e-9 < threshold) return true;
+        const sel = document.getElementById('posCustomer');
+        const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+        const hasRealCustomer = !!(sel && sel.value) && !(opt && opt.text && opt.text.includes('عميل نقدي'));
+        if (hasRealCustomer) return true;
+        this.showNotification(`⚠️ إجمالي الفاتورة (${this.formatCurrency(total)}) يساوي أو يتجاوز ${this.formatCurrency(threshold)} — يجب اختيار عميل مسجل قبل إتمام البيع`, 'error');
+        if (sel) { try { sel.focus(); } catch (e) { /* ignore */ } }
+        return false;
+    },
+
+    // Shows "المطلوب نقداً بعد التقريب" under the totals when rounding changes the amount.
+    updateCashRoundingRow(total) {
+        const row = document.getElementById('cartCashRoundedRow');
+        if (!row) return;
+        const rounded = this.cashDueAfterRounding(total);
+        const diff = Math.round((rounded - (parseFloat(total) || 0)) * 100) / 100;
+        if ((parseFloat(this.cashRounding) || 0) > 0 && diff !== 0) {
+            const valEl = document.getElementById('cartCashRounded');
+            if (valEl) valEl.textContent = `${this.formatCurrency(rounded)} ج.م (تقريب ${diff > 0 ? '+' : ''}${this.formatCurrency(diff)})`;
+            row.style.display = '';
+        } else {
+            row.style.display = 'none';
+        }
+    },
+
     currentWarehouseId: null,
     currentBranchId: null,
     currentShiftId: null,
@@ -307,6 +359,8 @@ const POS = {
 
         selectsToPersist.forEach(item => {
             const selectEl = document.getElementById(item.id);
+            // Locked payment accounts (lock_pos_payment_accounts): keep the branch default.
+            if (selectEl && selectEl.disabled) return;
             if (selectEl) {
                 // Restore saved value
                 const savedVal = localStorage.getItem(item.key);
@@ -1060,7 +1114,8 @@ const POS = {
         set('cartTax', this.formatCurrency(totals.tax));
         set('cartWht', '(' + this.formatCurrency(totals.wht) + ')');
         set('cartTotal', this.formatCurrency(totals.total) + ' ج.م');
-        set('modalTotal', this.formatCurrency(totals.total) + ' ج.م');
+        set('modalTotal', this.formatCurrency(this.cashDueAfterRounding(totals.total)) + ' ج.م');
+        this.updateCashRoundingRow(totals.total);
     },
 
     updateManualPrice(keyOrId, newPrice) {
@@ -1372,7 +1427,8 @@ const POS = {
         set('cartTax', this.formatCurrency(totals.tax));
         set('cartWht', '(' + this.formatCurrency(totals.wht) + ')');
         set('cartTotal', this.formatCurrency(totals.total) + ' ج.م');
-        set('modalTotal', this.formatCurrency(totals.total) + ' ج.م');
+        set('modalTotal', this.formatCurrency(this.cashDueAfterRounding(totals.total)) + ' ج.م');
+        this.updateCashRoundingRow(totals.total);
 
         // Cart item count badge
         const countEl = document.getElementById('cartCount');
@@ -1693,7 +1749,7 @@ const POS = {
         cashInput.addEventListener('input', () => {
             const received = parseFloat(cashInput.value) || 0;
             const totals = this.calculateTotals();
-            const change = received - totals.total;
+            const change = received - this.cashDueAfterRounding(totals.total);
             const changeEl = document.getElementById('changeAmount');
             if (changeEl) {
                 changeEl.textContent = `${this.formatCurrency(Math.max(0, change))} ج.م`;
@@ -1714,14 +1770,16 @@ const POS = {
             this.showNotification('⚠ السلة فارغة — أضف منتجات أولاً', 'warning');
             return;
         }
+        if (!this.checkLargeAmountCustomer(this.calculateTotals().total)) return;
         const modal = document.getElementById('cashModal');
         if (modal) {
             const totals = this.calculateTotals();
+            const cashDue = this.cashDueAfterRounding(totals.total);
             const totalEl = document.getElementById('modalTotal');
-            if (totalEl) totalEl.textContent = `${this.formatCurrency(totals.total)} ج.م`;
+            if (totalEl) totalEl.textContent = `${this.formatCurrency(cashDue)} ج.م`;
             const cashInput = document.getElementById('cashReceived');
             if (cashInput) {
-                cashInput.value = totals.total;
+                cashInput.value = cashDue;
                 cashInput.focus();
                 cashInput.select();
             }
@@ -1738,9 +1796,10 @@ const POS = {
         const cashInput = document.getElementById('cashReceived');
         const received = parseFloat(cashInput?.value) || 0;
         const totals = this.calculateTotals();
+        const cashDue = this.cashDueAfterRounding(totals.total);
 
-        if (received < totals.total) {
-            this.showNotification(`⚠ المبلغ المدفوع (${this.formatCurrency(received)}) أقل من الإجمالي (${this.formatCurrency(totals.total)})`, 'error');
+        if (received + 1e-9 < cashDue) {
+            this.showNotification(`⚠ المبلغ المدفوع (${this.formatCurrency(received)}) أقل من المطلوب (${this.formatCurrency(cashDue)})`, 'error');
             return;
         }
 
@@ -1844,6 +1903,7 @@ const POS = {
             this.showNotification('⚠️ السلة فارغة', 'warning');
             return;
         }
+        if (!this.checkLargeAmountCustomer(this.calculateTotals().total)) return;
         const modal = document.getElementById('splitModal');
         if (modal) {
             const totals = this.calculateTotals();
@@ -1857,7 +1917,7 @@ const POS = {
             });
             // Default first input (cash) with full total
             const cashInp = document.getElementById('splitCashInput');
-            if (cashInp) cashInp.value = totals.total;
+            if (cashInp) cashInp.value = this.cashDueAfterRounding(totals.total);
 
             this.updateSplitCalculations();
             modal.style.display = 'flex';
@@ -1875,7 +1935,10 @@ const POS = {
         const credit = parseFloat(document.getElementById('splitCreditInput')?.value) || 0;
 
         const totalPaid = cash + card + ewallet + bank + credit;
-        const remaining = total - totalPaid;
+        // Expected amount: non-cash parts + the cash part rounded (pos_cash_rounding).
+        const nonCash = card + ewallet + bank + credit;
+        const expected = cash > 0 ? nonCash + this.cashDueAfterRounding(total, nonCash) : total;
+        const remaining = Math.round((expected - totalPaid) * 100) / 100;
 
         const remEl = document.getElementById('splitRemainingAmount');
         if (remEl) {
@@ -1903,7 +1966,8 @@ const POS = {
             }
         });
 
-        const remaining = Math.max(0, total - otherTotal);
+        let remaining = Math.max(0, total - otherTotal);
+        if (targetType === 'cash') remaining = this.cashDueAfterRounding(total, otherTotal);
         if (inputs[targetType]) {
             inputs[targetType].value = remaining.toFixed(2);
         }
@@ -1930,8 +1994,11 @@ const POS = {
             }
         }
 
-        if (Math.abs(sumPaid - total) > 0.05) {
-            this.showNotification(`⚠️ إجمالي المبالغ المدخلة (${this.formatCurrency(sumPaid)}) لا يساوي إجمالي الفاتورة (${this.formatCurrency(total)})`, 'error');
+        // The cash part is rounded (pos_cash_rounding); the server recomputes it.
+        const nonCashPaid = card + ewallet + bank + credit;
+        const expectedPaid = cash > 0 ? nonCashPaid + this.cashDueAfterRounding(total, nonCashPaid) : total;
+        if (Math.abs(sumPaid - expectedPaid) > 0.05) {
+            this.showNotification(`⚠️ إجمالي المبالغ المدخلة (${this.formatCurrency(sumPaid)}) لا يساوي المطلوب (${this.formatCurrency(expectedPaid)})`, 'error');
             return;
         }
 
@@ -1975,6 +2042,7 @@ const POS = {
         if (this.cart.length === 0) return;
 
         const totals = this.calculateTotals();
+        if (!this.checkLargeAmountCustomer(totals.total)) return;
         const customerSelect = document.getElementById('posCustomer');
         const partner_id = customerSelect ? customerSelect.value : null;
         const customerOption = customerSelect ? customerSelect.options[customerSelect.selectedIndex] : null;
@@ -2100,6 +2168,10 @@ const POS = {
                 }
 
                 this.showReceiptModal(data, totals, cashReceived);
+                // auto_print_receipt: open the receipt document, which prints itself once on load.
+                if (this.autoPrintReceipt && data.invoice_id) {
+                    this.printReceipt(data.invoice_id);
+                }
                 this.closeTab(null, this.activeSessionId);
                 this.checkConsecutiveCustomerWarning(false);
                 this.updateGridStockDisplay();
@@ -2209,7 +2281,12 @@ const POS = {
         const content = document.getElementById('receiptContent');
         if (!modal || !content) return;
 
-        const change = cashReceived ? Math.max(0, cashReceived - (totals?.total || 0)) : 0;
+        // Change is computed against the cash actually due (after pos_cash_rounding).
+        const roundingAmount = parseFloat(data.rounding_amount) || 0;
+        const cashDue = (data.paid_cash !== undefined && data.paid_cash !== null)
+            ? (parseFloat(data.paid_cash) || 0)
+            : (totals?.total || 0);
+        const change = cashReceived ? Math.max(0, cashReceived - cashDue) : 0;
         const itemsHtml = (data.items || this.cart).map(item => `
             <div class="receipt-item">
                 <span>${item.name || item.product_name}</span>
@@ -2231,6 +2308,13 @@ const POS = {
                 <span>الإجمالي</span>
                 <span>${this.formatCurrency(data.total_amount || totals?.total)} ج.م</span>
             </div>
+            ${roundingAmount !== 0 ? `
+            <div class="receipt-item" style="font-size:0.8rem;">
+                <span>تقريب</span><span>${roundingAmount > 0 ? '+' : ''}${this.formatCurrency(roundingAmount)} ج.م</span>
+            </div>
+            <div class="receipt-item" style="font-size:0.8rem;font-weight:700;">
+                <span>المطلوب نقداً بعد التقريب</span><span>${this.formatCurrency(cashDue)} ج.م</span>
+            </div>` : ''}
             ${cashReceived ? `
             <div class="receipt-item" style="font-size:0.8rem;margin-top:0.4rem;">
                 <span>المبلغ المدفوع</span><span>${this.formatCurrency(cashReceived)} ج.م</span>
@@ -2315,7 +2399,7 @@ const POS = {
             discountMode: 'pct',
             customerId: '',
             notes: '',
-            applyTax: false,
+            applyTax: !!this.applyVatByDefault,
             applyWht: false
         });
         this.saveSessions();
@@ -2573,7 +2657,9 @@ const POS = {
     // RECEIPT PRINTING & PAPER SIZE MANAGEMENT
     // ============================================================
     getReceiptPaperSize() {
-        return localStorage.getItem('pos_receipt_paper_size') || '80mm';
+        let saved = null;
+        try { saved = localStorage.getItem('pos_receipt_paper_size'); } catch (e) { /* ignore */ }
+        return saved || this.receiptPaperWidth || '80mm';
     },
 
     setReceiptPaperSize(size) {
@@ -2615,7 +2701,11 @@ const POS = {
             winHeight = 600;
         }
         const win = window.open(`/invoicing/receipt/${invoiceId}/?size=${paperSize}`, 'receipt', `width=${winWidth},height=${winHeight},scrollbars=yes`);
-        if (win) win.focus();
+        if (win) {
+            win.focus();
+        } else {
+            this.showNotification('⚠️ المتصفح منع نافذة الطباعة — اسمح بالنوافذ المنبثقة لهذا الموقع', 'warning');
+        }
     },
 
 

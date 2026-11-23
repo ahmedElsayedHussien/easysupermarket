@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/panels.css' %}">
+<style>@media print { .no-print, .sidebar, .navbar, .top-navbar { display: none !important; } .lq-root { color: #000; } }</style>
+<div class="glass-container lq-root" style="padding: 1.5rem;">
+  <div class="lq-head">
+    <div>
+      <h2>🔄 تحويل مخزني <bdi dir="ltr">{{ doc.number }}</bdi></h2>
+      <span class="lq-scope">{{ doc.date|date:"Y-m-d" }} · بواسطة {{ doc.created_by|display_name|default:"-" }}{% if doc.is_inter_branch %} · 🚚 بين فرعين{% endif %}</span>
+    </div>
+    <div class="lq-actions no-print">
+      <button type="button" class="lq-btn" onclick="window.print()" style="cursor:pointer">🖨 طباعة</button>
+      <a class="lq-btn" href="{% url 'inventory:stock_transfer_list' %}">📜 سجل التحويلات</a>
+      {% if perms.inventory.change_inventorybatch %}<a class="lq-btn primary" href="{% url 'inventory:transfer_stock' %}">🔄 تحويل جديد</a>{% endif %}
+    </div>
+  </div>
+
+  <div class="lq-tiles">
+    <div class="lq-tile"><div class="k">من مستودع</div><div class="v" style="font-size:1.05rem">{{ doc.from_warehouse.name }}</div><div class="s">{{ doc.from_warehouse.branch.name }}</div></div>
+    <div class="lq-tile"><div class="k">إلى مستودع</div><div class="v" style="font-size:1.05rem">{{ doc.to_warehouse.name }}</div><div class="s">{{ doc.to_warehouse.branch.name }}</div></div>
+    <div class="lq-tile"><div class="k">عدد الأصناف</div><div class="v">{{ lines|length }}</div></div>
+    <div class="lq-tile hero"><div class="k">إجمالي التكلفة المحولة</div><div class="v"><bdi dir="ltr">{{ doc.total_cost|money }}</bdi> <small style="font-size:0.75rem;color:var(--lq-muted)">ج.م</small></div></div>
+  </div>
+
+  {% if doc.notes %}<div class="lq-card" style="margin-bottom:1rem;color:var(--lq-text-2)">📝 {{ doc.notes }}</div>{% endif %}
+
+  <section class="lq-card">
+    <div class="lq-scroll"><table class="lq-table">
+      <thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الوحدة</th><th>بالوحدة الأساسية</th><th>متوسط التكلفة</th><th>الإجمالي</th></tr></thead>
+      <tbody>
+        {% for l in lines %}
+        <tr>
+          <td style="color:var(--lq-muted)">{{ forloop.counter }}</td>
+          <td><b>{{ l.product.name }}</b>{% if l.product.barcode %} <small style="color:var(--lq-muted)">{{ l.product.barcode }}</small>{% endif %}</td>
+          <td class="num"><bdi dir="ltr">{{ l.quantity|floatformat:"-3u" }}</bdi></td>
+          <td>{{ l.uom_name }}</td>
+          <td class="num" style="font-weight:400"><bdi dir="ltr">{{ l.base_quantity|floatformat:"-3u" }}</bdi></td>
+          <td class="num" style="font-weight:400"><bdi dir="ltr">{{ l.unit_cost|money }}</bdi></td>
+          <td class="num"><bdi dir="ltr">{{ l.line_cost|money }}</bdi></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+</div>
+{% endblock %}

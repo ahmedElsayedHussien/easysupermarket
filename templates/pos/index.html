@@ -80,7 +80,7 @@
                 <span class="pos-field-label">🏦 {% trans 'الخزينة' %}:</span>
                 <select id="posTreasury" class="pos-subbar-select" {% if settings.lock_pos_payment_accounts %}disabled{% endif %}>
                     {% for t in treasuries %}
-                    <option value="{{ t.id }}" {% if settings.default_pos_treasury_id == t.id %}selected{% endif %}>{{ t.name }}</option>
+                    <option value="{{ t.id }}" {% if pos_default_treasury_id == t.id %}selected{% endif %}>{{ t.name }}</option>
                     {% empty %}
                     <option value="">{% trans 'لا يوجد خزينة' %}</option>
                     {% endfor %}
@@ -92,7 +92,7 @@
                 <select id="posVisaBank" class="pos-subbar-select" {% if settings.lock_pos_payment_accounts %}disabled{% endif %}>
                     <option value="">{% trans 'اختر ماكينة الفيزا' %}</option>
                     {% for b in bank_accounts %}
-                    <option value="{{ b.id }}" {% if settings.default_pos_bank_account_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+                    <option value="{{ b.id }}" {% if pos_default_bank_account_id == b.id %}selected{% endif %}>{{ b.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -102,7 +102,7 @@
                 <select id="posInstaBank" class="pos-subbar-select" {% if settings.lock_pos_payment_accounts %}disabled{% endif %}>
                     <option value="">{% trans 'اختر حساب إنستا' %}</option>
                     {% for b in bank_accounts %}
-                    <option value="{{ b.id }}" {% if settings.default_pos_instapay_account_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+                    <option value="{{ b.id }}" {% if pos_default_instapay_account_id == b.id %}selected{% endif %}>{{ b.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -112,7 +112,7 @@
                 <select id="posEwallet" class="pos-subbar-select" {% if settings.lock_pos_payment_accounts %}disabled{% endif %}>
                     <option value="">{% trans 'اختر المحفظة' %}</option>
                     {% for ew in ewallets %}
-                    <option value="{{ ew.id }}" {% if settings.default_pos_ewallet_id == ew.id %}selected{% endif %}>{{ ew.name }}</option>
+                    <option value="{{ ew.id }}" {% if pos_default_ewallet_id == ew.id %}selected{% endif %}>{{ ew.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -122,7 +122,7 @@
 
         <div class="pos-subbar-group">
             <label class="pos-tax-pill" title="{% trans 'تطبيق ضريبة القيمة المضافة (14%)' %}">
-                <input type="checkbox" id="posApplyTax" onchange="POS.updateCartDisplay()">
+                <input type="checkbox" id="posApplyTax" onchange="POS.updateCartDisplay()" {% if settings.apply_vat_by_default %}checked{% endif %}>
                 <span>{% trans 'ضريبة' %}</span>
             </label>
             <label class="pos-tax-pill" title="{% trans 'تطبيق ضريبة الخصم والإضافة' %}">
@@ -374,6 +374,10 @@
                     <span>{% trans 'الصافي المطلوب' %}:</span>
                     <span id="cartTotal">0.00 {% trans 'ج.م' %}</span>
                 </div>
+                <div class="total-row" id="cartCashRoundedRow" style="display:none; font-size:0.85rem; color:#fbbf24;">
+                    <span>{% trans 'المطلوب نقداً بعد التقريب' %}:</span>
+                    <span id="cartCashRounded">0.00</span>
+                </div>
             </div>
 
             <!-- Consecutive Customer Warning Notice -->
@@ -580,6 +584,13 @@
         POS.priceMarginPercent = {% localize off %}{{ settings.pos_price_margin_percent|default:0 }}{% endlocalize %};
         POS.allowNegativeStock = {% if settings.allow_negative_stock %}true{% else %}false{% endif %};
         POS.showCost = {% if settings.show_pos_cost %}true{% else %}false{% endif %};
+        POS.applyVatByDefault = {% if settings.apply_vat_by_default %}true{% else %}false{% endif %};
+        POS.autoPrintReceipt = {% if settings.auto_print_receipt %}true{% else %}false{% endif %};
+        // Sales >= this amount need a registered customer (0 = off); enforced again server-side.
+        POS.largeAmountRequiresCustomer = {% localize off %}{{ settings.large_amount_requires_customer|default:0 }}{% endlocalize %};
+        // Cash rounding step for display; the server recomputes the rounding.
+        POS.cashRounding = {% localize off %}{{ settings.pos_cash_rounding|default:0 }}{% endlocalize %};
+        POS.receiptPaperWidth = "{{ settings.receipt_paper_width|default:'80' }}mm";
         // Discount cap for non-admins (admins are exempt); enforced again server-side.
         POS.maxDiscountPercent = {% if is_admin or not settings %}100{% else %}{% localize off %}{{ settings.max_pos_discount_percentage }}{% endlocalize %}{% endif %};
         {% if last_sale_info %}

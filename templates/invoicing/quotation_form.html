@@ -190,6 +190,7 @@
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     const productsData = {{ products_json|safe }};
+    const APPLY_VAT_BY_DEFAULT = {% if system_setting and not system_setting.apply_vat_by_default %}false{% else %}true{% endif %};
     const totalFormsInput = document.querySelector('#id_lines-TOTAL_FORMS') || document.querySelector('[name$="-TOTAL_FORMS"]');
     const template = document.getElementById('empty-row-template');
     const linesBody = document.getElementById('lines-body');
@@ -264,8 +265,9 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         
         // Taxes & Discount
+        // VAT starts applied / not applied per SystemSetting.apply_vat_by_default (editable per line).
         const taxInput = row.querySelector('.tax-input');
-        if (taxInput) taxInput.value = Number(prod.tax_rate !== undefined && prod.tax_rate !== null ? prod.tax_rate : 0).toFixed(2);
+        if (taxInput) taxInput.value = APPLY_VAT_BY_DEFAULT ? Number(prod.tax_rate !== undefined && prod.tax_rate !== null ? prod.tax_rate : 0).toFixed(2) : '0.00';
 
         const whtInput = row.querySelector('.wht-input');
         if (whtInput) whtInput.value = Number(prod.wht_rate !== undefined && prod.wht_rate !== null ? prod.wht_rate : 0).toFixed(2);

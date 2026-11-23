@@ -112,6 +112,102 @@ class WorkingBranchTests(TestCase):
         self.assertFalse(r.json().get('success'))
 
 
+class ShiftBranchLockTests(TestCase):
+    """An open POS shift locks the branch everywhere until it is closed."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+        cls.branch2 = make_branch('الفرع 2', code='B2')
+        cls.treasury2 = make_treasury(cls.branch2, 'خزينة 2')
+
+    def setUp(self):
+        from apps.tenant.invoicing.models import POSSession
+        self.c = login(self.client, self.w.admin)
+        self.c.get(f'/?branch={self.branch2.id}')
+        self.c.post('/invoicing/pos/open-shift/', {'opening_balance': '0', 'treasury_id': self.treasury2.id})
+        self.shift = POSSession.objects.get(user=self.w.admin, status=POSSession.OPEN)
+        self.assertEqual(self.shift.branch, self.branch2)
+
+    def test_header_switch_blocked_while_shift_open(self):
+        r = self.c.get(f'/?branch={self.w.branch.id}')
+        self.assertEqual(r.wsgi_request.branch, self.branch2)
+        self.assertTrue(r.wsgi_request.branch_locked_by_shift)
+        r = self.c.get('/?branch=all')
+        self.assertEqual(r.wsgi_request.branch, self.branch2)
+
+    def test_header_shows_lock_instead_of_switcher(self):
+        r = self.c.get('/')
+        html = r.content.decode()
+        self.assertNotIn('id="branchSelector"', html)
+        self.assertIn('🔒', html)
+
+    def test_switch_allowed_after_shift_closed(self):
+        from apps.tenant.invoicing.models import POSSession
+        POSSession.objects.filter(pk=self.shift.pk).update(status=POSSession.CLOSED)
+        r = self.c.get(f'/?branch={self.w.branch.id}')
+        self.assertEqual(r.wsgi_request.branch, self.w.branch)
+        self.assertFalse(r.wsgi_request.branch_locked_by_shift)
+
+    def test_lock_helper_rejects_other_branch(self):
+        from apps.tenant.core.access import shift_branch_lock_error
+        r = self.c.get('/')
+        self.assertIsNotNone(shift_branch_lock_error(r.wsgi_request, self.w.branch))
+        self.assertIsNone(shift_branch_lock_error(r.wsgi_request, self.branch2))
+
+
+class TreasuryFollowsCurrentBranchTests(TestCase):
+    """Vouchers/expenses/transfers may only use treasuries of the current branch."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+        cls.branch2 = make_branch('الفرع 2', code='B2')
+        cls.treasury2 = make_treasury(cls.branch2, 'خزينة 2')
+
+    def _form_request(self, user, header_branch_id):
+        c = login(self.client, user)
+        return c.get(f'/?branch={header_branch_id}').wsgi_request
+
+    def test_voucher_form_lists_only_current_branch_treasuries(self):
+        from apps.tenant.accounting.forms import VoucherForm
+        rq = self._form_request(self.w.admin, self.branch2.id)
+        ids = set(VoucherForm(user=rq.user).fields['treasury'].queryset.values_list('id', flat=True))
+        self.assertEqual(ids, {self.treasury2.id})
+        rq = self._form_request(self.w.admin, self.w.branch.id)
+        ids = set(VoucherForm(user=rq.user).fields['treasury'].queryset.values_list('id', flat=True))
+        self.assertEqual(ids, {self.w.treasury.id})
+
+    def test_cashier_never_sees_other_branch_treasury(self):
+        from apps.tenant.accounting.forms import scoped_treasuries
+        rq = self._form_request(self.w.cashier, self.branch2.id)  # ?branch ignored for users
+        self.assertEqual(list(scoped_treasuries(rq.user)), [self.w.treasury])
+
+    def test_confirm_guard_rejects_other_branch_treasury(self):
+        from django.core.exceptions import ValidationError
+        from apps.tenant.accounting.views import _check_treasury_branch
+        rq = self._form_request(self.w.admin, self.w.branch.id)
+        with self.assertRaises(ValidationError):
+            _check_treasury_branch(rq.user, treasuries=[self.treasury2])
+        _check_treasury_branch(rq.user, treasuries=[self.w.treasury])  # same branch: ok
+
+    def test_transfer_source_current_branch_destination_any_for_admin(self):
+        from apps.tenant.accounting.forms import InternalTransferForm
+        rq = self._form_request(self.w.admin, self.w.branch.id)
+        f = InternalTransferForm(user=rq.user)
+        self.assertEqual(set(f.fields['from_treasury'].queryset.values_list('id', flat=True)), {self.w.treasury.id})
+        self.assertEqual(set(f.fields['to_treasury'].queryset.values_list('id', flat=True)),
+                         {self.w.treasury.id, self.treasury2.id})
+
+    def test_open_shift_branch_drives_treasuries(self):
+        from apps.tenant.accounting.forms import scoped_treasuries
+        c = login(self.client, self.w.admin)
+        c.get(f'/?branch={self.branch2.id}')
+        c.post('/invoicing/pos/open-shift/', {'opening_balance': '0', 'treasury_id': self.treasury2.id})
+        rq = c.get(f'/?branch={self.w.branch.id}').wsgi_request   # attempt blocked by the shift lock
+        self.assertEqual(list(scoped_treasuries(rq.user)), [self.treasury2])
+
+
 class MaintenanceTicketPagesTests(TestCase):
     @classmethod
     def setUpTestData(cls):

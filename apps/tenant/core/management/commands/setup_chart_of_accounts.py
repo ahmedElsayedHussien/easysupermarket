@@ -25,6 +25,8 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='1180', defaults={'name': 'أوراق قبض - حافظة الشيكات', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1185', defaults={'name': 'شيكات برسم التحصيل', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1190', defaults={'name': 'ضريبة القيمة المضافة - مدخلات (مشتريات)', 'account_type': Account.ASSET, 'parent': curr_assets})
+    # Inter-branch transfers: cash sent by one branch until the other confirms receipt
+    Account.objects.get_or_create(code='1195', defaults={'name': 'نقدية بالطريق بين الفروع', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     
     fix_assets, _ = Account.objects.get_or_create(code='1200', defaults={'name': 'أصول ثابتة', 'account_type': Account.ASSET, 'parent': assets})
     Account.objects.get_or_create(code='1210', defaults={'name': 'الأصول الثابتة والآلات', 'account_type': Account.ASSET, 'parent': fix_assets})

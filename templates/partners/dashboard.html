@@ -1,0 +1,225 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/panels.css' %}">
+
+<div class="glass-container lq-root" style="padding: 1.5rem;">
+  <div class="lq-head">
+    <div>
+      <h2>🤝 {{ title }}</h2>
+      <span class="lq-scope">العملاء والموردون على مستوى الشركة</span>
+    </div>
+    <div class="lq-actions">
+      {% if perms.partners.add_partner %}
+        <a class="lq-btn primary" href="{% url 'partners:partner_create' %}?type=customer">＋ عميل جديد</a>
+        <a class="lq-btn" href="{% url 'partners:partner_create' %}?type=supplier">＋ مورد جديد</a>
+      {% endif %}
+      {% if perms.accounting.add_voucher %}
+        <a class="lq-btn" href="{% url 'accounting:receipt_create' %}">⬇️ سند قبض</a>
+        <a class="lq-btn" href="{% url 'accounting:payment_create' %}">⬆️ سند صرف</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="lq-groups">
+    <div class="lq-group"><h4>العملاء</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'partners:customer_list' %}">👥 العملاء ({{ customers_count }})</a>
+      <a class="lq-btn" href="{% url 'pricing:sector_list' %}">🏢 قطاعات العملاء</a>
+    </div></div>
+    <div class="lq-group"><h4>الموردون</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'partners:supplier_list' %}">🚚 الموردون ({{ suppliers_count }})</a>
+    </div></div>
+    <div class="lq-group"><h4>الحسابات والتقارير</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'core:report_partners' %}">📑 تقرير وحسابات الشركاء</a>
+      <a class="lq-btn" href="{% url 'partners:partner_ledger_index' %}">📒 كشف حساب شريك</a>
+    </div></div>
+  </div>
+
+  <div class="lq-tiles">
+    <div class="lq-tile hero"><div class="k">مستحق لنا (مدينون)</div>
+      <div class="v"><bdi dir="ltr">{{ receivables|money }}</bdi> <small style="font-size:0.75rem;color:var(--lq-muted)">ج.م</small></div>
+      <div class="s">{{ debtors_count }} شريك مدين</div></div>
+    <div class="lq-tile"><div class="k">مستحق علينا (دائنون)</div>
+      <div class="v"><bdi dir="ltr">{{ payables|money }}</bdi></div><div class="s">{{ creditors_count }} شريك دائن</div></div>
+    <div class="lq-tile"><div class="k">صافي المركز</div>
+      <div class="v" {% if net_position < 0 %}style="color:var(--flow-out)"{% endif %}><bdi dir="ltr">{% if net_position > 0 %}+{% endif %}{{ net_position|money }}</bdi></div>
+      <div class="s">{% if net_position >= 0 %}لصالحنا{% else %}علينا{% endif %}</div></div>
+    <div class="lq-tile"><div class="k">تحصيلات هذا الشهر</div>
+      <div class="v"><bdi dir="ltr">{{ collected_this_month|money }}</bdi></div><div class="s">سندات قبض من عملاء</div></div>
+    <div class="lq-tile"><div class="k">مدفوعات هذا الشهر</div>
+      <div class="v"><bdi dir="ltr">{{ paid_this_month|money }}</bdi></div><div class="s">سندات صرف لموردين</div></div>
+    {% if new_customers_month is not None %}
+    <div class="lq-tile"><div class="k">عملاء جدد هذا الشهر</div><div class="v">{{ new_customers_month }}</div></div>
+    {% endif %}
+  </div>
+
+  <div class="lq-alerts">
+    <a class="lq-alert st-critical{% if not over_limit_count %} is-zero{% endif %}" href="#pt-credit">
+      <div class="k">⛔ تجاوزوا حد الائتمان</div><div class="v">{{ over_limit_count }}</div><div class="s">عميل</div></a>
+    <a class="lq-alert st-warning{% if not dormant_count %} is-zero{% endif %}" href="#pt-dormant">
+      <div class="k">🐢 مديونية راكدة ({{ dormant_days }} يوم بلا حركة)</div><div class="v">{{ dormant_count }}</div>
+      <div class="s">عميل · <bdi dir="ltr">{{ dormant_value|money }}</bdi></div></a>
+  </div>
+
+  <div class="lq-grid2" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr);">
+    <section class="lq-card">
+      <h3>أعلى المدينين <small>مستحق لنا</small></h3>
+      <ul class="lq-hbars">
+        {% for i in top_debtors %}
+        <li title="{{ i.label }}: {{ i.value|money }} ج.م">
+          <a class="lbl" href="{% url 'partners:partner_ledger' i.pk %}" style="color:inherit;text-decoration:none">{{ i.label }}</a>
+          <span class="trk"><i style="width: {{ i.pct|floatformat:'1u' }}%;"></i></span>
+          <span class="val"><bdi dir="ltr">{{ i.value|money }}</bdi></span>
+        </li>
+        {% empty %}<li class="lq-empty" style="display:block">لا توجد مديونيات</li>{% endfor %}
+      </ul>
+    </section>
+    <section class="lq-card">
+      <h3>أعلى الدائنين <small>مستحق علينا</small></h3>
+      <ul class="lq-hbars">
+        {% for i in top_creditors %}
+        <li title="{{ i.label }}: {{ i.value|money }} ج.م">
+          <a class="lbl" href="{% url 'partners:partner_ledger' i.pk %}" style="color:inherit;text-decoration:none">{{ i.label }}</a>
+          <span class="trk"><i style="width: {{ i.pct|floatformat:'1u' }}%; background: var(--series-2);"></i></span>
+          <span class="val"><bdi dir="ltr">{{ i.value|money }}</bdi></span>
+        </li>
+        {% empty %}<li class="lq-empty" style="display:block">لا توجد مستحقات للموردين</li>{% endfor %}
+      </ul>
+    </section>
+  </div>
+
+  <div class="lq-grid2" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr);">
+    <section class="lq-card">
+      <h3>العملاء: مبيعات آجلة مقابل تحصيلات <small>آخر {{ months }} شهور</small>
+        <span class="lq-flow-legend"><span><span class="lq-dot" style="background:var(--series-1)"></span>مبيعات آجلة</span><span><span class="lq-dot" style="background:var(--series-2)"></span>تحصيلات</span></span></h3>
+      <div class="lq-chart"><canvas id="ptCustChart" role="img" aria-label="المبيعات الآجلة والتحصيلات شهرياً"></canvas></div>
+    </section>
+    <section class="lq-card">
+      <h3>الموردون: مشتريات آجلة مقابل مدفوعات <small>آخر {{ months }} شهور</small>
+        <span class="lq-flow-legend"><span><span class="lq-dot" style="background:var(--series-1)"></span>مشتريات آجلة</span><span><span class="lq-dot" style="background:var(--series-2)"></span>مدفوعات</span></span></h3>
+      <div class="lq-chart"><canvas id="ptSuppChart" role="img" aria-label="المشتريات الآجلة والمدفوعات شهرياً"></canvas></div>
+    </section>
+  </div>
+  <details class="lq-table-view lq-card" style="margin-bottom:1.25rem"><summary>عرض بيانات الرسمين كجدول</summary>
+    <div class="lq-scroll"><table class="lq-table" id="ptTrendTable"><thead><tr><th>الشهر</th><th>مبيعات آجلة</th><th>تحصيلات</th><th>مشتريات آجلة</th><th>مدفوعات</th></tr></thead><tbody></tbody></table></div>
+  </details>
+
+  <div class="lq-grid2" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr);">
+    <section class="lq-card" id="pt-credit">
+      <h3>استخدام حد الائتمان <small>العملاء الذين لهم حد</small></h3>
+      <div class="lq-scroll"><table class="lq-table">
+        <thead><tr><th>العميل</th><th>الرصيد</th><th>الحد</th><th style="width:30%">الاستخدام</th></tr></thead>
+        <tbody>
+          {% for r in credit_rows %}
+          <tr>
+            <td><a href="{% url 'partners:partner_ledger' r.partner.pk %}" style="color:inherit">{{ r.partner.name }}</a></td>
+            <td class="num"><bdi dir="ltr">{{ r.balance|money }}</bdi></td>
+            <td class="num" style="font-weight:400"><bdi dir="ltr">{{ r.limit|money }}</bdi></td>
+            <td><div style="display:flex;align-items:center;gap:0.5rem">
+              <div class="lq-bar" style="flex:1"><i style="width:{{ r.bar|floatformat:'1u' }}%; background: var(--st-{{ r.level }});"></i></div>
+              <span class="num" style="font-weight:400;min-width:3.5rem">{% if r.level == 'critical' %}⛔{% elif r.level == 'warning' %}⚠️{% endif %} {{ r.usage|floatformat:"0u" }}%</span>
+            </div></td>
+          </tr>
+          {% empty %}<tr><td colspan="4" class="lq-empty">لا يوجد عملاء بحد ائتمان</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="lq-card" id="pt-dormant">
+      <h3>🐢 مديونيات راكدة <small>بلا فواتير أو تحصيل منذ {{ dormant_days }} يوم</small></h3>
+      <div class="lq-scroll"><table class="lq-table">
+        <thead><tr><th>العميل</th><th>المديونية</th><th>آخر حركة</th><th></th></tr></thead>
+        <tbody>
+          {% for d in dormant %}
+          <tr>
+            <td>{{ d.partner.name }}{% if d.partner.phone %} <small style="color:var(--lq-muted)"><bdi dir="ltr">{{ d.partner.phone }}</bdi></small>{% endif %}</td>
+            <td class="num"><bdi dir="ltr">{{ d.balance|money }}</bdi></td>
+            <td style="color:var(--lq-text-2)">{% if d.last %}{{ d.last|date:"Y-m-d" }} <small>({{ d.days }} يوم)</small>{% else %}—{% endif %}</td>
+            <td><div class="lq-row-actions">
+              <a href="{% url 'partners:partner_ledger' d.partner.pk %}">📄 كشف</a>
+              {% if perms.accounting.add_voucher %}<a href="{% url 'accounting:receipt_create' %}?partner={{ d.partner.pk }}">⬇️ تحصيل</a>{% endif %}
+            </div></td>
+          </tr>
+          {% empty %}<tr><td colspan="4" class="lq-empty">لا توجد مديونيات راكدة 👍</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <div class="lq-grid2">
+    <section class="lq-card">
+      <h3>المديونية حسب قطاع العملاء</h3>
+      <ul class="lq-hbars">
+        {% for s in sector_rows %}
+        <li title="{{ s.label }}: {{ s.value|money }} ج.م — {{ s.count }} عميل">
+          <span class="lbl">{{ s.label }}</span>
+          <span class="trk"><i style="width: {{ s.pct|floatformat:'1u' }}%;"></i></span>
+          <span class="val"><bdi dir="ltr">{{ s.value|money }}</bdi><small>{{ s.count }} عميل</small></span>
+        </li>
+        {% empty %}<li class="lq-empty" style="display:block">لا توجد مديونيات</li>{% endfor %}
+      </ul>
+    </section>
+    <section class="lq-card">
+      <h3>آخر سندات القبض والصرف</h3>
+      <div class="lq-scroll"><table class="lq-table">
+        <thead><tr><th>السند</th><th>التاريخ</th><th>الشريك</th><th>المبلغ</th></tr></thead>
+        <tbody>
+          {% for v in recent_vouchers %}
+          <tr>
+            <td><a href="{% url 'accounting:voucher_detail' v.pk %}" style="color:#00e5ff">{% if v.voucher_type == 'RECEIPT' %}⬇️{% else %}⬆️{% endif %} {{ v.voucher_number }}</a></td>
+            <td class="num" style="font-weight:400">{{ v.date|date:"Y-m-d" }}</td>
+            <td>{{ v.partner.name }}</td>
+            <td class="num{% if v.voucher_type == 'PAYMENT' %} neg{% endif %}"><bdi dir="ltr">{{ v.amount|money }}</bdi></td>
+          </tr>
+          {% empty %}<tr><td colspan="4" class="lq-empty">لا توجد سندات بعد</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </section>
+  </div>
+</div>
+
+{{ trend|json_script:"pt-trend" }}
+<script>
+(function () {
+  var t = JSON.parse(document.getElementById('pt-trend').textContent);
+  var root = document.querySelector('.lq-root');
+  var css = function (v) { return getComputedStyle(root).getPropertyValue(v).trim(); };
+  var fmt = function (n) { return Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+  var tbody = document.querySelector('#ptTrendTable tbody');
+  t.labels.forEach(function (m, i) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + m + '</td>' + [t.credit_sales[i], t.collections[i], t.credit_purchases[i], t.supplier_payments[i]]
+      .map(function (v) { return '<td class="num">' + fmt(v) + '</td>'; }).join('');
+    tbody.appendChild(tr);
+  });
+
+  if (typeof Chart === 'undefined') return;
+  function grouped(id, a, aLabel, b, bLabel) {
+    new Chart(document.getElementById(id), {
+      type: 'bar',
+      data: { labels: t.labels, datasets: [
+        { label: aLabel, data: a, backgroundColor: css('--series-1'), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'bottom', maxBarThickness: 22 },
+        { label: bLabel, data: b, backgroundColor: css('--series-2'), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'bottom', maxBarThickness: 22 }
+      ] },
+      options: {
+        maintainAspectRatio: false,
+        datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.9 } },
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: false },
+          tooltip: { rtl: true, textDirection: 'rtl', callbacks: { label: function (c) { return c.dataset.label + ': ' + fmt(c.parsed.y) + ' ج.م'; } } } },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: css('--lq-muted'), font: { size: 11 } } },
+          y: { beginAtZero: true, grid: { color: css('--lq-grid') }, border: { display: false },
+               ticks: { color: css('--lq-muted'), font: { size: 10 }, callback: function (v) { return Number(v).toLocaleString('en-US'); } } }
+        }
+      }
+    });
+  }
+  grouped('ptCustChart', t.credit_sales, 'مبيعات آجلة', t.collections, 'تحصيلات');
+  grouped('ptSuppChart', t.credit_purchases, 'مشتريات آجلة', t.supplier_payments, 'مدفوعات');
+})();
+</script>
+{% endblock %}

@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import liquidity_views
 
 app_name = 'accounting'
 urlpatterns = [
@@ -24,6 +25,7 @@ urlpatterns = [
     path('payment-methods/<int:pk>/update/', views.PaymentMethodUpdateView.as_view(), name='payment_method_update'),
     
     # Treasuries
+    path('liquidity/', liquidity_views.liquidity_dashboard, name='liquidity_dashboard'),
     path('treasuries/', views.TreasuryListView.as_view(), name='treasury_list'),
     path('treasuries/create/', views.TreasuryCreateView.as_view(), name='treasury_create'),
     path('treasuries/<int:pk>/update/', views.TreasuryUpdateView.as_view(), name='treasury_update'),
@@ -79,6 +81,8 @@ urlpatterns = [
     path('transfers/<int:pk>/', views.InternalTransferDetailView.as_view(), name='transfer_detail'),
     path('transfers/<int:pk>/confirm/', views.InternalTransferConfirmView.as_view(), name='transfer_confirm'),
     path('transfers/<int:pk>/cancel/', views.InternalTransferCancelView.as_view(), name='transfer_cancel'),
+    path('transfers/<int:pk>/receive/', views.InternalTransferReceiveView.as_view(), name='transfer_receive'),
+    path('transfers/<int:pk>/reject/', views.InternalTransferRejectView.as_view(), name='transfer_reject'),
 
     # Cheques Management (إدارة الشيكات: أوراق القبض وأوراق الدفع)
     path('cheques/', views.ChequeListView.as_view(), name='cheque_list'),

@@ -68,6 +68,15 @@ class BranchScopingTests(TestCase):
         self.assertEqual(list(resp.context['vouchers']), [])
 
     def test_admin_sees_all_branches(self):
+        # Admins follow the header branch: "all branches" shows everything...
         login(self.client, self.w.admin)
+        self.client.get('/?branch=all')
         resp = self.client.get(reverse('accounting:expense_detail', args=[self.expense_b.pk]))
         self.assertEqual(resp.status_code, 200)
+
+    def test_admin_on_one_branch_sees_only_that_branch(self):
+        # ...while a specific header branch hides other branches' records.
+        login(self.client, self.w.admin)
+        self.client.get(f'/?branch={self.w.branch.id}')
+        resp = self.client.get(reverse('accounting:expense_detail', args=[self.expense_b.pk]))
+        self.assertEqual(resp.status_code, 404)

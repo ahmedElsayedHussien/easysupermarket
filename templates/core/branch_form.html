@@ -1,0 +1,100 @@
+{% extends 'core/generic_form.html' %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+    .branch-section-title {
+        color: #ff7300;
+        font-weight: 800;
+        font-size: 1.05rem;
+        margin: 0 0 1.25rem;
+        padding-bottom: 0.6rem;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .branch-pos-box {
+        background: rgba(255, 115, 0, 0.05);
+        border: 1px solid rgba(255, 115, 0, 0.2);
+        border-radius: 12px;
+        padding: 1.25rem 1.25rem 0.25rem;
+        margin-top: 2rem;
+    }
+    .form-group .form-check-inline-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-7">
+        <div class="generic-card mt-4">
+            <div class="generic-card-header">
+                <h4 class="mb-0 text-white"><i class="fas fa-store me-2" style="color: #ff7300;"></i> {{ title }}</h4>
+            </div>
+            <div class="generic-card-body">
+                <form method="post">
+                    {% csrf_token %}
+
+                    {% if form.non_field_errors %}
+                    <div class="alert alert-danger" style="border-radius: 8px;">
+                        {% for error in form.non_field_errors %}{{ error }} {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    <h5 class="branch-section-title"><i class="fas fa-info-circle me-1"></i> بيانات الفرع</h5>
+                    {% for field in form.general_fields %}
+                    <div class="form-group">
+                        {% if field.name == 'is_active' %}
+                        <div class="form-check-inline-row">
+                            {{ field }}
+                            <label for="{{ field.id_for_label }}" class="mb-0">{{ field.label }}</label>
+                        </div>
+                        {% else %}
+                        <label for="{{ field.id_for_label }}">
+                            {{ field.label }}{% if field.field.required %} <span class="text-danger">*</span>{% endif %}
+                        </label>
+                        {{ field }}
+                        {% endif %}
+                        {% if field.help_text %}<div class="help-text">{{ field.help_text }}</div>{% endif %}
+                        {% for error in field.errors %}
+                        <div class="text-danger mt-1 small fw-bold"><i class="fas fa-exclamation-circle"></i> {{ error }}</div>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+
+                    <div class="branch-pos-box">
+                        <h5 class="branch-section-title"><i class="fas fa-wallet me-1"></i> حسابات الدفع الافتراضية لنقطة البيع بالفرع</h5>
+                        <p class="help-text mb-4">
+                            تُختار هذه الحسابات تلقائياً في نقطة البيع لهذا الفرع. أي حقل فارغ يستخدم
+                            <a href="{% url 'core:system_settings' %}#posAccounts" style="color:#ff7300;">الافتراضي العام من إعدادات النظام</a>.
+                        </p>
+                        {% for field in form.pos_fields %}
+                        <div class="form-group">
+                            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                            {{ field }}
+                            {% if field.help_text %}<div class="help-text">{{ field.help_text }}</div>{% endif %}
+                            {% for error in field.errors %}
+                            <div class="text-danger mt-1 small fw-bold"><i class="fas fa-exclamation-circle"></i> {{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <div class="d-flex justify-content-between mt-5 pt-4 border-top" style="border-color: rgba(255,255,255,0.1) !important;">
+                        <button type="submit" class="btn btn-primary-orange px-4">
+                            <i class="fas fa-save me-1"></i> حفظ البيانات
+                        </button>
+                        {% if cancel_url %}
+                        <a href="{{ cancel_url }}" class="btn btn-ghost px-4">
+                            <i class="fas fa-times me-1"></i> إلغاء
+                        </a>
+                        {% endif %}
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

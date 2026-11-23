@@ -502,6 +502,7 @@ def batch_get_partners_balances(partner_ids=None, partner_qs=None):
         paid_card=Sum('paid_card'),
         paid_ewallet=Sum('paid_ewallet'),
         paid_bank=Sum('paid_bank'),
+        rounding=Sum('rounding_amount'),
         cnt=Count('id')
     )
 
@@ -516,6 +517,8 @@ def batch_get_partners_balances(partner_ids=None, partner_qs=None):
 
         immed = (row['paid_cash'] or Decimal('0')) + (row['paid_card'] or Decimal('0')) + \
                 (row['paid_ewallet'] or Decimal('0')) + (row['paid_bank'] or Decimal('0'))
+        # POS cash rounding is collected on top of the invoice: not a payment against it
+        immed -= (row.get('rounding') or Decimal('0'))
 
         partners[pid]['transactions_count'] += cnt
 

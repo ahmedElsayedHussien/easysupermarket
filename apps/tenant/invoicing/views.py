@@ -12,14 +12,18 @@ from apps.tenant.inventory.models import Product, Warehouse, InventoryBatch
 from apps.tenant.core.models import Branch, SystemSetting
 from apps.tenant.partners.models import Partner
 import json
+import re
 from decimal import Decimal, InvalidOperation
 from apps.tenant.core.decorators import custom_permission_required, is_admin_user
 from apps.tenant.core.access import (
     BRANCH_UNASSIGNED_MESSAGE, allowed_branches, get_allowed_branch_ids, get_branch_scope,
     get_working_branch, is_branch_restricted, is_branch_unassigned, set_header_branch,
+    shift_branch_lock_error,
 )
 
 from django.views.decorators.cache import never_cache
+from django.utils.dateparse import parse_date
+from apps.tenant.core.settings_helpers import get_pos_defaults, round_cash, setting as setting_value
 
 logger = logging.getLogger(__name__)
 
@@ -210,8 +214,23 @@ def pos_view(request):
         'shift_stats': get_shift_stats_data(open_session),
         'settings': SystemSetting.get_settings(),
         'last_sale_info': last_sale_info,
+        **_pos_default_ids(current_branch, open_session),
     }
     return render(request, 'pos/index.html', context)
+
+
+def _pos_default_ids(branch, open_session=None):
+    """Pre-selected payment accounts in the POS header: the branch's defaults
+    (get_pos_defaults), the cash treasury falling back to the open shift's treasury."""
+    d = get_pos_defaults(branch)
+    treasury = d['treasury']
+    treasury_id = treasury.id if treasury else (open_session.treasury_id if open_session else None)
+    return {
+        'pos_default_treasury_id': treasury_id,
+        'pos_default_bank_account_id': d['bank_account'].id if d['bank_account'] else None,
+        'pos_default_instapay_account_id': d['instapay_account'].id if d['instapay_account'] else None,
+        'pos_default_ewallet_id': d['ewallet'].id if d['ewallet'] else None,
+    }
 
 @never_cache
 @login_required
@@ -311,7 +330,7 @@ def pos_close_shift(request):
         total_cash_sales=Coalesce(Sum(
             Case(
                 When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount') + F('rounding_amount')),
                 default=Decimal('0.00'),
                 output_field=models.DecimalField(max_digits=18, decimal_places=4)
             )
@@ -516,12 +535,15 @@ def purchase_invoice_view(request):
     user_branch = get_working_branch(request)
 
     branches = Branch.objects.filter(is_active=True) if is_admin else []
+    if is_admin and getattr(request, 'branch_locked_by_shift', False):
+        branches = Branch.objects.filter(id=request.branch.id)  # open shift: branch locked
 
     
     from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
     treasuries = Treasury.objects.all()
     bank_accounts = BankAccount.objects.all()
     ewallets = EWallet.objects.all()
+    expiry_tracking_enabled = bool(setting_value('enable_expiry_tracking', False))
 
     if request.method == 'POST':
         from django.db import transaction
@@ -539,27 +561,17 @@ def purchase_invoice_view(request):
             bank_account_id = request.POST.get('bank_account_id') or None
             ewallet_id = request.POST.get('ewallet_id') or None
 
-            # Reset irrelevant payment source based on payment_type
-            from apps.tenant.core.models import SystemSetting
-            setting = SystemSetting.get_settings()
+            # Reset irrelevant payment source based on payment_type. Missing defaults are
+            # filled once the invoice branch is known (get_pos_defaults(branch)).
             if payment_type == 'CASH':
                 bank_account_id = None
                 ewallet_id = None
-                if not treasury_id:
-                    def_t = getattr(setting, 'default_pos_treasury', None) or Treasury.objects.first()
-                    treasury_id = def_t.id if def_t else None
             elif payment_type in ['BANK_TRANSFER', 'CARD']:
                 treasury_id = None
                 ewallet_id = None
-                if not bank_account_id:
-                    def_b = getattr(setting, 'default_pos_bank_account', None) or BankAccount.objects.first()
-                    bank_account_id = def_b.id if def_b else None
             elif payment_type == 'EWALLET':
                 treasury_id = None
                 bank_account_id = None
-                if not ewallet_id:
-                    def_w = getattr(setting, 'default_pos_ewallet', None) or EWallet.objects.first()
-                    ewallet_id = def_w.id if def_w else None
             elif payment_type == 'CREDIT':
                 treasury_id = None
                 bank_account_id = None
@@ -569,7 +581,10 @@ def purchase_invoice_view(request):
             quantities = request.POST.getlist('quantity[]')
             prices = request.POST.getlist('price[]')
             uom_ids = request.POST.getlist('uom_id[]')
-            
+            expiry_dates = request.POST.getlist('expiry_date[]') if expiry_tracking_enabled else []
+            if len(expiry_dates) != len(product_ids):
+                expiry_dates = [''] * len(product_ids)
+
             # Ensure uom_ids list matches length of product_ids (fill with None if empty)
             if not uom_ids or len(uom_ids) != len(product_ids):
                 uom_ids = [None] * len(product_ids)
@@ -602,12 +617,28 @@ def purchase_invoice_view(request):
                     branch = Branch.objects.filter(id=branch_id, is_active=True).first() if branch_id else user_branch
                 else:
                     branch = user_branch
+                lock_error = shift_branch_lock_error(request, branch)
+                if lock_error:
+                    raise ValueError(lock_error)
                 if branch and warehouse and warehouse.branch_id and warehouse.branch_id != branch.id:
                     raise ValueError('المستودع المختار لا يتبع الفرع المحدد.')
                     
                 if not branch:
                     raise ValueError("لا يوجد فرع مرتبط بهذا المستخدم. يرجى مراجعة مدير النظام.")
-                
+
+                # Default payment accounts of the invoice branch (then global defaults).
+                branch_defaults = get_pos_defaults(branch)
+                if payment_type == 'CASH' and not treasury_id:
+                    def_t = (branch_defaults['treasury'] or Treasury.objects.filter(branch=branch).first()
+                             or Treasury.objects.first())
+                    treasury_id = def_t.id if def_t else None
+                elif payment_type in ['BANK_TRANSFER', 'CARD'] and not bank_account_id:
+                    def_b = branch_defaults['bank_account'] or BankAccount.objects.first()
+                    bank_account_id = def_b.id if def_b else None
+                elif payment_type == 'EWALLET' and not ewallet_id:
+                    def_w = branch_defaults['ewallet'] or EWallet.objects.first()
+                    ewallet_id = def_w.id if def_w else None
+
                 invoice = Invoice.objects.create(
                     invoice_type=invoice_type,
                     partner=supplier,
@@ -629,6 +660,15 @@ def purchase_invoice_view(request):
                 for i, (pid, qty, price, uom_id) in enumerate(zip(product_ids, quantities, prices, uom_ids)):
                     if pid and qty and price:
                         product = Product.objects.get(id=pid)
+                        line_expiry = None
+                        raw_expiry = (expiry_dates[i] or '').strip()
+                        if raw_expiry and invoice_type == Invoice.PURCHASE:
+                            try:
+                                line_expiry = parse_date(raw_expiry)
+                            except ValueError:
+                                line_expiry = None
+                            if line_expiry is None:
+                                raise ValueError(f'تاريخ الصلاحية غير صالح للصنف {product.name}.')
                         
                         # Apply taxes: if explicitly provided on invoice use it, else fallback to product defaults
                         if vat_percentage is not None:
@@ -701,8 +741,9 @@ def purchase_invoice_view(request):
                                 wht_rate=wht_r,
                                 discount_pct=invoice.discount_percentage,
                                 uom_id=uom_id_val,
+                                expiry_date=line_expiry,
                             )
-                
+
                 invoice.recalculate_totals()
                 
                 # Sync paid breakdown fields
@@ -731,9 +772,13 @@ def purchase_invoice_view(request):
             import json
             posted_lines = []
             posted_uoms = request.POST.getlist('uom_id[]')
+            posted_expiry = request.POST.getlist('expiry_date[]')
             for i, (pid, qty, prc) in enumerate(zip(request.POST.getlist('product_id[]'), request.POST.getlist('quantity[]'), request.POST.getlist('price[]'))):
                 u_id = posted_uoms[i] if i < len(posted_uoms) else ''
-                posted_lines.append({'product_id': pid, 'quantity': qty, 'price': prc, 'uom_id': u_id})
+                exp = posted_expiry[i] if i < len(posted_expiry) else ''
+                if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', exp or ''):
+                    exp = ''  # only echo back well-formed dates into the re-rendered form
+                posted_lines.append({'product_id': pid, 'quantity': qty, 'price': prc, 'uom_id': u_id, 'expiry_date': exp})
             
             # Re-pass the posted data back to context to prevent form clearing
             context = {
@@ -748,6 +793,7 @@ def purchase_invoice_view(request):
                 'bank_accounts': bank_accounts,
                 'ewallets': ewallets,
                 'title': 'إنشاء فاتورة مشتريات',
+                'expiry_tracking_enabled': expiry_tracking_enabled,
                 'posted_data': request.POST,
                 'posted_lines_json': _safe_json_for_script(posted_lines),
             }
@@ -765,6 +811,7 @@ def purchase_invoice_view(request):
         'bank_accounts': bank_accounts,
         'ewallets': ewallets,
         'is_admin': is_admin,
+        'expiry_tracking_enabled': expiry_tracking_enabled,
         'title': 'فاتورة مشتريات'
     }
     return render(request, 'invoicing/purchase_invoice.html', context)
@@ -1179,6 +1226,17 @@ def _pos_unit_price(product, puom, partner, branch, quantity):
     return price.quantize(Decimal('0.0001')), min_price.quantize(Decimal('0.0001'))
 
 
+GENERIC_CASH_CUSTOMER_NAMES = ('عميل نقدي', 'نقدي', 'طياري')
+
+
+def _is_generic_cash_customer(partner):
+    """True when there is no real customer: no partner, or the generic walk-in "عميل نقدي"."""
+    if partner is None:
+        return True
+    name = (partner.name or '').strip()
+    return not name or name in GENERIC_CASH_CUSTOMER_NAMES or 'عميل نقدي' in name
+
+
 @login_required
 @custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
 def complete_sale(request):
@@ -1236,6 +1294,16 @@ def complete_sale(request):
         can_override_discount = is_admin or request.user.has_perm('invoicing.change_invoice')
         setting = SystemSetting.get_settings()
         allow_price_edit_setting = bool(getattr(setting, 'allow_pos_price_modification', False))
+        # Allowed deviation (±%) from the server price when a non-admin edits a price
+        # (0 = no limit). Open-price / service products are exempt.
+        try:
+            price_margin_pct = Decimal(str(getattr(setting, 'pos_price_margin_percent', 0) or 0))
+        except (InvalidOperation, ValueError, TypeError):
+            price_margin_pct = Decimal('0')
+        try:
+            large_amount_threshold = Decimal(str(getattr(setting, 'large_amount_requires_customer', 0) or 0))
+        except (InvalidOperation, ValueError, TypeError):
+            large_amount_threshold = Decimal('0')
         # Discount cap for non-admins (admins are exempt). Applies to the
         # header discount and to each line's total effective discount (the POS
         # sends line discount combined with the invoice discount).
@@ -1278,6 +1346,10 @@ def complete_sale(request):
 
             if not treasury_id and open_session.treasury_id:
                 treasury_id = open_session.treasury_id
+            # Payment defaults of the sale's branch (= the open shift's branch).
+            branch_defaults = get_pos_defaults(branch)
+            if not treasury_id and branch_defaults['treasury'] is not None:
+                treasury_id = branch_defaults['treasury'].id
 
             payments = data.get('payments', {}) or {}
             if not isinstance(payments, dict):
@@ -1309,7 +1381,7 @@ def complete_sale(request):
                 if visa_bank_account_id:
                     bank_account_id = visa_bank_account_id
                 elif not bank_account_id:
-                    default_visa = getattr(setting, 'default_pos_bank_account', None)
+                    default_visa = branch_defaults['bank_account']
                     if default_visa:
                         bank_account_id = default_visa.id
                 if not bank_account_id:
@@ -1317,7 +1389,7 @@ def complete_sale(request):
 
             if payment_type == 'BANK_TRANSFER' or cl_bank > 0:
                 if not insta_bank_account_id:
-                    default_insta = getattr(setting, 'default_pos_instapay_account', None) or getattr(setting, 'default_pos_bank_account', None)
+                    default_insta = branch_defaults['instapay_account'] or branch_defaults['bank_account']
                     if default_insta:
                         insta_bank_account_id = default_insta.id
                 if not insta_bank_account_id and payment_type == 'BANK_TRANSFER':
@@ -1402,6 +1474,18 @@ def complete_sale(request):
                     if client_price < 0:
                         raise _SaleAbort(f'سعر الصنف "{product.name}" لا يمكن أن يكون سالباً.')
                     if can_edit_price:
+                        price_is_free = product.is_open_price or product.product_type == 'SERVICE'
+                        if (not is_admin and not price_is_free and price_margin_pct > 0
+                                and server_price > 0 and client_price != server_price):
+                            deviation_pct = (abs(client_price - server_price) / server_price) * Decimal('100')
+                            if deviation_pct > price_margin_pct + Decimal('0.01'):
+                                low = server_price * (Decimal('1') - price_margin_pct / Decimal('100'))
+                                high = server_price * (Decimal('1') + price_margin_pct / Decimal('100'))
+                                raise _SaleAbort(
+                                    f'سعر الصنف "{product.name}" ({client_price:.2f}) خارج هامش التعديل المسموح '
+                                    f'(±{price_margin_pct:.2f}% من {server_price:.2f}: بين {low:.2f} و {high:.2f}). '
+                                    'يتطلب ذلك صلاحية مدير.', status=403
+                                )
                         unit_price = client_price
                 if min_price > 0 and unit_price < min_price:
                     raise _SaleAbort(
@@ -1470,6 +1554,16 @@ def complete_sale(request):
             invoice.recalculate_totals()
             total = Decimal(str(invoice.total_amount)).quantize(Decimal('0.01'))
             tolerance = Decimal('0.05')
+
+            if large_amount_threshold > 0 and total >= large_amount_threshold and _is_generic_cash_customer(partner):
+                raise _SaleAbort(
+                    f'إجمالي الفاتورة ({total:.2f}) يساوي أو يتجاوز {large_amount_threshold:.2f}: '
+                    'يجب اختيار عميل مسجل (غير العميل النقدي) لإتمام هذه العملية.'
+                )
+
+            # Cash rounding (SystemSetting.pos_cash_rounding): only the cash part is rounded.
+            # The invoice total stays exact; the difference is posted to 5115.
+            rounding_amount = Decimal('0')
             paid = {'paid_cash': Decimal('0'), 'paid_card': Decimal('0'), 'paid_ewallet': Decimal('0'),
                     'paid_bank': Decimal('0'), 'paid_credit': Decimal('0')}
             if payment_type == 'SPLIT':
@@ -1478,7 +1572,9 @@ def complete_sale(request):
                     raise _SaleAbort(
                         f'مجموع المبالغ غير النقدية ({non_cash:.2f}) يتجاوز إجمالي الفاتورة ({total:.2f}).'
                     )
-                cash_due = max(Decimal('0'), total - non_cash)
+                exact_cash_due = max(Decimal('0'), total - non_cash)
+                cash_due = round_cash(exact_cash_due) if exact_cash_due > 0 else exact_cash_due
+                rounding_amount = cash_due - exact_cash_due
                 if cl_cash + tolerance < cash_due:
                     raise _SaleAbort(
                         f'المبالغ المدفوعة ({(cl_cash + non_cash):.2f}) أقل من إجمالي الفاتورة ({total:.2f}).'
@@ -1491,16 +1587,21 @@ def complete_sale(request):
                     'CASH': 'paid_cash', 'CARD': 'paid_card', 'EWALLET': 'paid_ewallet',
                     'BANK_TRANSFER': 'paid_bank', 'CREDIT': 'paid_credit',
                 }[payment_type]
+                amount_due = total
+                if payment_type == 'CASH':
+                    amount_due = round_cash(total)
+                    rounding_amount = amount_due - total
                 if payment_type == 'CASH' and data.get('cash_received') not in (None, ''):
                     cash_received = _to_decimal(data.get('cash_received'), 'المبلغ المستلم')
-                    if cash_received + tolerance < total:
+                    if cash_received + tolerance < amount_due:
                         raise _SaleAbort(
-                            f'المبلغ المستلم ({cash_received:.2f}) أقل من إجمالي الفاتورة ({total:.2f}).'
+                            f'المبلغ المستلم ({cash_received:.2f}) أقل من المبلغ المطلوب ({amount_due:.2f}).'
                         )
-                paid[field] = total
+                paid[field] = amount_due
             for k, v in paid.items():
                 setattr(invoice, k, v)
-            invoice.save(update_fields=list(paid.keys()) + ['updated_at'])
+            invoice.rounding_amount = rounding_amount.quantize(Decimal('0.01'))
+            invoice.save(update_fields=list(paid.keys()) + ['rounding_amount', 'updated_at'])
 
             confirmed_invoice = confirm_invoice(invoice.id)
 
@@ -1509,6 +1610,8 @@ def complete_sale(request):
             'invoice_number': confirmed_invoice.invoice_number,
             'invoice_id': confirmed_invoice.id,
             'total_amount': str(Decimal(str(confirmed_invoice.total_amount)).quantize(Decimal('0.01'))),
+            'rounding_amount': str(confirmed_invoice.rounding_amount or Decimal('0')),
+            'paid_cash': str(confirmed_invoice.paid_cash or Decimal('0')),
             'partner_id': confirmed_invoice.partner_id if confirmed_invoice.partner else None,
             'partner_name': confirmed_invoice.partner.name if confirmed_invoice.partner else 'عميل نقدي',
         })
@@ -1597,10 +1700,6 @@ def receipt_view(request, invoice_id):
         .select_related('partner', 'branch', 'cashier').prefetch_related('lines__product', 'lines__uom__uom'),
         id=invoice_id
     )
-    paper_size = request.GET.get('size', '80mm').strip().lower()
-    if paper_size not in ['80mm', '58mm', 'a4', 'a5']:
-        paper_size = '80mm'
-
     from apps.tenant.core.models import SystemSetting
     system_settings = None
     try:
@@ -1608,15 +1707,32 @@ def receipt_view(request, invoice_id):
     except Exception:
         pass
 
+    # Default paper width: SystemSetting.receipt_paper_width (58 / 80 mm).
+    default_size = f"{getattr(system_settings, 'receipt_paper_width', '80') or '80'}mm"
+    if default_size not in ('58mm', '80mm'):
+        default_size = '80mm'
+    paper_size = (request.GET.get('size') or default_size).strip().lower()
+    if paper_size not in ['80mm', '58mm', 'a4', 'a5']:
+        paper_size = default_size
+
     store_name = ""
     tax_id = ""
     cr_number = ""
     receipt_footer = ""
     store_phone = ""
     store_address = ""
+    company_logo_url = ""
+    show_branch_info = True
 
     if system_settings:
-        store_name = system_settings.store_name or system_settings.company_name or ""
+        show_branch_info = bool(getattr(system_settings, 'show_branch_info_on_receipt', True))
+        logo = getattr(system_settings, 'company_logo', None)
+        if logo:
+            try:
+                company_logo_url = logo.url
+            except Exception:
+                company_logo_url = ""
+        store_name = system_settings.store_name or getattr(system_settings, "company_name", "") or ""
         tax_id = system_settings.tax_number or ""
         cr_number = getattr(system_settings, 'commercial_register', '') or ""
         receipt_footer = system_settings.receipt_footer or ""
@@ -1624,15 +1740,25 @@ def receipt_view(request, invoice_id):
     if not store_name and hasattr(request, 'tenant'):
         store_name = request.tenant.name
 
-    if invoice.branch:
+    if invoice.branch and show_branch_info:
         if not store_phone and invoice.branch.phone:
             store_phone = invoice.branch.phone
         if not store_address and invoice.branch.address:
             store_address = invoice.branch.address
 
     amount_in_words = tafqeet_arabic(invoice.total_amount)
+    rounding_amount = Decimal(str(invoice.rounding_amount or 0))
+    cash_after_rounding = None
+    if rounding_amount != 0:
+        if invoice.payment_type == Invoice.CASH:
+            cash_after_rounding = (Decimal(str(invoice.total_amount)) + rounding_amount).quantize(Decimal('0.01'))
+        else:
+            cash_after_rounding = invoice.paid_cash
 
     return render(request, 'pos/receipt.html', {
+        'company_logo_url': company_logo_url,
+        'rounding_amount': rounding_amount,
+        'cash_after_rounding': cash_after_rounding,
         'invoice': invoice,
         'paper_size': paper_size,
         'store_name': store_name,
@@ -1677,23 +1803,24 @@ def process_invoice_return(request, invoice_id):
         insta_bank_account_id = data.get('insta_bank_account_id') or (original_invoice.insta_bank_account_id if getattr(original_invoice, 'insta_bank_account', None) else None)
         ewallet_id = data.get('ewallet_id') or (original_invoice.ewallet_id if original_invoice.ewallet else None)
 
-        setting = SystemSetting.get_settings()
         split_data = data.get('split_payments', {})
         req_cash = Decimal(str(split_data.get('cash', 0) or 0)) if payment_type == Invoice.SPLIT else (Decimal('1') if payment_type == Invoice.CASH else Decimal('0'))
         req_card = Decimal(str(split_data.get('card', 0) or 0)) if payment_type == Invoice.SPLIT else (Decimal('1') if payment_type == Invoice.CARD else Decimal('0'))
         req_ewallet = Decimal(str(split_data.get('ewallet', 0) or 0)) if payment_type == Invoice.SPLIT else (Decimal('1') if payment_type == Invoice.EWALLET else Decimal('0'))
         req_bank = Decimal(str(split_data.get('bank', 0) or 0)) if payment_type == Invoice.SPLIT else (Decimal('1') if payment_type == Invoice.BANK_TRANSFER else Decimal('0'))
 
+        # Defaults of the branch the refund belongs to (the original invoice's branch).
+        branch_defaults = get_pos_defaults(original_invoice.branch if original_invoice.branch_id else None)
         if req_cash > 0 and not treasury_id:
-            def_t = getattr(setting, 'default_pos_treasury', None) or Treasury.objects.first()
+            def_t = branch_defaults['treasury'] or Treasury.objects.first()
             treasury_id = def_t.id if def_t else None
 
         if (req_card > 0 or req_bank > 0) and not bank_account_id:
-            def_b = getattr(setting, 'default_pos_bank_account', None) or BankAccount.objects.first()
+            def_b = branch_defaults['bank_account'] or BankAccount.objects.first()
             bank_account_id = def_b.id if def_b else None
 
         if req_ewallet > 0 and not ewallet_id:
-            def_w = getattr(setting, 'default_pos_ewallet', None) or EWallet.objects.first()
+            def_w = branch_defaults['ewallet'] or EWallet.objects.first()
             ewallet_id = def_w.id if def_w else None
 
         open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
@@ -2192,10 +2319,14 @@ def _scoped_quotations(request):
 
 
 def _quotation_branch_error(request, form):
-    """Non-admins may only save a quotation on one of their own branches."""
+    """Non-admins may only save a quotation on one of their own branches;
+    nobody may pick another branch while their POS shift is open."""
+    branch = form.cleaned_data.get('branch')
+    lock_error = shift_branch_lock_error(request, branch)
+    if lock_error:
+        return lock_error
     if not is_branch_restricted(request):
         return None
-    branch = form.cleaned_data.get('branch')
     if branch is None or branch.id not in (get_allowed_branch_ids(request) or []):
         return 'لا يمكنك حفظ عرض سعر على فرع غير الفرع المرتبط بحسابك.'
     return None
@@ -2531,7 +2662,7 @@ def get_shift_stats_data(open_session):
         total_cash_sales=Coalesce(Sum(
             Case(
                 When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount') + F('rounding_amount')),
                 When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_cash')),
                 When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CASH), then=-F('total_amount')),
                 default=Decimal('0.00'),

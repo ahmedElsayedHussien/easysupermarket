@@ -7,10 +7,25 @@
         <h2 style="margin: 0; color: #fff;">
             <i class="fas fa-exchange-alt text-gold" style="margin-left: 0.5rem;"></i> {{ title }}
         </h2>
-        <a href="{% url 'accounting:transfer_create' %}" class="btn-orange">
-            <i class="fas fa-plus"></i> إضافة تحويل مالي جديد
-        </a>
+        <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
+            {% if incoming_only %}
+            <a href="{% url 'accounting:transfer_list' %}" class="btn btn-ghost">كل التحويلات</a>
+            {% else %}
+            <a href="{% url 'accounting:transfer_list' %}?incoming=1" class="btn btn-neon-cyan" style="{% if incoming_count %}box-shadow: 0 0 12px rgba(0,229,255,0.45);{% endif %}">
+                📥 تحويلات واردة{% if incoming_count %} <b style="background:#ff7300;color:#fff;border-radius:10px;padding:0 0.5rem;margin-right:0.3rem;">{{ incoming_count }}</b>{% endif %}
+            </a>
+            {% endif %}
+            <a href="{% url 'accounting:transfer_create' %}" class="btn-orange">
+                <i class="fas fa-plus"></i> إضافة تحويل مالي جديد
+            </a>
+        </div>
     </div>
+    {% if incoming_count and not incoming_only %}
+    <div style="background: rgba(0,229,255,0.08); border: 1px solid rgba(0,229,255,0.3); border-radius: 8px; padding: 0.7rem 1rem; margin-bottom: 1rem; color: #7dd3fc;">
+        🚚 لديك {{ incoming_count }} تحويل وارد من فروع أخرى بانتظار تأكيد الاستلام.
+        <a href="{% url 'accounting:transfer_list' %}?incoming=1" style="color: #00e5ff; text-decoration: underline;">عرضها</a>
+    </div>
+    {% endif %}
 
     <div class="data-table-container">
         <table class="data-table">
@@ -44,8 +59,12 @@
                     <td>
                         {% if transfer.status == 'DRAFT' %}
                             <span class="badge-status badge-warning" style="background: rgba(255,193,7,0.2); color: #ffc107; padding: 4px 10px; border-radius: 6px;">مسودة</span>
+                        {% elif transfer.status == 'IN_TRANSIT' %}
+                            <span class="badge-status" style="background: rgba(0,229,255,0.15); color: #00e5ff; padding: 4px 10px; border-radius: 6px;">🚚 بالطريق</span>
+                        {% elif transfer.status == 'REJECTED' %}
+                            <span class="badge-status badge-danger" style="background: rgba(220,53,69,0.2); color: #dc3545; padding: 4px 10px; border-radius: 6px;">مرفوض</span>
                         {% elif transfer.status == 'POSTED' %}
-                            <span class="badge-status badge-success" style="background: rgba(40,167,69,0.2); color: #28a745; padding: 4px 10px; border-radius: 6px;">مرحل</span>
+                            <span class="badge-status badge-success" style="background: rgba(40,167,69,0.2); color: #28a745; padding: 4px 10px; border-radius: 6px;">{% if transfer.send_entry_id %}تم الاستلام{% else %}مرحل{% endif %}</span>
                         {% else %}
                             <span class="badge-status badge-danger" style="background: rgba(220,53,69,0.2); color: #dc3545; padding: 4px 10px; border-radius: 6px;">ملغي</span>
                         {% endif %}

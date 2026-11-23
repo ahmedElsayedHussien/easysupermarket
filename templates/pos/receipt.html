@@ -164,6 +164,13 @@
             font-size: 10px;
             padding: 8px 6px;
         }
+        .receipt-company-logo {
+            display: block;
+            margin: 0 auto 4px;
+            max-width: 70%;
+            max-height: 60px;
+            object-fit: contain;
+        }
         .thermal-header {
             text-align: center;
             margin-bottom: 8px;
@@ -472,6 +479,8 @@
                 margin: 0 !important;
                 width: 100% !important;
             }
+            .thermal-invoice.size-80mm { max-width: 74mm !important; }
+            .thermal-invoice.size-58mm { max-width: 54mm !important; }
             .corporate-invoice {
                 box-shadow: none !important;
                 border: none !important;
@@ -535,7 +544,11 @@
              ============================================================ -->
         <div class="thermal-invoice {% if paper_size == '58mm' %}size-58mm{% else %}size-80mm{% endif %}">
             <div class="thermal-header">
+                {% if company_logo_url %}
+                <img src="{{ company_logo_url }}" onerror="this.style.display='none'" alt="Logo" class="receipt-company-logo">
+                {% else %}
                 <img src="/static/img/logo.png" onerror="this.style.display='none'" alt="Logo">
+                {% endif %}
                 <h2>{{ store_name }}</h2>
                 {% if tax_id %}<p>الرقم الضريبي: <strong>{{ tax_id }}</strong></p>{% endif %}
                 {% if cr_number %}<p>السجل التجاري: {{ cr_number }}</p>{% endif %}
@@ -623,6 +636,18 @@
                     <td class="extra-bold" style="font-size:13px;">الصافي المطلوب:</td>
                     <td class="text-left extra-bold" style="font-size:14px; font-family:monospace;">{{ invoice.total_amount|floatformat:2 }} ج.م</td>
                 </tr>
+                {% if rounding_amount %}
+                <tr>
+                    <td>تقريب:</td>
+                    <td class="text-left bold" style="font-family:monospace;">{% if rounding_amount > 0 %}+{% endif %}{{ rounding_amount|floatformat:2 }} ج.م</td>
+                </tr>
+                {% if cash_after_rounding is not None %}
+                <tr>
+                    <td class="bold">المطلوب نقداً بعد التقريب:</td>
+                    <td class="text-left extra-bold" style="font-family:monospace;">{{ cash_after_rounding|floatformat:2 }} ج.م</td>
+                </tr>
+                {% endif %}
+                {% endif %}
             </table>
 
             {% if invoice.payment_type == 'SPLIT' %}
@@ -668,7 +693,7 @@
                 </div>
 
                 <div class="text-center" style="align-self:center;">
-                    <img src="/static/img/logo.png" onerror="this.style.display='none'" style="max-height:65px; object-fit:contain; margin-bottom:4px;" alt="Logo">
+                    <img src="{% if company_logo_url %}{{ company_logo_url }}{% else %}/static/img/logo.png{% endif %}" onerror="this.style.display='none'" style="max-height:65px; object-fit:contain; margin-bottom:4px;" alt="Logo">
                     <div style="font-size:11px; font-weight:700; color:#1F4E79;">فاتورة مبيعات ضريبية</div>
                 </div>
 
@@ -804,6 +829,18 @@
                             <td>الصافي النهائي المطلوب:</td>
                             <td class="text-left" style="font-family:monospace; font-size:15px; font-weight:900;">{{ invoice.total_amount|floatformat:2 }} ج.م</td>
                         </tr>
+                        {% if rounding_amount %}
+                        <tr>
+                            <td>تقريب:</td>
+                            <td class="text-left bold" style="font-family:monospace; font-size:12px;">{% if rounding_amount > 0 %}+{% endif %}{{ rounding_amount|floatformat:2 }} ج.م</td>
+                        </tr>
+                        {% if cash_after_rounding is not None %}
+                        <tr>
+                            <td>المطلوب نقداً بعد التقريب:</td>
+                            <td class="text-left bold" style="font-family:monospace; font-size:12px;">{{ cash_after_rounding|floatformat:2 }} ج.م</td>
+                        </tr>
+                        {% endif %}
+                        {% endif %}
                     </table>
                 </div>
             </div>
@@ -850,7 +887,9 @@
             const urlParams = new URLSearchParams(window.location.search);
             const shouldAutoPrint = urlParams.get('autoprint') !== '0';
 
-            if (shouldAutoPrint) {
+            // Print once per document load (guards against a second load/print trigger).
+            if (shouldAutoPrint && !window.__receiptPrinted) {
+                window.__receiptPrinted = true;
                 setTimeout(function() {
                     window.print();
                 }, 350);
