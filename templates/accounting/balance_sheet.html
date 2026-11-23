@@ -26,16 +26,11 @@
                     </thead>
                     <tbody>
                         {% for account in current_assets %}
-                        {% if account.own_balance != 0 %}
-                        <tr>
-                            <td class="en">{{ account.code }}</td>
-                            <td>{{ account.report_name }}</td>
-                            <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
-                        </tr>
-                        {% endif %}
+                        {% include 'accounting/_report_account_row.html' %}
                         {% empty %}
                         <tr><td colspan="3" class="text-white-50 text-center py-2">لا توجد حركات</td></tr>
                         {% endfor %}
+                        {% include 'accounting/_report_section_summary.html' with summary=current_assets_summary gross_label='إجمالي الأصول المتداولة' net_label='صافي الأصول المتداولة' %}
                     </tbody>
                 </table>
 
@@ -51,16 +46,11 @@
                     </thead>
                     <tbody>
                         {% for account in fixed_assets %}
-                        {% if account.own_balance != 0 %}
-                        <tr>
-                            <td class="en">{{ account.code }}</td>
-                            <td>{{ account.report_name }}</td>
-                            <td class="en {% if account.code == '1220' %}text-danger{% endif %}">{{ account.own_balance|floatformat:"2u" }}</td>
-                        </tr>
-                        {% endif %}
+                        {% include 'accounting/_report_account_row.html' %}
                         {% empty %}
                         <tr><td colspan="3" class="text-white-50 text-center py-2">لا توجد حركات أصول ثابتة</td></tr>
                         {% endfor %}
+                        {% include 'accounting/_report_section_summary.html' with summary=fixed_assets_summary gross_label='الأصول الثابتة بالتكلفة' deductions_label='يُخصم: مجمع الإهلاك' net_label='صافي القيمة الدفترية للأصول الثابتة' %}
                     </tbody>
                 </table>
 
@@ -70,14 +60,9 @@
                 <table class="data-table mb-4">
                     <tbody>
                         {% for account in other_assets %}
-                        {% if account.own_balance != 0 %}
-                        <tr>
-                            <td class="en">{{ account.code }}</td>
-                            <td>{{ account.report_name }}</td>
-                            <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
-                        </tr>
-                        {% endif %}
+                        {% include 'accounting/_report_account_row.html' %}
                         {% endfor %}
+                        {% include 'accounting/_report_section_summary.html' with summary=other_assets_summary %}
                     </tbody>
                 </table>
                 {% endif %}
@@ -103,14 +88,9 @@
                     </thead>
                     <tbody>
                         {% for account in liability_accounts %}
-                        {% if account.own_balance != 0 %}
-                        <tr>
-                            <td class="en">{{ account.code }}</td>
-                            <td>{{ account.report_name }}</td>
-                            <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
-                        </tr>
-                        {% endif %}
+                        {% include 'accounting/_report_account_row.html' %}
                         {% endfor %}
+                        {% include 'accounting/_report_section_summary.html' with summary=liabilities_summary %}
                     </tbody>
                 </table>
                 <div class="d-flex justify-between align-center p-2 mb-4">
@@ -129,14 +109,9 @@
                     </thead>
                     <tbody>
                         {% for account in equity_accounts %}
-                        {% if account.own_balance != 0 %}
-                        <tr>
-                            <td class="en">{{ account.code }}</td>
-                            <td>{{ account.report_name }}</td>
-                            <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
-                        </tr>
-                        {% endif %}
+                        {% include 'accounting/_report_account_row.html' %}
                         {% endfor %}
+                        {% include 'accounting/_report_section_summary.html' with summary=equity_summary %}
                         <tr>
                             <td class="en">-</td>
                             <td>صافي الدخل (الفترة الحالية)</td>

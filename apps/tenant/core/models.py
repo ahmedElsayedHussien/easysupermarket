@@ -2,6 +2,7 @@
 Core models - Branch.
 The Branch is the fundamental organizational unit within each tenant.
 """
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils.translation import gettext_lazy as _
@@ -54,7 +55,8 @@ class Employee(models.Model):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.user.username} - {self.get_role_display()}"
+        from apps.tenant.core.usernames import display_username
+        return f"{display_username(self.user)} - {self.get_role_display()}"
 
 
 class Branch(models.Model):
@@ -96,6 +98,12 @@ class SystemSetting(models.Model):
         help_text=_('عند التفعيل يظهر عمود آخر شراء وتكلفة الوحدة في شاشة نقطة البيع والسلة. أوقفه لإخفاء التكلفة عن الكاشير والعملاء.')
     )
     pos_price_margin_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0.0, verbose_name=_('هامش التعديل المسموح للسعر (%)'))
+    max_pos_discount_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=100,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        verbose_name=_('الحد الأقصى لنسبة الخصم في نقطة البيع (%)'),
+        help_text=_('أقصى نسبة خصم إجمالية مسموحة لكل صنف وللفاتورة لغير المديرين (0 - 100). المديرون مستثنون.'),
+    )
     apply_vat_by_default = models.BooleanField(default=True, verbose_name=_('تطبيق الضريبة الافتراضي'))
     large_amount_requires_customer = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text=_('0 تعني غير مفعل'), verbose_name=_('إلزام اختيار عميل للمبالغ الأكبر من'))
     

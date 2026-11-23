@@ -100,6 +100,12 @@ class Account(MPTTModel):
         verbose_name='إيراد معاكس (مرتجعات/خصومات)',
         help_text='خصصه لحسابات مرتجعات المبيعات والخصومات حتى تُخصم من صافي المبيعات'
     )
+    is_contra = models.BooleanField(
+        default=False,
+        verbose_name='حساب معاكس (Contra)',
+        help_text='حساب رصيده الطبيعي عكس نوعه ويُعرض في القوائم كمبلغ موجب مخصوم '
+                  '(مثل مجمع الإهلاك تحت الأصول، مردودات المشتريات من التكلفة، مردودات المبيعات من الإيرادات)'
+    )
     allow_direct_payment = models.BooleanField(
         default=True,
         verbose_name='يظهر في سندات الصرف المباشرة',
@@ -117,6 +123,20 @@ class Account(MPTTModel):
 
     def __str__(self):
         return f'{self.code} - {self.name}'
+
+    # Contra accounts of the default chart (accumulated depreciation, purchase returns,
+    # sales returns / discounts): flagged automatically when created.
+    DEFAULT_CONTRA_CODES = frozenset({'1220', '5110', '4120', '4130'})
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and self.code in self.DEFAULT_CONTRA_CODES:
+            self.is_contra = True
+        # A contra-revenue account is by definition a contra account (keeps both flags consistent).
+        if self.is_contra_revenue and not self.is_contra:
+            self.is_contra = True
+            if kwargs.get('update_fields') is not None:
+                kwargs['update_fields'] = list(set(kwargs['update_fields']) | {'is_contra'})
+        super().save(*args, **kwargs)
 
     @property
     def normal_balance(self):
@@ -209,6 +229,18 @@ class JournalEntry(models.Model):
     object_id = models.PositiveIntegerField(null=True, blank=True)
     source_document = GenericForeignKey('content_type', 'object_id')
 
+    # Audit trail: a posted entry is never deleted when its document is cancelled/edited;
+    # a mirror entry (debit <-> credit) is posted instead and points to the original here.
+    # The original stays POSTED (history visible) and the pair nets to zero in every report.
+    reversal_of = models.OneToOneField(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='reversed_by',
+        verbose_name='قيد عكسي لـ'
+    )
+
     class Meta:
         verbose_name = 'قيد يومية'
         verbose_name_plural = 'قيود اليومية'
@@ -226,6 +258,22 @@ class JournalEntry(models.Model):
 
     def __str__(self):
         return f'{self.reference} - {self.date} [{self.get_status_display()}]'
+
+    @property
+    def is_reversal(self):
+        return self.reversal_of_id is not None
+
+    @property
+    def reversing_entry(self):
+        """The entry that reversed this one, or None."""
+        try:
+            return self.reversed_by
+        except JournalEntry.DoesNotExist:
+            return None
+
+    @property
+    def is_reversed(self):
+        return self.reversing_entry is not None
 
     def get_total_debit(self):
         """Sum of all debit amounts across journal items."""
@@ -374,22 +422,23 @@ class Treasury(models.Model):
             return self.account
         from apps.tenant.services.journal_service import _get_system_account
         try:
-            parent_code = '1120' if 'بنك' in self.name else '1110'
-            parent_acc = _get_system_account(parent_code)
-            if parent_acc:
-                acc, _ = Account.objects.get_or_create(
-                    code=f"{parent_acc.code}-{self.id}",
-                    defaults={
-                        'name': self.name,
-                        'account_type': parent_acc.account_type,
-                        'parent': parent_acc,
-                        'allow_reconcile': True
-                    }
-                )
-                if self.account_id != acc.id:
-                    self.account = acc
-                    Treasury.objects.filter(id=self.id).update(account=acc)
-                return acc
+            with transaction.atomic():
+                parent_code = '1120' if 'بنك' in self.name else '1110'
+                parent_acc = _get_system_account(parent_code)
+                if parent_acc:
+                    acc, _ = Account.objects.get_or_create(
+                        code=f"{parent_acc.code}-{self.id}",
+                        defaults={
+                            'name': self.name,
+                            'account_type': parent_acc.account_type,
+                            'parent': parent_acc,
+                            'allow_reconcile': True
+                        }
+                    )
+                    if self.account_id != acc.id:
+                        self.account = acc
+                        Treasury.objects.filter(id=self.id).update(account=acc)
+                    return acc
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Error ensuring treasury account: {e}")
@@ -428,21 +477,22 @@ class BankAccount(models.Model):
             return self.account
         from apps.tenant.services.journal_service import _get_system_account
         try:
-            parent_acc = _get_system_account('1120')
-            if parent_acc:
-                acc, _ = Account.objects.get_or_create(
-                    code=f"{parent_acc.code}-{self.id}",
-                    defaults={
-                        'name': self.name,
-                        'account_type': parent_acc.account_type,
-                        'parent': parent_acc,
-                        'allow_reconcile': True
-                    }
-                )
-                if self.account_id != acc.id:
-                    self.account = acc
-                    BankAccount.objects.filter(id=self.id).update(account=acc)
-                return acc
+            with transaction.atomic():
+                parent_acc = _get_system_account('1120')
+                if parent_acc:
+                    acc, _ = Account.objects.get_or_create(
+                        code=f"{parent_acc.code}-{self.id}",
+                        defaults={
+                            'name': self.name,
+                            'account_type': parent_acc.account_type,
+                            'parent': parent_acc,
+                            'allow_reconcile': True
+                        }
+                    )
+                    if self.account_id != acc.id:
+                        self.account = acc
+                        BankAccount.objects.filter(id=self.id).update(account=acc)
+                    return acc
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Error ensuring bank account: {e}")
@@ -477,21 +527,22 @@ class EWallet(models.Model):
             return self.account
         from apps.tenant.services.journal_service import _get_system_account
         try:
-            parent_acc = _get_system_account('1160')
-            if parent_acc:
-                acc, _ = Account.objects.get_or_create(
-                    code=f"{parent_acc.code}-{self.id}",
-                    defaults={
-                        'name': self.name,
-                        'account_type': parent_acc.account_type,
-                        'parent': parent_acc,
-                        'allow_reconcile': True
-                    }
-                )
-                if self.account_id != acc.id:
-                    self.account = acc
-                    EWallet.objects.filter(id=self.id).update(account=acc)
-                return acc
+            with transaction.atomic():
+                parent_acc = _get_system_account('1160')
+                if parent_acc:
+                    acc, _ = Account.objects.get_or_create(
+                        code=f"{parent_acc.code}-{self.id}",
+                        defaults={
+                            'name': self.name,
+                            'account_type': parent_acc.account_type,
+                            'parent': parent_acc,
+                            'allow_reconcile': True
+                        }
+                    )
+                    if self.account_id != acc.id:
+                        self.account = acc
+                        EWallet.objects.filter(id=self.id).update(account=acc)
+                    return acc
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f"Error ensuring ewallet account: {e}")
@@ -744,14 +795,14 @@ class Expense(models.Model):
             if (self.amount or Decimal('0')) <= 0 or (self.total_amount or Decimal('0')) <= 0:
                 raise ValidationError("لا يمكن ترحيل مصروف بمبلغ صفر أو سالب.")
 
-            from apps.tenant.services.journal_service import _get_system_account
-            
-            # Clean up any orphaned journal entry from previous failed attempts
-            JournalEntry.objects.filter(reference=self.expense_number).delete()
-            
+            from apps.tenant.services.journal_service import _get_system_account, delete_orphan_entries, unique_reference
+
+            # Clean up any orphaned journal entry from previous failed attempts (never a reversal pair)
+            delete_orphan_entries(self.expense_number)
+
             entry = JournalEntry.objects.create(
                 date=self.date,
-                reference=self.expense_number,
+                reference=unique_reference(self.expense_number),
                 description=f"سداد مصروف: {self.description}",
                 status=JournalEntry.POSTED,
                 created_by=self.created_by
@@ -1099,12 +1150,13 @@ class Voucher(models.Model):
                     if not trans_acc or not trans_acc.ensure_account():
                         raise ValidationError("يجب تحديد حساب إنستاباي / التحويل البنكي لجزء التحويل.")
 
-                # Clean up any orphaned journal entry
-                JournalEntry.objects.filter(reference=self.voucher_number).delete()
+                # Clean up any orphaned journal entry (reversed entries of a previous posting are kept)
+                from apps.tenant.services.journal_service import delete_orphan_entries, unique_reference
+                delete_orphan_entries(self.voucher_number)
 
                 entry = JournalEntry.objects.create(
                     date=self.date,
-                    reference=self.voucher_number,
+                    reference=unique_reference(self.voucher_number),
                     description=f"{self.get_voucher_type_display()} (سداد مقسم) - {self.description or ''}",
                     status=JournalEntry.POSTED
                 )
@@ -1140,12 +1192,13 @@ class Voucher(models.Model):
                 if not self.payment_account:
                     raise ValidationError("يجب تحديد حساب الدفع (الخزينة/البنك/المحفظة) المرتبط بطريقة الدفع.")
                     
-                # Clean up any orphaned journal entry
-                JournalEntry.objects.filter(reference=self.voucher_number).delete()
-                
+                # Clean up any orphaned journal entry (reversed entries of a previous posting are kept)
+                from apps.tenant.services.journal_service import delete_orphan_entries, unique_reference
+                delete_orphan_entries(self.voucher_number)
+
                 entry = JournalEntry.objects.create(
                     date=self.date,
-                    reference=self.voucher_number,
+                    reference=unique_reference(self.voucher_number),
                     description=f"{self.get_voucher_type_display()} - {self.description or ''}",
                     status=JournalEntry.POSTED
                 )
@@ -1165,22 +1218,26 @@ class Voucher(models.Model):
                 self.journal_entry = entry
                 self.save()
 
-    def cancel_voucher(self):
+    def cancel_voucher(self, user=None):
         """
-        Cancels the voucher and removes its linked journal entry (same approach as
-        invoice_service.cancel_invoice). Runs atomically on a locked row, and is refused
-        when the voucher belongs to an already-closed cashier shift (the shift's cash
-        count was reconciled against it).
+        Cancels the voucher. Its posted journal entry is NOT deleted: a reversal entry
+        (debit <-> credit) is posted and linked to it, so the audit trail is kept and the
+        pair nets to zero. ``journal_entry`` is cleared (no active entry any more).
+        Runs atomically on a locked row, and is refused when the voucher belongs to an
+        already-closed cashier shift (the shift's cash count was reconciled against it).
         """
+        from apps.tenant.services.journal_service import reverse_entry_if_active
         with transaction.atomic():
-            locked = Voucher.objects.select_for_update().select_related('pos_session').get(pk=self.pk)
+            locked = Voucher.objects.select_for_update().select_related('pos_session', 'journal_entry').get(pk=self.pk)
             if locked.status == self.CANCELLED:
                 raise ValidationError("السند ملغي بالفعل.")
             if locked.status == self.POSTED:
                 _ensure_pos_session_open(locked.pos_session, 'إلغاء')
 
             if locked.journal_entry_id:
-                JournalEntry.objects.filter(pk=locked.journal_entry_id).delete()
+                reverse_entry_if_active(
+                    locked.journal_entry, reason=f'إلغاء السند {locked.voucher_number}', user=user
+                )
 
             self.journal_entry = None
             self.status = self.CANCELLED
@@ -1428,11 +1485,12 @@ class EServiceTransaction(models.Model):
             revenue_account = _get_system_account('4200') or _get_system_account('4100')
             expense_account = Cheque.get_bank_expense_account()  # 5305 - agent / machine / wallet fees
 
-            JournalEntry.objects.filter(reference=self.transaction_number).delete()
+            from apps.tenant.services.journal_service import delete_orphan_entries, unique_reference
+            delete_orphan_entries(self.transaction_number)
 
             entry = JournalEntry.objects.create(
                 date=self.date,
-                reference=self.transaction_number,
+                reference=unique_reference(self.transaction_number),
                 description=f'{self.get_transaction_type_display()} - {self.description}'
             )
 
@@ -1489,44 +1547,56 @@ class EServiceTransaction(models.Model):
             self.save()
 
     def _create_service_invoice(self):
-        """Creates a POSTED sales invoice for commission revenue."""
+        """
+        Creates a POSTED sales invoice documenting the commission revenue.
+
+        The revenue itself is already booked by this transaction's journal entry, so the
+        invoice is a supporting document only and the caller (post_transaction) treats it
+        as optional: when no partner/warehouse exists it is simply skipped. Any DB error is
+        confined to its own savepoint (so on PostgreSQL the caller's transaction stays
+        usable), logged with the traceback, and the transaction posting continues.
+        """
+        from apps.tenant.invoicing.models import Invoice
+        from apps.tenant.partners.models import Partner
+        import datetime as dt
+
+        cash_partner = Partner.objects.filter(name='عميل نقدي').first() or Partner.objects.first()
+        if not cash_partner:
+            logger.warning('Service invoice skipped for %s: no partner available.', self.transaction_number)
+            return None
+
+        branch = self.treasury.branch
+        warehouse = branch.warehouses.first()
+        if not warehouse:
+            logger.warning('Service invoice skipped for %s: branch %s has no warehouse.', self.transaction_number, branch)
+            return None
+
         try:
-            from apps.tenant.invoicing.models import Invoice
-            from apps.tenant.partners.models import Partner
-            import datetime as dt
+            with transaction.atomic():
+                year = dt.date.today().year
+                inv_number = _next_doc_number('invoice', Invoice, 'invoice_number', f'SVC-{year}-')
 
-            cash_partner = Partner.objects.filter(name='عميل نقدي').first() or Partner.objects.first()
-            if not cash_partner:
-                return
-
-            branch = self.treasury.branch
-            warehouse = branch.warehouses.first()
-            if not warehouse:
-                return
-
-            year = dt.date.today().year
-            inv_number = _next_doc_number('invoice', Invoice, 'invoice_number', f'SVC-{year}-')
-
-            invoice = Invoice.objects.create(
-                invoice_number=inv_number,
-                invoice_type=Invoice.SALE,
-                partner=cash_partner,
-                branch=branch,
-                warehouse=warehouse,
-                date=self.date,
-                payment_type=Invoice.CASH,
-                treasury=self.treasury,
-                subtotal=self.commission_revenue,
-                discount_amount=Decimal('0'),
-                total_amount=self.commission_revenue,
-                status=Invoice.POSTED,
-                notes=f'عمولة خدمة: {self.get_transaction_type_display()} - {self.transaction_number}'
-            )
-            self.invoice = invoice
-            self.save(update_fields=['invoice'])
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f'Error creating service invoice: {e}')
+                invoice = Invoice.objects.create(
+                    invoice_number=inv_number,
+                    invoice_type=Invoice.SALE,
+                    partner=cash_partner,
+                    branch=branch,
+                    warehouse=warehouse,
+                    date=self.date,
+                    payment_type=Invoice.CASH,
+                    treasury=self.treasury,
+                    subtotal=self.commission_revenue,
+                    discount_amount=Decimal('0'),
+                    total_amount=self.commission_revenue,
+                    status=Invoice.POSTED,
+                    notes=f'عمولة خدمة: {self.get_transaction_type_display()} - {self.transaction_number}'
+                )
+                self.invoice = invoice
+                self.save(update_fields=['invoice'])
+                return invoice
+        except Exception:
+            logger.exception('Error creating service invoice for e-service transaction %s', self.transaction_number)
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -1684,12 +1754,13 @@ class InternalTransfer(models.Model):
                     raise ValidationError(f"عفواً، رصيد {self.source_name} الحالي ({src_balance:,.2f} ج.م) غير كافٍ لإكمال تحويل بمبلغ {self.amount:,.2f} ج.م.")
 
 
-            # Delete any orphaned journal entry
-            JournalEntry.objects.filter(reference=self.transfer_number).delete()
+            # Delete any orphaned journal entry (never a reversal pair)
+            from apps.tenant.services.journal_service import delete_orphan_entries, unique_reference
+            delete_orphan_entries(self.transfer_number)
 
             entry = JournalEntry.objects.create(
                 date=self.date,
-                reference=self.transfer_number,
+                reference=unique_reference(self.transfer_number),
                 description=f"تحويل مالي ({self.source_name} ⬅️ {self.destination_name}) - {self.description or ''}",
                 status=JournalEntry.POSTED
             )
@@ -1705,20 +1776,26 @@ class InternalTransfer(models.Model):
             self.journal_entry = entry
             self.save()
 
-    def cancel_transfer(self):
-        """Cancels transfer and deletes its linked journal entry."""
+    def cancel_transfer(self, user=None):
+        """
+        Cancels the transfer. Its posted journal entry is kept and a reversal entry is
+        posted against it (audit trail); ``journal_entry`` is cleared.
+        """
         from django.db import transaction
         from django.core.exceptions import ValidationError
+        from apps.tenant.services.journal_service import reverse_entry_if_active
 
         with transaction.atomic():
-            locked = InternalTransfer.objects.select_for_update().select_related('pos_session').get(pk=self.pk)
+            locked = InternalTransfer.objects.select_for_update().select_related('pos_session', 'journal_entry').get(pk=self.pk)
             if locked.status == self.CANCELLED:
                 raise ValidationError("التحويل ملغي بالفعل.")
             if locked.status == self.POSTED:
                 _ensure_pos_session_open(locked.pos_session, 'إلغاء')
 
             if locked.journal_entry_id:
-                JournalEntry.objects.filter(pk=locked.journal_entry_id).delete()
+                reverse_entry_if_active(
+                    locked.journal_entry, reason=f'إلغاء التحويل {locked.transfer_number}', user=user
+                )
 
             self.journal_entry = None
             self.status = self.CANCELLED

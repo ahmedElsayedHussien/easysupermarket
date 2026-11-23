@@ -52,7 +52,7 @@
                 <p><strong>تاريخ العودة:</strong> {{ rental.end_date|date:"Y-m-d" }}</p>
                 <p><strong>عدد الأيام:</strong> {{ rental.days_rented }} يوم</p>
                 <p><strong>تاريخ الإنشاء:</strong> {{ rental.created_at|date:"Y-m-d H:i" }}</p>
-                <p><strong>بواسطة:</strong> {{ rental.created_by.username }}</p>
+                <p><strong>بواسطة:</strong> {{ rental.created_by|display_username }}</p>
             </div>
         </div>
     </div>

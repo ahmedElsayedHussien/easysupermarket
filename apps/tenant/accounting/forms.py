@@ -53,7 +53,7 @@ class BaseGlassForm(forms.ModelForm):
 class AccountForm(BaseGlassForm):
     class Meta:
         model = Account
-        fields = ['code', 'name', 'account_type', 'parent', 'allow_reconcile', 'is_cogs', 'is_contra_revenue', 'allow_direct_payment', 'description']
+        fields = ['code', 'name', 'account_type', 'parent', 'allow_reconcile', 'is_cogs', 'is_contra_revenue', 'is_contra', 'allow_direct_payment', 'description']
         widgets = {
             'description': forms.Textarea(attrs={'rows': 2}),
         }

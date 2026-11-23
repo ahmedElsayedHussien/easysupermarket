@@ -103,7 +103,7 @@
                     {{ request.user.first_name|first|upper }}{{ request.user.last_name|first|upper|default:"A" }}
                 </div>
                 <div class="user-info-text">
-                    <span class="user-name">{{ request.user.get_full_name|default:request.user.username }}</span>
+                    <span class="user-name">{{ request.user|display_name }}</span>
                     <span class="user-role">
                         {% if is_admin %}مدير النظام{% else %}كاشير{% endif %}
                     </span>
@@ -112,7 +112,7 @@
                 <!-- Dropdown Menu -->
                 <div id="userDropdown" style="display:none; position:absolute; top:calc(100% + 5px); right:0; background:var(--bg-card); border:1px solid var(--border-default); border-radius:8px; padding:0.5rem; min-width:180px; z-index:1000; box-shadow:0 8px 24px rgba(0,0,0,0.2);">
                     <div style="padding: 0.5rem; border-bottom: 1px solid var(--border-default); margin-bottom: 0.5rem;">
-                        <div style="font-size: 0.85rem; color: var(--text-primary); font-weight: bold;">{{ request.user.username }}</div>
+                        <div style="font-size: 0.85rem; color: var(--text-primary); font-weight: bold;">{{ request.user|display_username }}</div>
                         <div style="font-size: 0.7rem; color: var(--text-muted);">{{ request.user.email }}</div>
                     </div>
                     <form action="{% url 'logout' %}" method="post" style="margin:0;">

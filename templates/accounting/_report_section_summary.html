@@ -1,0 +1,18 @@
+{# Subtotal rows of a statement section that contains contra accounts: gross - deductions = net. #}
+{% if summary.has_deductions %}
+<tr style="border-top: 1px solid var(--color-border, rgba(255,255,255,0.15));">
+    <td></td>
+    <td>{{ gross_label|default:"الإجمالي" }}</td>
+    <td class="en">{{ summary.gross|floatformat:"2u" }}</td>
+</tr>
+<tr class="text-danger">
+    <td></td>
+    <td>{{ deductions_label|default:"يُخصم: إجمالي الحسابات المعاكسة" }}</td>
+    <td class="en">({{ summary.deductions|floatformat:"2u" }})</td>
+</tr>
+<tr class="text-bold">
+    <td></td>
+    <td>{{ net_label|default:"الصافي" }}</td>
+    <td class="en">{{ summary.net|floatformat:"2u" }}</td>
+</tr>
+{% endif %}

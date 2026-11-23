@@ -1,0 +1,7 @@
+# Developer / release-build tools — NOT needed to run the server.
+# Install: pip install -r requirements.txt -r requirements-dev.txt
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6
+pyarmor==9.2.7
+git-filter-repo
+# E-invoice signer (local_signer) build deps are in local_signer/requirements.txt

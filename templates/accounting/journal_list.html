@@ -66,6 +66,12 @@
                         {% else %}
                         <span class="badge-status badge-warning">مسودة</span>
                         {% endif %}
+                        {% if entry.reversal_of_id %}
+                        <br><span class="badge-status badge-warning" title="قيد عكسي لـ {{ entry.reversal_of.reference }}">قيد عكسي لـ <span class="en">{{ entry.reversal_of.reference }}</span></span>
+                        {% endif %}
+                        {% with rev=entry.reversing_entry %}{% if rev %}
+                        <br><span class="badge-status badge-danger" title="تم عكسه بالقيد {{ rev.reference }}">تم عكسه بالقيد <span class="en">{{ rev.reference }}</span></span>
+                        {% endif %}{% endwith %}
                     </td>
                     <td style="text-align: center;">
                         <a href="{% url 'accounting:journal_detail' entry.id %}" class="btn-action" title="عرض التفاصيل">

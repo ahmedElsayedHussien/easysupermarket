@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تم إيقاف تسجيل الدخول مؤقتاً - مسار Masar ERP</title>
+    {% load static %}
+    <link rel="icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
+    <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
+    <style>
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 1rem;
+            box-sizing: border-box;
+            font-family: 'Inter', sans-serif;
+        }
+        .lockout-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-default);
+            border-radius: var(--radius-lg);
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 440px;
+            text-align: center;
+        }
+        .lockout-card h1 {
+            color: var(--neon-red, #ef4444);
+            font-size: 1.4rem;
+            margin: 0 0 1rem;
+        }
+        .lockout-card p {
+            color: var(--text-secondary);
+            line-height: 1.8;
+            margin: 0 0 1rem;
+        }
+        .btn-back {
+            display: inline-block;
+            margin-top: 0.5rem;
+            padding: 0.7rem 1.5rem;
+            background: var(--neon-cyan);
+            color: var(--bg-primary);
+            border-radius: var(--radius-md);
+            font-weight: bold;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="lockout-card">
+        <img src="{% static 'img/logo.png' %}" alt="مسار" style="height:80px; margin-bottom:1rem; object-fit:contain;">
+        <h1>تم إيقاف تسجيل الدخول مؤقتاً</h1>
+        <p>
+            تم تجاوز الحد المسموح به من محاولات تسجيل الدخول الخاطئة
+            {% if failure_limit %}({{ failure_limit }} محاولات){% endif %}
+            لهذا الحساب من هذا الجهاز.
+        </p>
+        <p>
+            {% if cooloff_timedelta %}
+            يرجى المحاولة مرة أخرى بعد {% widthratio cooloff_timedelta.seconds 60 1 %} دقيقة.
+            {% else %}
+            يرجى التواصل مع مدير النظام لإعادة تفعيل الدخول.
+            {% endif %}
+        </p>
+        <p style="font-size:0.85rem;">إذا نسيت كلمة المرور، تواصل مع مدير النظام لإعادة تعيينها.</p>
+        {% url 'login' as login_url %}
+        <a class="btn-back" href="{{ login_url|default:'/admin/login/' }}">العودة لصفحة الدخول</a>
+    </div>
+</body>
+</html>

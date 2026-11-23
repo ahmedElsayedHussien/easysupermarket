@@ -92,6 +92,38 @@ def is_tenant_admin(user):
     return emp.role == Role.ADMIN
 
 
+BRANCH_UNASSIGNED_MESSAGE = 'حسابك غير مرتبط بفرع — راجع مدير النظام'
+
+
+def is_branch_unassigned(request):
+    """
+    True for a non-admin employee whose account is not linked to any (active)
+    branch. Such users must see NO branch-scoped data at all (previously they
+    were treated as "central administration" and saw every branch).
+
+    Not applied when the Employee table does not exist yet (fresh SQLite DB
+    being bootstrapped) or for anonymous users.
+    """
+    cached = getattr(request, '_branch_unassigned_cache', None)
+    if cached is not None:
+        return cached
+    user = getattr(request, 'user', None)
+    result = False
+    if (user is not None and getattr(user, 'is_authenticated', False)
+            and not is_tenant_admin(user) and employee_table_exists()):
+        emp = get_employee(user)
+        if emp is None or not emp.branch_id:
+            result = True
+        else:
+            from apps.tenant.core.models import Branch
+            result = not Branch.objects.filter(id=emp.branch_id, is_active=True).exists()
+    try:
+        request._branch_unassigned_cache = result
+    except Exception:
+        pass
+    return result
+
+
 def get_branch_scope(request):
     """
     The Branch that data must be restricted to for this request, or None for
@@ -100,8 +132,11 @@ def get_branch_scope(request):
     - Admins: the branch selected in the branch switcher (request.branch);
       None means "all branches".
     - Non-admins: always their own employee branch, regardless of any GET /
-      session override. Employees without a branch (central administration)
-      are not branch-restricted.
+      session override.
+    - Non-admins WITHOUT a branch also get None here (backward compatible
+      return type), but they are NOT unrestricted: always check
+      ``is_branch_unassigned(request)`` / ``request.branch_restricted`` or,
+      better, use ``filter_by_branch()`` which returns an empty queryset.
     """
     user = getattr(request, 'user', None)
     if is_tenant_admin(user):
@@ -113,16 +148,40 @@ def get_branch_scope(request):
 
 
 def is_branch_restricted(request):
-    """True if a non-admin is pinned to a branch."""
+    """
+    True if the user may NOT see company-wide data: any non-admin employee,
+    whether pinned to a branch or not linked to a branch at all.
+    """
     user = getattr(request, 'user', None)
     if is_tenant_admin(user):
         return False
     emp = get_employee(user)
-    return bool(emp is not None and emp.branch_id)
+    if emp is not None and emp.branch_id:
+        return True
+    return is_branch_unassigned(request)
+
+
+def get_allowed_branch_ids(request):
+    """
+    List of branch ids the user may see, or None for "all branches"
+    (admins). Non-admins without a branch get ``[]``.
+    """
+    user = getattr(request, 'user', None)
+    if is_tenant_admin(user):
+        return None
+    if is_branch_unassigned(request):
+        return []
+    return list(allowed_branches(request).values_list('id', flat=True))
 
 
 def filter_by_branch(queryset, request, field='branch'):
-    """Filter ``queryset`` by ``field`` (a lookup path to a Branch FK)."""
+    """
+    Filter ``queryset`` by ``field`` (a lookup path to a Branch FK).
+    Single source of truth for branch scoping: non-admins without a branch
+    get an empty queryset.
+    """
+    if is_branch_unassigned(request):
+        return queryset.none()
     branch = get_branch_scope(request)
     if branch is None:
         return queryset
@@ -140,7 +199,8 @@ def allowed_branches(request):
     emp = get_employee(user)
     if emp is not None and emp.branch_id:
         return Branch.objects.filter(id=emp.branch_id, is_active=True)
-    # Central administration employees (no branch): not branch-restricted.
-    if emp is not None:
+    if not employee_table_exists():
+        # Fresh DB being bootstrapped: no employees yet.
         return Branch.objects.filter(is_active=True)
+    # Non-admin without a branch: no branch access at all.
     return Branch.objects.none()

@@ -30,7 +30,7 @@
             <select name="user" class="form-select">
                 <option value="">-- جميع المستخدمين --</option>
                 {% for u in users %}
-                <option value="{{ u.id }}" {% if selected_user_id == u.id|stringformat:"s" %}selected{% endif %}>{{ u.get_full_name|default:u.username }}</option>
+                <option value="{{ u.id }}" {% if selected_user_id == u.id|stringformat:"s" %}selected{% endif %}>{{ u.get_full_name|default:u.username|display_username }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -115,7 +115,7 @@
                 <tr>
                     <td class="fw-bold text-orange" style="color:#ff7300;">#{{ item.session.id }}</td>
                     <td class="text-light">{{ item.session.start_time|date:"Y-m-d H:i" }}</td>
-                    <td class="fw-bold text-light">{{ item.session.user.get_full_name|default:item.session.user.username }}</td>
+                    <td class="fw-bold text-light">{{ item.session.user.get_full_name|default:item.session.user.username|display_username }}</td>
                     <td class="text-muted">{{ item.session.treasury.name }}</td>
                     <td class="fw-bold text-light">
                         {{ item.net_sales_amount|floatformat:2 }}

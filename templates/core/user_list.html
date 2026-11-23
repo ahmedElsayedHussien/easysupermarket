@@ -28,7 +28,7 @@
                 {% for user_obj in users %}
                 <tr>
                     <td>
-                        <div style="font-weight:600;">{{ user_obj.username }}</div>
+                        <div style="font-weight:600;">{{ user_obj.username|display_username }}</div>
                         <div style="font-size:0.75rem;color:var(--text-muted);">{{ user_obj.email|default:"-" }}</div>
                     </td>
                     <td>{{ user_obj.get_full_name|default:"-" }}</td>

@@ -1,5 +1,6 @@
 from django.db import connection
 from apps.tenant.core.models import Branch, SystemSetting
+from apps.tenant.core.access import BRANCH_UNASSIGNED_MESSAGE
 
 def global_context(request):
     if hasattr(request, 'tenant') and request.tenant.schema_name == 'public':
@@ -31,4 +32,7 @@ def global_context(request):
         'system_setting': system_setting,
         'is_admin': is_admin,
         'db_engine_name': db_engine_name,
+        # Non-admin account not linked to a branch: sees no branch data.
+        'branch_unassigned': getattr(request, 'branch_unassigned', False),
+        'branch_unassigned_message': BRANCH_UNASSIGNED_MESSAGE,
     }

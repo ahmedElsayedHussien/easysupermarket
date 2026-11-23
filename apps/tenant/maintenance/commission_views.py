@@ -10,6 +10,7 @@ import datetime
 from .commission_models import CommissionRule, CommissionRecord
 from .commission_service import calculate_commissions
 from apps.tenant.inventory.models import Category
+from apps.tenant.core.access import get_branch_scope, is_branch_unassigned
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +88,11 @@ def commission_report(request):
     except (ValueError, TypeError):
         target_date = timezone.now().date()
 
-    branch = getattr(request, 'branch', None)
+    branch = get_branch_scope(request)
     report, start_date, end_date = calculate_commissions(period, target_date, branch=branch)
+    if is_branch_unassigned(request):
+        # Non-admin without a branch: no branch-scoped data at all.
+        report = []
 
     context = {
         'report': report,

@@ -50,7 +50,7 @@
                     {% endfor %}
                 </select>
             </div>
-            <span class="pos-cashier-badge">👤 {{ request.user.get_full_name|default:request.user.username }}</span>
+            <span class="pos-cashier-badge">👤 {{ request.user|display_name }}</span>
             <a href="{% url 'invoicing:pos_close_shift' %}" class="pos-close-shift-btn">🔒 {% trans 'إغلاق الوردية' %}</a>
             <span id="posDateTime"></span>
             <span class="connected-dot">CONNECTED</span>
@@ -581,6 +581,8 @@
         POS.priceMarginPercent = {% localize off %}{{ settings.pos_price_margin_percent|default:0 }}{% endlocalize %};
         POS.allowNegativeStock = {% if settings.allow_negative_stock %}true{% else %}false{% endif %};
         POS.showCost = {% if settings.show_pos_cost %}true{% else %}false{% endif %};
+        // Discount cap for non-admins (admins are exempt); enforced again server-side.
+        POS.maxDiscountPercent = {% if is_admin or not settings %}100{% else %}{% localize off %}{{ settings.max_pos_discount_percentage }}{% endlocalize %}{% endif %};
         {% if last_sale_info %}
         POS.lastSaleCustomerId = "{{ last_sale_info.customer_id }}";
         POS.lastSaleCustomerName = "{{ last_sale_info.customer_name|escapejs }}";

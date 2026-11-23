@@ -556,7 +556,7 @@
                 </tr>
                 <tr>
                     <td>الكاشير:</td>
-                    <td class="text-left">{{ invoice.cashier.username|default:"admin" }}</td>
+                    <td class="text-left">{{ invoice.cashier|display_username|default:"admin" }}</td>
                 </tr>
                 <tr>
                     <td>العميل:</td>
@@ -693,7 +693,7 @@
                         </tr>
                         <tr>
                             <td class="meta-label">الكاشير:</td>
-                            <td class="meta-val" style="font-family:inherit;">{{ invoice.cashier.username|default:"admin" }}</td>
+                            <td class="meta-val" style="font-family:inherit;">{{ invoice.cashier|display_username|default:"admin" }}</td>
                         </tr>
                     </table>
                 </div>
@@ -816,7 +816,7 @@
                 </div>
                 <div>
                     <div style="font-weight:700; color:#1F4E79;">المعتمد / مسؤول المبيعات</div>
-                    <div class="signature-line">اسم البائع: {{ invoice.cashier.username|default:"المسؤول" }}  الختم والتوقيع: ............................</div>
+                    <div class="signature-line">اسم البائع: {{ invoice.cashier|display_username|default:"المسؤول" }}  الختم والتوقيع: ............................</div>
                 </div>
             </div>
 

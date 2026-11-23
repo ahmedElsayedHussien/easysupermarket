@@ -504,7 +504,7 @@
                 <span>تقرير مفصل للوردية رقم <span style="color: var(--neon-cyan, #00e5ff);">#{{ details.session.id }}</span></span>
             </h1>
             <p style="color: var(--text-muted); font-size: 0.88rem; margin: 0.35rem 0 0 0;">
-                الكاشير: <strong style="color: #fff;">{{ details.session.user.get_full_name|default:details.session.user.username }}</strong>
+                الكاشير: <strong style="color: #fff;">{{ details.session.user.get_full_name|default:details.session.user.username|display_username }}</strong>
                 &nbsp;|&nbsp; الخزينة: <strong style="color: #fbbf24;">{{ details.session.treasury.name }}</strong>
                 &nbsp;|&nbsp; الفرع: <strong style="color: #38bdf8;">{{ details.session.branch.name }}</strong>
             </p>
@@ -574,7 +574,7 @@
             <div class="session-meta-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; background: rgba(0,0,0,0.25); padding: 1rem 1.25rem; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); font-size: 0.9rem;">
                 <div>
                     <span style="color: #94a3b8; display: block; font-size: 0.78rem;">الكاشير المسؤول:</span>
-                    <strong style="color: #fff;"><i class="fas fa-user-circle me-1 text-neon-cyan"></i> {{ details.session.user.get_full_name|default:details.session.user.username }}</strong>
+                    <strong style="color: #fff;"><i class="fas fa-user-circle me-1 text-neon-cyan"></i> {{ details.session.user.get_full_name|default:details.session.user.username|display_username }}</strong>
                 </div>
                 <div>
                     <span style="color: #94a3b8; display: block; font-size: 0.78rem;">الخزينة المعتمدة:</span>
@@ -999,7 +999,7 @@
                 <div style="font-size: 13px; font-weight: bold; margin: 2px 0;">وردية رقم #{{ details.session.id }}</div>
                 <div style="font-size: 10px; margin-top: 4px;">الفرع: {{ details.session.branch.name }}</div>
                 <div style="font-size: 10px;">الخزينة: {{ details.session.treasury.name }}</div>
-                <div style="font-size: 10px;">الكاشير: {{ details.session.user.get_full_name|default:details.session.user.username }}</div>
+                <div style="font-size: 10px;">الكاشير: {{ details.session.user.get_full_name|default:details.session.user.username|display_username }}</div>
                 <div style="font-size: 10px;">الفتح: {{ details.session.start_time|date:"Y-m-d H:i" }}</div>
                 <div style="font-size: 10px;">الإغلاق: {{ details.session.end_time|date:"Y-m-d H:i"|default:"مفتوحة حالياً" }}</div>
             </div>

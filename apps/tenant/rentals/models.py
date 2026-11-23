@@ -79,25 +79,20 @@ class Equipment(models.Model):
             return
 
         with transaction.atomic():
-            # 1. Get or Create Asset Account for Rental Equipment
-            try:
-                asset_parent = _get_system_account('1110') # Assuming 1110 is Fixed Assets
-            except Exception:
-                asset_parent = Account.objects.filter(account_type=Account.ASSET).first()
-                
-            acc_code = f"{asset_parent.code if asset_parent else '1110'}-EQ"
-            asset_account = Account.objects.filter(code=acc_code).first()
-            if not asset_account and asset_parent:
-                asset_account = Account.objects.create(
-                    code=acc_code,
-                    name='أصول ثابتة - معدات تأجير',
-                    account_type=Account.ASSET,
-                    parent=asset_parent,
-                    is_active=True
-                )
-            elif not asset_account:
-                # Fallback
-                asset_account = Account.objects.filter(account_type=Account.ASSET).first()
+            # 1. Rental equipment is a FIXED asset → 1215 under 1200 (أصول ثابتة).
+            #    Older versions created '1110-EQ' under 1110 (cash) by mistake: if it
+            #    exists, keep its balance but move it under fixed assets.
+            fixed_assets_parent = _get_or_create_account('1200', 'أصول ثابتة', Account.ASSET, '1000')
+            asset_account = Account.objects.filter(code='1215').first()
+            if not asset_account:
+                legacy = Account.objects.filter(code='1110-EQ').first()
+                if legacy:
+                    if legacy.parent_id != fixed_assets_parent.id:
+                        legacy.parent = fixed_assets_parent
+                        legacy.save()
+                    asset_account = legacy
+                else:
+                    asset_account = _get_or_create_account('1215', 'معدات التأجير', Account.ASSET, '1200')
 
             # 2. Get Opening Balance Equity Account
             # 3999 = Opening balances & capital adjustments (standard chart)

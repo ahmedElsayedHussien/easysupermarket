@@ -223,7 +223,7 @@
                             <span class="text-white-50">-</span>
                             {% endif %}
                         </td>
-                        <td class="text-white-50 small">{{ log.created_by.username|default:"النظام" }}</td>
+                        <td class="text-white-50 small">{{ log.created_by|display_username|default:"النظام" }}</td>
                     </tr>
                     {% empty %}
                     <tr>

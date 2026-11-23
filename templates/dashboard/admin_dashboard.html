@@ -157,7 +157,7 @@
                         <tr>
                             <td>
                                 <div style="font-weight:600;color:var(--text-primary);font-size:0.78rem;">{{ user.get_full_name }}</div>
-                                <div style="font-size:0.65rem;color:var(--text-muted);">{{ user.username }}</div>
+                                <div style="font-size:0.65rem;color:var(--text-muted);">{{ user|display_username }}</div>
                             </td>
                             <td>{{ user.branch.name|default:"-" }}</td>
                             <td>{% if user.is_superuser or user.employee_profile.role == 'ADMIN' %}مدير{% else %}كاشير{% endif %}</td>

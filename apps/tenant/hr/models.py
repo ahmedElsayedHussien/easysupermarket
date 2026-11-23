@@ -2,6 +2,7 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from apps.tenant.core.models import Employee
+from apps.tenant.core.usernames import display_username
 
 class Attendance(models.Model):
     STATUS_CHOICES = (
@@ -27,7 +28,7 @@ class Attendance(models.Model):
         unique_together = ('employee', 'date')
 
     def __str__(self):
-        return f"حضور {self.employee.user.username} - {self.date}"
+        return f"حضور {display_username(self.employee.user)} - {self.date}"
 
 class Payroll(models.Model):
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='payrolls', verbose_name=_('الموظف'))
@@ -52,4 +53,4 @@ class Payroll(models.Model):
         unique_together = ('employee', 'month', 'year')
 
     def __str__(self):
-        return f"راتب {self.employee.user.username} - {self.month}/{self.year}"
+        return f"راتب {display_username(self.employee.user)} - {self.month}/{self.year}"

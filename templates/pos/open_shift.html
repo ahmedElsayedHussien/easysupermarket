@@ -19,7 +19,7 @@
                 <label class="form-label" style="color: var(--text-secondary); font-size: 0.9rem;">الكاشير</label>
                 <div class="p-3 rounded" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border-default); color: var(--text-primary); font-weight: 500;">
                     <i class="fas fa-user-circle me-2" style="color: var(--neon-orange);"></i>
-                    {{ request.user.get_full_name|default:request.user.username }}
+                    {{ request.user|display_name }}
                 </div>
             </div>
 

@@ -1,0 +1,16 @@
+{# One account row of a financial statement. Contra accounts (is_contra / is_contra_revenue) are shown as a positive amount presented as a deduction. #}
+{% if account.own_balance != 0 %}
+{% if account.is_contra_account %}
+<tr class="text-danger">
+    <td class="en">{{ account.code }}</td>
+    <td>يُخصم: ({{ account.report_name }})</td>
+    <td class="en">({{ account.contra_amount|floatformat:"2u" }})</td>
+</tr>
+{% else %}
+<tr>
+    <td class="en">{{ account.code }}</td>
+    <td>{{ account.report_name }}</td>
+    <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
+</tr>
+{% endif %}
+{% endif %}

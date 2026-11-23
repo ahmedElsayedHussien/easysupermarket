@@ -162,7 +162,7 @@ def _get_system_account(code: str):
         fix_parent = Account.objects.filter(code='1200').first() or Account.objects.filter(code='1000').first()
         return Account.objects.create(
             code='1220', name='مجمع الإهلاك',
-            account_type=Account.ASSET, parent=fix_parent, is_active=True
+            account_type=Account.ASSET, parent=fix_parent, is_active=True, is_contra=True
         )
     elif code == '5220':
         exp_parent = Account.objects.filter(code='5200').first() or Account.objects.filter(code='5000').first()
@@ -231,6 +231,253 @@ def _next_reference(prefix: str) -> str:
     return f'{full_prefix}{num:05d}'
 
 
+def unique_reference(base: str) -> str:
+    """base, base-2, base-3 ... - the first reference not used by any journal entry.
+    Used when a document is re-posted after its previous entry was reversed (the reversed
+    original keeps the document number as its reference)."""
+    from apps.tenant.accounting.models import JournalEntry
+    ref = base
+    n = 2
+    while JournalEntry.objects.filter(reference=ref).exists():
+        ref = f'{base}-{n}'
+        n += 1
+    return ref
+
+
+def delete_orphan_entries(reference: str) -> int:
+    """
+    Deletes leftover entries carrying ``reference`` that are NOT part of a reversal pair
+    (e.g. an empty DRAFT header from an interrupted legacy flow). Reversed originals and
+    their reversal entries are audit trail and are never deleted.
+    """
+    from apps.tenant.accounting.models import JournalEntry
+    qs = JournalEntry.objects.filter(
+        reference=reference, reversal_of__isnull=True, reversed_by__isnull=True
+    )
+    count = 0
+    for entry in qs:
+        entry.delete()
+        count += 1
+    return count
+
+
+@transaction.atomic
+def reverse_journal_entry(entry, reason: str = '', user=None, date=None) -> 'JournalEntry':
+    """
+    Reverses a POSTED journal entry for the audit trail instead of deleting it:
+    posts a new entry with every line's debit/credit swapped (same accounts and line
+    descriptions), linked to the original through ``reversal_of`` and to the same source
+    document (content_type/object_id). The original stays POSTED, so both entries remain
+    visible in the ledger and net to zero in every balance/report.
+
+    Refuses to reverse an entry twice, to reverse a reversal entry, or a non-posted entry.
+    Returns the reversal entry.
+    """
+    from django.core.exceptions import ValidationError
+    from apps.tenant.accounting.models import JournalEntry, JournalItem
+
+    original = JournalEntry.objects.select_for_update().get(pk=entry.pk)
+    if original.status != JournalEntry.POSTED:
+        raise ValidationError(f'لا يمكن عكس القيد {original.reference} لأنه غير مرحّل.')
+    if original.reversal_of_id:
+        raise ValidationError(f'القيد {original.reference} قيد عكسي بالفعل ولا يمكن عكسه.')
+    if JournalEntry.objects.filter(reversal_of=original).exists():
+        raise ValidationError(f'القيد {original.reference} تم عكسه من قبل.')
+
+    items = list(original.items.all())
+    if not items:
+        raise ValidationError(f'القيد {original.reference} لا يحتوي على بنود لعكسها.')
+    description = f'قيد عكسي للقيد {original.reference}'
+    if reason:
+        description += f' - {reason}'
+    reversal = JournalEntry.objects.create(
+        date=date or timezone.localdate(),
+        reference=_next_reference('REV'),
+        description=description,
+        status=JournalEntry.DRAFT,
+        created_by=user if getattr(user, 'pk', None) else original.created_by,
+        content_type_id=original.content_type_id,
+        object_id=original.object_id,
+        reversal_of=original,
+    )
+    JournalItem.objects.bulk_create([
+        JournalItem(
+            entry=reversal,
+            account_id=item.account_id,
+            debit=item.credit,
+            credit=item.debit,
+            description=(f'عكس: {item.description}' if item.description else 'عكس قيد')[:500],
+        )
+        for item in items
+    ])
+    reversal.post()
+    logger.info('Journal entry %s reversed by %s (%s)', original.reference, reversal.reference, reason)
+    return reversal
+
+
+def reverse_entry_if_active(entry, reason: str = '', user=None, date=None):
+    """
+    Cancels the ledger effect of ``entry`` (if any):
+      - POSTED, not yet reversed and not itself a reversal -> reverse_journal_entry()
+      - DRAFT (never affected the ledger)                    -> deleted
+      - already reversed / a reversal entry                  -> left untouched
+    Returns the reversal entry or None. Must run inside the caller's atomic block.
+    """
+    from apps.tenant.accounting.models import JournalEntry
+    if entry is None:
+        return None
+    entry = JournalEntry.objects.select_for_update().filter(pk=entry.pk).first()
+    if entry is None:
+        return None
+    if entry.reversal_of_id or JournalEntry.objects.filter(reversal_of=entry).exists():
+        return None
+    if entry.status != JournalEntry.POSTED:
+        entry.delete()
+        return None
+    return reverse_journal_entry(entry, reason=reason, user=user, date=date)
+
+
+def reverse_document_entries(document, reason: str = '', user=None, date=None, extra_entry_ids=()):
+    """
+    Reverses every active journal entry linked to ``document`` through the generic FK
+    (content_type/object_id) plus any ``extra_entry_ids`` (e.g. document.journal_entry_id).
+    Returns the list of reversal entries created.
+    """
+    from django.contrib.contenttypes.models import ContentType
+    from django.db.models import Q
+    from apps.tenant.accounting.models import JournalEntry
+
+    ct = ContentType.objects.get_for_model(document)
+    q = Q(content_type=ct, object_id=document.pk)
+    ids = [i for i in extra_entry_ids if i]
+    if ids:
+        q |= Q(pk__in=ids)
+    reversals = []
+    for entry in JournalEntry.objects.filter(q).order_by('pk'):
+        rev = reverse_entry_if_active(entry, reason=reason, user=user, date=date)
+        if rev is not None:
+            reversals.append(rev)
+    return reversals
+
+
+# ---------------------------------------------------------------------------
+# Treasury / bank / e-wallet sub-account resolution
+# ---------------------------------------------------------------------------
+
+def _linked_account(holder):
+    """Ledger sub-account of a Treasury / BankAccount / EWallet (auto-created if missing)."""
+    if holder is None:
+        return None
+    ensure = getattr(holder, 'ensure_account', None)
+    acc = ensure() if callable(ensure) else None
+    return acc or getattr(holder, 'account', None)
+
+
+def _money_account(candidates, parent_code: str, context: str = ''):
+    """
+    First specific ledger account found among ``candidates`` (Treasury/BankAccount/EWallet
+    instances or None, in preference order). Falls back to the parent account
+    ``parent_code`` (1110 / 1120 / 1160) only when nothing is set, logging a warning,
+    because postings on the parent cannot be attributed to a specific drawer/bank.
+    """
+    for holder in candidates:
+        acc = _linked_account(holder)
+        if acc is not None:
+            return acc
+    logger.warning(
+        'No specific treasury/bank/e-wallet for %s; posting on parent account %s.',
+        context or 'journal entry', parent_code,
+    )
+    return _get_system_account(parent_code)
+
+
+def _single(qs):
+    """The only row of qs, or None when there are zero or several rows."""
+    rows = list(qs[:2])
+    return rows[0] if len(rows) == 1 else None
+
+
+def _branch_treasury(branch):
+    """The branch's treasury when the branch has exactly one (unambiguous)."""
+    if branch is None:
+        return None
+    from apps.tenant.accounting.models import Treasury
+    return _single(Treasury.objects.filter(branch=branch).order_by('pk'))
+
+
+def _invoice_cash_account(invoice):
+    pos_session = invoice.pos_session if getattr(invoice, 'pos_session_id', None) else None
+    return _money_account(
+        [
+            invoice.treasury if getattr(invoice, 'treasury_id', None) else None,
+            pos_session.treasury if (pos_session is not None and pos_session.treasury_id) else None,
+            _branch_treasury(invoice.branch if getattr(invoice, 'branch_id', None) else None),
+        ],
+        '1110', f'invoice {invoice.invoice_number} (cash)',
+    )
+
+
+def _invoice_card_account(invoice):
+    return _money_account(
+        [invoice.bank_account if getattr(invoice, 'bank_account_id', None) else None],
+        '1120', f'invoice {invoice.invoice_number} (card)',
+    )
+
+
+def _invoice_transfer_account(invoice):
+    return _money_account(
+        [
+            invoice.insta_bank_account if getattr(invoice, 'insta_bank_account_id', None) else None,
+            invoice.bank_account if getattr(invoice, 'bank_account_id', None) else None,
+        ],
+        '1120', f'invoice {invoice.invoice_number} (bank transfer)',
+    )
+
+
+def _invoice_ewallet_account(invoice):
+    return _money_account(
+        [invoice.ewallet if getattr(invoice, 'ewallet_id', None) else None],
+        '1160', f'invoice {invoice.invoice_number} (e-wallet)',
+    )
+
+
+def _payment_money_account(payment):
+    """
+    Specific treasury / bank sub-account for a partners.Payment.
+    Payment has no treasury/bank field today, so the account is resolved from (in order):
+    an explicit treasury / bank_account attribute (if the model gains one), the branch's
+    single treasury (CASH) / the single bank account or the system default (CARD/BANK).
+    Falls back to the parent 1110 / 1120 with a warning when ambiguous.
+    """
+    from apps.tenant.accounting.models import BankAccount
+    try:
+        from apps.tenant.core.models import SystemSetting
+        settings_obj = SystemSetting.get_settings()
+    except Exception:  # settings table not available
+        settings_obj = None
+    ctx = f'payment {payment.reference}'
+    if payment.method == 'CASH':
+        default_tr = getattr(settings_obj, 'default_pos_treasury', None) if settings_obj else None
+        if default_tr is not None and getattr(payment, 'branch_id', None) and default_tr.branch_id != payment.branch_id:
+            default_tr = None
+        return _money_account(
+            [
+                getattr(payment, 'treasury', None),
+                _branch_treasury(payment.branch if getattr(payment, 'branch_id', None) else None),
+                default_tr,
+            ],
+            '1110', ctx,
+        )
+    return _money_account(
+        [
+            getattr(payment, 'bank_account', None),
+            getattr(settings_obj, 'default_pos_bank_account', None) if settings_obj else None,
+            _single(BankAccount.objects.order_by('pk')),
+        ],
+        '1120', ctx,
+    )
+
+
 @transaction.atomic
 def post_sale_invoice(invoice) -> 'JournalEntry':
     from apps.tenant.accounting.models import JournalEntry, JournalItem
@@ -278,11 +525,11 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     # Dr: Accounts based on payment_type (Cash, Bank, EWallet, A/R)
     if invoice.payment_type == 'SPLIT':
-        cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
-        card_acc = (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
-        ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
-        insta_bank = getattr(invoice, 'insta_bank_account', None)
-        bank_acc = (insta_bank.account if insta_bank and insta_bank.account_id else None) or (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
+        # Resolve each payment leg's specific sub-account only when that leg has an amount
+        cash_acc = _invoice_cash_account(invoice) if (invoice.paid_cash or 0) > 0 else None
+        card_acc = _invoice_card_account(invoice) if (invoice.paid_card or 0) > 0 else None
+        ewallet_acc = _invoice_ewallet_account(invoice) if (invoice.paid_ewallet or 0) > 0 else None
+        bank_acc = _invoice_transfer_account(invoice) if (invoice.paid_bank or 0) > 0 else None
 
         splits = [
             (cash_acc, invoice.paid_cash or Decimal('0'), f'سداد نقدي - {invoice.invoice_number}'),
@@ -307,7 +554,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
                     description=desc
                 ))
     elif invoice.payment_type == 'CASH':
-        cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
+        cash_acc = _invoice_cash_account(invoice)
         items_to_create.append(JournalItem(
             entry=entry,
             account=cash_acc,
@@ -316,8 +563,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
             description=f'مبيعات نقدية - {invoice.invoice_number}'
         ))
     elif invoice.payment_type in ('CARD', 'BANK_TRANSFER'):
-        target_bank = invoice.insta_bank_account if (invoice.payment_type == 'BANK_TRANSFER' and getattr(invoice, 'insta_bank_account_id', None)) else invoice.bank_account
-        bank_acc = (target_bank.account if target_bank and target_bank.account_id else None) or _get_system_account('1120')
+        bank_acc = _invoice_transfer_account(invoice) if invoice.payment_type == 'BANK_TRANSFER' else _invoice_card_account(invoice)
         desc = f'مبيعات بطاقة - {invoice.invoice_number}' if invoice.payment_type == 'CARD' else f'مبيعات تحويل بنكي - {invoice.invoice_number}'
         items_to_create.append(JournalItem(
             entry=entry,
@@ -327,7 +573,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
             description=desc
         ))
     elif invoice.payment_type == 'EWALLET':
-        ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
+        ewallet_acc = _invoice_ewallet_account(invoice)
         items_to_create.append(JournalItem(
             entry=entry,
             account=ewallet_acc,
@@ -524,11 +770,11 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
 
     # Cr: Accounts Payable / Cash / Bank / EWallet / Split
     if invoice.payment_type == 'SPLIT':
-        cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
-        card_acc = (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
-        ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
-        insta_bank = getattr(invoice, 'insta_bank_account', None)
-        bank_acc = (insta_bank.account if insta_bank and insta_bank.account_id else None) or (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
+        # Resolve each payment leg's specific sub-account only when that leg has an amount
+        cash_acc = _invoice_cash_account(invoice) if (invoice.paid_cash or 0) > 0 else None
+        card_acc = _invoice_card_account(invoice) if (invoice.paid_card or 0) > 0 else None
+        ewallet_acc = _invoice_ewallet_account(invoice) if (invoice.paid_ewallet or 0) > 0 else None
+        bank_acc = _invoice_transfer_account(invoice) if (invoice.paid_bank or 0) > 0 else None
 
         splits = [
             (cash_acc, invoice.paid_cash or Decimal('0'), f'سداد نقدي مشتريات - {invoice.invoice_number}'),
@@ -553,7 +799,7 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
                     description=desc
                 ))
     elif invoice.payment_type == 'CASH':
-        cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
+        cash_acc = _invoice_cash_account(invoice)
         items_to_create.append(JournalItem(
             entry=entry,
             account=cash_acc,
@@ -562,8 +808,7 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
             description=f'مشتريات نقدية - {invoice.invoice_number}'
         ))
     elif invoice.payment_type in ('CARD', 'BANK_TRANSFER'):
-        target_bank = invoice.insta_bank_account if (invoice.payment_type == 'BANK_TRANSFER' and getattr(invoice, 'insta_bank_account_id', None)) else invoice.bank_account
-        bank_acc = (target_bank.account if target_bank and target_bank.account_id else None) or _get_system_account('1120')
+        bank_acc = _invoice_transfer_account(invoice) if invoice.payment_type == 'BANK_TRANSFER' else _invoice_card_account(invoice)
         desc = f'مشتريات بطاقة - {invoice.invoice_number}' if invoice.payment_type == 'CARD' else f'مشتريات تحويل بنكي - {invoice.invoice_number}'
         items_to_create.append(JournalItem(
             entry=entry,
@@ -573,7 +818,7 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
             description=desc
         ))
     elif invoice.payment_type == 'EWALLET':
-        ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
+        ewallet_acc = _invoice_ewallet_account(invoice)
         items_to_create.append(JournalItem(
             entry=entry,
             account=ewallet_acc,
@@ -623,12 +868,12 @@ def post_payment(payment) -> 'JournalEntry':
     Creates and posts a journal entry for a customer receipt or supplier payment.
 
     Customer Receipt (RECEIPT):
-      Dr 1110/1120 (Cash/Bank)            amount
+      Dr 1110-<id>/1120-<id> (Treasury/Bank) amount
         Cr 1130 (A/R - Customer)          amount
 
     Supplier Payment (PAYMENT):
       Dr 2110 (A/P - Supplier)            amount
-        Cr 1110/1120 (Cash/Bank)          amount
+        Cr 1110-<id>/1120-<id> (Treasury/Bank) amount
 
     Args:
         payment: Payment instance
@@ -645,11 +890,8 @@ def post_payment(payment) -> 'JournalEntry':
     if payment.amount <= Decimal('0'):
         raise ValueError('مبلغ الدفعة يجب أن يكون أكبر من صفر.')
 
-    # Cash/Bank account based on payment method
-    if payment.method == 'CASH':
-        cash_account = _get_system_account('1110')
-    else:
-        cash_account = _get_system_account('1120')  # CARD or BANK
+    # Specific treasury / bank sub-account (1110-<id> / 1120-<id>); parent only as a logged fallback
+    cash_account = _payment_money_account(payment)
 
     reference = _next_reference('PAY')
 

@@ -4,6 +4,9 @@ from django.http import JsonResponse
 from .models import Product, InventoryBatch, StockMovement, Warehouse
 from apps.tenant.core.decorators import custom_permission_required
 from apps.tenant.core.models import SystemSetting
+from apps.tenant.core.access import (
+    allowed_branches, get_allowed_branch_ids, get_branch_scope, is_branch_restricted,
+)
 
 @login_required
 @custom_permission_required('inventory.view_inventorybatch', redirect_url='core:main_screen')
@@ -52,7 +55,7 @@ def product_list(request):
             Q(barcode__icontains=query)
         )
         
-    current_branch = getattr(request, 'branch', None)
+    current_branch = get_branch_scope(request)
     
     paginator = Paginator(products, 25)
     page_number = request.GET.get('page')
@@ -1471,7 +1474,11 @@ def api_products(request):
     wh = None
     if warehouse_id:
         try:
-            wh = Warehouse.objects.filter(id=int(warehouse_id), is_active=True).first()
+            # Non-admins may only read stock of their own branch's warehouses.
+            wh_qs = Warehouse.objects.filter(id=int(warehouse_id), is_active=True)
+            if is_branch_restricted(request):
+                wh_qs = wh_qs.filter(branch_id__in=get_allowed_branch_ids(request))
+            wh = wh_qs.first()
         except (ValueError, TypeError):
             wh = None
 
@@ -1487,11 +1494,10 @@ def api_products(request):
     current_branch = None
     branch_id = request.GET.get('branch_id')
     if branch_id and str(branch_id).isdigit():
-        from apps.tenant.core.models import Branch
-        current_branch = Branch.objects.filter(id=int(branch_id), is_active=True).first()
+        current_branch = allowed_branches(request).filter(id=int(branch_id)).first()
 
     if not current_branch:
-        current_branch = getattr(request, 'branch', None)
+        current_branch = get_branch_scope(request)
 
     from apps.tenant.invoicing.models import InvoiceLine
     latest_sale_lines = InvoiceLine.objects.filter(

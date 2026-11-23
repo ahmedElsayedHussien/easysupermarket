@@ -28,7 +28,11 @@ def setup_chart_of_accounts_data():
     
     fix_assets, _ = Account.objects.get_or_create(code='1200', defaults={'name': 'أصول ثابتة', 'account_type': Account.ASSET, 'parent': assets})
     Account.objects.get_or_create(code='1210', defaults={'name': 'الأصول الثابتة والآلات', 'account_type': Account.ASSET, 'parent': fix_assets})
-    Account.objects.get_or_create(code='1220', defaults={'name': 'مجمع الإهلاك', 'account_type': Account.ASSET, 'parent': fix_assets})
+    # Rental equipment. Legacy tenants have it as '1110-EQ' wrongly placed under cash (1110): move it.
+    if not Account.objects.filter(code='1110-EQ').exists():
+        Account.objects.get_or_create(code='1215', defaults={'name': 'معدات التأجير', 'account_type': Account.ASSET, 'parent': fix_assets})
+    Account.objects.filter(code='1110-EQ').exclude(parent=fix_assets).update(parent=fix_assets)
+    Account.objects.get_or_create(code='1220', defaults={'name': 'مجمع الإهلاك', 'account_type': Account.ASSET, 'parent': fix_assets, 'is_contra': True})
 
     # 2000 LIABILITIES
     liab, _ = Account.objects.get_or_create(code='2000', defaults={'name': 'خصوم', 'account_type': Account.LIABILITY})
@@ -76,7 +80,7 @@ def setup_chart_of_accounts_data():
     exp, _ = Account.objects.get_or_create(code='5000', defaults={'name': 'مصروفات', 'account_type': Account.EXPENSE, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5100', defaults={'name': 'تكلفة البضاعة المباعة', 'account_type': Account.EXPENSE, 'parent': exp, 'is_cogs': True, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5105', defaults={'name': 'تكلفة قطع الغيار المستهلكة في الصيانة', 'account_type': Account.EXPENSE, 'parent': exp, 'is_cogs': True, 'allow_direct_payment': False})
-    Account.objects.get_or_create(code='5110', defaults={'name': 'مردودات ومسموحات المشتريات', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
+    Account.objects.get_or_create(code='5110', defaults={'name': 'مردودات ومسموحات المشتريات', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False, 'is_contra': True})
     Account.objects.get_or_create(code='5115', defaults={'name': 'فروق تقريب نقطة البيع', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
     
     op_exp, _ = Account.objects.get_or_create(code='5200', defaults={'name': 'مصاريف تشغيلية', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})

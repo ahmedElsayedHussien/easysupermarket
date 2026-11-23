@@ -143,7 +143,7 @@ call venv\Scripts\activate.bat
 
 :: Check and install requirements
 echo [3/4] Checking required packages...
-venv\Scripts\python.exe -c "import sys; from importlib.metadata import distributions; installed = {d.metadata['Name'].lower().replace('_', '-'): d.version for d in distributions() if d.metadata.get('Name')}; missing = [l.strip() for l in open('requirements.txt', encoding='utf-8') if l.strip() and not l.strip().startswith('#') and l.strip().split('==')[0].split('>=')[0].split('<=')[0].strip().lower().replace('_', '-') not in installed]; sys.exit(1 if missing else 0)" >nul 2>&1
+venv\Scripts\python.exe -c "import sys; from importlib.metadata import distributions; norm = lambda n: n.strip().lower().replace('_', '-'); installed = {norm(d.metadata['Name']): d.version for d in distributions() if d.metadata.get('Name')}; reqs = [l.strip() for l in open('requirements.txt', encoding='utf-8') if l.strip() and not l.strip().startswith('#')]; bad = [r for r in reqs if norm(r.split('==')[0].split('>=')[0].split('<=')[0]) not in installed or ('==' in r and installed.get(norm(r.split('==')[0])) != r.split('==')[1].strip())]; sys.exit(1 if bad else 0)" >nul 2>&1
 
 if %errorlevel% equ 0 goto PACKAGES_ALREADY_INSTALLED
 

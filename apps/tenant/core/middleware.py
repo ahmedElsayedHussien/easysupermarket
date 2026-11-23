@@ -3,7 +3,35 @@ from django.contrib.auth import logout
 from apps.tenant.core.models import Branch
 from apps.tenant.core.access import (
     is_public_request, is_tenant_member, is_tenant_admin, get_employee,
+    is_branch_unassigned, BRANCH_UNASSIGNED_MESSAGE,
 )
+
+
+def _wants_html_page(request):
+    if request.method != 'GET':
+        return False
+    if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+        return False
+    path = request.path or ''
+    if path.startswith(('/static/', '/media/', '/i18n/', '/api/')) or '/api/' in path:
+        return False
+    accept = request.headers.get('accept', '')
+    return 'text/html' in accept
+
+
+def _add_unassigned_notice(request):
+    """Queue the 'no branch' warning once (no duplicates across redirects)."""
+    from django.contrib import messages
+    storage = getattr(request, '_messages', None)
+    if storage is None:
+        return
+    try:
+        pending = list(getattr(storage, '_queued_messages', [])) + list(getattr(storage, '_loaded_messages', []))
+        if any(str(m.message) == BRANCH_UNASSIGNED_MESSAGE for m in pending):
+            return
+    except Exception:
+        pass
+    messages.warning(request, BRANCH_UNASSIGNED_MESSAGE)
 
 
 class BranchMiddleware:
@@ -13,12 +41,19 @@ class BranchMiddleware:
        is not a platform superuser) is logged out.
     2. Branch selection: admins may switch branches (or pick "all"); everybody
        else is pinned to their own employee branch, regardless of GET/session.
+    3. Sets ``request.branch_restricted`` (True for every non-admin) and
+       ``request.allowed_branch_ids`` (None = all branches for admins, [] for a
+       non-admin whose account is not linked to an active branch). Non-admins
+       without a branch see no branch-scoped data and get a warning banner.
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
+        request.branch_restricted = False
+        request.allowed_branch_ids = None
+        request.branch_unassigned = False
         if is_public_request(request):
             return self.get_response(request)
 
@@ -43,6 +78,15 @@ class BranchMiddleware:
             request.branch = branch
             if request.session.get('current_branch_id') != (branch.id if branch else None):
                 request.session['current_branch_id'] = branch.id if branch else None
+            request.branch_restricted = True
+            if branch is not None:
+                request.allowed_branch_ids = [branch.id]
+            elif is_branch_unassigned(request):
+                # No branch: nothing branch-scoped is visible.
+                request.allowed_branch_ids = []
+                request.branch_unassigned = True
+                if _wants_html_page(request):
+                    _add_unassigned_notice(request)
 
         return self.get_response(request)
 

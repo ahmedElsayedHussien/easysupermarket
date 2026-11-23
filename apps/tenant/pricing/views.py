@@ -15,6 +15,7 @@ from django.db.models import Q, Count
 from django.utils import timezone
 
 from apps.tenant.core.decorators import custom_permission_required
+from apps.tenant.core.access import allowed_branches, get_branch_scope
 from apps.tenant.inventory.models import Product, UnitOfMeasure
 from apps.tenant.partners.models import Partner
 from .models import CustomerSector, PriceList, PriceListItem
@@ -538,7 +539,7 @@ def api_resolve_price(request):
         except UnitOfMeasure.DoesNotExist:
             uom = None
 
-    current_branch = getattr(request, 'branch', None)
+    current_branch = get_branch_scope(request)
     result = PricingEngineService.get_effective_price(
         product=product,
         partner=partner,
@@ -586,15 +587,15 @@ def api_customer_prices(request):
     except (Partner.DoesNotExist, ValueError, TypeError):
         return JsonResponse({'success': True, 'prices': {}})
 
-    from apps.tenant.core.models import Branch
     branch = None
     if branch_id and branch_id not in ['null', 'undefined', 'None', '']:
         try:
-            branch = Branch.objects.filter(pk=int(branch_id)).first()
+            # Only branches this user may access (non-admins: their own branch).
+            branch = allowed_branches(request).filter(pk=int(branch_id)).first()
         except (ValueError, TypeError):
             branch = None
     if not branch:
-        branch = getattr(request, 'branch', None)
+        branch = get_branch_scope(request)
 
     tiers = PricingEngineService.get_customer_price_tiers(partner=partner, branch=branch)
     prices_map = PricingEngineService.get_customer_price_map(partner=partner, branch=branch)

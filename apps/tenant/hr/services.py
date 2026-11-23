@@ -2,6 +2,7 @@ from django.db import transaction
 from django.utils import timezone
 from apps.tenant.accounting.models import JournalEntry, JournalItem, Account
 from apps.tenant.services.journal_service import _get_system_account, _next_reference
+from apps.tenant.core.usernames import display_username
 
 @transaction.atomic
 def post_payroll(payroll):
@@ -29,7 +30,7 @@ def post_payroll(payroll):
     entry = JournalEntry.objects.create(
         date=timezone.now().date(),
         reference=_next_reference('PR-'),
-        description=f"استحقاق راتب {payroll.employee.user.username} لشهر {payroll.month}/{payroll.year}",
+        description=f"استحقاق راتب {display_username(payroll.employee.user)} لشهر {payroll.month}/{payroll.year}",
         status=JournalEntry.POSTED,
     )
 

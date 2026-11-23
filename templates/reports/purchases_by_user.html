@@ -87,9 +87,9 @@
                     <td style="font-weight: bold;">
                         {{ item.cashier__first_name }} {{ item.cashier__last_name }}
                         {% if not item.cashier__first_name and not item.cashier__last_name %}
-                            {{ item.cashier__username }}
+                            {{ item.cashier__username|display_username }}
                         {% endif %}
-                        <div style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">@{{ item.cashier__username }}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">@{{ item.cashier__username|display_username }}</div>
                     </td>
                     <td style="text-align: center; color: var(--neon-blue); font-weight: bold;">
                         {{ item.sales_count }} فاتورة

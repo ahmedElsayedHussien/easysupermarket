@@ -12,7 +12,7 @@
                     <h2 class="mb-4 text-primary">تسجيل الحضور والانصراف</h2>
                     
                     <div class="mb-4">
-                        <h5 class="text-muted">مرحباً، {{ employee.user.get_full_name|default:employee.user.username }}</h5>
+                        <h5 class="text-muted">مرحباً، {{ employee.user|display_name }}</h5>
                         <p class="mb-1">فرع: <span class="fw-bold">{{ employee.branch.name|default:"غير محدد" }}</span></p>
                         <p class="small text-muted">ميعاد الدوام: {{ employee.shift_start_time|time:"H:i" }} إلى {{ employee.shift_end_time|time:"H:i" }}</p>
                     </div>

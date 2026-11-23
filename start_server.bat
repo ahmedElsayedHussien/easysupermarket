@@ -29,6 +29,13 @@ if not exist "venv\Scripts\activate.bat" goto NO_VENV
 :ACTIVATE
 call venv\Scripts\activate.bat
 
+echo Checking required packages...
+python -c "import sys; from importlib.metadata import distributions; norm = lambda n: n.strip().lower().replace('_', '-'); installed = {norm(d.metadata['Name']): d.version for d in distributions() if d.metadata.get('Name')}; reqs = [l.strip() for l in open('requirements.txt', encoding='utf-8') if l.strip() and not l.strip().startswith('#')]; bad = [r for r in reqs if norm(r.split('==')[0]) not in installed or ('==' in r and installed.get(norm(r.split('==')[0])) != r.split('==')[1].strip())]; sys.exit(1 if bad else 0)" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo Updating packages from requirements.txt...
+    python -m pip install --timeout 120 --retries 5 -r requirements.txt
+)
+
 echo Checking and applying database updates...
 findstr /i "DB_ENGINE=postgresql" .env >nul
 if %errorlevel% equ 0 (
@@ -36,6 +43,9 @@ if %errorlevel% equ 0 (
 ) else (
     python manage.py migrate --noinput
 )
+
+echo Building static files (CSS/JS)...
+python manage.py collectstatic --noinput >nul
 
 echo Freeing port 8080 if previously occupied...
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8080 ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1

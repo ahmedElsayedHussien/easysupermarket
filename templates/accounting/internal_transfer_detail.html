@@ -44,7 +44,7 @@
 
             <div>
                 <span style="color: rgba(255,255,255,0.6); display: block; font-size: 0.85rem;">أنشئ بواسطة</span>
-                <strong style="color: #fff; font-size: 1rem;">{{ transfer.created_by.get_full_name|default:transfer.created_by.username|default:"-" }}</strong>
+                <strong style="color: #fff; font-size: 1rem;">{{ transfer.created_by|display_name|default:"-" }}</strong>
             </div>
         </div>
     </div>
@@ -92,7 +92,7 @@
 
     {% if transfer.pos_session %}
     <div style="background: rgba(255,193,7,0.08); border: 1px solid rgba(255,193,7,0.3); border-radius: 8px; padding: 1rem; margin-bottom: 2rem; color: #ffc107;">
-        <i class="fas fa-cash-register"></i> مرتبط بوردية نقطة البيع رقم <strong>#{{ transfer.pos_session.id }}</strong> (الكاشير: {{ transfer.pos_session.user.get_full_name|default:transfer.pos_session.user.username }})
+        <i class="fas fa-cash-register"></i> مرتبط بوردية نقطة البيع رقم <strong>#{{ transfer.pos_session.id }}</strong> (الكاشير: {{ transfer.pos_session.user|display_name }})
     </div>
     {% endif %}
 
@@ -126,7 +126,7 @@
         {% endif %}
 
         {% if transfer.status != 'CANCELLED' %}
-            <form method="post" action="{% url 'accounting:transfer_cancel' transfer.pk %}" onsubmit="return confirm('هل أنت تأكد من رغبتك في إلغاء هذا التحويل وحذف القيد المربوط به؟');">
+            <form method="post" action="{% url 'accounting:transfer_cancel' transfer.pk %}" onsubmit="return confirm('هل أنت متأكد من رغبتك في إلغاء هذا التحويل؟ سيتم تسجيل قيد عكسي للقيد المربوط به.');">
                 {% csrf_token %}
                 <button type="submit" style="background: rgba(220,53,69,0.8); color: #fff; padding: 0.7rem 1.5rem; border-radius: 8px; border: none; cursor: pointer; font-weight: bold;">
                     <i class="fas fa-times-circle"></i> إلغاء التحويل

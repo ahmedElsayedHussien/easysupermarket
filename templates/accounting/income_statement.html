@@ -29,7 +29,7 @@
                 {% for account in contra_revenue_accounts %}
                 <tr class="text-neon-pink">
                     <td class="en">{{ account.code }}</td>
-                    <td>{{ account.report_name }}</td>
+                    <td>يُخصم: ({{ account.report_name }})</td>
                     {# contra_amount is the (positive) amount deducted from sales #}
                     <td class="en">({{ account.contra_amount|floatformat:"2u" }})</td>
                 </tr>
@@ -66,10 +66,24 @@
                     <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
                 </tr>
                 {% endfor %}
+                {% if contra_cogs_accounts %}
+                <tr>
+                    <td colspan="2" class="text-right">إجمالي التكلفة قبل المردودات</td>
+                    <td class="en">{{ gross_cogs|floatformat:"2u" }}</td>
+                </tr>
+                {% for account in contra_cogs_accounts %}
+                <tr class="text-neon-pink">
+                    <td class="en">{{ account.code }}</td>
+                    {# contra expense (e.g. 5110 purchase returns): positive amount deducted from cost #}
+                    <td>يُخصم: ({{ account.report_name }})</td>
+                    <td class="en">({{ account.contra_amount|floatformat:"2u" }})</td>
+                </tr>
+                {% endfor %}
+                {% endif %}
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="2" class="text-right text-bold">إجمالي تكلفة المبيعات</td>
+                    <td colspan="2" class="text-right text-bold">{% if contra_cogs_accounts %}صافي تكلفة المبيعات{% else %}إجمالي تكلفة المبيعات{% endif %}</td>
                     <td class="en text-bold text-warning">{{ total_cogs|floatformat:"2u" }}</td>
                 </tr>
             </tfoot>

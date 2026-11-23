@@ -352,17 +352,17 @@ def update_invoice_payment_method(
     paid_ewallet: Decimal = Decimal('0'),
     paid_bank: Decimal = Decimal('0'),
     insta_bank_account_id: Optional[int] = None,
+    user=None,
 ):
     """
     Updates payment_type and payment destination fields of an existing invoice.
-    If the invoice is POSTED, deletes existing payment settlement journal entries
-    and re-creates settlement journal entries matching the updated payment method.
+    If the invoice is POSTED, its active journal entries (main accrual entry + any legacy
+    settlement entries) are reversed - never deleted - and a fresh entry matching the
+    updated payment method / partner is posted. invoice.journal_entry points to the new one.
     """
     from apps.tenant.invoicing.models import Invoice
     from apps.tenant.partners.models import Partner
-    from apps.tenant.accounting.models import JournalEntry, Account
-    from apps.tenant.services.journal_service import _create_sale_payment_entry, _create_purchase_payment_entry
-    from django.contrib.contenttypes.models import ContentType
+    from apps.tenant.services.journal_service import reverse_document_entries
 
     invoice = Invoice.objects.select_for_update().get(id=invoice_id)
 
@@ -383,30 +383,17 @@ def update_invoice_payment_method(
         if not curr_partner or 'عميل نقدي' in curr_partner.name or curr_partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']:
             raise ValueError('لا يمكن تغيير طريقة السداد إلى (آجل) لـ "عميل نقدي". يرجى اختيار عميل/مورد آخر مخصص للآجل.')
 
-    # 1. If invoice is POSTED, delete existing payment settlement journal entries
+    # 1. If invoice is POSTED, reverse its active entries (audit trail: posted lines are never
+    #    edited or deleted). The new entry posted in step 3 uses the (possibly new) partner's
+    #    receivable/payable account and the new payment destination.
     if invoice.status == Invoice.POSTED:
-        ct = ContentType.objects.get_for_model(Invoice)
-        payment_entries = JournalEntry.objects.filter(
-            content_type=ct,
-            object_id=invoice.id
+        reverse_document_entries(
+            invoice,
+            reason=f'تعديل طريقة سداد الفاتورة {invoice.invoice_number}',
+            user=user,
+            extra_entry_ids=[invoice.journal_entry_id],
         )
-        if invoice.journal_entry_id:
-            payment_entries = payment_entries.exclude(id=invoice.journal_entry_id)
-
-        # Delete old payment entries (CASCADE deletes journal items)
-        payment_entries.delete()
-
-        # Update A/R or A/P line in main accrual entry if partner has dedicated account
-        if invoice.journal_entry:
-            je = invoice.journal_entry
-            if invoice.invoice_type in (Invoice.SALE, Invoice.RETURN_SALE) and invoice.partner and invoice.partner.receivable_account:
-                old_ar = Account.objects.filter(code='1130').first()
-                if old_ar:
-                    je.items.filter(account=old_ar).update(account=invoice.partner.receivable_account)
-            elif invoice.invoice_type in (Invoice.PURCHASE, Invoice.RETURN_PURCHASE) and invoice.partner and invoice.partner.payable_account:
-                old_ap = Account.objects.filter(code='2110').first()
-                if old_ap:
-                    je.items.filter(account=old_ap).update(account=invoice.partner.payable_account)
+        invoice.journal_entry = None
 
     # 2. Update payment fields on invoice
     invoice.payment_type = payment_type
@@ -424,15 +411,8 @@ def update_invoice_payment_method(
         'paid_cash', 'paid_card', 'paid_ewallet', 'paid_bank', 'updated_at'
     ])
 
-    # 3. If POSTED, recreate the unified journal entry matching updated payment method
+    # 3. If POSTED, post a fresh unified journal entry matching the updated payment method
     if invoice.status == Invoice.POSTED:
-        if invoice.journal_entry:
-            old_je = invoice.journal_entry
-            old_je.items.all().delete()
-            old_je.delete()
-            invoice.journal_entry = None
-            invoice.save(update_fields=['journal_entry'])
-
         from apps.tenant.services.journal_service import post_sale_invoice, post_purchase_invoice
         if invoice.invoice_type in (Invoice.SALE, Invoice.RETURN_SALE):
             je = post_sale_invoice(invoice)
@@ -446,7 +426,7 @@ def update_invoice_payment_method(
 
 
 @transaction.atomic
-def cancel_invoice(invoice_id: int):
+def cancel_invoice(invoice_id: int, user=None):
     """
     Cancels an invoice (DRAFT or POSTED).
 
@@ -454,7 +434,9 @@ def cancel_invoice(invoice_id: int):
       - Sets status to CANCELLED.
 
     If POSTED:
-      - Deletes linked journal entries (main accrual entry + payment settlement entries).
+      - Reverses linked journal entries (main accrual entry + payment settlement entries):
+        each active POSTED entry gets a reversal entry (debit <-> credit); nothing is deleted,
+        so the audit trail is kept and the pair nets to zero. invoice.journal_entry is cleared.
       - Reverses inventory effects:
         - For SALE: Restores consumed stock by adding FIFO batches (or resetting serial items).
         - For PURCHASE: Removes inventory batches created by the purchase invoice lines.
@@ -463,10 +445,9 @@ def cancel_invoice(invoice_id: int):
       - Sets status to CANCELLED.
     """
     from apps.tenant.invoicing.models import Invoice
-    from apps.tenant.accounting.models import JournalEntry
     from apps.tenant.inventory.models import InventoryBatch
     from apps.tenant.services.fifo_engine import add_inventory_batch, consume_fifo_batches
-    from django.contrib.contenttypes.models import ContentType
+    from apps.tenant.services.journal_service import reverse_document_entries
 
     invoice = Invoice.objects.select_for_update().get(id=invoice_id)
 
@@ -481,16 +462,14 @@ def cancel_invoice(invoice_id: int):
         )
 
     if invoice.status == Invoice.POSTED:
-        # 1. Reverse Financial Effects (Delete linked Journal Entries)
-        ct = ContentType.objects.get_for_model(Invoice)
-        JournalEntry.objects.filter(
-            content_type=ct,
-            object_id=invoice.id
-        ).delete()
-
-        if invoice.journal_entry_id:
-            JournalEntry.objects.filter(id=invoice.journal_entry_id).delete()
-            invoice.journal_entry = None
+        # 1. Reverse Financial Effects (reversal entries - the posted entries are kept)
+        reverse_document_entries(
+            invoice,
+            reason=f'إلغاء الفاتورة {invoice.invoice_number}',
+            user=user,
+            extra_entry_ids=[invoice.journal_entry_id],
+        )
+        invoice.journal_entry = None
 
         # 2. Reverse Inventory Effects
         lines = list(invoice.lines.select_related('product', 'serial_item', 'uom').all())

@@ -16,6 +16,7 @@ from .models import Attendance, Payroll
 from apps.tenant.core.models import Employee
 from apps.tenant.core.decorators import custom_permission_required, is_admin_user
 from .services import post_payroll
+from apps.tenant.core.usernames import display_username
 
 # An open attendance (checked-in, not checked-out) is matched for check-out as long as it
 # started within this window, so overnight shifts work; older forgotten ones are ignored.
@@ -250,7 +251,7 @@ def payroll_process(request):
         with transaction.atomic():
             existing = Payroll.objects.select_for_update().filter(employee=emp, month=month, year=year).first()
             if existing and (existing.is_paid or existing.journal_entry_id):
-                skipped.append(emp.user.username)
+                skipped.append(display_username(emp.user))
                 continue
 
             attendances = Attendance.objects.filter(employee=emp, date__year=year, date__month=month)
@@ -274,7 +275,7 @@ def payroll_process(request):
 
             net_salary = emp.base_salary - deductions + overtime_pay
             if net_salary < 0:
-                clamped.append(emp.user.username)
+                clamped.append(display_username(emp.user))
                 net_salary = Decimal('0.00')
 
             Payroll.objects.update_or_create(

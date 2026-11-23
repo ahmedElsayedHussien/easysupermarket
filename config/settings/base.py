@@ -4,6 +4,8 @@ Multi-Tenant Supermarket ERP using django-tenants (PostgreSQL schemas)
 """
 from pathlib import Path
 import os
+import logging
+import logging.handlers  # noqa: F401  (RotatingFileHandler used in LOGGING)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -28,6 +30,9 @@ SHARED_APPS = [
     'mptt',
     'rest_framework',
     'corsheaders',
+    # Brute-force login protection. Shared (public schema) because auth_user is
+    # shared: failed attempts / lockouts are global across all tenants.
+    'axes',
 
     # Our public apps
     'apps.public.tenants',
@@ -77,8 +82,13 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'apps.tenant.core.middleware.BranchMiddleware',
+    # django-axes: must come after AuthenticationMiddleware; returns the
+    # lockout response when a login attempt is blocked.
+    'axes.middleware.AxesMiddleware',
+    # MessageMiddleware before BranchMiddleware so BranchMiddleware can queue
+    # the "account not linked to a branch" warning.
     'django.contrib.messages.middleware.MessageMiddleware',
+    'apps.tenant.core.middleware.BranchMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'django.middleware.locale.LocaleMiddleware',
 ]
@@ -107,6 +117,9 @@ TEMPLATES = [
                 'django.template.context_processors.tz',
                 'apps.tenant.core.context_processors.global_context',
             ],
+            # |display_username / |display_name available in every template
+            # without {% load %} (strips the internal tenant username prefix).
+            'builtins': ['apps.tenant.core.templatetags.user_tags'],
         },
     },
 ]
@@ -121,7 +134,11 @@ ASGI_APPLICATION = 'config.asgi.application'
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
+# STORAGES replaces STATICFILES_STORAGE (removed in Django 5.1; supported since 4.2).
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'},
+}
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -136,6 +153,25 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
+
+# AxesStandaloneBackend must be first: it blocks authentication for locked-out
+# username+IP pairs before the real backend checks the password.
+AUTHENTICATION_BACKENDS = [
+    'axes.backends.AxesStandaloneBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+
+# =============================================================================
+# DJANGO-AXES (brute-force protection)  -- reset: manage.py axes_reset
+# =============================================================================
+
+AXES_ENABLED = True
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = 0.25  # hours (15 minutes)
+AXES_LOCKOUT_PARAMETERS = [['username', 'ip_address']]
+AXES_RESET_ON_SUCCESS = True
+AXES_LOCKOUT_TEMPLATE = 'auth/lockout.html'
+AXES_VERBOSE = False
 
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
@@ -201,12 +237,29 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 # LOGGING
 # =============================================================================
 
+LOG_DIR = BASE_DIR / 'logs'
+os.makedirs(LOG_DIR, exist_ok=True)
+
+
+class _FileLevelFilter(logging.Filter):
+    """
+    One shared RotatingFileHandler (two handlers on the same file break
+    rotation on Windows). The noisy 'django' logger only writes WARNING+ to
+    the file (console still gets INFO); 'django.security' keeps INFO.
+    """
+    def filter(self, record):
+        name = record.name
+        if (name == 'django' or name.startswith('django.')) and not name.startswith('django.security'):
+            return record.levelno >= logging.WARNING
+        return True
+
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
         'verbose': {
-            'format': '[{levelname}] {asctime} {module} {process:d} {thread:d} {message}',
+            'format': '[{levelname}] {asctime} {name} {module} {process:d} {thread:d} {message}',
             'style': '{',
         },
         'simple': {
@@ -214,30 +267,48 @@ LOGGING = {
             'style': '{',
         },
     },
+    'filters': {
+        'file_level': {'()': _FileLevelFilter},
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'simple',
         },
         'file': {
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'easysupermarket.log',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_DIR / 'easysupermarket.log'),
+            'maxBytes': 5 * 1024 * 1024,  # 5 MB
+            'backupCount': 5,
+            'encoding': 'utf-8',
+            'delay': True,
             'formatter': 'verbose',
+            'filters': ['file_level'],
         },
     },
     'root': {
-        'handlers': ['console'],
+        'handlers': ['console', 'file'],
         'level': 'WARNING',
     },
     'loggers': {
         'django': {
-            'handlers': ['console'],
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'axes': {
+            'handlers': ['console', 'file'],
             'level': 'INFO',
             'propagate': False,
         },
         'apps': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
             'propagate': False,
         },
     },

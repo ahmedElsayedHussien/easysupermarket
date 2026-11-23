@@ -12,6 +12,10 @@ from apps.tenant.partners.models import Partner
 import json
 from decimal import Decimal, InvalidOperation
 from apps.tenant.core.decorators import custom_permission_required, is_admin_user
+from apps.tenant.core.access import (
+    BRANCH_UNASSIGNED_MESSAGE, allowed_branches, get_allowed_branch_ids, get_branch_scope,
+    is_branch_restricted, is_branch_unassigned,
+)
 
 from django.views.decorators.cache import never_cache
 
@@ -31,11 +35,44 @@ def _safe_json_for_script(obj):
     from django.core.serializers.json import DjangoJSONEncoder
     return json.dumps(obj, cls=DjangoJSONEncoder).translate(_JSON_SCRIPT_ESCAPES)
 
+
+def _scope_by_allowed_branches(qs, request, field='branch_id'):
+    """
+    Admins: unchanged (all branches). Non-admins: only rows of their own branch;
+    a non-admin without a branch gets nothing (get_allowed_branch_ids -> []).
+    """
+    if is_branch_restricted(request):
+        return qs.filter(**{f'{field}__in': get_allowed_branch_ids(request)})
+    return qs
+
+
+# Tolerance for browser float rounding when comparing discounts with the cap.
+DISCOUNT_CAP_TOLERANCE = Decimal('0.01')
+
+
+def _max_discount_pct_for(user, setting=None):
+    """
+    SystemSetting.max_pos_discount_percentage for non-admins (None = no cap:
+    admins, or a cap of 100%).
+    """
+    if is_admin_user(user):
+        return None
+    if setting is None:
+        setting = SystemSetting.get_settings()
+    try:
+        cap = Decimal(str(getattr(setting, 'max_pos_discount_percentage', 100)))
+    except Exception:
+        cap = Decimal('100')
+    return None if cap >= Decimal('100') else cap
+
 @never_cache
 @login_required
 @custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def pos_view(request):
     """Hybrid Sales Point View"""
+    if is_branch_unassigned(request):
+        messages.error(request, BRANCH_UNASSIGNED_MESSAGE)
+        return redirect('core:main_screen')
     
     # Check if cashier has an open shift
     open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
@@ -63,7 +100,7 @@ def pos_view(request):
         # Non-admin: force their branch
         current_branch = user_branch
     elif not current_branch:
-        req_branch = getattr(request, 'branch', None)
+        req_branch = get_branch_scope(request)
         if user_branch and warehouses.filter(branch=user_branch).exists():
             current_branch = user_branch
         elif req_branch and warehouses.filter(branch=req_branch).exists():
@@ -193,6 +230,10 @@ def pos_open_shift(request):
         return redirect('invoicing:pos')
 
     from apps.tenant.accounting.models import Treasury
+
+    if is_branch_unassigned(request):
+        messages.error(request, BRANCH_UNASSIGNED_MESSAGE)
+        return redirect('core:main_screen')
     
     # Determine branch
     user_branch = None
@@ -492,6 +533,10 @@ def purchase_invoice_view(request):
         from django.contrib import messages
         try:
             invoice_type = request.POST.get('invoice_type')
+            # This form only creates purchase documents; sales must go through
+            # POS (complete_sale) where discount/price limits are enforced.
+            if invoice_type not in (Invoice.PURCHASE, Invoice.RETURN_PURCHASE):
+                raise ValueError('نوع الفاتورة غير صالح لهذه الشاشة.')
             supplier_id = request.POST.get('supplier_id')
             warehouse_id = request.POST.get('warehouse_id')
             payment_type = request.POST.get('payment_type')
@@ -733,9 +778,9 @@ def _filter_invoices(request, base_types):
     from django.db.models import Q
     from django.core.paginator import Paginator
     
-    invoices = Invoice.objects.filter(
+    invoices = _scope_by_allowed_branches(Invoice.objects.filter(
         invoice_type__in=base_types
-    ).select_related(
+    ), request).select_related(
         'partner', 'branch', 'treasury', 'bank_account', 'ewallet'
     ).prefetch_related('lines').order_by('-date', '-created_at')
     
@@ -810,7 +855,7 @@ def _filter_invoices(request, base_types):
         'selected_branch_id': branch_id,
         'per_page': per_page,
         'query_string': query_string,
-        'branches': Branch.objects.filter(is_active=True),
+        'branches': allowed_branches(request),
     }
 
 @login_required
@@ -836,7 +881,7 @@ def invoice_detail(request, invoice_id):
     from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
     from apps.tenant.partners.models import Partner
 
-    invoice = get_object_or_404(Invoice, id=invoice_id)
+    invoice = get_object_or_404(_scope_by_allowed_branches(Invoice.objects.all(), request), id=invoice_id)
     lines = invoice.lines.select_related('product', 'serial_item', 'uom__uom').all()
     
     is_fully_returned = False
@@ -874,6 +919,9 @@ def confirm_invoice_view(request, invoice_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
         
+    if not _scope_by_allowed_branches(Invoice.objects.filter(id=invoice_id), request).exists():
+        return JsonResponse({'success': False, 'error': 'الفاتورة غير موجودة أو خارج نطاق فرعك.'}, status=404)
+
     from apps.tenant.services.invoice_service import confirm_invoice
     try:
         invoice = confirm_invoice(invoice_id)
@@ -886,6 +934,9 @@ def confirm_invoice_view(request, invoice_id):
 def update_invoice_payment_method_view(request, invoice_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
+
+    if not _scope_by_allowed_branches(Invoice.objects.filter(id=invoice_id), request).exists():
+        return JsonResponse({'success': False, 'error': 'الفاتورة غير موجودة أو خارج نطاق فرعك.'}, status=404)
 
     from apps.tenant.services.invoice_service import update_invoice_payment_method
     try:
@@ -911,6 +962,7 @@ def update_invoice_payment_method_view(request, invoice_id):
             paid_card=paid_card,
             paid_ewallet=paid_ewallet,
             paid_bank=paid_bank,
+            user=request.user,
         )
         return JsonResponse({
             'success': True,
@@ -927,9 +979,12 @@ def cancel_invoice_view(request, invoice_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
 
+    if not _scope_by_allowed_branches(Invoice.objects.filter(id=invoice_id), request).exists():
+        return JsonResponse({'success': False, 'error': 'الفاتورة غير موجودة أو خارج نطاق فرعك.'}, status=404)
+
     from apps.tenant.services.invoice_service import cancel_invoice
     try:
-        invoice = cancel_invoice(invoice_id)
+        invoice = cancel_invoice(invoice_id, user=request.user)
         return JsonResponse({
             'success': True,
             'message': f'تم إلغاء الفاتورة رقم {invoice.invoice_number} وعكس كافة الآثار المخزنية والمحاسبية بنجاح.'
@@ -981,10 +1036,12 @@ def get_product_by_barcode(request):
                 'factor': float(puom.conversion_factor or 1.0)
             })
             
-        current_branch = getattr(request, 'branch', None)
+        current_branch = get_branch_scope(request)
         current_warehouse = None
         if warehouse_id and str(warehouse_id).isdigit():
-            current_warehouse = Warehouse.objects.filter(id=int(warehouse_id), is_active=True).first()
+            current_warehouse = _scope_by_allowed_branches(
+                Warehouse.objects.filter(id=int(warehouse_id), is_active=True), request
+            ).first()
 
         # Multi-Tier Pricing (Customer Price List -> Sector Price List -> Default Product Price)
         partner_id = request.GET.get('partner_id')
@@ -1182,12 +1239,20 @@ def complete_sale(request):
         can_override_discount = is_admin or request.user.has_perm('invoicing.change_invoice')
         setting = SystemSetting.get_settings()
         allow_price_edit_setting = bool(getattr(setting, 'allow_pos_price_modification', False))
+        # Discount cap for non-admins (admins are exempt). Applies to the
+        # header discount and to each line's total effective discount (the POS
+        # sends line discount combined with the invoice discount).
+        max_discount_pct = _max_discount_pct_for(request.user, setting)
+        # Float rounding from the browser (values sent with 4 decimals).
+        discount_tolerance = DISCOUNT_CAP_TOLERANCE
 
         with transaction.atomic():
             branch = Branch.objects.filter(id=branch_id).first() if branch_id else None
             if not branch:
                 raise _SaleAbort('الفرع المحدد غير موجود.')
             user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
+            if not is_admin and is_branch_unassigned(request):
+                raise _SaleAbort(BRANCH_UNASSIGNED_MESSAGE, status=403)
             if not is_admin and user_branch and branch.id != user_branch.id:
                 raise _SaleAbort('لا يمكنك البيع على فرع غير الفرع المرتبط بحسابك.', status=403)
 
@@ -1265,6 +1330,11 @@ def complete_sale(request):
             discount_percentage = _to_decimal(data.get('discount_percentage', 0), 'نسبة الخصم')
             if discount_percentage < 0 or discount_percentage > 100:
                 raise _SaleAbort('نسبة الخصم يجب أن تكون بين 0 و 100.')
+            if max_discount_pct is not None and discount_percentage > max_discount_pct + discount_tolerance:
+                raise _SaleAbort(
+                    f'نسبة خصم الفاتورة ({discount_percentage:.2f}%) تتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
+                    'يتطلب ذلك صلاحية مدير.', status=403
+                )
 
             # Totals are recomputed from lines by recalculate_totals(); start from zero.
             invoice = Invoice.objects.create(
@@ -1341,6 +1411,11 @@ def complete_sale(request):
                 discount_pct = _to_decimal(item.get('discount_percent', 0), f'الخصم - {product.name}')
                 if discount_pct < 0 or discount_pct > 100:
                     raise _SaleAbort(f'نسبة الخصم للصنف "{product.name}" يجب أن تكون بين 0 و 100.')
+                if max_discount_pct is not None and discount_pct > max_discount_pct + discount_tolerance:
+                    raise _SaleAbort(
+                        f'الخصم على الصنف "{product.name}" ({discount_pct:.2f}%) يتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
+                        'يتطلب ذلك صلاحية مدير.', status=403
+                    )
                 if discount_pct > 0 and not can_override_discount and min_price > 0:
                     net_unit = unit_price * (Decimal('1') - discount_pct / Decimal('100'))
                     if net_unit < min_price:
@@ -1518,7 +1593,8 @@ def tafqeet_arabic(number):
 @login_required
 def receipt_view(request, invoice_id):
     invoice = get_object_or_404(
-        Invoice.objects.select_related('partner', 'branch', 'cashier').prefetch_related('lines__product', 'lines__uom__uom'),
+        _scope_by_allowed_branches(Invoice.objects.all(), request)
+        .select_related('partner', 'branch', 'cashier').prefetch_related('lines__product', 'lines__uom__uom'),
         id=invoice_id
     )
     paper_size = request.GET.get('size', '80mm').strip().lower()
@@ -1830,6 +1906,9 @@ def create_standalone_sales_return(request):
 
             partner = Partner.objects.get(id=partner_id)
             warehouse = Warehouse.objects.get(id=warehouse_id)
+            if is_branch_restricted(request) and warehouse.branch_id not in (get_allowed_branch_ids(request) or []):
+                messages.error(request, 'لا يمكنك استلام مرتجع على مستودع خارج فرعك.')
+                return redirect('invoicing:create_standalone_sales_return')
             branch = warehouse.branch or (request.user.employee_profile.branch if hasattr(request.user, 'employee_profile') else Branch.objects.filter(is_active=True).first())
             
             treasury = Treasury.objects.filter(id=treasury_id).first() if treasury_id else None
@@ -1994,7 +2073,7 @@ def quotation_list(request):
     """List all quotations with status filtering and pagination."""
     from django.core.paginator import Paginator
     status_filter = request.GET.get('status')
-    quotations = Quotation.objects.select_related('partner', 'branch', 'warehouse', 'created_by').order_by('-date', '-created_at')
+    quotations = _scoped_quotations(request).select_related('partner', 'branch', 'warehouse', 'created_by').order_by('-date', '-created_at')
     if status_filter:
         quotations = quotations.filter(status=status_filter)
     
@@ -2066,13 +2145,78 @@ def _format_quotation_form_errors(form, formset):
     return 'تعذر الحفظ: ' + ' | '.join(msgs)
 
 
+def _quotation_discount_cap_error(user, form, formset):
+    """
+    Enforce SystemSetting.max_pos_discount_percentage for non-admins on a
+    quotation (header discount + each line discount), same rule/tolerance as
+    POS complete_sale. Quotations become sales invoices via quotation_convert.
+    Returns an Arabic error message, or None when within the limit.
+    """
+    lines = []
+    for line_form in formset.forms:
+        cd = getattr(line_form, 'cleaned_data', None) or {}
+        if not cd or cd.get('DELETE') or not cd.get('product'):
+            continue
+        lines.append((cd['product'].name, cd.get('discount_pct')))
+    return _discount_cap_error(user, form.cleaned_data.get('discount_percentage'), lines)
+
+
+def _discount_cap_error(user, header_pct, lines):
+    """
+    Core discount-cap rule (same tolerance/messages as complete_sale).
+    ``lines`` is an iterable of (product_name, discount_pct). Returns an Arabic
+    error message or None. Admins / a 100% cap are never limited.
+    """
+    max_discount_pct = _max_discount_pct_for(user)
+    if max_discount_pct is None:
+        return None
+    header_pct = Decimal(str(header_pct or 0))
+    if header_pct > max_discount_pct + DISCOUNT_CAP_TOLERANCE:
+        return (
+            f'نسبة خصم الفاتورة ({header_pct:.2f}%) تتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
+            'يتطلب ذلك صلاحية مدير.'
+        )
+    for product_name, line_pct in lines:
+        line_pct = Decimal(str(line_pct or 0))
+        if line_pct > max_discount_pct + DISCOUNT_CAP_TOLERANCE:
+            return (
+                f'الخصم على الصنف "{product_name}" ({line_pct:.2f}%) يتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
+                'يتطلب ذلك صلاحية مدير.'
+            )
+    return None
+
+
+def _scoped_quotations(request):
+    """Quotations the user may see: admins all, non-admins their branch, no branch -> none."""
+    return _scope_by_allowed_branches(Quotation.objects.all(), request)
+
+
+def _quotation_branch_error(request, form):
+    """Non-admins may only save a quotation on one of their own branches."""
+    if not is_branch_restricted(request):
+        return None
+    branch = form.cleaned_data.get('branch')
+    if branch is None or branch.id not in (get_allowed_branch_ids(request) or []):
+        return 'لا يمكنك حفظ عرض سعر على فرع غير الفرع المرتبط بحسابك.'
+    return None
+
+
 @custom_permission_required('invoicing.add_quotation', redirect_url='core:main_screen')
 def quotation_create(request):
     """Create a new Quotation."""
+    if is_branch_unassigned(request):
+        messages.error(request, BRANCH_UNASSIGNED_MESSAGE)
+        return redirect('invoicing:quotation_list')
     if request.method == 'POST':
         form = QuotationForm(request.POST)
         formset = QuotationLineFormSet(request.POST)
+        cap_error = None
         if form.is_valid() and formset.is_valid():
+            cap_error = (_quotation_branch_error(request, form)
+                         or _quotation_discount_cap_error(request.user, form, formset))
+        if cap_error:
+            messages.error(request, cap_error)
+        elif form.is_valid() and formset.is_valid():
             quotation = form.save(commit=False)
             quotation.created_by = request.user
             quotation.save()
@@ -2087,7 +2231,9 @@ def quotation_create(request):
             messages.error(request, _format_quotation_form_errors(form, formset))
     else:
         # Defaults
-        initial_branch = getattr(request, 'branch', Branch.objects.filter(is_active=True).first())
+        initial_branch = get_branch_scope(request)
+        if initial_branch is None and not is_branch_restricted(request):
+            initial_branch = Branch.objects.filter(is_active=True).first()
         initial_warehouse = Warehouse.objects.filter(is_active=True).first()
         form = QuotationForm(initial={
             'branch': initial_branch,
@@ -2110,7 +2256,7 @@ def quotation_create(request):
 @custom_permission_required('invoicing.change_quotation', redirect_url='core:main_screen')
 def quotation_edit(request, quotation_id):
     """Edit an existing Quotation."""
-    quotation = get_object_or_404(Quotation, id=quotation_id)
+    quotation = get_object_or_404(_scoped_quotations(request), id=quotation_id)
     if quotation.status in [Quotation.CONVERTED, Quotation.CANCELLED]:
         messages.warning(request, 'لا يمكن تعديل عرض سعر تم تحويله إلى فاتورة أو ملغى.')
         return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
@@ -2118,7 +2264,13 @@ def quotation_edit(request, quotation_id):
     if request.method == 'POST':
         form = QuotationForm(request.POST, instance=quotation)
         formset = QuotationLineFormSet(request.POST, instance=quotation)
+        cap_error = None
         if form.is_valid() and formset.is_valid():
+            cap_error = (_quotation_branch_error(request, form)
+                         or _quotation_discount_cap_error(request.user, form, formset))
+        if cap_error:
+            messages.error(request, cap_error)
+        elif form.is_valid() and formset.is_valid():
             from django.db import transaction
             with transaction.atomic():
                 # Quotations confirmed under the old logic deducted stock; give it back
@@ -2151,7 +2303,7 @@ def quotation_edit(request, quotation_id):
 def quotation_detail(request, quotation_id):
     """View Quotation details."""
     quotation = get_object_or_404(
-        Quotation.objects.select_related('partner', 'branch', 'warehouse', 'created_by', 'converted_invoice').prefetch_related('lines__product', 'lines__uom'),
+        _scoped_quotations(request).select_related('partner', 'branch', 'warehouse', 'created_by', 'converted_invoice').prefetch_related('lines__product', 'lines__uom'),
         id=quotation_id
     )
     context = {
@@ -2164,7 +2316,7 @@ def quotation_detail(request, quotation_id):
 @custom_permission_required('invoicing.delete_quotation', redirect_url='core:main_screen')
 def quotation_delete(request, quotation_id):
     """Delete a Quotation."""
-    quotation = get_object_or_404(Quotation, id=quotation_id)
+    quotation = get_object_or_404(_scoped_quotations(request), id=quotation_id)
     if quotation.status == Quotation.CONVERTED:
         messages.error(request, 'لا يمكن حذف عرض سعر تم تحويله إلى فاتورة.')
         return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
@@ -2189,7 +2341,7 @@ def quotation_delete(request, quotation_id):
 @custom_permission_required('invoicing.change_quotation', redirect_url='core:main_screen')
 def quotation_confirm(request, quotation_id):
     """Confirm quotation: status change only (no stock / accounting effect)."""
-    quotation = get_object_or_404(Quotation, id=quotation_id)
+    quotation = get_object_or_404(_scoped_quotations(request), id=quotation_id)
     if request.method == 'POST':
         try:
             quotation.confirm_quotation()
@@ -2203,7 +2355,7 @@ def quotation_confirm(request, quotation_id):
 @custom_permission_required('invoicing.change_quotation', redirect_url='core:main_screen')
 def quotation_convert(request, quotation_id):
     """Convert quotation directly into a confirmed Sales Invoice with stock deduction in one step."""
-    quotation = get_object_or_404(Quotation, id=quotation_id)
+    quotation = get_object_or_404(_scoped_quotations(request), id=quotation_id)
     if quotation.status == Quotation.CONVERTED and quotation.converted_invoice:
         messages.info(request, f'عرض السعر محول مسبقاً إلى فاتورة رقم ({quotation.converted_invoice.invoice_number}).')
         return redirect('invoicing:invoice_detail', invoice_id=quotation.converted_invoice.id)
@@ -2211,6 +2363,17 @@ def quotation_convert(request, quotation_id):
     if request.method == 'POST':
         from django.db import transaction
         from apps.tenant.services.invoice_service import confirm_invoice
+        # Re-check the discount cap for non-admins (the quotation may predate the
+        # cap or have been written by someone else).
+        cap_error = _discount_cap_error(
+            request.user,
+            quotation.discount_percentage,
+            [(line.product.name if line.product_id else '', line.discount_pct)
+             for line in quotation.lines.select_related('product')],
+        )
+        if cap_error:
+            messages.error(request, cap_error)
+            return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
         try:
             with transaction.atomic():
                 invoice = quotation.convert_to_invoice(user=request.user)
@@ -2233,7 +2396,7 @@ def quotation_convert(request, quotation_id):
 def quotation_print(request, quotation_id):
     """Printable Quotation View."""
     quotation = get_object_or_404(
-        Quotation.objects.select_related('partner', 'branch', 'warehouse').prefetch_related('lines__product', 'lines__uom'),
+        _scoped_quotations(request).select_related('partner', 'branch', 'warehouse').prefetch_related('lines__product', 'lines__uom'),
         id=quotation_id
     )
     system_setting = SystemSetting.get_settings()
@@ -2325,10 +2488,7 @@ def get_product_last_prices(request):
 @login_required
 def recent_transactions_api(request):
     """API returning recent sales transactions for dashboard feed."""
-    invoices = Invoice.objects.filter(invoice_type='SALE')
-    user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
-    if not is_admin_user(request.user) and user_branch:
-        invoices = invoices.filter(branch=user_branch)
+    invoices = _scope_by_allowed_branches(Invoice.objects.filter(invoice_type='SALE'), request)
 
     invoices = invoices.select_related('branch').order_by('-created_at')[:10]
     data = []

@@ -57,6 +57,8 @@
                             {% endif %}
                             {% if node.is_contra_revenue %}
                             <span class="badge bg-danger">إيراد معاكس</span>
+                            {% elif node.is_contra %}
+                            <span class="badge bg-secondary">حساب معاكس (يُعرض مخصوماً)</span>
                             {% endif %}
                             {% if not node.is_leaf_node %}
                             <span class="text-white-50 small ms-2"><i class="fas fa-sitemap me-1"></i> ({{ node.get_descendant_count }} حساب فرعي)</span>

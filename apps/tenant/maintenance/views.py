@@ -14,6 +14,9 @@ from apps.tenant.inventory.models import Product, Warehouse, SerialItem
 from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
 from apps.tenant.core.models import Branch
 from apps.tenant.core.decorators import custom_permission_required
+from apps.tenant.core.access import (
+    filter_by_branch, get_branch_scope, is_branch_unassigned, BRANCH_UNASSIGNED_MESSAGE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +39,10 @@ def ticket_list(request):
     from django.core.paginator import Paginator
     status_filter = request.GET.get('status', '')
     q = request.GET.get('q', '').strip()
-    branch = getattr(request, 'branch', None)
-
-    qs = MaintenanceTicket.objects.select_related('customer', 'technician', 'branch').order_by('-created_at')
-    if branch:
-        qs = qs.filter(branch=branch)
+    qs = filter_by_branch(
+        MaintenanceTicket.objects.select_related('customer', 'technician', 'branch').order_by('-created_at'),
+        request,
+    )
     if status_filter:
         qs = qs.filter(status=status_filter)
     if q:
@@ -72,13 +74,16 @@ def ticket_list(request):
 # ---------------------------------------------------------------------------
 @custom_permission_required('maintenance.add_maintenanceticket', redirect_url='core:main_screen')
 def ticket_create(request):
-    branch = getattr(request, 'branch', None)
+    if is_branch_unassigned(request):
+        messages.error(request, BRANCH_UNASSIGNED_MESSAGE)
+        return redirect('maintenance:ticket_list')
+    branch = get_branch_scope(request)
     customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True).order_by('name')
     technicians = __import__('django.contrib.auth', fromlist=['get_user_model']).get_user_model().objects.filter(is_active=True)
     parent_id = request.GET.get('parent_id')
     parent_ticket = None
     if parent_id:
-        parent_ticket = MaintenanceTicket.objects.filter(pk=parent_id).first()
+        parent_ticket = filter_by_branch(MaintenanceTicket.objects.all(), request).filter(pk=parent_id).first()
 
     if request.method == 'POST':
         try:
@@ -92,6 +97,9 @@ def ticket_create(request):
                 estimated_cost = request.POST.get('estimated_cost') or None
                 warranty_days = int(request.POST.get('warranty_days', 0) or 0)
                 parent_ticket_id = request.POST.get('parent_ticket_id') or None
+                if parent_ticket_id and not filter_by_branch(
+                        MaintenanceTicket.objects.all(), request).filter(pk=parent_ticket_id).exists():
+                    parent_ticket_id = None
                 notes = request.POST.get('notes', '').strip()
                 device_condition = request.POST.get('device_condition_on_receipt', '').strip()
 
@@ -131,12 +139,9 @@ def ticket_create(request):
 # ---------------------------------------------------------------------------
 @custom_permission_required('maintenance.view_maintenanceticket', redirect_url='core:main_screen')
 def ticket_detail(request, pk):
-    branch = getattr(request, 'branch', None)
-    qs = MaintenanceTicket.objects.select_related(
+    qs = filter_by_branch(MaintenanceTicket.objects.select_related(
         'customer', 'technician', 'branch', 'journal_entry', 'treasury', 'bank_account', 'ewallet'
-    )
-    if branch:
-        qs = qs.filter(branch=branch)
+    ), request)
     ticket = get_object_or_404(qs, pk=pk)
     parts = ticket.parts.select_related('product', 'warehouse', 'serial_item')
     
@@ -173,10 +178,7 @@ def ticket_detail(request, pk):
 # ---------------------------------------------------------------------------
 @custom_permission_required('maintenance.change_maintenanceticket', redirect_url='core:main_screen')
 def ticket_edit(request, pk):
-    branch = getattr(request, 'branch', None)
-    qs = MaintenanceTicket.objects.all()
-    if branch:
-        qs = qs.filter(branch=branch)
+    qs = filter_by_branch(MaintenanceTicket.objects.all(), request)
     ticket = get_object_or_404(qs, pk=pk)
     if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
         return JsonResponse({'error': 'لا يمكن تعديل تذكرة مسلّمة.'}, status=400)
@@ -225,10 +227,7 @@ def ticket_edit(request, pk):
 # ---------------------------------------------------------------------------
 @custom_permission_required('maintenance.add_ticketpart', redirect_url='core:main_screen')
 def add_part(request, pk):
-    branch = getattr(request, 'branch', None)
-    qs = MaintenanceTicket.objects.all()
-    if branch:
-        qs = qs.filter(branch=branch)
+    qs = filter_by_branch(MaintenanceTicket.objects.all(), request)
     ticket = get_object_or_404(qs, pk=pk)
     if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
         return JsonResponse({'error': 'لا يمكن إضافة قطع لتذكرة مسلّمة.'}, status=400)
@@ -303,10 +302,7 @@ def delete_part(request, part_pk):
     """Delete a part and return its stock (FIFO batch at the consumed cost / un-sell the serial)."""
     from apps.tenant.services.fifo_engine import add_inventory_batch
 
-    branch = getattr(request, 'branch', None)
-    qs = TicketPart.objects.all()
-    if branch:
-        qs = qs.filter(ticket__branch=branch)
+    qs = filter_by_branch(TicketPart.objects.all(), request, 'ticket__branch')
     part = get_object_or_404(qs, pk=part_pk)
 
     try:
@@ -354,10 +350,7 @@ def delete_part(request, part_pk):
 # ---------------------------------------------------------------------------
 @custom_permission_required('maintenance.change_maintenanceticket', redirect_url='core:main_screen')
 def deliver_ticket(request, pk):
-    branch = getattr(request, 'branch', None)
-    qs = MaintenanceTicket.objects.all()
-    if branch:
-        qs = qs.filter(branch=branch)
+    qs = filter_by_branch(MaintenanceTicket.objects.all(), request)
     ticket = get_object_or_404(qs, pk=pk)
     if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
         return JsonResponse({'error': 'هذه التذكرة مسلّمة بالفعل.'}, status=400)

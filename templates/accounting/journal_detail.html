@@ -18,7 +18,7 @@
             <div>
                 <strong>التاريخ:</strong> {{ entry.date }}<br>
                 <strong>البيان:</strong> {{ entry.description }}<br>
-                <strong>المنشئ:</strong> {% if entry.created_by %}{{ entry.created_by.get_full_name|default:entry.created_by.username }}{% else %}النظام{% endif %}
+                <strong>المنشئ:</strong> {% if entry.created_by %}{{ entry.created_by|display_name }}{% else %}النظام{% endif %}
             </div>
             <div class="text-left">
                 <strong>الحالة:</strong> 
@@ -27,6 +27,14 @@
                 {% else %}
                 <span class="badge badge-draft">مسودة</span>
                 {% endif %}
+                {% if entry.reversal_of_id %}
+                <br><span class="badge badge-warning mt-2">قيد عكسي لـ
+                    <a href="{% url 'accounting:journal_detail' entry.reversal_of_id %}" class="en">{{ entry.reversal_of.reference }}</a></span>
+                {% endif %}
+                {% with rev=entry.reversing_entry %}{% if rev %}
+                <br><span class="badge badge-danger mt-2">تم عكسه بالقيد
+                    <a href="{% url 'accounting:journal_detail' rev.pk %}" class="en">{{ rev.reference }}</a></span>
+                {% endif %}{% endwith %}
             </div>
         </div>
 

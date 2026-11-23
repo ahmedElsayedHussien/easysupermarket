@@ -175,7 +175,7 @@
         </a>
         <form action="{% url 'accounting:voucher_cancel' voucher.pk %}" method="post" style="margin: 0;">
             {% csrf_token %}
-            <button type="submit" class="btn" style="background: #dc3545; color: white; font-weight: bold; padding: 0.6rem 1.5rem; border-radius: 8px; border: none; cursor: pointer;" onclick="return confirm('هل أنت متأكد من إلغاء هذا السند؟ سيتم حذف وعكس القيد المحاسبي المربوط به.');">
+            <button type="submit" class="btn" style="background: #dc3545; color: white; font-weight: bold; padding: 0.6rem 1.5rem; border-radius: 8px; border: none; cursor: pointer;" onclick="return confirm('هل أنت متأكد من إلغاء هذا السند؟ سيتم تسجيل قيد عكسي للقيد المحاسبي المربوط به (يبقى القيد الأصلي في الدفتر).');">
                 <i class="fas fa-times-circle"></i> إلغاء السند
             </button>
         </form>

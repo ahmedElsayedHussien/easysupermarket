@@ -13,6 +13,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 import datetime
+from apps.tenant.core.usernames import display_username
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +99,7 @@ class POSSession(models.Model):
         ordering = ['-start_time']
 
     def __str__(self):
-        return f"وردية {self.user.username} - {self.get_status_display()} ({self.start_time.strftime('%Y-%m-%d %H:%M')})"
+        return f"وردية {display_username(self.user)} - {self.get_status_display()} ({self.start_time.strftime('%Y-%m-%d %H:%M')})"
 
 
 # ---------------------------------------------------------------------------

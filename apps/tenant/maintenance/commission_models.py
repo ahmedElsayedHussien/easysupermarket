@@ -12,6 +12,7 @@ from decimal import Decimal
 from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from apps.tenant.core.usernames import display_username
 
 User = settings.AUTH_USER_MODEL
 
@@ -102,4 +103,4 @@ class CommissionRecord(models.Model):
         ordering = ['-period_start', 'user']
 
     def __str__(self):
-        return f"عمولة {self.user.username} | {self.category.name} | {self.period_start} → {self.period_end}: {self.commission_earned} ج"
+        return f"عمولة {display_username(self.user)} | {self.category.name} | {self.period_start} → {self.period_end}: {self.commission_earned} ج"

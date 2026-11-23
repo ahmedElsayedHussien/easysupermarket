@@ -21,7 +21,7 @@ if /i not "%CONFIRM%"=="Y" (
 
 echo.
 echo [1/2] Running duplicate cleanup...
-.\venv\Scripts\python.exe cleanup_duplicates.py --sqlite
+.\venv\Scripts\python.exe scripts\cleanup_duplicates.py --sqlite
 
 echo.
 echo ======================================================================

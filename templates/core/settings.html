@@ -222,6 +222,13 @@
                             <small class="text-muted d-block mt-1">{{ form.pos_price_margin_percent.help_text }}</small>
                         </div>
 
+                        <div class="form-group mb-3">
+                            <label class="form-label text-muted" for="{{ form.max_pos_discount_percentage.id_for_label }}">{{ form.max_pos_discount_percentage.label }}</label>
+                            {{ form.max_pos_discount_percentage }}
+                            <small class="text-muted d-block mt-1">{{ form.max_pos_discount_percentage.help_text }}</small>
+                            {% for err in form.max_pos_discount_percentage.errors %}<small class="text-danger d-block">{{ err }}</small>{% endfor %}
+                        </div>
+
                         <div class="form-check form-switch mb-3 custom-switch">
                             {{ form.apply_vat_by_default }}
                             <label class="form-check-label ms-2" for="{{ form.apply_vat_by_default.id_for_label }}">تطبيق الضريبة الافتراضي على الفواتير</label>

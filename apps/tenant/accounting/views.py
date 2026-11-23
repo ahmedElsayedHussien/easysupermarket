@@ -98,7 +98,7 @@ class JournalEntryListView(CustomPermissionRequiredMixin, ListView):
 
     
     def get_queryset(self):
-        queryset = JournalEntry.objects.all().order_by('-date', '-created_at')
+        queryset = JournalEntry.objects.select_related('reversal_of', 'reversed_by').order_by('-date', '-created_at')
         
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
@@ -133,6 +133,9 @@ class JournalEntryDetailView(CustomPermissionRequiredMixin, DetailView):
     model = JournalEntry
     template_name = 'accounting/journal_detail.html'
     context_object_name = 'entry'
+
+    def get_queryset(self):
+        return JournalEntry.objects.select_related('reversal_of', 'reversed_by', 'created_by')
 
     def dispatch(self, request, *args, **kwargs):
         if not is_admin_user(request.user):
@@ -459,7 +462,25 @@ def _report_accounts(qs):
     batch_get_own_balances(account_qs=accounts)
     for acc in accounts:
         acc.report_name = acc.name if acc.is_leaf else f'{acc.name} (مرحّل مباشرة على الحساب الرئيسي)'
+        # Contra accounts (is_contra / is_contra_revenue) carry a balance opposite to their type
+        # (e.g. 1220 accumulated depreciation is a credit balance under ASSETS), so own_balance is
+        # negative. Reports show it as a positive amount presented as a deduction; the signed
+        # own_balance is still what every total uses, so totals do not change.
+        acc.is_contra_account = bool(getattr(acc, 'is_contra', False) or acc.is_contra_revenue)
+        acc.contra_amount = -acc.own_balance if acc.is_contra_account else Decimal('0.00')
     return accounts
+
+
+def _section(accounts):
+    """Gross (normal accounts), deductions (contra accounts, positive) and net (= signed sum)."""
+    gross = sum((a.own_balance for a in accounts if not a.is_contra_account), Decimal('0.00'))
+    deductions = sum((a.contra_amount for a in accounts if a.is_contra_account), Decimal('0.00'))
+    return {
+        'gross': gross,
+        'deductions': deductions,
+        'net': gross - deductions,
+        'has_deductions': any(a.is_contra_account for a in accounts),
+    }
 
 
 @login_required
@@ -514,25 +535,28 @@ def income_statement(request):
     expense_accounts = [acc for acc in accounts if acc.account_type == Account.EXPENSE and acc.own_balance != 0]
 
     # ── إيرادات المبيعات الأساسية (REVENUE وليس معاكساً)
-    sales_accounts = [acc for acc in revenue_accounts if not acc.is_contra_revenue]
+    sales_accounts = [acc for acc in revenue_accounts if not acc.is_contra_account]
     total_sales = sum((acc.own_balance for acc in sales_accounts), Decimal('0.00'))
 
     # ── الإيرادات المعاكسة (مرتجعات، خصومات) — كمبلغ موجب يُطرح
-    contra_revenue_accounts = [acc for acc in revenue_accounts if acc.is_contra_revenue]
-    for acc in contra_revenue_accounts:
-        acc.contra_amount = -acc.own_balance
+    contra_revenue_accounts = [acc for acc in revenue_accounts if acc.is_contra_account]
     total_contra_revenue = sum((acc.contra_amount for acc in contra_revenue_accounts), Decimal('0.00'))
 
     net_sales = total_sales - total_contra_revenue
 
     # ── تكلفة البضاعة المباعة COGS
-    cogs_accounts = [acc for acc in expense_accounts if acc.is_cogs]
-    total_cogs = sum((acc.own_balance for acc in cogs_accounts), Decimal('0.00'))
+    # حسابات المصروفات المعاكسة (is_contra، مثل 5110 مردودات ومسموحات المشتريات) رصيدها دائن،
+    # فتُعرض كمبلغ موجب يُخصم من تكلفة المبيعات/المشتريات بدلاً من ظهورها كمصروف تشغيلي سالب.
+    cogs_accounts = [acc for acc in expense_accounts if acc.is_cogs and not acc.is_contra_account]
+    contra_cogs_accounts = [acc for acc in expense_accounts if acc.is_contra_account]
+    gross_cogs = sum((acc.own_balance for acc in cogs_accounts), Decimal('0.00'))
+    total_contra_cogs = sum((acc.contra_amount for acc in contra_cogs_accounts), Decimal('0.00'))
+    total_cogs = gross_cogs - total_contra_cogs
 
     gross_profit = net_sales - total_cogs
 
-    # ── مصروفات التشغيل (كل مصروف ليس COGS)
-    op_expense_accounts = [acc for acc in expense_accounts if not acc.is_cogs]
+    # ── مصروفات التشغيل (كل مصروف ليس COGS وليس معاكساً)
+    op_expense_accounts = [acc for acc in expense_accounts if not acc.is_cogs and not acc.is_contra_account]
     total_op_expense = sum((acc.own_balance for acc in op_expense_accounts), Decimal('0.00'))
 
     total_expense = total_cogs + total_op_expense
@@ -542,6 +566,9 @@ def income_statement(request):
         'sales_accounts': sales_accounts,
         'contra_revenue_accounts': contra_revenue_accounts,
         'cogs_accounts': cogs_accounts,
+        'contra_cogs_accounts': contra_cogs_accounts,
+        'gross_cogs': gross_cogs,
+        'total_contra_cogs': total_contra_cogs,
         'op_expense_accounts': op_expense_accounts,
         'total_sales': total_sales,
         'total_contra_revenue': total_contra_revenue,
@@ -592,6 +619,12 @@ def balance_sheet(request):
     total_liabilities_and_equity = total_liabilities + total_equity + net_income
 
     context = {
+        # gross / deductions (contra accounts as positive amounts) / net per section
+        'current_assets_summary': _section(current_assets),
+        'fixed_assets_summary': _section(fixed_assets),
+        'other_assets_summary': _section(other_assets),
+        'liabilities_summary': _section(liability_accounts),
+        'equity_summary': _section(equity_accounts),
         'current_assets': current_assets,
         'fixed_assets': fixed_assets,
         'other_assets': other_assets,
@@ -1085,20 +1118,27 @@ class VoucherUpdateView(CustomPermissionRequiredMixin, UpdateView):
 
     def form_valid(self, form):
         """
-        Editing a posted voucher = remove its entry + save + repost, all in ONE transaction:
-        if reposting fails nothing is changed (the old posted entry is kept) and the error is shown.
+        Editing a posted voucher = reverse its entry + save + repost, all in ONE transaction:
+        the old posted entry is kept for the audit trail and neutralised by a reversal entry,
+        then a fresh entry is posted for the edited voucher. If reposting fails everything is
+        rolled back (old entry stays active, no reversal) and the error is shown.
         """
         from .models import _ensure_pos_session_open
+        from apps.tenant.services.journal_service import reverse_entry_if_active
         try:
             with transaction.atomic():
-                locked = Voucher.objects.select_for_update().select_related('pos_session').get(pk=self.object.pk)
+                locked = Voucher.objects.select_for_update().select_related('pos_session', 'journal_entry').get(pk=self.object.pk)
                 if locked.status == Voucher.CANCELLED:
                     raise ValidationError('لا يمكن تعديل سند ملغي.')
                 was_posted = (locked.status == Voucher.POSTED)
                 if was_posted:
                     _ensure_pos_session_open(locked.pos_session, 'تعديل')
                     if locked.journal_entry_id:
-                        JournalEntry.objects.filter(pk=locked.journal_entry_id).delete()
+                        reverse_entry_if_active(
+                            locked.journal_entry,
+                            reason=f'تعديل السند {locked.voucher_number}',
+                            user=self.request.user,
+                        )
                     form.instance.journal_entry = None
                     form.instance.status = Voucher.DRAFT
 
@@ -1127,8 +1167,8 @@ class VoucherCancelView(CustomPermissionRequiredMixin, View):
     def post(self, request, pk):
         voucher = get_object_or_404(scope_vouchers(Voucher.objects.all(), request.user), pk=pk)
         try:
-            voucher.cancel_voucher()
-            messages.success(request, 'تم إلغاء السند وحذف القيد المحاسبي المربوط به بنجاح.')
+            voucher.cancel_voucher(user=request.user)
+            messages.success(request, 'تم إلغاء السند وتسجيل قيد عكسي للقيد المحاسبي المربوط به بنجاح.')
         except Exception as e:
             messages.error(request, f'حدث خطأ أثناء إلغاء السند: {str(e)}')
         return redirect('accounting:voucher_detail', pk=voucher.pk)
@@ -1511,8 +1551,8 @@ class InternalTransferCancelView(CustomPermissionRequiredMixin, View):
     def post(self, request, pk):
         transfer = get_object_or_404(scope_transfers(InternalTransfer.objects.all(), request.user), pk=pk)
         try:
-            transfer.cancel_transfer()
-            messages.success(request, 'تم إلغاء التحويل وحذف القيد المحاسبي المربوط بنجاح.')
+            transfer.cancel_transfer(user=request.user)
+            messages.success(request, 'تم إلغاء التحويل وتسجيل قيد عكسي للقيد المحاسبي المربوط به بنجاح.')
         except Exception as e:
             messages.error(request, f'حدث خطأ أثناء الإلغاء: {str(e)}')
         return redirect('accounting:transfer_detail', pk=transfer.pk)

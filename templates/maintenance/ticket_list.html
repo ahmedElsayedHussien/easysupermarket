@@ -54,7 +54,7 @@
           <td>{{ ticket.customer.name }}</td>
           <td>{{ ticket.device_model }}</td>
           <td><small class="text-muted">{{ ticket.device_serial|default:'-' }}</small></td>
-          <td>{{ ticket.technician.get_full_name|default:ticket.technician.username|default:'-' }}</td>
+          <td>{{ ticket.technician|display_name|default:'-' }}</td>
           <td>{{ ticket.labor_cost }} ج</td>
           <td>
             {% if ticket.status == 'PENDING' %}

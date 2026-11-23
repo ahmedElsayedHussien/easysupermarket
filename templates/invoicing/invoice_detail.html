@@ -419,7 +419,7 @@ function confirmInvoice(invoiceId) {
 }
 
 function cancelInvoice(invoiceId) {
-    if (confirm('هل أنت متأكد من إلغاء هذه الفاتورة بالكامل؟\nسوف يتم حذف وعكس كافة القيود المحاسبية وحركات المخزون المربوطة بها.')) {
+    if (confirm('هل أنت متأكد من إلغاء هذه الفاتورة بالكامل؟\nسوف يتم تسجيل قيود عكسية لكافة القيود المحاسبية وعكس حركات المخزون المربوطة بها.')) {
         fetch(`/invoicing/invoice/${invoiceId}/cancel/`, {
             method: 'POST',
             headers: {

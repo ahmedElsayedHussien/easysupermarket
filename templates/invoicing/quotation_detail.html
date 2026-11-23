@@ -91,7 +91,7 @@
         </div>
         <div>
             <div style="color: #94a3b8; font-size: 0.85rem;">أنشئ بواسطة</div>
-            <div style="color: #fff; margin-top: 0.2rem;">{{ quotation.created_by.username|default:"النظام" }}</div>
+            <div style="color: #fff; margin-top: 0.2rem;">{{ quotation.created_by|display_username|default:"النظام" }}</div>
         </div>
     </div>
 

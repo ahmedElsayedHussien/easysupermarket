@@ -5,6 +5,34 @@ from django.contrib.auth.models import Permission
 from apps.tenant.core.models import Employee, Branch, Role
 from django.db import transaction
 from .models import SystemSetting
+from .usernames import namespace_username, display_username
+
+USERNAME_TAKEN_MSG = 'اسم المستخدم هذا مستخدم بالفعل.'
+NO_BRANCH_HELP = 'الموظفون غير المديرين بدون فرع لن يروا أي بيانات خاصة بالفروع.'
+
+
+def _clean_tenant_username(form, entered, exclude_pk=None):
+    """
+    Validate a username typed in a tenant and return the internal
+    (namespaced) value. Uniqueness is checked ONLY against the namespaced
+    form, so other tenants' usernames are never revealed.
+    """
+    entered = (entered or '').strip()
+    if not entered:
+        raise forms.ValidationError('اسم المستخدم مطلوب.')
+    if '__' in entered:
+        raise forms.ValidationError('اسم المستخدم لا يجب أن يحتوي على "__".')
+    internal = namespace_username(entered)
+    max_len = User._meta.get_field('username').max_length
+    if len(internal) > max_len:
+        raise forms.ValidationError('اسم المستخدم طويل جداً.')
+    User._meta.get_field('username').run_validators(internal)
+    qs = User.objects.filter(username__iexact=internal)
+    if exclude_pk:
+        qs = qs.exclude(pk=exclude_pk)
+    if qs.exists():
+        raise forms.ValidationError(USERNAME_TAKEN_MSG)
+    return internal
 
 class SystemSettingForm(forms.ModelForm):
     class Meta:
@@ -22,6 +50,7 @@ class SystemSettingForm(forms.ModelForm):
             'allow_pos_price_modification': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'show_pos_cost': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'pos_price_margin_percent': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'step': '0.01'}),
+            'max_pos_discount_percentage': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'max': 100, 'step': '0.01'}),
             'apply_vat_by_default': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'default_pos_treasury': forms.Select(attrs={'class': 'form-select'}),
             'default_pos_bank_account': forms.Select(attrs={'class': 'form-select'}),
@@ -89,6 +118,11 @@ class EmployeeUserCreationForm(UserCreationForm):
         if 'username' in self.fields:
             self.fields['username'].label = 'اسم المستخدم (Username)'
             self.fields['username'].help_text = 'اسم تسجيل الدخول للنظام (حروف إنجليزية أو أرقام).'
+        self.fields['branch'].help_text = NO_BRANCH_HELP
+
+    def clean_username(self):
+        # Stored as <schema>__<entered> (no prefix in SQLite mode).
+        return _clean_tenant_username(self, self.cleaned_data.get('username'))
 
     def _post_clean(self):
         forms.ModelForm._post_clean(self)
@@ -195,7 +229,10 @@ class EmployeeUserUpdateForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields['branch'].help_text = NO_BRANCH_HELP
         if self.instance and self.instance.pk:
+            # Show the entered name, never the internal tenant prefix.
+            self.initial['username'] = display_username(self.instance.username)
             try:
                 employee = self.instance.employee_profile
                 self.fields['branch'].initial = employee.branch
@@ -209,6 +246,13 @@ class EmployeeUserUpdateForm(forms.ModelForm):
             except Employee.DoesNotExist:
                 pass
             self.fields['user_permissions'].initial = self.instance.user_permissions.all()
+
+    def clean_username(self):
+        entered = (self.cleaned_data.get('username') or '').strip()
+        current = self.instance.username if self.instance and self.instance.pk else ''
+        if current and entered == display_username(current):
+            return current  # unchanged (legacy users keep their raw name)
+        return _clean_tenant_username(self, entered, exclude_pk=getattr(self.instance, 'pk', None))
 
     def clean(self):
         cleaned_data = super().clean()
@@ -266,7 +310,33 @@ class TenantAuthenticationForm(AuthenticationForm):
     credentials alone are not enough: the user must have an Employee profile in
     the current tenant schema (platform superusers excepted). The same generic
     "invalid login" error is shown to avoid account enumeration.
+
+    Usernames created inside a tenant are stored as ``<schema>__<entered>``;
+    the user types only ``<entered>``. If no such namespaced user exists, the
+    raw name is tried (legacy users created before namespacing).
+
+    ``request`` is always passed to authenticate() (required by django-axes).
     """
+
+    def clean(self):
+        from django.contrib.auth import authenticate
+        username = self.cleaned_data.get('username')
+        password = self.cleaned_data.get('password')
+
+        if username is not None and password:
+            username = username.strip()
+            login_name = username
+            namespaced = namespace_username(username)
+            if namespaced != username and User.objects.filter(username=namespaced).exists():
+                login_name = namespaced
+            # Exactly one authenticate() call per attempt so django-axes counts
+            # one failure per attempt.
+            self.user_cache = authenticate(self.request, username=login_name, password=password)
+            if self.user_cache is None:
+                raise self.get_invalid_login_error()
+            self.confirm_login_allowed(self.user_cache)
+
+        return self.cleaned_data
 
     def confirm_login_allowed(self, user):
         super().confirm_login_allowed(user)

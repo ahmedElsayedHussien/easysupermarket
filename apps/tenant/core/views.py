@@ -19,6 +19,7 @@ from .models import SystemSetting
 from .forms import SystemSettingForm, EmployeeUserCreationForm, EmployeeUserUpdateForm
 from .decorators import custom_permission_required, is_admin_user
 from .access import allowed_branches as _allowed_branches
+from .usernames import display_username
 
 _is_admin = is_admin_user
 
@@ -335,8 +336,8 @@ def admin_dashboard(request):
         if hasattr(u, 'employee_profile') and u.employee_profile:
             branch_obj = u.employee_profile.branch
         users_with_branches.append({
-            'username': u.username,
-            'get_full_name': u.get_full_name() or u.username,
+            'username': display_username(u),
+            'get_full_name': u.get_full_name() or display_username(u),
             # Template shows "مدير" for is_superuser: reflect the tenant role.
             'is_superuser': u.is_superuser or getattr(getattr(u, 'employee_profile', None), 'role', '') == 'ADMIN',
             'is_staff': False,
@@ -519,7 +520,7 @@ class UserCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
         return context
 
     def form_valid(self, form):
-        messages.success(self.request, f'تم إنشاء المستخدم "{form.instance.username}" بنجاح.')
+        messages.success(self.request, f'تم إنشاء المستخدم "{display_username(form.instance)}" بنجاح.')
         return super().form_valid(form)
 
     def form_invalid(self, form):
@@ -543,7 +544,7 @@ class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, TenantUserQuerysetM
         if form.instance.pk == self.request.user.pk and not form.cleaned_data.get('is_active', True):
             form.add_error('is_active', 'لا يمكنك تعطيل حسابك الحالي.')
             return self.form_invalid(form)
-        messages.success(self.request, f'تم تعديل بيانات المستخدم "{form.instance.username}" بنجاح.')
+        messages.success(self.request, f'تم تعديل بيانات المستخدم "{display_username(form.instance)}" بنجاح.')
         return super().form_valid(form)
 
     def form_invalid(self, form):

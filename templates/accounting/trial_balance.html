@@ -28,7 +28,7 @@
                 {% for account in accounts %}
                 <tr>
                     <td class="en">{{ account.code }}</td>
-                    <td>{{ account.report_name }}</td>
+                    <td>{{ account.report_name }}{% if account.is_contra_account %} <span class="badge bg-secondary" title="حساب معاكس: رصيده عكس طبيعة نوعه ويُعرض مخصوماً في القوائم المالية">معاكس</span>{% endif %}</td>
                     <td class="en">{% if account.tb_debit %}{{ account.tb_debit|floatformat:"2u" }}{% else %}0.00{% endif %}</td>
                     <td class="en">{% if account.tb_credit %}{{ account.tb_credit|floatformat:"2u" }}{% else %}0.00{% endif %}</td>
                 </tr>

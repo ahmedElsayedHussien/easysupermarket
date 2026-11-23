@@ -31,7 +31,7 @@
                     <td>
                         <strong style="color: #fff;">
                             {% if obj.name %}{{ obj.name }}
-                            {% elif obj.username %}{{ obj.username }}
+                            {% elif obj.username|display_username %}{{ obj.username|display_username }}
                             {% else %}{{ obj }}{% endif %}
                         </strong><br>
                         <small style="color: #94a3b8;">

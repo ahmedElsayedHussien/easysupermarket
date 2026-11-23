@@ -9,7 +9,10 @@ const POS = {
     activeSessionId: 1,
     nextSessionId: 2,
     discountMode: 'pct',
-    
+    // Max total discount % per line / invoice for this user (set by the
+    // template from SystemSetting.max_pos_discount_percentage; 100 for admins).
+    maxDiscountPercent: 100,
+
     get cart() {
         const session = this.sessions.find(s => s.id === this.activeSessionId);
         return session ? session.cart : [];
@@ -946,9 +949,49 @@ const POS = {
     setDiscount(keyOrId, discountPct) {
         const item = this.findCartItem(keyOrId);
         if (item) {
-            item.discount = Math.max(0, Math.min(100, parseFloat(discountPct) || 0));
+            let pct = Math.max(0, Math.min(100, parseFloat(discountPct) || 0));
+            const allowed = this.getAllowedLineDiscount(this.getGlobalDiscountPct());
+            if (pct > allowed + 0.0001) {
+                pct = allowed;
+                this.notifyDiscountCap();
+            }
+            item.discount = pct;
             this.updateCartDisplay();
         }
+    },
+
+    // --- Discount cap (SystemSetting.max_pos_discount_percentage) ---
+    // The cap applies to the TOTAL effective discount of each line
+    // (line discount combined with the invoice discount), exactly as the
+    // server validates it.
+    getDiscountCap() {
+        const cap = parseFloat(this.maxDiscountPercent);
+        if (isNaN(cap)) return 100;
+        return Math.max(0, Math.min(100, cap));
+    },
+
+    getAllowedLineDiscount(globalPct) {
+        const cap = this.getDiscountCap();
+        if (cap >= 100) return 100;
+        const g = Math.max(0, Math.min(100, parseFloat(globalPct) || 0)) / 100;
+        if (g >= 1) return 0;
+        return Math.max(0, (1 - (1 - cap / 100) / (1 - g)) * 100);
+    },
+
+    getAllowedGlobalDiscount() {
+        const cap = this.getDiscountCap();
+        if (cap >= 100) return 100;
+        const maxLine = (this.cart || []).reduce((m, i) => Math.max(m, parseFloat(i.discount) || 0), 0) / 100;
+        if (maxLine >= 1) return 0;
+        return Math.max(0, Math.min(cap, (1 - (1 - cap / 100) / (1 - maxLine)) * 100));
+    },
+
+    notifyDiscountCap() {
+        const cap = this.getDiscountCap();
+        const now = Date.now();
+        if (this._lastCapNotice && now - this._lastCapNotice < 1500) return;
+        this._lastCapNotice = now;
+        this.showNotification(`⚠ الحد الأقصى المسموح للخصم هو ${cap}% — تم ضبط الخصم تلقائياً`, 'warning');
     },
 
     updateUom(keyOrId, uomId) {
@@ -1081,11 +1124,11 @@ const POS = {
         if (this.discountMode === 'val' && valInput) {
             const val = Math.max(0, parseFloat(valInput.value) || 0);
             if (gross > 0) {
-                return Math.min(100, (val / gross) * 100);
+                return Math.min(this.getAllowedGlobalDiscount(), (val / gross) * 100);
             }
             return 0;
         } else if (pctInput) {
-            return Math.max(0, Math.min(100, parseFloat(pctInput.value) || 0));
+            return Math.max(0, Math.min(this.getAllowedGlobalDiscount(), parseFloat(pctInput.value) || 0));
         }
         return 0;
     },
@@ -1094,8 +1137,18 @@ const POS = {
         this.discountMode = 'val';
         const valInput = document.getElementById('globalDiscountVal');
         const pctInput = document.getElementById('globalDiscountPct');
-        const val = Math.max(0, parseFloat(valInput ? valInput.value : 0) || 0);
+        let val = Math.max(0, parseFloat(valInput ? valInput.value : 0) || 0);
         const gross = this.getCartGrossSubtotal();
+
+        // Enforce the discount cap (value mode is converted to a percentage).
+        if (gross > 0 && valInput) {
+            const allowedPct = this.getAllowedGlobalDiscount();
+            if ((val / gross) * 100 > allowedPct + 0.0001) {
+                val = Math.floor(gross * allowedPct) / 100;
+                valInput.value = val;
+                this.notifyDiscountCap();
+            }
+        }
 
         if (pctInput) {
             if (gross > 0) {
@@ -1121,7 +1174,13 @@ const POS = {
         this.discountMode = 'pct';
         const valInput = document.getElementById('globalDiscountVal');
         const pctInput = document.getElementById('globalDiscountPct');
-        const pct = Math.max(0, Math.min(100, parseFloat(pctInput ? pctInput.value : 0) || 0));
+        let pct = Math.max(0, Math.min(100, parseFloat(pctInput ? pctInput.value : 0) || 0));
+        const allowedPct = this.getAllowedGlobalDiscount();
+        if (pct > allowedPct + 0.0001) {
+            pct = Math.floor(allowedPct * 100) / 100;
+            if (pctInput) pctInput.value = pct;
+            this.notifyDiscountCap();
+        }
         const gross = this.getCartGrossSubtotal();
 
         if (valInput) {
@@ -1157,10 +1216,21 @@ const POS = {
                 val = gross;
                 valInput.value = val.toFixed(2);
             }
+            // Cart shrank: keep the fixed amount within the discount cap.
+            const allowedPct = this.getAllowedGlobalDiscount();
+            if ((val / gross) * 100 > allowedPct + 0.0001) {
+                val = Math.floor(gross * allowedPct) / 100;
+                valInput.value = val.toFixed(2);
+            }
             const pct = (val / gross) * 100;
             pctInput.value = pct > 0 ? (Math.round(pct * 100) / 100) : '0';
         } else if (pctInput && valInput) {
-            const pct = Math.max(0, Math.min(100, parseFloat(pctInput.value) || 0));
+            let pct = Math.max(0, Math.min(100, parseFloat(pctInput.value) || 0));
+            const allowedPct = this.getAllowedGlobalDiscount();
+            if (pct > allowedPct + 0.0001) {
+                pct = Math.floor(allowedPct * 100) / 100;
+                pctInput.value = pct;
+            }
             const val = gross * (pct / 100);
             valInput.value = val > 0 ? (Math.round(val * 100) / 100) : '0';
         }

@@ -146,7 +146,7 @@
                         <span class="badge" style="background: rgba(255, 23, 68, 0.1); color: var(--neon-red); padding: 0.2rem 0.5rem; border-radius: 4px;">ملغي</span>
                         {% endif %}
                     </td>
-                    <td style="color: var(--text-muted);">{{ t.created_by.get_full_name|default:t.created_by.username|default:"-" }}</td>
+                    <td style="color: var(--text-muted);">{{ t.created_by.get_full_name|default:t.created_by.username|display_username|default:"-" }}</td>
                     <td style="color: var(--text-muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ t.notes }}">
                         {{ t.notes|default:"-" }}
                     </td>

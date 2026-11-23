@@ -80,7 +80,7 @@
                         {{ inv.partner.name|default:"عميل نقدي/طياري" }}
                     </td>
                     <td>
-                        {{ inv.cashier.first_name|default:inv.cashier.username }}
+                        {{ inv.cashier.first_name|default:inv.cashier.username|display_username }}
                     </td>
                     <td style="font-weight: bold; color: var(--neon-red); font-size: 1.1rem;">
                         {{ inv.total_amount|floatformat:"-2" }}

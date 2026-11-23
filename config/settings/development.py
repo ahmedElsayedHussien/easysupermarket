@@ -53,6 +53,21 @@ else:
             }
         }
     }
+    # -------------------------------------------------------------------------
+    # SQLite concurrency note
+    # select_for_update() is a silent no-op on SQLite, so row locks used by the
+    # stock / sequence / journal code do not protect against lost updates.
+    # With the default DEFERRED transactions two writers can both read the
+    # same row and the second commit overwrites the first. From Django 5.1,
+    # transaction_mode='IMMEDIATE' makes every atomic() block take SQLite's
+    # write lock at BEGIN, serialising writers (readers are unaffected in WAL
+    # mode). The 30s timeout / busy_timeout below make writers wait instead of
+    # failing with "database is locked". On Django < 5.1 the option does not
+    # exist and is skipped.
+    # -------------------------------------------------------------------------
+    import django as _django
+    if _django.VERSION >= (5, 1):
+        DATABASES['default']['OPTIONS']['transaction_mode'] = 'IMMEDIATE'
     # Auto-adjust for SQLite: remove django_tenants and its schema dependencies
     INSTALLED_APPS = [app for app in INSTALLED_APPS if app != 'django_tenants']
     MIDDLEWARE = [m for m in MIDDLEWARE if 'django_tenants' not in m]

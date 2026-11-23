@@ -50,7 +50,7 @@
           <i class="fas fa-user" style="color:#ff7300;"></i>
         </div>
         <div>
-          <div class="fw-bold">{{ entry.user.get_full_name|default:entry.user.username }}</div>
+          <div class="fw-bold">{{ entry.user|display_name }}</div>
           <small class="text-muted">إجمالي المبيعات: <strong>{{ entry.total_sales|floatformat:2 }} ج.م</strong></small>
         </div>
       </div>

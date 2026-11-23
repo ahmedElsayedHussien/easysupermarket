@@ -127,7 +127,7 @@
                 </div>
                 
                 <div class="card-footer bg-dark-glass border-top border-secondary text-white-50 small p-3">
-                    <i class="fas fa-user me-1"></i> أُنشئ بواسطة: {{ expense.created_by.get_full_name|default:expense.created_by.username|default:"النظام" }} 
+                    <i class="fas fa-user me-1"></i> أُنشئ بواسطة: {{ expense.created_by|display_name|default:"النظام" }} 
                     <span class="mx-2">|</span>
                     <i class="fas fa-clock me-1"></i> {{ expense.created_at|date:"Y-m-d H:i" }}
                 </div>

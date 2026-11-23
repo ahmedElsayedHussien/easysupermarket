@@ -19,7 +19,9 @@ from django.http import HttpResponse
 from django.contrib import messages
 from apps.tenant.core.access import (
     filter_by_branch, get_branch_scope, is_branch_restricted, is_tenant_admin,
+    is_branch_unassigned,
 )
+from apps.tenant.core.usernames import display_username
 
 # Hard cap on the number of rows written to an Excel export.
 EXPORT_MAX_ROWS = 50000
@@ -584,10 +586,10 @@ class UserSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVie
     def get_csv_row(self, obj):
         name = f"{obj['cashier__first_name']} {obj['cashier__last_name']}".strip()
         if not name:
-            name = obj['cashier__username']
+            name = display_username(obj['cashier__username'])
         return [
             name,
-            obj['cashier__username'],
+            display_username(obj['cashier__username']),
             obj['sales_count'],
             obj['total_sales'],
             obj['returns_count'],
@@ -722,7 +724,7 @@ class SalesReturnsReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
             obj.date.strftime('%Y-%m-%d %H:%M') if hasattr(obj, 'date') and obj.date else '',
             obj.invoice_number,
             obj.partner.name if obj.partner else 'عميل نقدي/طياري',
-            obj.cashier.first_name or obj.cashier.username if obj.cashier else '',
+            obj.cashier.first_name or display_username(obj.cashier) if obj.cashier else '',
             obj.total_amount,
             obj.notes
         ]
@@ -1261,10 +1263,10 @@ class UserPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
     def get_csv_row(self, obj):
         name = f"{obj['cashier__first_name']} {obj['cashier__last_name']}".strip()
         if not name:
-            name = obj['cashier__username']
+            name = display_username(obj['cashier__username'])
         return [
             name,
-            obj['cashier__username'],
+            display_username(obj['cashier__username']),
             obj['purchases_count'],
             obj['total_purchases'],
             obj['returns_count'],
@@ -1333,7 +1335,7 @@ class PurchaseReturnsReportView(CsvExportMixin, CustomPermissionRequiredMixin, L
             obj.date.strftime('%Y-%m-%d %H:%M') if hasattr(obj, 'date') and obj.date else '',
             obj.invoice_number,
             obj.partner.name if obj.partner else 'مورد نقدي',
-            obj.cashier.first_name or obj.cashier.username if obj.cashier else '',
+            obj.cashier.first_name or display_username(obj.cashier) if obj.cashier else '',
             obj.total_amount,
             obj.notes
         ]
@@ -2777,7 +2779,9 @@ class CashVouchersReportView(CustomPermissionRequiredMixin, TemplateView):
             date__range=[date_from_obj, date_to_obj]
         ).select_related('partner', 'account', 'treasury', 'bank_account', 'ewallet').order_by('-date', '-id')
         _branch = get_branch_scope(self.request)
-        if _branch is not None:
+        if is_branch_unassigned(self.request):
+            queryset = queryset.none()
+        elif _branch is not None:
             # Voucher.branch may be unset on legacy rows: fall back to the treasury's branch.
             queryset = queryset.filter(
                 models.Q(branch=_branch) | models.Q(branch__isnull=True, treasury__branch=_branch)
@@ -2885,7 +2889,9 @@ class InternalTransfersReportView(CustomPermissionRequiredMixin, TemplateView):
         ).order_by('-date', '-id')
 
         _branch = get_branch_scope(self.request)
-        if _branch is not None:
+        if is_branch_unassigned(self.request):
+            queryset = queryset.none()
+        elif _branch is not None:
             queryset = queryset.filter(models.Q(from_treasury__branch=_branch) | models.Q(to_treasury__branch=_branch))
 
         if status:
@@ -3126,7 +3132,9 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
         # for branch-scoped viewers.
         users = User.objects.filter(employee_profile__isnull=False)
         branch = get_branch_scope(self.request)
-        if branch is not None:
+        if is_branch_unassigned(self.request):
+            users = users.filter(pk=self.request.user.pk)
+        elif branch is not None:
             users = users.filter(employee_profile__branch=branch)
         users = users.order_by('first_name', 'username')
 
@@ -3284,7 +3292,7 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
                     f"#{s.id}",
                     start_str,
                     end_str,
-                    s.user.get_full_name() or s.user.username,
+                    s.user.get_full_name() or display_username(s.user),
                     s.treasury.name if s.treasury else '',
                     to_dec(item.get('net_sales_amount')),
                     to_dec(item.get('total_cash_sales')),
@@ -3390,7 +3398,7 @@ def shift_detail_api(request, pk):
 
     data = {
         'id': session.id,
-        'user': session.user.get_full_name() or session.user.username,
+        'user': session.user.get_full_name() or display_username(session.user),
         'treasury': session.treasury.name if session.treasury else '-',
         'branch': session.branch.name if session.branch else '-',
         'start_time': session.start_time.strftime('%Y-%m-%d %H:%M') if session.start_time else '',
@@ -3794,7 +3802,7 @@ def export_shift_detail_excel(request, pk):
 
     # 2. Metadata Section
     metadata = [
-        ["الكاشير المسؤول", session.user.get_full_name() or session.user.username, "الخزينة المعتمدة", session.treasury.name if session.treasury else '-'],
+        ["الكاشير المسؤول", session.user.get_full_name() or display_username(session.user), "الخزينة المعتمدة", session.treasury.name if session.treasury else '-'],
         ["الفرع", session.branch.name if session.branch else '-', "حالة الوردية", session.get_status_display()],
         ["تاريخ ووقت الفتح", session.start_time.strftime('%Y-%m-%d %H:%M') if session.start_time else '-', "تاريخ ووقت الإغلاق", session.end_time.strftime('%Y-%m-%d %H:%M') if session.end_time else 'مفتوحة حالياً'],
     ]
@@ -4198,10 +4206,15 @@ class FixedAssetReportView(CsvExportMixin, CustomPermissionRequiredMixin, Templa
             'report_data': asset_rows,
         })
 
-        if self.request.GET.get('export') == 'csv':
-            return self.export_csv(asset_rows)
-
         return context
+
+    def get(self, request, *args, **kwargs):
+        # CSV export must be handled here, not in get_context_data(): returning
+        # an HttpResponse from get_context_data() crashes the template render.
+        if request.GET.get('export') == 'csv':
+            context = self.get_context_data(**kwargs)
+            return self.export_csv(context.get('report_data') or [])
+        return super().get(request, *args, **kwargs)
 
     def export_csv(self, rows):
         import csv
@@ -4360,10 +4373,15 @@ class LoanReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView
             'total_count': len(loan_rows),
         })
 
-        if self.request.GET.get('export') == 'csv':
-            return self.export_csv(loan_rows)
-
         return context
+
+    def get(self, request, *args, **kwargs):
+        # CSV export must be handled here, not in get_context_data(): returning
+        # an HttpResponse from get_context_data() crashes the template render.
+        if request.GET.get('export') == 'csv':
+            context = self.get_context_data(**kwargs)
+            return self.export_csv(context.get('report_data') or [])
+        return super().get(request, *args, **kwargs)
 
     def export_csv(self, rows):
         import csv
