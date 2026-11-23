@@ -6,7 +6,7 @@ cd /d %~dp0
 
 if exist "venv\Scripts\activate.bat" (
     call venv\Scripts\activate.bat
-    python apps\tenant\core\backup_service.py --restore
+    python manage.py db_backup --restore
 ) else (
     echo [ERROR] Virtual environment 'venv' not found!
     echo Please run setup_venv.bat first.

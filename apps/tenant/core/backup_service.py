@@ -459,9 +459,13 @@ def _check_sql_file(path, schema):
     return True
 
 
-def restore_backup(filepath):
+def restore_backup(filepath, trusted_operator=False):
     """
     Restores the current tenant from a server-signed backup file.
+    ``trusted_operator=True`` is ONLY for the local command-line tool (someone at
+    the server's keyboard): it skips the signature check so a backup made on
+    another machine (different SECRET_KEY) can be restored. The web UI never
+    passes it. Content checks still apply.
     Returns (success: bool, message: str)
     """
     try:
@@ -471,7 +475,7 @@ def restore_backup(filepath):
         return False, str(e)
     if not os.path.isfile(filepath) or os.path.dirname(os.path.abspath(filepath)) != b_dir:
         return False, 'ملف النسخة الاحتياطية غير موجود.'
-    if not verify_signature(filepath):
+    if not trusted_operator and not verify_signature(filepath):
         logger.warning('Restore refused: invalid/missing signature for %s (schema %s)', filepath, schema)
         return False, 'توقيع النسخة الاحتياطية غير صالح أو مفقود؛ لا يمكن استعادة إلا النسخ التي أنشأها النظام لهذه المساحة.'
 
@@ -536,75 +540,210 @@ def restore_backup(filepath):
 
 
 # ---------------------------------------------------------------------------
-# CLI (server operators only)
+# CLI (server operators only) - used by backup_database.bat / restore_database.bat
 # ---------------------------------------------------------------------------
+#
+# PostgreSQL menu:
+#   [1..N]  one supermarket (tenant schema)   -> backups/<schema>/  (also visible in the web UI)
+#   [A]     every supermarket, one file each  (backup only)
+#   [F]     FULL database (all schemas + users) -> backups/_full/*.dump
+#           Use F to move the whole system to a new machine.
+# SQLite: a single copy of db.sqlite3 (no menu).
+
+FULL_DIR_NAME = '_full'
+
 
 def _cli_setup():
     import sys
     sys.path.insert(0, BASE_DIR)
+    os.chdir(BASE_DIR)
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.development')
     import django
     django.setup()
 
 
-def _cli_schema_context(argv):
-    """`--schema=<name>` selects the tenant in django-tenants mode."""
-    import contextlib
-    schema = None
+def _cli_tenants():
+    from apps.public.tenants.models import Tenant
+    return list(Tenant.objects.exclude(schema_name='public').order_by('schema_name'))
+
+
+def _cli_schema_arg(argv):
     for arg in argv:
         if arg.startswith('--schema='):
-            schema = arg.split('=', 1)[1]
-    if schema and hasattr(connection, 'set_schema'):
-        from django_tenants.utils import schema_context
-        return schema_context(schema)
-    return contextlib.nullcontext()
+            return arg.split('=', 1)[1]
+    return None
 
 
-def restore_cli(argv):
-    print('=' * 60)
-    print('      Cashierak ERP - Database Restore Tool')
-    print('=' * 60)
-    with _cli_schema_context(argv):
-        info = get_current_db_info()
-        print(f"  Active Database: {info['display_engine']} ({info['name']}) schema={info['schema']}")
-        backups = list_backups()
-        if not backups:
-            print('  No backups found for this schema.')
-            return
-        for idx, b in enumerate(backups, 1):
-            print(f"  [{idx}] {b['filename']} ({b['size_display']} - {b['created_at_display']})")
-        choice = input('\n  Select backup to restore [1..N]: ').strip()
-        try:
-            target = backups[int(choice) - 1]['filepath']
-        except (ValueError, IndexError):
-            print('  Invalid selection.')
-            return
-        confirm = input(f'\n  [WARNING] Current data will be OVERWRITTEN by [{os.path.basename(target)}]. Proceed? [y/n]: ').strip().lower()
-        if confirm not in ['y', 'yes', 'نعم']:
+def _cli_ask(prompt):
+    try:
+        return input(prompt).strip()
+    except EOFError:
+        return ''
+
+
+def _cli_menu(tenants, restore):
+    print('\n  Choose what to %s:' % ('restore' if restore else 'back up'))
+    for idx, t in enumerate(tenants, 1):
+        print(f'    [{idx}] {t.name}  (schema: {t.schema_name})')
+    if not restore:
+        print('    [A] All supermarkets (one file each)')
+    print('    [F] FULL database - everything incl. users (to move to a new machine)')
+    return _cli_ask('\n  Your choice: ').upper()
+
+
+def _full_dir():
+    path = os.path.join(BACKUP_DIR, FULL_DIR_NAME)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _cli_pick(items, label):
+    for idx, text in enumerate(label(i) for i in items):
+        print(f'    [{idx + 1}] {text}')
+    choice = _cli_ask('\n  Select [1..N]: ')
+    try:
+        return items[int(choice) - 1]
+    except (ValueError, IndexError):
+        print('  Invalid selection.')
+        return None
+
+
+def _cli_full_backup():
+    pg_dump_exe = find_pg_tool('pg_dump')
+    if not pg_dump_exe:
+        print('  [ERROR] pg_dump was not found (install PostgreSQL client tools).')
+        return
+    db = get_current_db_info()
+    now_str = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    path = os.path.join(_full_dir(), f"full_{db['name']}_{now_str}.dump")
+    cmd = [pg_dump_exe, '-Fc', '--no-owner', '--no-privileges',
+           '-h', db['host'], '-p', db['port'], '-U', db['user'], '-f', path, db['name']]
+    res = subprocess.run(cmd, env=_pg_env(), capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f'  [ERROR] pg_dump failed:\n{res.stderr[-2000:]}')
+        _safe_remove(path)
+        return
+    size_mb = os.path.getsize(path) / (1024 * 1024)
+    print(f'  [SUCCESS] Full database backup ({size_mb:.1f} MB)\n  Path : {path}')
+    print('  To move to a new machine: copy this file + your .env, run setup_venv.bat,')
+    print('  switch_database.bat (PostgreSQL), then restore_database.bat -> [F].')
+
+
+def _cli_full_restore():
+    pg_restore_exe = find_pg_tool('pg_restore')
+    if not pg_restore_exe:
+        print('  [ERROR] pg_restore was not found (install PostgreSQL client tools).')
+        return
+    full_dir = _full_dir()
+    files = sorted((f for f in os.listdir(full_dir) if f.endswith('.dump')), reverse=True)
+    if not files:
+        print(f'  No full backups found. Put the .dump file in:\n  {full_dir}')
+        return
+    name = _cli_pick(files, lambda f: f'{f} ({os.path.getsize(os.path.join(full_dir, f)) / (1024 * 1024):.1f} MB)')
+    if not name:
+        return
+    path = os.path.join(full_dir, name)
+    db = get_current_db_info()
+    print(f"\n  [WARNING] The WHOLE database '{db['name']}' (all supermarkets and users)")
+    print('  will be REPLACED by this file.')
+    if _cli_ask('  Type YES to continue: ') != 'YES':
+        print('  Restore cancelled.')
+        return
+    connection.close()
+    cmd = [pg_restore_exe, '--clean', '--if-exists', '--no-owner', '--no-privileges', '--single-transaction',
+           '-h', db['host'], '-p', db['port'], '-U', db['user'], '-d', db['name'], path]
+    res = subprocess.run(cmd, env=_pg_env(), capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f'  [ERROR] pg_restore failed (nothing was changed):\n{res.stderr[-2000:]}')
+        return
+    from django.core.management import call_command
+    call_command('migrate_schemas', interactive=False, verbosity=0)
+    print('  [SUCCESS] Full database restored and migrations applied.')
+
+
+def _cli_restore_from_list(backups, folder, what):
+    if not backups:
+        print(f'  No backups found. Put the backup file (and its .sig if any) in:\n  {folder}')
+        return
+    picked = _cli_pick(backups, lambda b: f"{b['filename']} ({b['size_display']} - {b['created_at_display']})")
+    if not picked:
+        return
+    target = picked['filepath']
+    trusted = False
+    if not verify_signature(target):
+        print('\n  [NOTICE] This file was not signed by THIS installation (for example it comes')
+        print('  from another machine with a different SECRET_KEY). Restore it only if you trust it.')
+        if _cli_ask('  Type TRUST to restore it anyway: ') != 'TRUST':
             print('  Restore cancelled.')
             return
-        ok, msg = restore_backup(target)
-        print(f"\n  [{'SUCCESS' if ok else 'ERROR'}] {msg}")
+        trusted = True
+    if _cli_ask(f'\n  [WARNING] {what} will be OVERWRITTEN. Type YES to continue: ') != 'YES':
+        print('  Restore cancelled.')
+        return
+    ok, msg = restore_backup(target, trusted_operator=trusted)
+    print(f"\n  [{'SUCCESS' if ok else 'ERROR'}] {msg}")
+    if not ok:
+        print('  Details: logs/easysupermarket.log')
 
 
-def backup_cli(argv):
-    print('=' * 60)
-    print('      Cashierak ERP - Database Backup Tool')
-    print('=' * 60)
-    with _cli_schema_context(argv):
-        info = get_current_db_info()
-        print(f"  Active Database: {info['display_engine']} ({info['name']}) schema={info['schema']}")
+def _cli_tenant_backup(schema):
+    from django_tenants.utils import schema_context
+    with schema_context(schema):
         ok, msg, path = create_backup()
-        if ok:
-            print(f'  [SUCCESS] {msg}\n  Path : {path}')
+    print(f"  [{'SUCCESS' if ok else 'ERROR'}] {schema}: {msg}" + (f'\n          {path}' if ok else ''))
+
+
+def _cli_tenant_restore(schema):
+    from django_tenants.utils import schema_context
+    with schema_context(schema):
+        _cli_restore_from_list(list_backups(), get_backup_dir(), f"Data of '{schema}'")
+
+
+def run_cli(argv):
+    restore = '--restore' in argv
+    print('=' * 60)
+    print('      Masar ERP - Database %s Tool' % ('Restore' if restore else 'Backup'))
+    print('=' * 60)
+    info = get_current_db_info()
+    print(f"  Active Database: {info['display_engine']} ({info['name']})")
+
+    if not is_postgres():
+        if restore:
+            _cli_restore_from_list(list_backups(), get_backup_dir(), 'Current data (a .pre_restore_bak copy is kept)')
         else:
-            print(f'  [ERROR] {msg}')
+            ok, msg, path = create_backup()
+            print(f"  [{'SUCCESS' if ok else 'ERROR'}] {msg}" + (f'\n  Path : {path}' if ok else ''))
+        return
+
+    schema = _cli_schema_arg(argv)
+    if schema:
+        schemas = [schema]
+    else:
+        tenants = _cli_tenants()
+        if not tenants:
+            print('  No supermarkets (tenants) found yet.')
+        choice = _cli_menu(tenants, restore)
+        if choice == 'F':
+            if restore:
+                _cli_full_restore()
+            else:
+                _cli_full_backup()
+            return
+        if choice == 'A' and not restore:
+            schemas = [t.schema_name for t in tenants]
+        else:
+            try:
+                schemas = [tenants[int(choice) - 1].schema_name]
+            except (ValueError, IndexError):
+                print('  Invalid selection.')
+                return
+    for s in schemas:
+        if restore:
+            _cli_tenant_restore(s)
+        else:
+            _cli_tenant_backup(s)
 
 
 if __name__ == '__main__':
-    import sys
-    _cli_setup()
-    if '--restore' in sys.argv:
-        restore_cli(sys.argv)
-    else:
-        backup_cli(sys.argv)
+    # Settings are read at import time, so this module can't run as a plain script.
+    print('Use: python manage.py db_backup   (or  db_backup --restore)')
