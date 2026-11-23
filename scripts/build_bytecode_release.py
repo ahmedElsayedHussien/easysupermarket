@@ -35,7 +35,7 @@ INCLUDE_DIRS = ['apps', 'config', 'templates', 'static', 'staticfiles', 'locale'
 INCLUDE_FILES = [
     'manage.py', 'run_waitress.py', 'switch_db.py',
     'start_server.bat', 'setup_venv.bat', 'setup_database.bat', 'switch_database.bat',
-    'backup_database.bat', 'restore_database.bat',
+    'backup_database.bat', 'restore_database.bat', 'schedule_backup.bat',
     'requirements.txt', '.env.example', 'logo.png',
     'SETUP_GUIDE.txt', 'دليل تثبيت وتشغيل نظام.docx',
 ]
