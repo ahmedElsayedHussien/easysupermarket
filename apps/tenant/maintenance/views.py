@@ -248,9 +248,7 @@ def add_part(request, pk):
             serial_item_id = request.POST.get('serial_item_id') or None
 
             product   = get_object_or_404(Product, id=product_id)
-            wh_qs = Warehouse.objects.all()
-            if branch:
-                wh_qs = wh_qs.filter(branch=branch)
+            wh_qs = filter_by_branch(Warehouse.objects.all(), request)
             warehouse = get_object_or_404(wh_qs, id=warehouse_id)
 
             with transaction.atomic():

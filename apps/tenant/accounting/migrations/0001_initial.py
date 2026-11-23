@@ -76,14 +76,14 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='journalitem',
-            constraint=models.CheckConstraint(check=models.Q(('credit__gt', 0), ('debit__gt', 0), _negated=True), name='accounting_not_both_debit_and_credit'),
+            constraint=models.CheckConstraint(condition=models.Q(('credit__gt', 0), ('debit__gt', 0), _negated=True), name='accounting_not_both_debit_and_credit'),
         ),
         migrations.AddConstraint(
             model_name='journalitem',
-            constraint=models.CheckConstraint(check=models.Q(('debit__gte', 0)), name='accounting_debit_non_negative'),
+            constraint=models.CheckConstraint(condition=models.Q(('debit__gte', 0)), name='accounting_debit_non_negative'),
         ),
         migrations.AddConstraint(
             model_name='journalitem',
-            constraint=models.CheckConstraint(check=models.Q(('credit__gte', 0)), name='accounting_credit_non_negative'),
+            constraint=models.CheckConstraint(condition=models.Q(('credit__gte', 0)), name='accounting_credit_non_negative'),
         ),
     ]

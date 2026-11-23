@@ -358,15 +358,15 @@ class JournalItem(models.Model):
         verbose_name_plural = 'بنود القيد'
         constraints = [
             models.CheckConstraint(
-                check=~Q(debit__gt=0, credit__gt=0),
+                condition=~Q(debit__gt=0, credit__gt=0),
                 name='accounting_not_both_debit_and_credit'
             ),
             models.CheckConstraint(
-                check=Q(debit__gte=0),
+                condition=Q(debit__gte=0),
                 name='accounting_debit_non_negative'
             ),
             models.CheckConstraint(
-                check=Q(credit__gte=0),
+                condition=Q(credit__gte=0),
                 name='accounting_credit_non_negative'
             ),
         ]
