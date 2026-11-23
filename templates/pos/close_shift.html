@@ -41,6 +41,21 @@
                 </div>
             </div>
         </div>
+
+        <div class="row mb-4">
+            <div class="col-md-6 mb-3 mb-md-0">
+                <div class="p-3 rounded" style="background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.3);">
+                    <span class="d-block mb-1" style="color: var(--neon-cyan); font-size: 0.9rem;">💵 سندات القبض النقدية</span>
+                    <span class="fs-4 fw-bold" style="color: var(--neon-cyan);">+ {{ total_cash_receipts|floatformat:2 }} ج.م</span>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="p-3 rounded" style="background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3);">
+                    <span class="d-block mb-1" style="color: var(--neon-gold); font-size: 0.9rem;">💸 سندات الصرف النقدية</span>
+                    <span class="fs-4 fw-bold" style="color: var(--neon-gold);">- {{ total_cash_payments|floatformat:2 }} ج.م</span>
+                </div>
+            </div>
+        </div>
         
         <div class="row mb-4">
             <div class="col-6 col-md-3 mb-3 mb-md-0">
@@ -75,7 +90,7 @@
         
         <div class="p-4 rounded text-center mb-5" style="background: rgba(251, 191, 36, 0.1); border: 1px solid var(--neon-gold);">
             <span class="d-block mb-2 fw-bold" style="color: var(--neon-gold); font-size: 1.1rem; text-shadow: 0 0 5px var(--neon-gold-glow);">النقدية المتوقعة في الدرج (النظام)</span>
-            <h1 class="m-0 fw-bold" id="expectedBalance" data-val="{{ expected_balance }}" style="color: var(--neon-gold); font-size: 2.5rem; text-shadow: 0 0 10px var(--neon-gold-glow);">{{ expected_balance|floatformat:2 }} ج.م</h1>
+            <h1 class="m-0 fw-bold" id="expectedBalance" data-val="{{ expected_balance|stringformat:'f' }}" style="color: var(--neon-gold); font-size: 2.5rem; text-shadow: 0 0 10px var(--neon-gold-glow);">{{ expected_balance|floatformat:2 }} ج.م</h1>
         </div>
 
         <form method="post" class="needs-validation" novalidate id="closeShiftForm">
@@ -104,7 +119,8 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const actualInput = document.getElementById('actual_balance');
-        const expectedVal = parseFloat(document.getElementById('expectedBalance').getAttribute('data-val')) || 0;
+        const rawAttr = (document.getElementById('expectedBalance')?.getAttribute('data-val') || '').replace(/,/g, '');
+        const expectedVal = parseFloat(rawAttr) || 0;
         const diffAlert = document.getElementById('diffAlert');
         const diffText = document.getElementById('diffText');
         
@@ -123,21 +139,20 @@
             diffAlert.style.borderColor = 'transparent';
             diffAlert.style.color = 'var(--text-primary)';
             
-            if (diff < 0) {
-                diffAlert.style.backgroundColor = 'rgba(255, 71, 87, 0.1)';
+            if (Math.abs(diff) > 0.01) {
+                diffAlert.style.backgroundColor = 'rgba(255, 71, 87, 0.15)';
                 diffAlert.style.borderColor = 'var(--status-danger)';
                 diffAlert.style.color = 'var(--status-danger)';
-                diffText.innerHTML = `يوجد عجز بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong>`;
-            } else if (diff > 0) {
+                if (diff < 0) {
+                    diffText.innerHTML = `⚠️ يوجد عجز بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong> <br><small style="color:var(--status-danger); font-weight:bold;">(غير مسموح بإغلاق الوردية بوجود عجز)</small>`;
+                } else {
+                    diffText.innerHTML = `⚠️ يوجد زيادة بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong> <br><small style="color:var(--status-danger); font-weight:bold;">(غير مسموح بإغلاق الوردية بوجود زيادة)</small>`;
+                }
+            } else {
                 diffAlert.style.backgroundColor = 'rgba(46, 213, 115, 0.1)';
                 diffAlert.style.borderColor = 'var(--status-success)';
                 diffAlert.style.color = 'var(--status-success)';
-                diffText.innerHTML = `يوجد زيادة بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong>`;
-            } else {
-                diffAlert.style.backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                diffAlert.style.borderColor = 'var(--border-default)';
-                diffAlert.style.color = 'var(--text-secondary)';
-                diffText.innerHTML = `<span style="color:var(--status-success);"><i class="fas fa-check-circle me-2"></i> الخزينة مطابقة تماماً، عمل ممتاز!</span>`;
+                diffText.innerHTML = `<span style="color:var(--status-success);"><i class="fas fa-check-circle me-2"></i> النقدية مطابقة تماماً، يمكنك إغلاق الوردية الآن!</span>`;
             }
         }
         
@@ -156,13 +171,10 @@
             const actualVal = parseFloat(rawVal) || 0;
             const diff = actualVal - expectedVal;
 
-            let msg = '';
-            if (diff < 0) {
-                msg = `⚠️ تنبيه هام من النظام:\n\nيوجد عجز في النقدية بمقدار: (${Math.abs(diff).toFixed(2)} ج.م)\n- النقدية المتوقعة: ${expectedVal.toFixed(2)} ج.م\n- النقدية المدخلة: ${actualVal.toFixed(2)} ج.م\n\nهل أنت متأكد من الاعتماد وإغلاق الوردية بهذا العجز؟`;
-            } else if (diff > 0) {
-                msg = `⚠️ تنبيه هام من النظام:\n\nيوجد زيادة في النقدية بمقدار: (${Math.abs(diff).toFixed(2)} ج.م)\n\nهل أنت متأكد من الاعتماد وإغلاق الوردية بهذه الزيادة؟`;
-            } else {
-                msg = `✅ النقدية مطابقة تماماً بدون عجز أو زيادة.\n\nهل أنت متأكد من تأكيد الجرد وإغلاق الوردية؟`;
+            let msg = `✅ النقدية مطابقة تماماً (${expectedVal.toFixed(2)} ج.م).\n\nهل أنت متأكد من تأكيد الجرد وإغلاق الوردية؟`;
+            if (Math.abs(diff) > 0.01) {
+                const diffType = diff > 0 ? 'زيادة' : 'عجز';
+                msg = `⚠️ يوجد ${diffType} بقيمة (${Math.abs(diff).toFixed(2)} ج.م).\n\nالنقدية المتوقعة: ${expectedVal.toFixed(2)} ج.م\nالنقدية المدخلة: ${actualVal.toFixed(2)} ج.م\n\nهل أنت متأكد من تأكيد الجرد وتسجيل الفرق وإغلاق الوردية؟`;
             }
 
             if (confirm(msg)) {

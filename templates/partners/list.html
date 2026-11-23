@@ -5,7 +5,7 @@
 <div class="container-fluid">
     <div class="d-flex justify-between align-center mb-4">
         <h2 class="text-neon-blue">{{ title }}</h2>
-        <a href="{% url 'partners:partner_create' %}?type={{ type }}" class="btn btn-neon-blue">+ إضافة</a>
+        <a href="{% url 'partners:partner_create' %}?type={{ type }}" class="btn btn-orange">+ إضافة</a>
     </div>
 
     <!-- Search Form -->
@@ -55,11 +55,26 @@
         <tbody>
             {% for partner in partners %}
             <tr>
-                <td>{{ partner.name }}</td>
+                <td>
+                    <a href="{% url 'partners:partner_ledger' partner.id %}" style="color: #00e5ff; font-weight: bold; text-decoration: none;" title="عرض كشف الحساب">
+                        {{ partner.name }}
+                    </a>
+                    {% if partner.partner_type == 'BOTH' %}
+                    <span class="badge badge-info" style="font-size: 0.7rem; background: #00bcd4; color: #fff; margin-right: 4px;">عميل ومورد</span>
+                    {% endif %}
+                    {% if partner.sector %}
+                    <span class="badge" style="font-size: 0.72rem; background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4); margin-right: 4px;">🏢 {{ partner.sector.name }}</span>
+                    {% endif %}
+                </td>
                 <td class="en">{{ partner.phone|default:"-" }}</td>
                 <td class="en">{{ partner.tax_id|default:"-" }}</td>
                 <td class="en font-bold {% if type == 'customer' %}{% if partner.balance > 0 %}text-neon-green{% elif partner.balance < 0 %}text-neon-red{% endif %}{% else %}{% if partner.balance > 0 %}text-neon-red{% elif partner.balance < 0 %}text-neon-green{% endif %}{% endif %}">
-                    {{ partner.balance|default:"0.0000" }} ج.م
+                    {{ partner.balance|floatformat:"2" }} ج.م
+                    {% if partner.opening_balance > 0 %}
+                    <div style="font-size: 0.72rem; font-weight: normal; color: var(--text-muted); margin-top: 2px;">
+                        (أول مدة: {{ partner.opening_balance|floatformat:"2" }})
+                    </div>
+                    {% endif %}
                 </td>
                 <td>{{ partner.payment_terms_days }} يوم</td>
                 <td>
@@ -69,7 +84,10 @@
                     <span class="badge badge-danger">لا</span>
                     {% endif %}
                 </td>
-                <td class="table-actions">
+                <td class="table-actions" style="white-space: nowrap;">
+                    <a href="{% url 'partners:partner_ledger' partner.id %}" class="btn btn-sm btn-orange" title="كشف الحساب">
+                        📑 كشف حساب
+                    </a>
                     <a href="{% url 'partners:partner_edit' partner.id %}" class="btn btn-sm btn-ghost">تعديل</a>
                 </td>
             </tr>
@@ -80,5 +98,30 @@
             {% endfor %}
         </tbody>
     </table>
+
+    <!-- Pagination & Summary Footer -->
+    {% if is_paginated %}
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="color: var(--text-muted); font-size: 0.9rem;">
+            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ total_count }}</b> {% if type == 'supplier' %}مورد{% else %}عميل{% endif %}
+        </div>
+
+        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
+            {% endif %}
+
+            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

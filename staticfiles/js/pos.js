@@ -8,6 +8,7 @@ const POS = {
     sessions: [{id: 1, name: 'فاتورة 1', cart: []}],
     activeSessionId: 1,
     nextSessionId: 2,
+    discountMode: 'pct',
     
     get cart() {
         const session = this.sessions.find(s => s.id === this.activeSessionId);
@@ -27,20 +28,59 @@ const POS = {
             sessionStorage.setItem('pos_sessions', JSON.stringify(this.sessions));
             sessionStorage.setItem('pos_activeSessionId', this.activeSessionId);
             sessionStorage.setItem('pos_nextSessionId', this.nextSessionId);
+            // Store today's date to detect stale data next day
+            sessionStorage.setItem('pos_sessions_date', new Date().toISOString().slice(0, 10));
         } catch(e) { /* ignore */ }
     },
 
     restoreSessions() {
         try {
             const saved = sessionStorage.getItem('pos_sessions');
+            const savedDate = sessionStorage.getItem('pos_sessions_date');
+            const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+            // Discard sessions saved on a previous day — prices may be stale
+            if (saved && savedDate && savedDate !== today) {
+                this.clearPOSCache();
+                console.log('[POS] Session data from previous day cleared to refresh prices.');
+                return;
+            }
+
             if (saved) {
                 this.sessions = JSON.parse(saved);
+                if (Array.isArray(this.sessions)) {
+                    this.sessions.forEach(s => {
+                        if (!Array.isArray(s.cart)) s.cart = [];
+                        s.cart = s.cart.filter(item => item && item.id && !isNaN(parseInt(item.id)));
+                    });
+                }
                 this.activeSessionId = parseInt(sessionStorage.getItem('pos_activeSessionId')) || this.sessions[0]?.id || 1;
                 this.nextSessionId = parseInt(sessionStorage.getItem('pos_nextSessionId')) || 2;
                 if (this.sessions.length === 0) {
-                    this.sessions = [{id: 1, name: 'فاتورة 1', cart: []}];
+                    this.sessions = [{id: 1, name: 'فاتورة 1', cart: [], discountVal: 0, discountPct: 0, discountMode: 'pct', customerId: '', notes: '', applyTax: false, applyWht: false}];
                     this.activeSessionId = 1;
                     this.nextSessionId = 2;
+                }
+                const active = this.sessions.find(s => s.id === this.activeSessionId);
+                if (active) {
+                    this.discountMode = active.discountMode || 'pct';
+                    const valInput = document.getElementById('globalDiscountVal');
+                    if (valInput && active.discountVal !== undefined) valInput.value = active.discountVal;
+                    const pctInput = document.getElementById('globalDiscountPct');
+                    if (pctInput && active.discountPct !== undefined) pctInput.value = active.discountPct;
+                    const notesEl = document.getElementById('posInvoiceNotes');
+                    if (notesEl && active.notes !== undefined) notesEl.value = active.notes;
+                    const custEl = document.getElementById('posCustomer');
+                    if (custEl && active.customerId !== undefined) {
+                        custEl.value = active.customerId;
+                        if (typeof $ !== 'undefined' && $(custEl).hasClass('select2-hidden-accessible')) {
+                            $(custEl).val(active.customerId).trigger('change.select2');
+                        }
+                    }
+                    const taxEl = document.getElementById('posApplyTax');
+                    if (taxEl && active.applyTax !== undefined) taxEl.checked = !!active.applyTax;
+                    const whtEl = document.getElementById('posApplyWht');
+                    if (whtEl && active.applyWht !== undefined) whtEl.checked = !!active.applyWht;
                 }
             }
         } catch(e) { /* ignore */ }
@@ -51,7 +91,7 @@ const POS = {
             sessionStorage.removeItem('pos_sessions');
             sessionStorage.removeItem('pos_activeSessionId');
             sessionStorage.removeItem('pos_nextSessionId');
-            this.sessions = [{id: 1, name: 'فاتورة 1', cart: []}];
+            this.sessions = [{id: 1, name: 'فاتورة 1', cart: [], discountVal: 0, discountPct: 0, discountMode: 'pct', customerId: '', notes: '', applyTax: false, applyWht: false}];
             this.activeSessionId = 1;
             this.nextSessionId = 2;
         } catch(e) { /* ignore */ }
@@ -62,14 +102,35 @@ const POS = {
     currentShiftId: null,
     transactionNumber: '001',
     selectedProductRow: null,
-    heldTransactions: [],
     lastInvoiceData: null,
     isReturnMode: false,
+    currentCustomerPrices: {},
+    lastSaleCustomerId: null,
+    lastSaleCustomerName: null,
+    lastSaleInvoiceNumber: null,
+    initialProductsHtml: null,
+    isServerSearchActive: false,
+    searchRequestId: 0,
 
     // ============================================================
     // INIT
     // ============================================================
     init() {
+        // Restore consecutive customer info from sessionStorage if not set by server template
+        if (!this.lastSaleCustomerId && typeof sessionStorage !== 'undefined') {
+            const savedCustId = sessionStorage.getItem('pos_last_sale_customer_id');
+            if (savedCustId) {
+                this.lastSaleCustomerId = savedCustId;
+                this.lastSaleCustomerName = sessionStorage.getItem('pos_last_sale_customer_name') || '';
+                this.lastSaleInvoiceNumber = sessionStorage.getItem('pos_last_sale_invoice_num') || '';
+            }
+        }
+
+        const tbodyInit = document.getElementById('productsTableBody');
+        if (tbodyInit && !this.initialProductsHtml && tbodyInit.children.length > 0) {
+            this.initialProductsHtml = tbodyInit.innerHTML;
+        }
+
         this.restoreSessions();
         this.setupBarcodeScanner();
         this.setupProductSearch();
@@ -80,34 +141,103 @@ const POS = {
         setInterval(() => this.updateDateTime(), 1000);
         this.renderTabs();
         this.updateCartDisplay();
+        this.updateReceiptPaperSizeUI();
         
         const applyTaxCheckbox = document.getElementById('posApplyTax');
         if (applyTaxCheckbox) {
             applyTaxCheckbox.addEventListener('change', () => {
+                const s = this.sessions.find(x => x.id === this.activeSessionId);
+                if (s) { s.applyTax = applyTaxCheckbox.checked; this.saveSessions(); }
                 this.updateCartDisplay();
+            });
+        }
+
+        const applyWhtCheckbox = document.getElementById('posApplyWht');
+        if (applyWhtCheckbox) {
+            applyWhtCheckbox.addEventListener('change', () => {
+                const s = this.sessions.find(x => x.id === this.activeSessionId);
+                if (s) { s.applyWht = applyWhtCheckbox.checked; this.saveSessions(); }
+                this.updateCartDisplay();
+            });
+        }
+
+        const notesInput = document.getElementById('posInvoiceNotes');
+        if (notesInput) {
+            notesInput.addEventListener('input', () => {
+                const s = this.sessions.find(x => x.id === this.activeSessionId);
+                if (s) { s.notes = notesInput.value; this.saveSessions(); }
             });
         }
         
         const posCustomerSelect = document.getElementById('posCustomer');
         if (posCustomerSelect) {
-            const handleCustomerChange = () => {
+            const handleCustomerChange = async () => {
+                const s = this.sessions.find(x => x.id === this.activeSessionId);
+                const custId = posCustomerSelect.value;
+                if (s) { s.customerId = custId; this.saveSessions(); }
                 const whtCheckbox = document.getElementById('posApplyWht');
                 const opt = posCustomerSelect.options[posCustomerSelect.selectedIndex];
                 if (whtCheckbox && opt) {
                     whtCheckbox.checked = (opt.dataset.whtSubject === 'true');
+                    if (s) { s.applyWht = whtCheckbox.checked; this.saveSessions(); }
                 }
+                await this.applyCustomerPrices(custId);
                 this.updateCartDisplay();
+                this.checkConsecutiveCustomerWarning(true);
             };
             
-            // using jQuery if Select2 is used, otherwise native event
-            if (typeof $ !== 'undefined' && $(posCustomerSelect).hasClass('select2-hidden-accessible')) {
-                $(posCustomerSelect).on('change', handleCustomerChange);
-            } else {
-                posCustomerSelect.addEventListener('change', handleCustomerChange);
+            posCustomerSelect.addEventListener('change', handleCustomerChange);
+            if (typeof $ !== 'undefined') {
+                $(posCustomerSelect).on('change select2:select select2:clear', handleCustomerChange);
+            }
+
+            const customerSearchInput = document.getElementById('posCustomerSearch');
+            if (customerSearchInput) {
+                customerSearchInput.addEventListener('input', () => {
+                    const term = customerSearchInput.value.trim().toLowerCase();
+                    Array.from(posCustomerSelect.options).forEach((opt, idx) => {
+                        if (idx === 0 || opt.selected || !term) {
+                            opt.hidden = false;
+                            return;
+                        }
+                        opt.hidden = !opt.textContent.toLowerCase().includes(term);
+                    });
+                });
+                customerSearchInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const match = Array.from(posCustomerSelect.options).find((opt, idx) => idx > 0 && !opt.hidden);
+                        if (match) {
+                            posCustomerSelect.value = match.value;
+                            posCustomerSelect.dispatchEvent(new Event('change'));
+                        }
+                    }
+                });
             }
         }
         
         this.setupPersistedHeaders();
+
+        // Sync active session's fields to UI
+        const active = this.sessions.find(s => s.id === this.activeSessionId);
+        if (active) {
+            if (applyTaxCheckbox && active.applyTax !== undefined) applyTaxCheckbox.checked = !!active.applyTax;
+            if (applyWhtCheckbox && active.applyWht !== undefined) applyWhtCheckbox.checked = !!active.applyWht;
+            if (notesInput && active.notes !== undefined) notesInput.value = active.notes || '';
+            if (posCustomerSelect && active.customerId !== undefined) {
+                posCustomerSelect.value = active.customerId || '';
+                if (typeof $ !== 'undefined' && $(posCustomerSelect).hasClass('select2-hidden-accessible')) {
+                    $(posCustomerSelect).val(active.customerId || '').trigger('change.select2');
+                }
+            }
+        }
+
+        const initialCustId = active?.customerId || (posCustomerSelect ? posCustomerSelect.value : '');
+        if (initialCustId) {
+            this.applyCustomerPrices(initialCustId);
+        }
+
+        this.checkConsecutiveCustomerWarning(false);
 
         window.addEventListener('pageshow', (event) => {
             if (event.persisted) {
@@ -119,13 +249,13 @@ const POS = {
     },
 
     // ============================================================
-    // PERSISTED HEADERS (Branch, Warehouse, Bank, Safe, Wallet, Customer)
+    // PERSISTED HEADERS (Branch, Warehouse, Bank, Safe, Wallet)
     // ============================================================
     setupPersistedHeaders() {
         const urlParams = new URLSearchParams(window.location.search);
         const userSuffix = `_${this.currentUserId || 'default'}`;
         
-        // Reset saved customer if a new shift was opened
+        // Reset saved shift state if a new shift was opened
         if (this.currentShiftId || urlParams.has('new_shift')) {
             const lastShiftKey = `pos_active_shift_id${userSuffix}`;
             const lastShiftId = localStorage.getItem(lastShiftKey);
@@ -169,12 +299,13 @@ const POS = {
             }
         }
 
-        // 2. Treasury, Bank, Ewallet, Customer
+        // 2. Treasury, Bank, Ewallet
         const selectsToPersist = [
             { id: 'posTreasury', key: `pos_saved_treasury${userSuffix}` },
+            { id: 'posVisaBank', key: `pos_saved_visa_bank${userSuffix}` },
+            { id: 'posInstaBank', key: `pos_saved_insta_bank${userSuffix}` },
             { id: 'posBank', key: `pos_saved_bank${userSuffix}` },
-            { id: 'posEwallet', key: `pos_saved_ewallet${userSuffix}` },
-            { id: 'posCustomer', key: `pos_saved_customer${userSuffix}`, isSelect2: true }
+            { id: 'posEwallet', key: `pos_saved_ewallet${userSuffix}` }
         ];
 
         selectsToPersist.forEach(item => {
@@ -182,20 +313,20 @@ const POS = {
             if (selectEl) {
                 // Restore saved value
                 const savedVal = localStorage.getItem(item.key);
-                if (savedVal && Array.from(selectEl.options).some(opt => opt.value === savedVal)) {
+                if (savedVal && savedVal !== "" && Array.from(selectEl.options).some(opt => opt.value === savedVal)) {
                     selectEl.value = savedVal;
                     if (item.isSelect2 && typeof $ !== 'undefined') {
                         $(selectEl).trigger('change');
                     } else {
                         selectEl.dispatchEvent(new Event('change'));
                     }
-                } else if (item.id === 'posCustomer') {
-                    // Default to cash customer ("") if no saved value
-                    selectEl.value = "";
-                    if (item.isSelect2 && typeof $ !== 'undefined') {
-                        $(selectEl).trigger('change');
-                    } else {
-                        selectEl.dispatchEvent(new Event('change'));
+                } else if ((!selectEl.value || selectEl.value === "") && selectEl.options.length > 1) {
+                    // Fallback to Django pre-selected option or first real option
+                    const selectedOpt = Array.from(selectEl.options).find(opt => opt.hasAttribute('selected') && opt.value);
+                    if (selectedOpt) {
+                        selectEl.value = selectedOpt.value;
+                    } else if (selectEl.options[1] && selectEl.options[1].value) {
+                        selectEl.value = selectEl.options[1].value;
                     }
                 }
 
@@ -222,8 +353,16 @@ const POS = {
         const cartEl = document.getElementById('cartDate');
         if (!el && !cartEl) return;
 
-        const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
-        const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const pad = (n) => String(n).padStart(2, '0');
+        const d = pad(now.getDate());
+        const m = pad(now.getMonth() + 1);
+        const y = now.getFullYear();
+        const hh = pad(now.getHours());
+        const mm = pad(now.getMinutes());
+        const ss = pad(now.getSeconds());
+
+        const dateStr = `${d}/${m}/${y}`;
+        const timeStr = `${hh}:${mm}:${ss}`;
 
         if (el) el.textContent = `${dateStr}  ${timeStr}`;
         if (cartEl) cartEl.textContent = dateStr;
@@ -248,6 +387,7 @@ const POS = {
 
         barcodeInput.addEventListener('keypress', async (e) => {
             if (e.key === 'Enter') {
+                e.preventDefault();
                 const barcode = barcodeInput.value.trim();
                 if (barcode) {
                     await this.addProductByBarcode(barcode);
@@ -260,43 +400,164 @@ const POS = {
 
     async addProductByBarcode(barcode) {
         try {
-            const resp = await fetch(`/invoicing/api/product/barcode/?barcode=${encodeURIComponent(barcode)}&warehouse_id=${this.currentWarehouseId || ''}`);
+            const custId = (this.sessions.find(x => x.id === this.activeSessionId)?.customerId) || document.getElementById('posCustomer')?.value || '';
+            const resp = await fetch(`/invoicing/api/product/barcode/?barcode=${encodeURIComponent(barcode)}&warehouse_id=${this.currentWarehouseId || ''}&partner_id=${encodeURIComponent(custId)}`);
             if (!resp.ok) throw new Error('Network error');
             const data = await resp.json();
             if (data.found) {
-                this.addToCart(data.product, 1);
-                this.showNotification(`✓ تمت الإضافة: ${data.product.name}`, 'success');
+                this.addToCart(data.product, 1, data.product.selected_uom_id);
+                const badge = data.product.pricing_badge_text ? ` [${data.product.pricing_badge_text}]` : '';
+                this.showNotification(`✓ تمت الإضافة: ${data.product.name}${badge}`, 'success');
             } else {
                 this.showNotification('❌ صنف غير موجود: ' + barcode, 'error');
             }
         } catch (err) {
             // If API not available, try to find in the product table (offline)
-            const row = document.querySelector(`[data-product-barcode="${barcode}"]`);
+            let row = document.querySelector(`[data-product-barcode="${barcode}"]`);
+            let matchedUomId = null;
+            if (!row) {
+                const allRows = document.querySelectorAll('#productsTableBody .product-row');
+                for (const r of allRows) {
+                    try {
+                        const uoms = JSON.parse(r.dataset.uoms || '[]');
+                        const foundUom = uoms.find(u => u.barcode && String(u.barcode) === barcode);
+                        if (foundUom) {
+                            row = r;
+                            matchedUomId = foundUom.id;
+                            break;
+                        }
+                    } catch(e) {}
+                }
+            }
             if (row) {
                 const product = this.extractProductFromRow(row);
-                this.addToCart(product, 1);
+                this.addToCart(product, 1, matchedUomId);
                 this.highlightRow(row);
                 this.showNotification(`✓ تمت الإضافة: ${product.name}`, 'success');
             } else {
-                this.showNotification('⚠ خطأ في الاتصال - تحقق من الإنترنت', 'error');
+                this.showNotification('⚠ صنف غير موجود أو تعذر الاتصال', 'error');
+            }
+        }
+    },
+
+    applyCurrentCustomerPricesToTable() {
+        if (!this.currentCustomerPrices || Object.keys(this.currentCustomerPrices).length === 0) return;
+        const rows = document.querySelectorAll('#productsTableBody .product-row');
+        rows.forEach(row => {
+            const pid = String(row.dataset.productId);
+            if (!row.dataset.originalSalePrice) {
+                row.dataset.originalSalePrice = row.dataset.salePrice;
+            }
+            const origPrice = parseFloat(row.dataset.originalSalePrice) || 0;
+            const priceCol = row.querySelector('.price-col');
+
+            if (this.currentCustomerPrices[pid]) {
+                const pInfo = this.currentCustomerPrices[pid];
+                row.dataset.salePrice = String(pInfo.price);
+                if (priceCol) {
+                    priceCol.innerHTML = `${parseFloat(pInfo.price).toFixed(2)} ج.م <span class="customer-price-badge" style="font-size:0.65rem; background:rgba(0,229,255,0.15); color:${pInfo.badge_color || '#00e5ff'}; border:1px solid ${pInfo.badge_color || '#00e5ff'}; padding:1px 4px; border-radius:3px; margin-right:2px; font-weight:700;">${pInfo.badge_text || ''}</span>`;
+                }
+            } else {
+                row.dataset.salePrice = String(origPrice);
+                if (priceCol) {
+                    priceCol.textContent = `${origPrice.toFixed(2)} ج.م`;
+                }
+            }
+        });
+    },
+
+    async applyCustomerPrices(customerId) {
+        this.currentCustomerPrices = {};
+        const branchId = this.currentBranchId || '';
+
+        if (customerId) {
+            try {
+                const resp = await fetch(`/pricing/api/customer-prices/?partner_id=${encodeURIComponent(customerId)}&branch_id=${encodeURIComponent(branchId)}`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.success && data.prices) {
+                        this.currentCustomerPrices = data.prices;
+                    }
+                }
+            } catch(e) {
+                console.warn('[POS] Failed to fetch customer prices:', e);
+            }
+        }
+
+        // 1. Update Products Table rows with customer pricing
+        this.applyCurrentCustomerPricesToTable();
+
+        // 2. Update Cart items in the active session
+        if (this.cart && this.cart.length > 0) {
+            let cartUpdated = false;
+            this.cart.forEach(item => {
+                const pid = String(item.id);
+                if (item.original_base_price === undefined) {
+                    item.original_base_price = item.base_price;
+                }
+
+                const selUom = item.uoms && item.uoms.find(u => String(u.id) === String(item.uom_id));
+                const uomFactor = selUom ? parseFloat(selUom.factor) || 1.0 : 1.0;
+
+                if (this.currentCustomerPrices[pid]) {
+                    const pInfo = this.currentCustomerPrices[pid];
+                    item.base_price = parseFloat(pInfo.price);
+                    item.price = item.base_price * uomFactor;
+                    item.pricing_badge_text = pInfo.badge_text;
+                    item.pricing_badge_color = pInfo.badge_color;
+                    cartUpdated = true;
+                } else if (item.original_base_price !== undefined && item.base_price !== item.original_base_price) {
+                    item.base_price = item.original_base_price;
+                    item.price = item.base_price * uomFactor;
+                    delete item.pricing_badge_text;
+                    delete item.pricing_badge_color;
+                    cartUpdated = true;
+                }
+            });
+
+            if (cartUpdated) {
+                this.saveSessions();
+                this.updateCartDisplay();
+                this.showNotification('✓ تم تحديث أسعار الأصناف في السلة تلقائياً وفقاً للعميل المختار', 'info');
             }
         }
     },
 
     extractProductFromRow(row) {
+        if (!row || !row.dataset) return null;
         const cleanNumber = (val) => String(val || '0').replace(/,/g, '');
+        const pid = parseInt(row.dataset.productId);
+        if (isNaN(pid)) {
+            console.error('[POS] Invalid product ID on row:', row);
+            return null;
+        }
+        const pidStr = String(pid);
+        const customPriceObj = (this.currentCustomerPrices && this.currentCustomerPrices[pidStr]) ? this.currentCustomerPrices[pidStr] : null;
+        const effectiveSalePrice = customPriceObj ? String(customPriceObj.price) : cleanNumber(row.dataset.salePrice);
         return {
-            id: parseInt(row.dataset.productId),
+            id: pid,
             name: row.dataset.productName,
             product_type: row.dataset.productType || 'PRODUCT',
             is_open_price: row.dataset.isOpenPrice === 'true',
-            barcode: row.dataset.productBarcode,
-            sale_price: cleanNumber(row.dataset.salePrice),
+            barcode: (row.dataset.productBarcode === 'None' || !row.dataset.productBarcode) ? '' : row.dataset.productBarcode,
+            sale_price: effectiveSalePrice,
+            original_sale_price: cleanNumber(row.dataset.originalSalePrice || row.dataset.salePrice),
+            pricing_badge_text: customPriceObj ? customPriceObj.badge_text : '',
+            pricing_badge_color: customPriceObj ? customPriceObj.badge_color : '',
+            last_purchase_price: cleanNumber(row.dataset.lastPurchase),
+            last_sale_price: cleanNumber(row.dataset.lastSale),
             available_stock: parseFloat(cleanNumber(row.dataset.availableStock)) || 0,
+            allow_negative_stock: row.dataset.allowNegativeStock === 'true',
             tax_rate: parseFloat(cleanNumber(row.dataset.taxRate)) || 0,
             wht_rate: parseFloat(cleanNumber(row.dataset.whtRate)) || 0,
             avg_cost: parseFloat(cleanNumber(row.dataset.avgCost)) || 0,
-            uoms: JSON.parse(row.dataset.uoms || '[{"id":"base", "name":"Unit"}]')
+            uoms: (() => {
+                try {
+                    return JSON.parse(row.dataset.uoms || '[]');
+                } catch(e) {
+                    return [{ id: 'base', name: 'قطعة', factor: 1.0 }];
+                }
+            })()
         };
     },
 
@@ -310,37 +571,136 @@ const POS = {
     },
 
     // ============================================================
-    // PRODUCT SEARCH
+    // PRODUCT SEARCH (High Performance & Fully Responsive)
     // ============================================================
     setupProductSearch() {
         const searchInput = document.getElementById('productSearch');
         if (!searchInput) return;
 
-        let debounceTimer;
-        searchInput.addEventListener('input', (e) => {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => this.filterProducts(e.target.value), 200);
-        });
+        // Cache initial products table HTML on setup
+        const tbody = document.getElementById('productsTableBody');
+        if (tbody && !this.initialProductsHtml && tbody.children.length > 0) {
+            this.initialProductsHtml = tbody.innerHTML;
+        }
 
-        searchInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                searchInput.value = '';
+        let debounceTimer = null;
+        const triggerFilter = (immediate = false) => {
+            const rawVal = searchInput.value || '';
+            const clearBtn = document.getElementById('clearSearchBtn');
+            if (clearBtn) {
+                clearBtn.style.display = rawVal.trim() ? 'block' : 'none';
+            }
+
+            // If empty, trigger immediately without debounce for instant response
+            if (!rawVal.trim()) {
+                if (debounceTimer) clearTimeout(debounceTimer);
                 this.filterProducts('');
+                return;
+            }
+
+            if (immediate) {
+                if (debounceTimer) clearTimeout(debounceTimer);
+                this.filterProducts(rawVal);
+            } else {
+                if (debounceTimer) clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    this.filterProducts(searchInput.value || '');
+                }, 120);
+            }
+        };
+
+        // Input event (fires on typing, backspace, delete, cut, speech, virtual keyboard)
+        searchInput.addEventListener('input', () => triggerFilter(false));
+
+        // Keyup event (instant response for Backspace & Delete when field becomes empty)
+        searchInput.addEventListener('keyup', (e) => {
+            if (e.key === 'Backspace' || e.key === 'Delete') {
+                if (!searchInput.value || !searchInput.value.trim()) {
+                    triggerFilter(true);
+                }
             }
         });
+
+        // Keydown event (instant Escape to clear)
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                this.clearProductSearch();
+            }
+        });
+
+        // Search event (for HTML5 search clear 'x' button)
+        searchInput.addEventListener('search', () => triggerFilter(true));
+
+        // Paste event
+        searchInput.addEventListener('paste', () => {
+            setTimeout(() => triggerFilter(true), 10);
+        });
+
+        // Change event
+        searchInput.addEventListener('change', () => triggerFilter(true));
+    },
+
+    clearProductSearch() {
+        const searchInput = document.getElementById('productSearch');
+        if (searchInput) {
+            searchInput.value = '';
+            const clearBtn = document.getElementById('clearSearchBtn');
+            if (clearBtn) clearBtn.style.display = 'none';
+            this.filterProducts('');
+            searchInput.focus();
+        }
     },
 
     filterProducts(query) {
-        const rows = document.querySelectorAll('#productsTableBody .product-row');
-        const q = query.toLowerCase().trim();
+        const q = (query || '').toLowerCase().trim();
+        const tbody = document.getElementById('productsTableBody');
+        if (!tbody) return;
+
+        // Ensure initialProductsHtml is captured
+        if (!this.initialProductsHtml && tbody.children.length > 0) {
+            this.initialProductsHtml = tbody.innerHTML;
+        }
+
+        // Increment request ID to cancel/invalidate any in-flight asynchronous search responses
+        const currentReqId = ++this.searchRequestId;
+
+        // Update clear button visibility
+        const clearBtn = document.getElementById('clearSearchBtn');
+        if (clearBtn) {
+            clearBtn.style.display = q ? 'block' : 'none';
+        }
+
+        // 1. If query is empty: RESTORE ALL PRODUCTS IMMEDIATELY
+        if (!q) {
+            if (this.initialProductsHtml) {
+                tbody.innerHTML = this.initialProductsHtml;
+                this.updateGridStockDisplay();
+                this.applyCurrentCustomerPricesToTable();
+                this.isServerSearchActive = false;
+            } else {
+                this.loadProducts();
+            }
+            const rows = tbody.querySelectorAll('.product-row');
+            rows.forEach(r => r.style.display = '');
+            const emptyMsg = document.getElementById('productsEmptyMsg');
+            if (emptyMsg) emptyMsg.style.display = rows.length === 0 ? '' : 'none';
+            return;
+        }
+
+        // 2. If server search was active and query is now short (1 char), restore full table first
+        if (this.isServerSearchActive && this.initialProductsHtml && q.length < 2) {
+            tbody.innerHTML = this.initialProductsHtml;
+            this.updateGridStockDisplay();
+            this.applyCurrentCustomerPricesToTable();
+            this.isServerSearchActive = false;
+        }
+
+        // 3. Client-side instant filter on current rows
+        let rows = tbody.querySelectorAll('.product-row');
         let visibleCount = 0;
 
         rows.forEach(row => {
-            if (!q) {
-                row.style.display = '';
-                visibleCount++;
-                return;
-            }
             const name = (row.dataset.productName || '').toLowerCase();
             const barcode = (row.dataset.productBarcode || '').toLowerCase();
             const matches = name.includes(q) || barcode.includes(q);
@@ -348,15 +708,59 @@ const POS = {
             if (matches) visibleCount++;
         });
 
-        // Show empty state
-        const emptyMsg = document.getElementById('productsEmptyMsg');
-        if (emptyMsg) emptyMsg.style.display = visibleCount === 0 ? '' : 'none';
+        // 4. Server-side dynamic search (when q.length >= 2)
+        if (q.length >= 2) {
+            const params = new URLSearchParams({
+                q: q,
+                warehouse_id: this.currentWarehouseId || '',
+                branch_id: this.currentBranchId || ''
+            });
+
+            fetch(`/inventory/api/products/?${params}`)
+                .then(r => r.json())
+                .then(data => {
+                    // Check if a newer request was dispatched or if the query was cleared/changed!
+                    if (currentReqId !== this.searchRequestId) {
+                        return; // Discard stale response
+                    }
+                    const searchInput = document.getElementById('productSearch');
+                    const currentVal = (searchInput?.value || '').toLowerCase().trim();
+                    if (currentVal !== q) {
+                        return; // Discard because user already changed/cleared input
+                    }
+
+                    if (data.products && data.products.length > 0) {
+                        this.isServerSearchActive = true;
+                        this.renderProductsTable(data.products);
+                        this.applyCurrentCustomerPricesToTable();
+                        const emptyMsg = document.getElementById('productsEmptyMsg');
+                        if (emptyMsg) emptyMsg.style.display = 'none';
+                    } else if (visibleCount === 0) {
+                        const emptyMsg = document.getElementById('productsEmptyMsg');
+                        if (emptyMsg) emptyMsg.style.display = '';
+                    }
+                })
+                .catch(() => {});
+        } else {
+            const emptyMsg = document.getElementById('productsEmptyMsg');
+            if (emptyMsg) emptyMsg.style.display = visibleCount === 0 ? '' : 'none';
+        }
     },
 
     // ============================================================
     // CART MANAGEMENT
     // ============================================================
-    addToCart(product, quantity = 1) {
+    addToCart(product, quantity = 1, forceUomId = null) {
+        if (!product || !product.id || isNaN(parseInt(product.id))) {
+            this.showNotification('بيانات الصنف غير صحيحة أو غير متوفرة', 'error');
+            return;
+        }
+
+        if (!this.currentWarehouseId) {
+            this.showNotification('لا يمكن إضافة أصناف لعدم وجود مستودع نشط مرتبط بهذا الفرع — اختر فرعاً آخر أو أضف مستودعاً أولاً.', 'error');
+            return;
+        }
+
         // SERIALIZED: show serial picker instead of direct add
         if (product.product_type === 'SERIALIZED') {
             this.showSerialPickerModal(product);
@@ -364,43 +768,82 @@ const POS = {
         }
 
         // Validate stock
-        const stock = parseInt(product.available_stock) || 0;
+        const stock = parseFloat(product.available_stock) || 0;
         const isService = product.product_type === 'SERVICE';
-        // Use _uniqueKey for SERIALIZED items (never merge them)
+        // Master Lock: allowed if service OR global setting OR product-level allow_negative_stock
+        const canNegative = isService || (POS.allowNegativeStock === true) || (product.allow_negative_stock === true);
+
+        const targetUomId = (forceUomId !== null && forceUomId !== undefined) ? forceUomId : (product.selected_uom_id !== undefined ? product.selected_uom_id : (product.uom_id || 'base'));
+        const cartKey = product._uniqueKey || `${product.id}_${targetUomId}`;
+
+        // Find existing matching item (checking unique key or product ID + UoM ID)
         const existing = this.cart.find(item => 
             item._uniqueKey 
                 ? item._uniqueKey === product._uniqueKey 
-                : item.id === parseInt(product.id)
+                : (item._cartKey ? item._cartKey === cartKey : (item.id === parseInt(product.id) && String(item.uom_id) === String(targetUomId)))
         );
 
+        const addQty = parseFloat(quantity) || 1;
+
         if (existing) {
-            const newQty = existing.quantity + quantity;
-            if (!isService && stock > 0 && newQty > stock) {
-                this.showNotification(`⚠ الكمية المطلوبة (${newQty}) تتجاوز المخزون المتاح (${stock})`, 'warning');
+            const newQty = existing.quantity + addQty;
+            // Get the UoM factor for the currently selected unit (to compare base quantities)
+            const selUom = existing.uoms && existing.uoms.find(u => String(u.id) === String(existing.uom_id));
+            const uomFactor = selUom ? parseFloat(selUom.factor) || 1.0 : 1.0;
+            const baseQtyNeeded = newQty * uomFactor;
+            if (!canNegative && stock > 0 && baseQtyNeeded > stock) {
+                this.showNotification(`⚠ الكمية المطلوبة (${newQty} ${selUom ? selUom.name : ''}) تتجاوز المخزون المتاح (${stock})`, 'warning');
+                return;
+            }
+            if (!canNegative && stock <= 0) {
+                this.showNotification(`⚠ الصنف "${product.name}" غير متاح في المخزون`, 'warning');
                 return;
             }
             existing.quantity = newQty;
         } else {
-            if (!isService && stock === 0) {
+            if (!canNegative && stock <= 0) {
                 this.showNotification(`⚠ الصنف "${product.name}" غير متاح في المخزون`, 'warning');
                 return;
             }
+            const uomList = product.uoms || [{id:'base', name:'Unit', factor:1.0}];
+            const selUom = uomList.find(u => String(u.id) === String(targetUomId));
+            const uomFactor = selUom ? parseFloat(selUom.factor) || 1.0 : 1.0;
+            const baseQtyNeeded = addQty * uomFactor;
+            if (!canNegative && stock > 0 && baseQtyNeeded > stock) {
+                this.showNotification(`⚠ الكمية المطلوبة (${addQty}) تتجاوز المخزون المتاح (${stock})`, 'warning');
+                return;
+            }
+            const pidStr = String(product.id);
+            let basePrice = parseFloat(product.sale_price) || 0;
+            if (this.currentCustomerPrices && this.currentCustomerPrices[pidStr]) {
+                basePrice = parseFloat(this.currentCustomerPrices[pidStr].price);
+            }
+            const origBasePrice = parseFloat(product.original_sale_price) || parseFloat(product.sale_price) || basePrice;
+            const badgeText = product.pricing_badge_text || (this.currentCustomerPrices?.[pidStr]?.badge_text || '');
+            const badgeColor = product.pricing_badge_color || (this.currentCustomerPrices?.[pidStr]?.badge_color || '');
+            const baseCost = parseFloat(product.avg_cost) || basePrice || 0;
             this.cart.push({
                 id: parseInt(product.id),
+                _cartKey: cartKey,
+                _uniqueKey: product._uniqueKey || null,
                 name: product.name,
                 product_type: product.product_type || 'PRODUCT',
                 barcode: product.barcode || '',
-                price: parseFloat(product.sale_price) || 0,
-                base_price: parseFloat(product.sale_price) || 0,
-                quantity: parseInt(quantity) || 1,
+                price: basePrice * uomFactor,
+                base_price: basePrice,
+                original_base_price: origBasePrice,
+                pricing_badge_text: badgeText,
+                pricing_badge_color: badgeColor,
+                quantity: addQty,
                 discount: 0,
                 tax_rate: parseFloat(product.tax_rate) || 0,
                 wht_rate: parseFloat(product.wht_rate) || 0,
                 available_stock: stock,
-                uoms: product.uoms || [{id:'base', name:'Unit', factor:1.0}],
-                uom_id: 'base',
-                base_cost: parseFloat(product.avg_cost) || parseFloat(product.sale_price) || 0,
-                current_cost: parseFloat(product.avg_cost) || parseFloat(product.sale_price) || 0
+                allow_negative_stock: product.allow_negative_stock || false,
+                uoms: uomList,
+                uom_id: targetUomId,
+                base_cost: baseCost,
+                current_cost: baseCost * uomFactor
             });
         }
 
@@ -409,26 +852,38 @@ const POS = {
         this.updateSalePriceDisplay(product);
     },
 
-    removeFromCart(productId) {
-        this.cart = this.cart.filter(item => item.id !== parseInt(productId));
+    findCartItem(keyOrId) {
+        if (keyOrId === null || keyOrId === undefined) return null;
+        const strKey = String(keyOrId);
+        return this.cart.find(i => (i._cartKey && String(i._cartKey) === strKey) || (i._uniqueKey && String(i._uniqueKey) === strKey) || i.id === parseInt(keyOrId));
+    },
+
+    removeFromCart(keyOrId) {
+        const strKey = String(keyOrId);
+        this.cart = this.cart.filter(item => (item._cartKey ? String(item._cartKey) !== strKey : item.id !== parseInt(keyOrId)));
         this.saveSessions();
         this.updateCartDisplay();
         this.clearSalePriceDisplay();
     },
 
-    updateQuantity(productId, newQty) {
-        const item = this.cart.find(i => i.id === parseInt(productId));
+    updateQuantity(keyOrId, newQty) {
+        const item = this.findCartItem(keyOrId);
         if (!item) return;
 
-        const qty = parseInt(newQty);
+        const qty = parseFloat(newQty);
         if (isNaN(qty) || qty <= 0) {
             if (confirm(`حذف "${item.name}" من السلة؟`)) {
-                this.removeFromCart(productId);
+                this.removeFromCart(keyOrId);
             }
             return;
         }
-        if (item.product_type !== 'SERVICE' && qty > item.available_stock && item.available_stock > 0) {
-            this.showNotification(`⚠ الحد الأقصى للمخزون: ${item.available_stock}`, 'warning');
+        // Master Lock: If POS.allowNegativeStock is false, negative stock is strictly forbidden for all physical products
+        const canNegative = item.product_type === 'SERVICE' || (POS.allowNegativeStock === true);
+        // Account for UoM factor: compare base quantity vs available stock (always in base units)
+        const selUom = item.uoms && item.uoms.find(u => String(u.id) === String(item.uom_id));
+        const uomFactor = selUom ? parseFloat(selUom.factor) || 1.0 : 1.0;
+        if (!canNegative && (qty * uomFactor) > item.available_stock) {
+            this.showNotification(`⚠ الحد الأقصى للمخزون: ${(item.available_stock / uomFactor).toFixed(2)} ${selUom ? selUom.name : ''}`, 'warning');
             return;
         }
         item.quantity = qty;
@@ -451,39 +906,98 @@ const POS = {
             return;
         }
         const newQty = item.quantity + delta;
+        const itemKey = item._cartKey || productId;
         if (newQty <= 0) {
-            this.removeFromCart(productId);
+            this.removeFromCart(itemKey);
         } else {
-            this.updateQuantity(productId, newQty);
+            this.updateQuantity(itemKey, newQty);
         }
     },
 
-    setDiscount(productId, discountPct) {
-        const item = this.cart.find(i => i.id === parseInt(productId));
+    setDiscount(keyOrId, discountPct) {
+        const item = this.findCartItem(keyOrId);
         if (item) {
             item.discount = Math.max(0, Math.min(100, parseFloat(discountPct) || 0));
             this.updateCartDisplay();
         }
     },
 
-    updateUom(productId, uomId) {
-        const item = this.cart.find(i => i.id === parseInt(productId));
+    updateUom(keyOrId, uomId) {
+        const item = this.findCartItem(keyOrId);
         if (item) {
-            item.uom_id = uomId;
-            const selectedUom = item.uoms.find(u => u.id == uomId);
-            const factor = selectedUom ? parseFloat(selectedUom.factor) || 1.0 : 1.0;
-            item.price = item.base_price * factor;
-            item.current_cost = (item.base_cost || 0) * factor;
+            const newCartKey = item._uniqueKey || `${item.id}_${uomId}`;
+            const existingOther = this.cart.find(i => i !== item && ((i._cartKey && String(i._cartKey) === String(newCartKey)) || (i.id === item.id && String(i.uom_id) === String(uomId))));
+            if (existingOther) {
+                existingOther.quantity += item.quantity;
+                this.cart = this.cart.filter(i => i !== item);
+            } else {
+                item.uom_id = uomId;
+                item._cartKey = newCartKey;
+                const selectedUom = item.uoms.find(u => String(u.id) === String(uomId));
+                const factor = selectedUom ? parseFloat(selectedUom.factor) || 1.0 : 1.0;
+                item.price = item.base_price * factor;
+                item.current_cost = (item.base_cost || 0) * factor;
+            }
             this.saveSessions();
             this.updateCartDisplay();
             // Update cost display in side panel if this product is selected
             const costEl = document.getElementById('displayCost');
-            if (costEl) costEl.textContent = item.current_cost.toFixed(2);
+            if (costEl) costEl.textContent = (item.current_cost || 0).toFixed(2);
         }
     },
 
-    updateManualPrice(productId, newPrice) {
-        const item = this.cart.find(i => i.id === parseInt(productId));
+    handlePriceInput(keyOrId, inputEl) {
+        const item = this.findCartItem(keyOrId);
+        if (!item) return;
+
+        const val = parseFloat(inputEl.value);
+        if (!isNaN(val) && val >= 0) {
+            item.price = val;
+        } else {
+            item.price = 0;
+        }
+
+        // Update line total element in DOM directly without re-rendering cart
+        const cartItemEl = inputEl.closest('.cart-item');
+        if (cartItemEl) {
+            const lineTotalEl = cartItemEl.querySelector('.cart-item-total');
+            if (lineTotalEl) {
+                const applyTaxCheckbox = document.getElementById('posApplyTax');
+                const applyTax = applyTaxCheckbox ? applyTaxCheckbox.checked : false;
+
+                const applyWhtCheckbox = document.getElementById('posApplyWht');
+                const applyWht = applyWhtCheckbox ? applyWhtCheckbox.checked : false;
+
+                const globalDiscountPct = this.getGlobalDiscountPct();
+
+                const lineGross = item.price * item.quantity;
+                const itemDiscount = lineGross * (item.discount / 100);
+                let lineNet = lineGross - itemDiscount;
+                const lineGlobalDiscount = lineNet * (globalDiscountPct / 100);
+                lineNet = lineNet - lineGlobalDiscount;
+
+                const effectiveTaxRate = applyTax ? item.tax_rate : 0;
+                const effectiveWhtRate = applyWht ? item.wht_rate : 0;
+                const lineTotal = lineNet + (lineNet * (effectiveTaxRate / 100)) - (lineNet * (effectiveWhtRate / 100));
+
+                lineTotalEl.textContent = this.formatCurrency(lineTotal);
+            }
+        }
+
+        // Update overall invoice totals in DOM directly
+        const totals = this.calculateTotals();
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+        set('cartSubtotal', this.formatCurrency(totals.subtotal));
+        set('cartDiscount', '(' + this.formatCurrency(totals.discount) + ')');
+        set('cartTax', this.formatCurrency(totals.tax));
+        set('cartWht', '(' + this.formatCurrency(totals.wht) + ')');
+        set('cartTotal', this.formatCurrency(totals.total) + ' ج.م');
+        set('modalTotal', this.formatCurrency(totals.total) + ' ج.م');
+    },
+
+    updateManualPrice(keyOrId, newPrice) {
+        const item = this.findCartItem(keyOrId);
         if (!item) return;
 
         const isEditable = POS.allowPriceEdit || item.product_type === 'SERVICE';
@@ -496,12 +1010,12 @@ const POS = {
         if (item) {
             const price = parseFloat(newPrice);
             if (!isNaN(price) && price >= 0) {
-                const selectedUom = item.uoms && item.uoms.find(u => u.id == item.uom_id);
+                const selectedUom = item.uoms && item.uoms.find(u => String(u.id) === String(item.uom_id));
                 const factor = selectedUom ? parseFloat(selectedUom.factor) || 1.0 : 1.0;
                 const originalPrice = item.base_price * factor;
                 
                 let isAllowed = true;
-                if (item.product_type !== 'SERVICE' && POS.priceMarginPercent > 0) {
+                if (item.product_type !== 'SERVICE' && POS.priceMarginPercent > 0 && originalPrice > 0) {
                     const marginValue = originalPrice * (POS.priceMarginPercent / 100);
                     const minAllowed = originalPrice - marginValue;
                     const maxAllowed = originalPrice + marginValue;
@@ -522,6 +1036,107 @@ const POS = {
     },
 
     // ============================================================
+    // DISCOUNT HELPERS & CALCULATIONS
+    // ============================================================
+    getCartGrossSubtotal() {
+        if (!this.cart || this.cart.length === 0) return 0;
+        return this.cart.reduce((sum, item) => sum + ((parseFloat(item.price) || 0) * (parseFloat(item.quantity) || 0)), 0);
+    },
+
+    getGlobalDiscountPct() {
+        const gross = this.getCartGrossSubtotal();
+        const valInput = document.getElementById('globalDiscountVal');
+        const pctInput = document.getElementById('globalDiscountPct');
+
+        if (this.discountMode === 'val' && valInput) {
+            const val = Math.max(0, parseFloat(valInput.value) || 0);
+            if (gross > 0) {
+                return Math.min(100, (val / gross) * 100);
+            }
+            return 0;
+        } else if (pctInput) {
+            return Math.max(0, Math.min(100, parseFloat(pctInput.value) || 0));
+        }
+        return 0;
+    },
+
+    onDiscountValChange() {
+        this.discountMode = 'val';
+        const valInput = document.getElementById('globalDiscountVal');
+        const pctInput = document.getElementById('globalDiscountPct');
+        const val = Math.max(0, parseFloat(valInput ? valInput.value : 0) || 0);
+        const gross = this.getCartGrossSubtotal();
+
+        if (pctInput) {
+            if (gross > 0) {
+                const pct = Math.min(100, (val / gross) * 100);
+                pctInput.value = pct > 0 ? (Math.round(pct * 100) / 100) : '0';
+            } else {
+                pctInput.value = '0';
+            }
+        }
+
+        const session = this.sessions.find(s => s.id === this.activeSessionId);
+        if (session) {
+            session.discountVal = val;
+            session.discountPct = pctInput ? parseFloat(pctInput.value) || 0 : 0;
+            session.discountMode = 'val';
+            this.saveSessions();
+        }
+
+        this.updateCartDisplay(false);
+    },
+
+    onDiscountPctChange() {
+        this.discountMode = 'pct';
+        const valInput = document.getElementById('globalDiscountVal');
+        const pctInput = document.getElementById('globalDiscountPct');
+        const pct = Math.max(0, Math.min(100, parseFloat(pctInput ? pctInput.value : 0) || 0));
+        const gross = this.getCartGrossSubtotal();
+
+        if (valInput) {
+            const val = gross * (pct / 100);
+            valInput.value = val > 0 ? (Math.round(val * 100) / 100) : '0';
+        }
+
+        const session = this.sessions.find(s => s.id === this.activeSessionId);
+        if (session) {
+            session.discountPct = pct;
+            session.discountVal = valInput ? parseFloat(valInput.value) || 0 : 0;
+            session.discountMode = 'pct';
+            this.saveSessions();
+        }
+
+        this.updateCartDisplay(false);
+    },
+
+    syncDiscountInputs() {
+        const gross = this.getCartGrossSubtotal();
+        const valInput = document.getElementById('globalDiscountVal');
+        const pctInput = document.getElementById('globalDiscountPct');
+
+        if (gross === 0) {
+            if (valInput) valInput.value = '0';
+            if (pctInput) pctInput.value = '0';
+            return;
+        }
+
+        if (this.discountMode === 'val' && valInput && pctInput) {
+            let val = Math.max(0, parseFloat(valInput.value) || 0);
+            if (val > gross) {
+                val = gross;
+                valInput.value = val.toFixed(2);
+            }
+            const pct = (val / gross) * 100;
+            pctInput.value = pct > 0 ? (Math.round(pct * 100) / 100) : '0';
+        } else if (pctInput && valInput) {
+            const pct = Math.max(0, Math.min(100, parseFloat(pctInput.value) || 0));
+            const val = gross * (pct / 100);
+            valInput.value = val > 0 ? (Math.round(val * 100) / 100) : '0';
+        }
+    },
+
+    // ============================================================
     // TOTALS CALCULATION
     // ============================================================
     calculateTotals() {
@@ -536,8 +1151,7 @@ const POS = {
         const applyWhtCheckbox = document.getElementById('posApplyWht');
         const applyWht = applyWhtCheckbox ? applyWhtCheckbox.checked : false;
         
-        const globalDiscountInput = document.getElementById('globalDiscountPct');
-        const globalDiscountPct = globalDiscountInput ? Math.max(0, Math.min(100, parseFloat(globalDiscountInput.value) || 0)) : 0;
+        const globalDiscountPct = this.getGlobalDiscountPct();
 
         this.cart.forEach(item => {
             const lineGross = item.price * item.quantity;
@@ -578,9 +1192,13 @@ const POS = {
     // ============================================================
     // CART DISPLAY UPDATE
     // ============================================================
-    updateCartDisplay() {
+    updateCartDisplay(syncDiscount = true) {
         const cartItems = document.getElementById('cartItems');
         if (!cartItems) return;
+
+        if (syncDiscount) {
+            this.syncDiscountInputs();
+        }
 
         const applyTaxCheckbox = document.getElementById('posApplyTax');
         const applyTax = applyTaxCheckbox ? applyTaxCheckbox.checked : false;
@@ -588,13 +1206,13 @@ const POS = {
         const applyWhtCheckbox = document.getElementById('posApplyWht');
         const applyWht = applyWhtCheckbox ? applyWhtCheckbox.checked : false;
 
-        const globalDiscountInput = document.getElementById('globalDiscountPct');
-        const globalDiscountPct = globalDiscountInput ? Math.max(0, Math.min(100, parseFloat(globalDiscountInput.value) || 0)) : 0;
+        const globalDiscountPct = this.getGlobalDiscountPct();
 
         if (this.cart.length === 0) {
             cartItems.innerHTML = '<div class="cart-empty-msg">أضف منتجات للسلة</div>';
         } else {
             cartItems.innerHTML = this.cart.map(item => {
+                const itemKey = item._cartKey || item.id;
                 const lineGross = item.price * item.quantity;
                 const itemDiscount = lineGross * (item.discount / 100);
                 let lineNet = lineGross - itemDiscount;
@@ -604,43 +1222,47 @@ const POS = {
                 const effectiveTaxRate = applyTax ? item.tax_rate : 0;
                 const effectiveWhtRate = applyWht ? item.wht_rate : 0;
                 const lineTotal = lineNet + (lineNet * (effectiveTaxRate / 100)) - (lineNet * (effectiveWhtRate / 100));
-                const selectedUom = item.uoms && item.uoms.find(u => u.id == item.uom_id);
+                const selectedUom = item.uoms && item.uoms.find(u => String(u.id) == String(item.uom_id));
                 const uomFactor = selectedUom ? parseFloat(selectedUom.factor) || 1.0 : 1.0;
                 const displayCost = ((item.base_cost || 0) * uomFactor).toFixed(2);
-                const costLabel = item.product_type !== 'SERVICE' && item.base_cost > 0 
-                    ? `<div style="font-size:0.75em; color:#f59e0b; margin-top:2px;">💰 تكلفة/وحدة: ${displayCost}</div>` 
+                const showCost = this.showCost !== false;
+                const costLabel = (showCost && item.product_type !== 'SERVICE' && item.base_cost > 0)
+                    ? `<div class="cart-item-cost">💰 تكلفة/وحدة: ${displayCost}</div>`
                     : '';
+                const canEditPrice = POS.allowPriceEdit || item.product_type === 'SERVICE';
                 return `
-                <div class="cart-item" data-cart-id="${item.id}" style="display:grid; grid-template-columns: 2fr 1fr 1.5fr 1fr 1fr; gap: 5px; align-items:center; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 10px;">
+                <div class="cart-item" data-cart-id="${itemKey}">
                     <div>
-                        <div class="cart-item-name">${item.name}</div>
-                        <div class="cart-item-barcode" style="font-size:0.8em; color:var(--text-muted);">${item.barcode}</div>
+                        <div class="cart-item-name">${item.name} ${item.pricing_badge_text ? `<span style="font-size:0.7em; background:rgba(0,229,255,0.15); color:${item.pricing_badge_color || '#00e5ff'}; border:1px solid ${item.pricing_badge_color || '#00e5ff'}; padding:1px 4px; border-radius:3px; margin-right:4px; font-weight:700;">${item.pricing_badge_text}</span>` : ''}</div>
+                        <div class="cart-item-barcode">${item.barcode}</div>
                         ${costLabel}
                     </div>
-                    <div class="cart-item-qty d-flex align-center gap-1">
-                        <button class="qty-btn" onclick="POS.updateQuantity(${item.id}, ${item.quantity - 1})" style="padding:2px 6px;">−</button>
-                        <span class="qty-value">${item.quantity}</span>
-                        <button class="qty-btn" onclick="POS.updateQuantity(${item.id}, ${item.quantity + 1})" style="padding:2px 6px;">+</button>
+                    <div class="cart-item-qty">
+                        <button class="qty-btn" onclick="POS.updateQuantity('${itemKey}', ${item.quantity - 1})">−</button>
+                        <input type="number" class="qty-value cart-item-qty-input" value="${item.quantity}" min="0.001" step="any"
+                               onchange="POS.updateQuantity('${itemKey}', this.value)">
+                        <button class="qty-btn" onclick="POS.updateQuantity('${itemKey}', ${item.quantity + 1})">+</button>
                     </div>
-                    <div>
-                        <input type="number" 
-                               value="${item.price}" 
-                               style="width: 75px; padding: 4px; text-align: center; border: 1px solid ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? '#0ea5e9' : '#ccc'}; border-radius: 4px; font-weight: bold; color: var(--text); background-color: ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? '#fff' : '#f8f9fa'}; cursor: ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? 'text' : 'not-allowed'}; box-shadow: ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? '0 0 5px rgba(14,165,233,0.2)' : 'none'};"
-                               onchange="POS.updateManualPrice(${item.id}, this.value)"
-                               ${POS.allowPriceEdit || item.product_type === 'SERVICE' ? '' : 'readonly'}
-                               step="0.01" min="0" title="${POS.allowPriceEdit || item.product_type === 'SERVICE' ? 'تعديل السعر' : 'تعديل السعر مغلق من الإعدادات'}">
-                        <div style="font-size: 0.8em; color: var(--text-muted);">Tax: ${effectiveTaxRate}% | WHT: ${effectiveWhtRate}%</div>
+                    <div style="text-align:center;">
+                        <input type="number"
+                               value="${item.price}"
+                               class="cart-item-price-input ${canEditPrice ? '' : 'is-readonly'}"
+                               onchange="POS.updateManualPrice('${itemKey}', this.value)"
+                               oninput="POS.handlePriceInput('${itemKey}', this)"
+                               ${canEditPrice ? '' : 'readonly'}
+                               step="0.01" min="0" title="${canEditPrice ? 'تعديل السعر' : 'تعديل السعر مغلق من الإعدادات'}">
+                        <div class="cart-item-tax-meta">ض: ${effectiveTaxRate}% | خ: ${effectiveWhtRate}%</div>
                     </div>
-                    <div>
+                    <div style="text-align:center;">
                         ${item.uoms && item.uoms.length > 1 ? `
-                        <select onchange="POS.updateUom(${item.id}, this.value)" style="width:100%; padding:4px; font-size:0.9em; background:var(--surface); border:1px solid var(--border); border-radius:4px; color:var(--text);">
-                            ${item.uoms.map(u => `<option value="${u.id}" ${item.uom_id == u.id ? 'selected' : ''}>${u.name}</option>`).join('')}
+                        <select class="cart-item-uom-select" onchange="POS.updateUom('${itemKey}', this.value)">
+                            ${item.uoms.map(u => `<option value="${u.id}" ${String(item.uom_id) == String(u.id) ? 'selected' : ''}>${u.name}</option>`).join('')}
                         </select>
-                        ` : `<span style="font-size:0.9em;">${item.uoms && item.uoms[0] ? item.uoms[0].name : 'Unit'}</span>`}
+                        ` : `<span class="cart-item-uom-static">${item.uoms && item.uoms[0] ? item.uoms[0].name : 'Unit'}</span>`}
                     </div>
-                    <div class="d-flex align-center gap-1" style="justify-content:space-between;">
-                        <div class="cart-item-total" style="font-weight:bold;">${this.formatCurrency(lineTotal)}</div>
-                        <button class="cart-item-remove" onclick="POS.removeFromCart(${item.id})" title="حذف" style="color:var(--danger); background:none; border:none; cursor:pointer; font-size:1.2em;">✕</button>
+                    <div class="cart-item-total-cell">
+                        <div class="cart-item-total">${this.formatCurrency(lineTotal)}</div>
+                        <button class="cart-item-remove" onclick="POS.removeFromCart('${itemKey}')" title="حذف">✕</button>
                     </div>
                 </div>`;
             }).join('');
@@ -678,7 +1300,13 @@ const POS = {
         const stockEl = document.getElementById('displayStock');
         const costEl = document.getElementById('displayCost');
 
-        if (priceEl) priceEl.textContent = parseFloat(product.sale_price).toFixed(2);
+        if (priceEl) {
+            const pidStr = String(product.id);
+            const customPriceObj = (this.currentCustomerPrices && this.currentCustomerPrices[pidStr]) ? this.currentCustomerPrices[pidStr] : null;
+            const effectivePrice = customPriceObj ? customPriceObj.price : product.sale_price;
+            const badge = customPriceObj ? ` (${customPriceObj.badge_text})` : (product.pricing_badge_text ? ` (${product.pricing_badge_text})` : '');
+            priceEl.textContent = `${parseFloat(effectivePrice).toFixed(2)}${badge}`;
+        }
         if (qtyEl) {
             const cartItem = this.cart.find(i => i.id === parseInt(product.id));
             qtyEl.textContent = cartItem ? cartItem.quantity : 1;
@@ -688,7 +1316,17 @@ const POS = {
                 costEl.textContent = parseFloat(product.avg_cost || 0).toFixed(2);
             }
         }
-        if (stockEl) stockEl.textContent = product.available_stock || 0;
+        if (stockEl) {
+            const sVal = parseFloat(product.available_stock) || 0;
+            stockEl.textContent = product.available_stock || 0;
+            if (sVal < 0) {
+                stockEl.style.color = '#ff4d4f';
+                stockEl.style.fontWeight = 'bold';
+            } else {
+                stockEl.style.color = '';
+                stockEl.style.fontWeight = '';
+            }
+        }
     },
 
     updateGridStockDisplay() {
@@ -708,7 +1346,18 @@ const POS = {
             const qtyValue = row.querySelector('.qty-value');
             if (stockCell) {
                 const reserved = totalReserved[productId] || 0;
-                stockCell.textContent = Math.max(0, originalStock - reserved);
+                const remaining = originalStock - reserved;
+                stockCell.textContent = remaining;
+                if (remaining < 0) {
+                    stockCell.style.color = '#ff4d4f';
+                    stockCell.style.fontWeight = 'bold';
+                } else if (remaining === 0) {
+                    stockCell.style.color = '#94a3b8';
+                    stockCell.style.fontWeight = '';
+                } else {
+                    stockCell.style.color = '';
+                    stockCell.style.fontWeight = '';
+                }
                 // Show active session's cart qty in the grid row
                 if (qtyValue) {
                     const activeCartItem = this.cart.find(i => i.id === productId);
@@ -721,12 +1370,16 @@ const POS = {
     clearSalePriceDisplay() {
         ['displayPrice', 'displayQty', 'displayStock', 'displayCost'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.textContent = '-';
+            if (el) {
+                el.textContent = '-';
+                el.style.color = '';
+                el.style.fontWeight = '';
+            }
         });
     },
 
     // ============================================================
-    // CART EVENTS (row click delegation)
+    // CART EVENTS (row click & long-press delegation)
     // ============================================================
     setupCartEvents() {
         const tbody = document.getElementById('productsTableBody');
@@ -736,6 +1389,68 @@ const POS = {
         if (tbody._posEventsAttached) return;
         tbody._posEventsAttached = true;
 
+        let longPressTimer = null;
+        let isLongPress = false;
+        let startX = 0;
+        let startY = 0;
+
+        const cancelLongPress = () => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        };
+
+        const handleStart = (e) => {
+            if (e.target.closest('.qty-btn') || e.target.closest('.qty-control')) return;
+            const row = e.target.closest('.product-row');
+            if (!row) return;
+
+            isLongPress = false;
+            cancelLongPress();
+
+            if (e.type === 'touchstart' && e.touches && e.touches[0]) {
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+            }
+
+            longPressTimer = setTimeout(() => {
+                isLongPress = true;
+                row._isLongPress = true;
+                if (navigator.vibrate) {
+                    try { navigator.vibrate(50); } catch(err) {}
+                }
+                const productId = parseInt(row.dataset.productId);
+                POS.showLastPricesModal(productId, row.dataset.productName);
+            }, 500);
+        };
+
+        const handleMove = (e) => {
+            if (e.type === 'touchmove' && e.touches && e.touches[0]) {
+                const diffX = Math.abs(e.touches[0].clientX - startX);
+                const diffY = Math.abs(e.touches[0].clientY - startY);
+                if (diffX > 10 || diffY > 10) {
+                    cancelLongPress();
+                }
+            }
+        };
+
+        tbody.addEventListener('mousedown', handleStart);
+        tbody.addEventListener('touchstart', handleStart, { passive: true });
+
+        tbody.addEventListener('mouseup', cancelLongPress);
+        tbody.addEventListener('mouseleave', cancelLongPress);
+        tbody.addEventListener('touchend', cancelLongPress);
+        tbody.addEventListener('touchcancel', cancelLongPress);
+        tbody.addEventListener('touchmove', handleMove, { passive: true });
+
+        tbody.addEventListener('contextmenu', (e) => {
+            const row = e.target.closest('.product-row');
+            if (row && (isLongPress || row._isLongPress)) {
+                e.preventDefault();
+            }
+        });
+
         tbody.addEventListener('click', (e) => {
             // Don't trigger on quantity buttons
             if (e.target.closest('.qty-btn')) return;
@@ -744,10 +1459,133 @@ const POS = {
             const row = e.target.closest('.product-row');
             if (!row) return;
 
+            if (isLongPress || row._isLongPress) {
+                isLongPress = false;
+                row._isLongPress = false;
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+
             const product = this.extractProductFromRow(row);
-            this.addToCart(product, 1);
-            this.highlightRow(row);
+            if (product) {
+                this.addToCart(product, 1);
+                this.highlightRow(row);
+                this.updateSalePriceDisplay(product);
+            }
         });
+    },
+
+    // ============================================================
+    // LAST SELLING PRICES MODAL (Long-Press Handler)
+    // ============================================================
+    async showLastPricesModal(productId, fallbackName = '') {
+        const modal = document.getElementById('lastPricesModal');
+        const pNameEl = document.getElementById('lpModalProductName');
+        const pBarcodeEl = document.getElementById('lpModalProductBarcode');
+        const cNameEl = document.getElementById('lpModalCustomerName');
+        const bodyEl = document.getElementById('lpModalBody');
+        const movementBtn = document.getElementById('lpModalMovementBtn');
+
+        if (!modal || !bodyEl) return;
+
+        if (movementBtn) {
+            movementBtn.href = `/reports/inventory/movement/?product_id=${productId}`;
+        }
+
+        // Get currently selected customer from select element
+        const customerSelect = document.getElementById('posCustomer');
+        let customerId = '';
+        let customerNameText = 'عميل نقدي';
+
+        if (customerSelect && customerSelect.value) {
+            customerId = customerSelect.value;
+            const opt = customerSelect.options[customerSelect.selectedIndex];
+            if (opt) customerNameText = opt.textContent.trim();
+        }
+
+        if (pNameEl) pNameEl.textContent = fallbackName || 'جاري التحميل...';
+        if (pBarcodeEl) pBarcodeEl.textContent = '';
+        if (cNameEl) cNameEl.textContent = customerNameText;
+        if (bodyEl) {
+            bodyEl.innerHTML = `
+                <div style="text-align:center; padding:2rem; color:var(--text-muted);">
+                    <div style="font-size:1rem; margin-bottom:8px;">⏳</div>
+                    <div>جاري جلب آخر 5 أسعار بيع للعميل...</div>
+                </div>`;
+        }
+
+        modal.style.display = 'flex';
+
+        try {
+            const url = `/invoicing/api/product/last-prices/?product_id=${productId}&partner_id=${customerId}`;
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error('Failed to fetch sales history');
+            const data = await resp.json();
+
+            if (!data.success) {
+                bodyEl.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--danger);">❌ ${data.error || 'حدث خطأ أثناء جلب البيانات'}</div>`;
+                return;
+            }
+
+            if (pNameEl) pNameEl.textContent = data.product_name;
+            if (pBarcodeEl) pBarcodeEl.textContent = data.product_barcode ? `باركود: ${data.product_barcode}` : '';
+            if (cNameEl) cNameEl.textContent = data.customer_name;
+
+            if (!data.history || data.history.length === 0) {
+                bodyEl.innerHTML = `
+                    <div style="text-align:center; padding:2.5rem 1.5rem; color:#e2e8f0; background:rgba(255,255,255,0.03); border-radius:10px; border:1px dashed rgba(255,255,255,0.2); font-size:1.05rem; line-height:1.6;">
+                        ℹ️ لا توجد فواتير مبيعات سابقة لهذه المادة مع <strong style="color:#ffffff;">${data.customer_name}</strong>.
+                    </div>`;
+                return;
+            }
+
+            let html = `
+                <div style="overflow-x: auto; border:1px solid rgba(255,255,255,0.15); border-radius:8px; background: #0f172a;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.95rem; min-width: 540px;">
+                        <thead>
+                            <tr style="background:#1e293b; border-bottom:2px solid var(--neon-blue); text-align:right;">
+                                <th style="padding:12px 14px; font-size:1rem; font-weight:700; color:#ffffff;">الفاتورة والتاريخ</th>
+                                <th style="padding:12px 14px; font-size:1rem; font-weight:700; color:#ffffff;">سعر البيع</th>
+                                <th style="padding:12px 14px; font-size:1rem; font-weight:700; color:#ffffff;">الكمية والوحدة</th>
+                                <th style="padding:12px 14px; font-size:1rem; font-weight:700; color:#ffffff;">الخصم</th>
+                                <th style="padding:12px 14px; text-align:left; font-size:1rem; font-weight:700; color:#ffffff;">طريقة السداد</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+
+            data.history.forEach((line, idx) => {
+                const discountText = line.discount_pct > 0 ? `${line.discount_pct}%` : '-';
+                html += `
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.08); ${idx % 2 === 0 ? 'background:rgba(255,255,255,0.04);' : 'background:transparent;'}">
+                        <td style="padding:12px 14px;">
+                            <div style="font-weight:700; color:#38bdf8; font-size:1.05rem;">#${line.invoice_number}</div>
+                            <div style="font-size:0.85rem; color:#cbd5e1; margin-top:3px;">${line.date}</div>
+                        </td>
+                        <td style="padding:12px 14px; font-weight:800; color:#10b981; font-size:1.25rem;">
+                            ${parseFloat(line.unit_price).toFixed(2)} <span style="font-size:0.85rem; font-weight:600; color:#e2e8f0;">ج.م</span>
+                        </td>
+                        <td style="padding:12px 14px; font-size:1.05rem; font-weight:600; color:#ffffff;">
+                            ${line.quantity} <span style="font-size:0.9rem; color:#cbd5e1; font-weight:normal;">${line.uom_name || ''}</span>
+                        </td>
+                        <td style="padding:12px 14px; color:#fbbf24; font-weight:700; font-size:1.05rem;">
+                            ${discountText}
+                        </td>
+                        <td style="padding:12px 14px; text-align:left;">
+                            <span class="badge" style="background:rgba(255,255,255,0.15); color:#ffffff; font-size:0.88rem; font-weight:600; padding:5px 12px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); display:inline-block;">${line.payment_type_display}</span>
+                        </td>
+                    </tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+            bodyEl.innerHTML = html;
+
+        } catch (err) {
+            console.error('[POS] Last prices error:', err);
+            if (bodyEl) {
+                bodyEl.innerHTML = `<div style="text-align:center; padding:1.5rem; color:var(--danger);">⚠️ تعذر جلب سجل الأسعار. تحقق من الاتصال بالشبكة.</div>`;
+            }
+        }
     },
 
     // ============================================================
@@ -825,8 +1663,17 @@ const POS = {
             this.showNotification('⚠ السلة فارغة', 'warning');
             return;
         }
+
+        const visaSelect = document.getElementById('posVisaBank') || document.getElementById('posBank');
+        const bankId = visaSelect ? visaSelect.value : null;
+
+        if (!bankId) {
+            this.showNotification('⚠️ لا توجد ماكينة فيزا مسجلة أو مختارة! يرجى اختيار الماكينة من القائمة العلوية أو إنشاؤها من شاشة الحسابات البنكية.', 'error');
+            return;
+        }
+
         if (confirm('تأكيد الدفع بالبطاقة؟')) {
-            await this.completeSale('CARD');
+            await this.completeSale('CARD', null, null, bankId);
         }
     },
 
@@ -881,15 +1728,15 @@ const POS = {
             return;
         }
         
-        const bankSelect = document.getElementById('posBank');
-        const bankId = bankSelect ? bankSelect.value : null;
+        const instaSelect = document.getElementById('posInstaBank') || document.getElementById('posBank');
+        const bankId = instaSelect ? instaSelect.value : null;
 
         if (!bankId) {
-            this.showNotification('⚠️ الرجاء اختيار الحساب البنكي من القائمة العلوية أولاً', 'error');
+            this.showNotification('⚠️ لا يوجد حساب إنستا مسجل أو مختار! يرجى اختيار الحساب من القائمة العلوية أو إنشاؤه من شاشة الحسابات البنكية.', 'error');
             return;
         }
 
-        if (confirm('تأكيد التحويل البنكي؟')) {
+        if (confirm('تأكيد الدفع عن طريق إنستا (تحويل بنكي لحظي)؟')) {
             await this.completeSale('BANK_TRANSFER', null, null, bankId);
         }
     },
@@ -996,10 +1843,29 @@ const POS = {
         const ewalletSelect = document.getElementById('posEwallet');
         const ewalletId = ewalletSelect ? ewalletSelect.value : null;
 
-        const bankSelect = document.getElementById('posBank');
-        const bankId = bankSelect ? bankSelect.value : null;
+        const visaSelect = document.getElementById('posVisaBank') || document.getElementById('posBank');
+        const visaBankId = visaSelect ? visaSelect.value : null;
 
-        const splitPayments = { cash, card, ewallet, bank, credit };
+        const instaSelect = document.getElementById('posInstaBank') || document.getElementById('posBank');
+        const instaBankId = instaSelect ? instaSelect.value : null;
+
+        if (card > 0 && !visaBankId) {
+            this.showNotification('⚠️ الرجاء اختيار ماكينة الفيزا من القائمة العلوية أولاً', 'error');
+            return;
+        }
+
+        if (bank > 0 && !instaBankId) {
+            this.showNotification('⚠️ الرجاء اختيار حساب إنستا من القائمة العلوية أولاً', 'error');
+            return;
+        }
+
+        if (ewallet > 0 && !ewalletId) {
+            this.showNotification('⚠️ الرجاء اختيار المحفظة الإلكترونية من القائمة العلوية أولاً', 'error');
+            return;
+        }
+
+        const bankId = visaBankId || instaBankId;
+        const splitPayments = { cash, card, ewallet, bank, credit, visa_bank_id: visaBankId || null, insta_bank_id: instaBankId || null };
 
         const modal = document.getElementById('splitModal');
         if (modal) modal.style.display = 'none';
@@ -1028,20 +1894,31 @@ const POS = {
         const applyWhtCheckbox = document.getElementById('posApplyWht');
         const applyWht = applyWhtCheckbox ? applyWhtCheckbox.checked : false;
 
-        const globalDiscountInput = document.getElementById('globalDiscountPct');
-        const globalDiscountPct = globalDiscountInput ? Math.max(0, Math.min(100, parseFloat(globalDiscountInput.value) || 0)) : 0;
+        const globalDiscountPct = this.getGlobalDiscountPct();
+
+        const notesEl = document.getElementById('posInvoiceNotes');
+        const invoiceNotes = notesEl ? notesEl.value.trim() : '';
 
         const payload = {
-            cart: this.cart.map(item => ({
-                product_id: item.id,
-                quantity: item.quantity,
-                unit_price: item.price,
-                discount_percent: item.discount,
-                tax_rate: applyTax ? item.tax_rate : 0,
-                wht_rate: applyWht ? item.wht_rate : 0,
-                uom_id: item.uom_id,
-                serial_item_id: item.serial_item_id || null
-            })),
+            cart: this.cart.map(item => {
+                const lineGross = item.price * item.quantity;
+                const itemDiscAmt = lineGross * ((item.discount || 0) / 100);
+                const lineNet = lineGross - itemDiscAmt;
+                const globalDiscAmt = lineNet * (globalDiscountPct / 100);
+                const totalLineDiscAmt = itemDiscAmt + globalDiscAmt;
+                const effectiveDiscPct = lineGross > 0 ? (totalLineDiscAmt / lineGross) * 100 : 0;
+
+                return {
+                    product_id: item.id,
+                    quantity: item.quantity,
+                    unit_price: item.price,
+                    discount_percent: parseFloat(effectiveDiscPct.toFixed(4)),
+                    tax_rate: applyTax ? item.tax_rate : 0,
+                    wht_rate: applyWht ? item.wht_rate : 0,
+                    uom_id: item.uom_id,
+                    serial_item_id: item.serial_item_id || null
+                };
+            }),
             payment_type: paymentType,
             warehouse_id: this.currentWarehouseId,
             branch_id: this.currentBranchId,
@@ -1057,7 +1934,8 @@ const POS = {
             wht_amount: totals.wht,
             total_amount: totals.total,
             cash_received: cashReceived,
-            payments: splitPayments || {}
+            payments: splitPayments || {},
+            notes: invoiceNotes
         };
 
         try {
@@ -1078,18 +1956,60 @@ const POS = {
             const data = await resp.json();
             if (data.success) {
                 this.lastInvoiceData = data;
-                // Update stock locally: subtract sold quantities from grid
+                if (notesEl) notesEl.value = '';
+
+                // Record consecutive customer info
+                const completedCustId = data.partner_id ? String(data.partner_id) : (partner_id ? String(partner_id) : '');
+                const completedCustName = data.partner_name || (customerOption ? customerOption.text.trim() : '') || '';
+                const isCashCust = !completedCustId || completedCustName.includes('نقدي') || (customerOption && customerOption.text.includes('نقدي'));
+
+                if (!isCashCust && completedCustId) {
+                    this.lastSaleCustomerId = completedCustId;
+                    this.lastSaleCustomerName = completedCustName;
+                    this.lastSaleInvoiceNumber = data.invoice_number || '';
+                    try {
+                        sessionStorage.setItem('pos_last_sale_customer_id', this.lastSaleCustomerId);
+                        sessionStorage.setItem('pos_last_sale_customer_name', this.lastSaleCustomerName);
+                        sessionStorage.setItem('pos_last_sale_invoice_num', this.lastSaleInvoiceNumber);
+                    } catch(e) {}
+                } else {
+                    this.lastSaleCustomerId = null;
+                    this.lastSaleCustomerName = null;
+                    this.lastSaleInvoiceNumber = null;
+                    try {
+                        sessionStorage.removeItem('pos_last_sale_customer_id');
+                        sessionStorage.removeItem('pos_last_sale_customer_name');
+                        sessionStorage.removeItem('pos_last_sale_invoice_num');
+                    } catch(e) {}
+                }
+
+                // Update stock locally: subtract sold quantities or add returned quantities to grid (factored)
                 this.cart.forEach(item => {
                     const row = document.querySelector(`[data-product-id="${item.id}"]`);
                     if (row) {
                         const oldStock = parseFloat(row.dataset.availableStock) || 0;
-                        row.dataset.availableStock = Math.max(0, oldStock - item.quantity);
+                        const selUom = item.uoms && item.uoms.find(u => String(u.id) === String(item.uom_id));
+                        const uomFactor = selUom ? parseFloat(selUom.factor) || 1.0 : 1.0;
+                        const deltaQty = item.quantity * uomFactor;
+                        if (invoice_type === 'RETURN_SALE') {
+                            row.dataset.availableStock = oldStock + deltaQty;
+                        } else {
+                            row.dataset.availableStock = oldStock - deltaQty;
+                        }
                     }
                 });
+
+                // Auto reset return mode if active so subsequent sales are normal
+                if (this.isReturnMode) {
+                    this.toggleReturnMode(false);
+                }
+
                 this.showReceiptModal(data, totals, cashReceived);
                 this.closeTab(null, this.activeSessionId);
+                this.checkConsecutiveCustomerWarning(false);
                 this.updateGridStockDisplay();
                 this.showNotification(`تم حفظ الفاتورة: ${data.invoice_number}`, 'success');
+                this.refreshShiftStats();
             } else {
                 throw new Error(data.error || 'فشل في إتمام البيع');
             }
@@ -1203,7 +2123,8 @@ const POS = {
 
         content.innerHTML = `
             <div class="receipt-header" style="text-align:center;margin-bottom:0.75rem;">
-                <div style="font-size:1rem;font-weight:800;">ميزا MIRA MARKET</div>
+                <img src="/static/img/logo.png" alt="مسار" style="height:45px;margin-bottom:4px;border-radius:6px;object-fit:contain;">
+                <div style="font-size:1.1rem;font-weight:800;color:#1e293b;">مسار Masar</div>
                 <div style="font-size:0.75rem;color:#64748b;">${data.branch_name || ''}</div>
                 <div style="font-size:0.72rem;color:#94a3b8;">${new Date().toLocaleString('en-US')}</div>
             </div>
@@ -1229,39 +2150,130 @@ const POS = {
         // Store last invoice data for modal buttons
         this.lastInvoiceId = data.invoice_id;
 
+        // Sync paper size selector UI with saved preference
+        this.updateReceiptPaperSizeUI();
+
         modal.style.display = 'flex';
     },
 
-    // ============================================================
-    // CLEAR CART
+
     // ============================================================
     clearCart() {
         this.cart = [];
-        this.updateCartDisplay();
+        this.discountMode = 'pct';
+        const valInput = document.getElementById('globalDiscountVal');
+        if (valInput) valInput.value = '0';
+        const pctInput = document.getElementById('globalDiscountPct');
+        if (pctInput) pctInput.value = '0';
+        const notesInput = document.getElementById('posInvoiceNotes');
+        if (notesInput) notesInput.value = '';
+
+        const custEl = document.getElementById('posCustomer');
+        if (custEl) {
+            custEl.value = '';
+            if (typeof $ !== 'undefined' && $(custEl).hasClass('select2-hidden-accessible')) {
+                $(custEl).val('').trigger('change.select2');
+            }
+        }
+
+        const session = this.sessions.find(s => s.id === this.activeSessionId);
+        if (session) {
+            session.discountVal = 0;
+            session.discountPct = 0;
+            session.discountMode = 'pct';
+            session.notes = '';
+            session.customerId = '';
+            this.saveSessions();
+        }
+
+        this.updateCartDisplay(false);
         this.clearSalePriceDisplay();
         // Clear product row selections
         document.querySelectorAll('.product-row.selected').forEach(r => r.classList.remove('selected'));
         this.selectedProductRow = null;
+        this.checkConsecutiveCustomerWarning(false);
     },
 
     // ============================================================
     // TABS MANAGEMENT
     // ============================================================
     createTab() {
+        const current = this.sessions.find(s => s.id === this.activeSessionId);
+        if (current) {
+            const custEl = document.getElementById('posCustomer');
+            if (custEl) current.customerId = custEl.value;
+            const notesEl = document.getElementById('posInvoiceNotes');
+            if (notesEl) current.notes = notesEl.value;
+            const taxEl = document.getElementById('posApplyTax');
+            if (taxEl) current.applyTax = taxEl.checked;
+            const whtEl = document.getElementById('posApplyWht');
+            if (whtEl) current.applyWht = whtEl.checked;
+        }
+
         const id = this.nextSessionId++;
-        this.sessions.push({id: id, name: `فاتورة ${id}`, cart: []});
+        this.sessions.push({
+            id: id,
+            name: `فاتورة ${id}`,
+            cart: [],
+            discountVal: 0,
+            discountPct: 0,
+            discountMode: 'pct',
+            customerId: '',
+            notes: '',
+            applyTax: false,
+            applyWht: false
+        });
         this.saveSessions();
         this.switchTab(id);
     },
 
     switchTab(id) {
-        if (this.sessions.find(s => s.id === id)) {
+        const current = this.sessions.find(s => s.id === this.activeSessionId);
+        if (current && current.id !== id) {
+            const custEl = document.getElementById('posCustomer');
+            if (custEl) current.customerId = custEl.value;
+            const notesEl = document.getElementById('posInvoiceNotes');
+            if (notesEl) current.notes = notesEl.value;
+            const taxEl = document.getElementById('posApplyTax');
+            if (taxEl) current.applyTax = taxEl.checked;
+            const whtEl = document.getElementById('posApplyWht');
+            if (whtEl) current.applyWht = whtEl.checked;
+        }
+
+        const session = this.sessions.find(s => s.id === id);
+        if (session) {
             this.activeSessionId = id;
+            this.discountMode = session.discountMode || 'pct';
+            const valInput = document.getElementById('globalDiscountVal');
+            if (valInput) valInput.value = session.discountVal !== undefined ? session.discountVal : '0';
+            const pctInput = document.getElementById('globalDiscountPct');
+            if (pctInput) pctInput.value = session.discountPct !== undefined ? session.discountPct : '0';
+
+            const custEl = document.getElementById('posCustomer');
+            if (custEl) {
+                custEl.value = session.customerId || '';
+                if (typeof $ !== 'undefined' && $(custEl).hasClass('select2-hidden-accessible')) {
+                    $(custEl).val(session.customerId || '').trigger('change.select2');
+                }
+            }
+
+            const notesEl = document.getElementById('posInvoiceNotes');
+            if (notesEl) notesEl.value = session.notes || '';
+
+            const taxEl = document.getElementById('posApplyTax');
+            if (taxEl) taxEl.checked = !!session.applyTax;
+
+            const whtEl = document.getElementById('posApplyWht');
+            if (whtEl) whtEl.checked = !!session.applyWht;
+
             this.saveSessions();
             this.renderTabs();
-            this.updateCartDisplay();
+            this.applyCustomerPrices(session.customerId || '');
+            this.updateCartDisplay(false);
             this.clearSalePriceDisplay();
-            document.getElementById('txNumber').textContent = id.toString().padStart(3, '0');
+            this.checkConsecutiveCustomerWarning(false);
+            const txEl = document.getElementById('txNumber');
+            if (txEl) txEl.textContent = id.toString().padStart(3, '0');
         }
     },
 
@@ -1274,14 +2286,12 @@ const POS = {
             return;
         }
         this.sessions = this.sessions.filter(s => s.id !== id);
+        let nextId = this.activeSessionId;
         if (this.activeSessionId === id) {
-            this.activeSessionId = this.sessions[this.sessions.length - 1].id;
+            nextId = this.sessions[this.sessions.length - 1].id;
         }
         this.saveSessions();
-        this.renderTabs();
-        this.updateCartDisplay();
-        this.clearSalePriceDisplay();
-        document.getElementById('txNumber').textContent = this.activeSessionId.toString().padStart(3, '0');
+        this.switchTab(nextId);
     },
 
     renderTabs() {
@@ -1330,6 +2340,10 @@ const POS = {
                     e.preventDefault();
                     this.createTab();
                     break;
+                case 'F7':
+                    e.preventDefault();
+                    this.processBankPayment();
+                    break;
                 case 'F8':
                     e.preventDefault();
                     this.processEWalletPayment();
@@ -1363,8 +2377,17 @@ const POS = {
                 case 'Delete':
                     if (!isTyping) {
                         e.preventDefault();
-                        // Remove last cart item
                         if (this.cart.length > 0) {
+                            // Remove the selected product's cart item first (if any)
+                            if (this.selectedProductRow) {
+                                const selId = parseInt(this.selectedProductRow.dataset.productId);
+                                const inCart = this.cart.find(i => i.id === selId);
+                                if (inCart) {
+                                    this.removeFromCart(selId);
+                                    break;
+                                }
+                            }
+                            // Fallback: remove last cart item
                             this.removeFromCart(this.cart[this.cart.length - 1].id);
                         }
                     }
@@ -1376,20 +2399,37 @@ const POS = {
     // ============================================================
     // RETURN MODE
     // ============================================================
-    toggleReturnMode() {
-        this.isReturnMode = !this.isReturnMode;
+    toggleReturnMode(forceState = null) {
+        if (forceState !== null) {
+            this.isReturnMode = forceState;
+        } else {
+            // Guard: if switching ON, require explicit confirmation
+            if (!this.isReturnMode) {
+                const confirmed = confirm(
+                    '⚠️ تحذير: وضع المرتجع\n\n' +
+                    'هذا الوضع يُنشئ فاتورة مرتجع مستقلة وتُعاد البضاعة للمخزون فوراً.\n\n' +
+                    'للمرتجعات المرتبطة بفاتورة محددة، استخدم زر "إرجاع" داخل تفاصيل الفاتورة.\n\n' +
+                    'هل تريد المتابعة في وضع المرتجع؟'
+                );
+                if (!confirmed) return;
+            }
+            this.isReturnMode = !this.isReturnMode;
+        }
+
         const toggleBtn = document.getElementById('returnModeToggle');
         const navbar = document.querySelector('.pos-navbar');
         if (this.isReturnMode) {
             if (toggleBtn) toggleBtn.style.backgroundColor = 'var(--danger)';
             if (toggleBtn) toggleBtn.style.color = '#fff';
             if (navbar) navbar.style.borderBottom = '3px solid var(--danger)';
-            this.showNotification('تم تفعيل وضع المرتجع', 'warning');
+            this.showNotification('⚠️ وضع المرتجع مفعّل — البضاعة ستُعاد للمخزون', 'error');
         } else {
             if (toggleBtn) toggleBtn.style.backgroundColor = 'transparent';
             if (toggleBtn) toggleBtn.style.color = 'var(--danger)';
             if (navbar) navbar.style.borderBottom = '';
-            this.showNotification('تم إيقاف وضع المرتجع', 'info');
+            if (forceState === null) {
+                this.showNotification('تم إيقاف وضع المرتجع', 'info');
+            }
         }
     },
 
@@ -1427,6 +2467,29 @@ const POS = {
     },
 
     // ============================================================
+    // RECEIPT PRINTING & PAPER SIZE MANAGEMENT
+    // ============================================================
+    getReceiptPaperSize() {
+        return localStorage.getItem('pos_receipt_paper_size') || '80mm';
+    },
+
+    setReceiptPaperSize(size) {
+        localStorage.setItem('pos_receipt_paper_size', size);
+        this.updateReceiptPaperSizeUI(size);
+    },
+
+    updateReceiptPaperSizeUI(size) {
+        const activeSize = size || this.getReceiptPaperSize();
+        const btns = document.querySelectorAll('#posReceiptSizeButtons .btn-paper-size');
+        btns.forEach(btn => {
+            if (btn.dataset.size === activeSize) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+    },
+
     reprintLast() {
         if (!this.lastInvoiceData || !this.lastInvoiceData.invoice_id) {
             this.showNotification('لا يوجد إيصال سابق للطباعة', 'warning');
@@ -1435,10 +2498,65 @@ const POS = {
         this.printReceipt(this.lastInvoiceData.invoice_id);
     },
 
-    printReceipt(invoiceId) {
-        window.open(`/invoicing/receipt/${invoiceId}/`, 'receipt', 'width=350,height=600');
+    printReceipt(invoiceId, size) {
+        const paperSize = size || this.getReceiptPaperSize();
+        let winWidth = 380, winHeight = 650;
+        if (paperSize === 'a4') {
+            winWidth = 980;
+            winHeight = 900;
+        } else if (paperSize === 'a5') {
+            winWidth = 720;
+            winHeight = 820;
+        } else if (paperSize === '58mm') {
+            winWidth = 320;
+            winHeight = 600;
+        }
+        const win = window.open(`/invoicing/receipt/${invoiceId}/?size=${paperSize}`, 'receipt', `width=${winWidth},height=${winHeight},scrollbars=yes`);
+        if (win) win.focus();
     },
 
+
+    // ============================================================
+    // CONSECUTIVE CUSTOMER WARNING
+    // ============================================================
+    checkConsecutiveCustomerWarning(triggerToast = false) {
+        const custSelect = document.getElementById('posCustomer');
+        const custId = custSelect ? custSelect.value : '';
+        const badge = document.getElementById('posSameCustomerBadge');
+        const notice = document.getElementById('posSameCustomerNotice');
+        const badgeText = document.getElementById('posSameCustomerText');
+        const noticeText = document.getElementById('posSameCustomerNoticeText');
+
+        if (!custId || !this.lastSaleCustomerId) {
+            if (badge) badge.style.display = 'none';
+            if (notice) notice.style.display = 'none';
+            return;
+        }
+
+        const isSameCustomer = (String(custId) === String(this.lastSaleCustomerId));
+
+        if (isSameCustomer) {
+            const custName = this.lastSaleCustomerName || (custSelect.options[custSelect.selectedIndex]?.text?.trim()) || 'نفس العميل';
+            const invNum = this.lastSaleInvoiceNumber ? `(#${this.lastSaleInvoiceNumber})` : '';
+            const msg = `تنبيه: آخر فاتورة بيع مسجلة ${invNum} كانت لنفس العميل (${custName})`;
+
+            if (badge) {
+                if (badgeText) badgeText.textContent = `آخر فاتورة لنفس العميل ${invNum}`;
+                badge.style.display = 'inline-flex';
+            }
+            if (notice) {
+                if (noticeText) noticeText.textContent = msg;
+                notice.style.display = 'block';
+            }
+
+            if (triggerToast) {
+                this.showNotification(`⚠️ ${msg}`, 'warning');
+            }
+        } else {
+            if (badge) badge.style.display = 'none';
+            if (notice) notice.style.display = 'none';
+        }
+    },
 
     // ============================================================
     // NOTIFICATIONS (TOASTS)
@@ -1482,6 +2600,10 @@ const POS = {
             .then(data => {
                 if (data.products) {
                     this.renderProductsTable(data.products);
+                    const tbody = document.getElementById('productsTableBody');
+                    if (tbody && !this.initialProductsHtml && data.products.length > 0) {
+                        this.initialProductsHtml = tbody.innerHTML;
+                    }
                 }
             })
             .catch(() => {
@@ -1491,42 +2613,115 @@ const POS = {
 
     renderProductsTable(products) {
         const tbody = document.getElementById('productsTableBody');
-        if (!tbody || products.length === 0) return;
+        if (!tbody) return;
+        const showCost = this.showCost !== false;
 
-        tbody.innerHTML = products.map(p => `
+        if (products.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="${showCost ? 7 : 6}" style="text-align:center;padding:2rem;color:#94a3b8;">لا توجد منتجات</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = products.map(p => {
+            const pidStr = String(p.id);
+            const customPriceObj = (this.currentCustomerPrices && this.currentCustomerPrices[pidStr]) ? this.currentCustomerPrices[pidStr] : null;
+            const effectivePrice = customPriceObj ? customPriceObj.price : p.sale_price;
+            const badgeHtml = customPriceObj ? `<span class="customer-price-badge" style="font-size:0.65rem; background:rgba(0,229,255,0.15); color:${customPriceObj.badge_color || '#00e5ff'}; border:1px solid ${customPriceObj.badge_color || '#00e5ff'}; padding:1px 4px; border-radius:3px; margin-right:2px; font-weight:700;">${customPriceObj.badge_text || ''}</span>` : '';
+            const safeName = (p.name || '').replace(/"/g, '&quot;');
+            return `
             <tr class="product-row"
                 data-product-id="${p.id}"
-                data-product-name="${p.name}"
+                data-product-name="${safeName}"
+                data-product-type="${p.product_type || 'PRODUCT'}"
+                data-is-open-price="${p.is_open_price ? 'true' : 'false'}"
                 data-product-barcode="${p.barcode || ''}"
-                data-sale-price="${p.sale_price}"
+                data-sale-price="${effectivePrice}"
+                data-original-sale-price="${p.sale_price}"
+                data-last-purchase="${p.last_purchase_price || 0}"
+                data-last-sale="${p.last_sale_price || p.sale_price || 0}"
                 data-available-stock="${p.available_stock || 0}"
+                data-allow-negative-stock="${p.allow_negative_stock ? 'true' : 'false'}"
                 data-tax-rate="${p.tax_rate || 0}"
-                data-uoms='${JSON.stringify(p.uoms || [])}'>
-                <td>
-                    ${p.image ? `<img src="${p.image}" class="product-thumb" alt="${p.name}">` :
-                      `<div class="product-thumb-placeholder">📦</div>`}
+                data-wht-rate="${p.wht_rate || p.withholding_tax_rate || 0}"
+                data-uoms='${JSON.stringify(p.uoms || [])}'
+                data-avg-cost="${p.avg_cost || p.last_purchase_price || 0}">
+                <td class="td-product">
+                    <div style="display:inline-flex; align-items:center; gap:10px;">
+                        ${p.image ? `<img src="${p.image}" class="product-thumb" alt="${p.name}">` :
+                          `<div class="product-thumb-placeholder">📦</div>`}
+                        <div>
+                            <div class="product-name">${p.name}</div>
+                            ${p.barcode ? `<span class="product-barcode-tag en">${p.barcode}</span>` : ''}
+                        </div>
+                    </div>
                 </td>
-                <td>${p.name}</td>
-                <td class="en">${p.barcode || '-'}</td>
+                ${showCost ? `<td class="cost-col en">${parseFloat(p.last_purchase_price || 0).toFixed(2)} ج.م</td>` : ''}
+                <td class="last-sale-col en">${parseFloat(p.last_sale_price || p.sale_price || 0).toFixed(2)} ج.م</td>
+                <td class="price-col en">${parseFloat(effectivePrice).toFixed(2)} ج.م ${badgeHtml}</td>
+                <td class="stock-cell">${p.available_stock || 0}</td>
+                <td>${p.unit_display || p.unit || '-'}</td>
                 <td>
-                    <div class="qty-control">
+                    <div class="qty-control" style="justify-content:center;">
                         <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, ${p.id}, -1)">−</button>
                         <span class="qty-value">1</span>
                         <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, ${p.id}, 1)">+</button>
                     </div>
                 </td>
-                <td class="stock-cell">${p.available_stock || 0}</td>
-                <td class="price-col en">${parseFloat(p.sale_price).toFixed(2)} EGP</td>
-                <td>-</td>
-                <td class="en">${parseFloat(p.sale_price).toFixed(2)} EGP</td>
-                <td>${p.unit_display || p.unit || '-'}</td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
 
-        // Reset flag so events re-attach after dynamic render
-        const tbody2 = document.getElementById('productsTableBody');
-        if (tbody2) tbody2._posEventsAttached = false;
-        this.setupCartEvents();
         this.updateGridStockDisplay();
+    },
+
+    async refreshShiftStats() {
+        try {
+            const resp = await fetch('/invoicing/pos/api/shift-stats/');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (!data.has_open_shift) return;
+
+            const salesEl = document.getElementById('statTotalSales');
+            if (salesEl) salesEl.textContent = `${parseFloat(data.total_sales).toFixed(2)} ج.م`;
+
+            const countEl = document.getElementById('statInvoiceCount');
+            if (countEl) countEl.textContent = data.invoices_count;
+
+            const cashEl = document.getElementById('statCashInDrawer');
+            if (cashEl) cashEl.textContent = `${parseFloat(data.cash_in_drawer).toFixed(2)} ج.م`;
+
+            const cardEl = document.getElementById('statCardSales');
+            if (cardEl) cardEl.textContent = `${parseFloat(data.card_sales).toFixed(2)} ج.م`;
+
+            const feedEl = document.getElementById('recentInvoicesFeed');
+            if (feedEl && Array.isArray(data.recent_invoices)) {
+                if (data.recent_invoices.length === 0) {
+                    feedEl.innerHTML = '<span id="noRecentInvoicesMsg" style="font-size:0.72rem; color:#64748b;">لا توجد فواتير بعد في هذه الوردية</span>';
+                } else {
+                    feedEl.innerHTML = data.recent_invoices.map(inv => `
+                        <div class="recent-inv-chip" style="background:#1e293b; border:1px solid #334155; border-radius:6px; padding:3px 8px; display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:0.75rem;">
+                            <span style="font-weight:700; color:#f1f5f9;">${inv.number}</span>
+                            <span style="color:#10b981; font-weight:700;">${parseFloat(inv.total).toFixed(2)}</span>
+                            <span style="color:#94a3af; font-size:0.68rem;">(${inv.payment_type})</span>
+                            <button type="button" onclick="POS.printReceipt(${inv.id})" style="background:transparent; border:none; color:#00e5ff; cursor:pointer; padding:0 2px;" title="إعادة طباعة">🖨️</button>
+                        </div>
+                    `).join('');
+                }
+            }
+        } catch (err) {
+            console.error('Failed to refresh shift stats:', err);
+        }
+    },
+
+    toggleShiftBar() {
+        const content = document.getElementById('shiftBarContent');
+        const btn = document.getElementById('toggleShiftBarBtn');
+        if (!content || !btn) return;
+        if (content.style.display === 'none') {
+            content.style.display = 'flex';
+            btn.textContent = '▼';
+        } else {
+            content.style.display = 'none';
+            btn.textContent = '▲';
+        }
     }
 };
 
@@ -1552,9 +2747,13 @@ function getCsrfToken() {
 // ============================================================
 // DOM READY
 // ============================================================
-document.addEventListener('DOMContentLoaded', () => {
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        POS.init();
+    });
+} else {
     POS.init();
-});
+}
 
 // Expose globally
 window.POS = POS;

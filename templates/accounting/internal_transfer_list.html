@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h2 style="margin: 0; color: #fff;">
+            <i class="fas fa-exchange-alt text-gold" style="margin-left: 0.5rem;"></i> {{ title }}
+        </h2>
+        <a href="{% url 'accounting:transfer_create' %}" class="btn-orange">
+            <i class="fas fa-plus"></i> إضافة تحويل مالي جديد
+        </a>
+    </div>
+
+    <div class="data-table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم التحويل</th>
+                    <th>التاريخ</th>
+                    <th>من (الجهة المحول منها)</th>
+                    <th>إلى (الجهة المحول إليها)</th>
+                    <th>المبلغ</th>
+                    <th>البيان</th>
+                    <th>الحالة</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for transfer in transfers %}
+                <tr>
+                    <td><strong style="color: #00e5ff;">{{ transfer.transfer_number }}</strong></td>
+                    <td style="color: rgba(255,255,255,0.7);">{{ transfer.date|date:"Y-m-d" }}</td>
+                    <td>
+                        <span class="badge badge-info" style="background: rgba(13, 202, 240, 0.2); border: 1px solid rgba(13, 202, 240, 0.4); color: #0dcaf0; padding: 3px 8px; border-radius: 4px; font-size: 0.8rem;">{{ transfer.get_from_account_type_display }}</span>
+                        <strong style="color: #fff; margin-right: 4px;">{{ transfer.source_name }}</strong>
+                    </td>
+                    <td>
+                        <span class="badge badge-info" style="background: rgba(40, 167, 69, 0.2); border: 1px solid rgba(40, 167, 69, 0.4); color: #28a745; padding: 3px 8px; border-radius: 4px; font-size: 0.8rem;">{{ transfer.get_to_account_type_display }}</span>
+                        <strong style="color: #fff; margin-right: 4px;">{{ transfer.destination_name }}</strong>
+                    </td>
+                    <td style="font-weight: 900; font-size: 1.1rem; color: #ff7300;">{{ transfer.amount }} ج.م</td>
+                    <td style="color: rgba(255,255,255,0.7); max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{{ transfer.description|default:'' }}">{{ transfer.description|default:"-" }}</td>
+                    <td>
+                        {% if transfer.status == 'DRAFT' %}
+                            <span class="badge-status badge-warning" style="background: rgba(255,193,7,0.2); color: #ffc107; padding: 4px 10px; border-radius: 6px;">مسودة</span>
+                        {% elif transfer.status == 'POSTED' %}
+                            <span class="badge-status badge-success" style="background: rgba(40,167,69,0.2); color: #28a745; padding: 4px 10px; border-radius: 6px;">مرحل</span>
+                        {% else %}
+                            <span class="badge-status badge-danger" style="background: rgba(220,53,69,0.2); color: #dc3545; padding: 4px 10px; border-radius: 6px;">ملغي</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'accounting:transfer_detail' transfer.pk %}" class="btn-action" title="عرض التفاصيل" style="color: #00e5ff; font-size: 1.1rem;">
+                            <i class="fas fa-eye"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" style="text-align: center; padding: 3rem; color: rgba(255,255,255,0.5);">لا توجد تحويلات مالية بين الحسابات حتى الآن.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if is_paginated %}
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="color: var(--text-muted); font-size: 0.9rem;">
+            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ page_obj.paginator.count }}</b> تحويل مالي
+        </div>
+
+        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
+            <a href="?page={{ page_obj.previous_page_number }}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
+            {% endif %}
+
+            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

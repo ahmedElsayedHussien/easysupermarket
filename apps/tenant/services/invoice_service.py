@@ -16,7 +16,9 @@ If any step fails, ALL changes are rolled back.
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from decimal import Decimal
+from typing import Optional, List, Dict, Any
 import logging
+
 
 logger = logging.getLogger(__name__)
 
@@ -115,13 +117,19 @@ def _process_sale_invoice(invoice, lines):
 
     total_cogs = Decimal('0')
 
+    from apps.tenant.core.models import SystemSetting
+    system_setting = SystemSetting.get_settings()
+    allow_negative_global = getattr(system_setting, 'allow_negative_stock', False)
+
     # --- Pre-validate all stock before consuming anything ---
     for line in lines:
         if line.product.product_type == 'SERVICE':
             continue  # Services have no stock limits
         base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
         available = line.product.get_stock(warehouse=invoice.warehouse)
-        if available < base_quantity and not line.product.allow_negative_stock:
+        # Master Lock: Global setting or individual product setting governs negative stock
+        allow_negative = allow_negative_global or getattr(line.product, 'allow_negative_stock', False)
+        if available < base_quantity and not allow_negative:
             raise ValueError(
                 f'المخزون غير كافٍ للمنتج "{line.product.name}". '
                 f'المتاح: {available}, المطلوب: {base_quantity}'
@@ -152,12 +160,16 @@ def _process_sale_invoice(invoice, lines):
             continue
 
         base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
+        is_return_purchase = (invoice.invoice_type == Invoice.RETURN_PURCHASE)
+        notes_text = f'مرتجع مشتريات - فاتورة {invoice.invoice_number}' if is_return_purchase else f'بيع - فاتورة {invoice.invoice_number}'
+        m_type = 'RETURN_OUT' if is_return_purchase else 'OUT'
         consumptions = consume_fifo_batches(
             product=line.product,
             warehouse=invoice.warehouse,
             quantity_needed=base_quantity,
             reference=invoice.invoice_number,
-            notes=f'بيع - فاتورة {invoice.invoice_number}'
+            notes=notes_text,
+            movement_type=m_type,
         )
 
         # Sum COGS from all consumed batches for this line
@@ -170,7 +182,11 @@ def _process_sale_invoice(invoice, lines):
     invoice.recalculate_totals()
 
     # --- Create and post journal entry ---
-    journal_entry = post_sale_invoice(invoice)
+    if invoice.invoice_type == Invoice.RETURN_PURCHASE:
+        from apps.tenant.services.journal_service import post_purchase_invoice
+        journal_entry = post_purchase_invoice(invoice)
+    else:
+        journal_entry = post_sale_invoice(invoice)
 
     # --- Update invoice status ---
     invoice.journal_entry = journal_entry
@@ -202,9 +218,11 @@ def _process_purchase_invoice(invoice, lines):
             
         conversion_factor = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
         base_quantity = line.quantity * conversion_factor
+        is_return_sale = (invoice.invoice_type == Invoice.RETURN_SALE)
+        m_type = 'RETURN_IN' if is_return_sale else 'IN'
         
         # For RETURN_SALE, use the exact original line's unit COGS if available from parent invoice, else fallback to average_cost / last_purchase_price
-        if invoice.invoice_type == Invoice.RETURN_SALE:
+        if is_return_sale:
             unit_cost = line.product.get_average_cost(invoice.warehouse) or line.product.last_purchase_price
             if getattr(invoice, 'parent_invoice', None):
                 orig_line = invoice.parent_invoice.lines.filter(product=line.product).first()
@@ -213,7 +231,7 @@ def _process_purchase_invoice(invoice, lines):
                     orig_base_qty = orig_line.quantity * orig_conv
                     unit_cost = (orig_line.cogs_amount / orig_base_qty).quantize(Decimal('0.0001'))
         else:
-            unit_cost = line.unit_price / conversion_factor
+            unit_cost = (line.subtotal / base_quantity).quantize(Decimal('0.0001')) if base_quantity > 0 else (line.unit_price / conversion_factor)
             
         add_inventory_batch(
             product=line.product,
@@ -222,15 +240,324 @@ def _process_purchase_invoice(invoice, lines):
             unit_cost=unit_cost,
             invoice_line=line,
             reference=invoice.invoice_number,
+            movement_type=m_type,
         )
+
+        if invoice.invoice_type == Invoice.RETURN_SALE:
+            line.cogs_amount = (unit_cost * base_quantity).quantize(Decimal('0.0001'))
+            line.save(update_fields=['cogs_amount'])
 
     # --- Recalculate invoice totals ---
     invoice.recalculate_totals()
 
     # --- Create and post journal entry ---
-    journal_entry = post_purchase_invoice(invoice)
+    if invoice.invoice_type == Invoice.RETURN_SALE:
+        from apps.tenant.services.journal_service import post_sale_invoice
+        journal_entry = post_sale_invoice(invoice)
+    else:
+        journal_entry = post_purchase_invoice(invoice)
 
     # --- Update invoice status ---
     invoice.journal_entry = journal_entry
     invoice.status = Invoice.POSTED
     invoice.save(update_fields=['journal_entry', 'status', 'updated_at'])
+
+
+@transaction.atomic
+def update_invoice_payment_method(
+    invoice_id: int,
+    payment_type: str,
+    partner_id: Optional[int] = None,
+    treasury_id: Optional[int] = None,
+    bank_account_id: Optional[int] = None,
+    ewallet_id: Optional[int] = None,
+    paid_cash: Decimal = Decimal('0'),
+    paid_card: Decimal = Decimal('0'),
+    paid_ewallet: Decimal = Decimal('0'),
+    paid_bank: Decimal = Decimal('0'),
+    insta_bank_account_id: Optional[int] = None,
+):
+    """
+    Updates payment_type and payment destination fields of an existing invoice.
+    If the invoice is POSTED, deletes existing payment settlement journal entries
+    and re-creates settlement journal entries matching the updated payment method.
+    """
+    from apps.tenant.invoicing.models import Invoice
+    from apps.tenant.partners.models import Partner
+    from apps.tenant.accounting.models import JournalEntry, Account
+    from apps.tenant.services.journal_service import _create_sale_payment_entry, _create_purchase_payment_entry
+    from django.contrib.contenttypes.models import ContentType
+
+    invoice = Invoice.objects.select_for_update().get(id=invoice_id)
+
+    # Protection Guard: Cannot modify payment method of an invoice that has returns
+    if invoice.return_invoices.exclude(status=Invoice.CANCELLED).exists() or any(line.returned_quantity > 0 for line in invoice.lines.all()):
+        raise ValueError(
+            f'لا يمكن تعديل طريقة سداد الفاتورة رقم "{invoice.invoice_number}" لوجود مرتجعات محررة عليها.'
+        )
+
+    # Update partner if provided
+    if partner_id:
+        new_partner = Partner.objects.get(id=partner_id)
+        invoice.partner = new_partner
+
+    # Protection Guard: Credit Payment requires an explicit, non-cash partner
+    if payment_type == 'CREDIT':
+        curr_partner = invoice.partner
+        if not curr_partner or 'عميل نقدي' in curr_partner.name or curr_partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']:
+            raise ValueError('لا يمكن تغيير طريقة السداد إلى (آجل) لـ "عميل نقدي". يرجى اختيار عميل/مورد آخر مخصص للآجل.')
+
+    # 1. If invoice is POSTED, delete existing payment settlement journal entries
+    if invoice.status == Invoice.POSTED:
+        ct = ContentType.objects.get_for_model(Invoice)
+        payment_entries = JournalEntry.objects.filter(
+            content_type=ct,
+            object_id=invoice.id
+        )
+        if invoice.journal_entry_id:
+            payment_entries = payment_entries.exclude(id=invoice.journal_entry_id)
+
+        # Delete old payment entries (CASCADE deletes journal items)
+        payment_entries.delete()
+
+        # Update A/R or A/P line in main accrual entry if partner has dedicated account
+        if invoice.journal_entry:
+            je = invoice.journal_entry
+            if invoice.invoice_type in (Invoice.SALE, Invoice.RETURN_SALE) and invoice.partner and invoice.partner.receivable_account:
+                old_ar = Account.objects.filter(code='1130').first()
+                if old_ar:
+                    je.items.filter(account=old_ar).update(account=invoice.partner.receivable_account)
+            elif invoice.invoice_type in (Invoice.PURCHASE, Invoice.RETURN_PURCHASE) and invoice.partner and invoice.partner.payable_account:
+                old_ap = Account.objects.filter(code='2110').first()
+                if old_ap:
+                    je.items.filter(account=old_ap).update(account=invoice.partner.payable_account)
+
+    # 2. Update payment fields on invoice
+    invoice.payment_type = payment_type
+    invoice.treasury_id = treasury_id
+    invoice.bank_account_id = bank_account_id
+    invoice.insta_bank_account_id = insta_bank_account_id
+    invoice.ewallet_id = ewallet_id
+    invoice.paid_cash = paid_cash
+    invoice.paid_card = paid_card
+    invoice.paid_ewallet = paid_ewallet
+    invoice.paid_bank = paid_bank
+
+    invoice.save(update_fields=[
+        'partner', 'payment_type', 'treasury_id', 'bank_account_id', 'insta_bank_account_id', 'ewallet_id',
+        'paid_cash', 'paid_card', 'paid_ewallet', 'paid_bank', 'updated_at'
+    ])
+
+    # 3. If POSTED, recreate the unified journal entry matching updated payment method
+    if invoice.status == Invoice.POSTED:
+        if invoice.journal_entry:
+            old_je = invoice.journal_entry
+            old_je.items.all().delete()
+            old_je.delete()
+            invoice.journal_entry = None
+            invoice.save(update_fields=['journal_entry'])
+            
+        from apps.tenant.services.journal_service import post_sale_invoice, post_purchase_invoice
+        if invoice.invoice_type in (Invoice.SALE, Invoice.RETURN_SALE):
+            je = post_sale_invoice(invoice)
+        else:
+            je = post_purchase_invoice(invoice)
+        invoice.journal_entry = je
+        invoice.save(update_fields=['journal_entry'])
+
+    return invoice
+
+
+
+@transaction.atomic
+def cancel_invoice(invoice_id: int):
+    """
+    Cancels an invoice (DRAFT or POSTED).
+
+    If DRAFT:
+      - Sets status to CANCELLED.
+
+    If POSTED:
+      - Deletes linked journal entries (main accrual entry + payment settlement entries).
+      - Reverses inventory effects:
+        - For SALE: Restores consumed stock by adding FIFO batches (or resetting serial items).
+        - For PURCHASE: Removes inventory batches created by the purchase invoice lines.
+        - For RETURN_SALE: Deducts stock via FIFO.
+        - For RETURN_PURCHASE: Restores stock by adding FIFO batches.
+      - Sets status to CANCELLED.
+    """
+    from apps.tenant.invoicing.models import Invoice
+    from apps.tenant.accounting.models import JournalEntry
+    from apps.tenant.inventory.models import InventoryBatch
+    from apps.tenant.services.fifo_engine import add_inventory_batch, consume_fifo_batches
+    from django.contrib.contenttypes.models import ContentType
+
+    invoice = Invoice.objects.select_for_update().get(id=invoice_id)
+
+    if invoice.status == Invoice.CANCELLED:
+        raise ValueError(f'الفاتورة رقم "{invoice.invoice_number}" ملغاة بالفعل.')
+
+    # Protection Guard: Cannot cancel an invoice that has returns
+    if invoice.return_invoices.exclude(status=Invoice.CANCELLED).exists() or any(line.returned_quantity > 0 for line in invoice.lines.all()):
+        raise ValueError(
+            f'لا يمكن إلغاء الفاتورة رقم "{invoice.invoice_number}" لوجود مرتجعات محررة عليها. '
+            'يجب إلغاء فواتير المرتجع المرتبطة أولاً قبل إلغاء الفاتورة الأصلية.'
+        )
+
+    if invoice.status == Invoice.POSTED:
+        # 1. Reverse Financial Effects (Delete linked Journal Entries)
+        ct = ContentType.objects.get_for_model(Invoice)
+        JournalEntry.objects.filter(
+            content_type=ct,
+            object_id=invoice.id
+        ).delete()
+
+        if invoice.journal_entry_id:
+            JournalEntry.objects.filter(id=invoice.journal_entry_id).delete()
+            invoice.journal_entry = None
+
+        # 2. Reverse Inventory Effects
+        lines = list(invoice.lines.select_related('product', 'serial_item', 'uom').all())
+
+        if invoice.invoice_type == Invoice.SALE:
+            for line in lines:
+                if line.product.product_type == 'SERVICE':
+                    continue
+
+                if line.product.product_type == 'SERIALIZED' and line.serial_item:
+                    line.serial_item.is_sold = False
+                    line.serial_item.warehouse = invoice.warehouse
+                    line.serial_item.save(update_fields=['is_sold', 'warehouse', 'updated_at'])
+                    continue
+
+                net_unreturned_qty = line.quantity - line.returned_quantity
+                if net_unreturned_qty <= Decimal('0'):
+                    continue
+
+                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                base_qty = net_unreturned_qty * conv
+                unit_cost = (line.cogs_amount / (line.quantity * conv)).quantize(Decimal('0.0001')) if (line.cogs_amount > 0 and line.quantity > 0) else (line.product.get_average_cost(invoice.warehouse) or Decimal('0'))
+
+                add_inventory_batch(
+                    product=line.product,
+                    warehouse=invoice.warehouse,
+                    quantity=base_qty,
+                    unit_cost=unit_cost,
+                    invoice_line=line,
+                    reference=f'إلغاء فاتورة مبيعات {invoice.invoice_number}'
+                )
+
+        elif invoice.invoice_type == Invoice.PURCHASE:
+            from apps.tenant.core.models import SystemSetting
+            allow_negative = getattr(SystemSetting.get_settings(), 'allow_negative_stock', False)
+
+            # Pre-validate available stock before making any changes
+            for line in lines:
+                if line.product.product_type == 'SERVICE':
+                    continue
+                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                net_unreturned_qty = line.quantity - line.returned_quantity
+                if net_unreturned_qty <= Decimal('0'):
+                    continue
+                base_qty = net_unreturned_qty * conv
+                available = line.product.get_stock(warehouse=invoice.warehouse)
+                if available < base_qty and not allow_negative:
+                    raise ValueError(
+                        f'لا يمكن إلغاء فاتورة الشراء رقم "{invoice.invoice_number}". '
+                        f'الكمية المتاحة من المنتج "{line.product.name}" بالمستودع ({available}) '
+                        f'أقل من الكمية المطلوب إلغاؤها ({base_qty}) نظراً لبيع أو صرف جزء من المخزون.'
+                    )
+
+            for line in lines:
+                if line.product.product_type == 'SERVICE':
+                    continue
+
+                if line.product.product_type == 'SERIALIZED' and line.serial_item:
+                    line.serial_item.delete()
+                    continue
+
+                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                net_unreturned_qty = line.quantity - line.returned_quantity
+                if net_unreturned_qty <= Decimal('0'):
+                    continue
+
+                qty_to_remove = net_unreturned_qty * conv
+                batches = InventoryBatch.objects.select_for_update().filter(source_invoice_line=line).order_by('created_at')
+                from apps.tenant.inventory.models import StockMovement
+                for b in batches:
+                    if qty_to_remove <= Decimal('0'):
+                        break
+                    to_deduct = min(b.quantity_remaining, qty_to_remove)
+                    if to_deduct > Decimal('0'):
+                        b.quantity_remaining -= to_deduct
+                        b.save(update_fields=['quantity_remaining', 'updated_at'])
+                        StockMovement.objects.create(
+                            product=line.product,
+                            warehouse=invoice.warehouse,
+                            batch=b,
+                            movement_type='OUT',
+                            quantity=to_deduct,
+                            unit_cost=b.unit_cost,
+                            reference=f'إلغاء فاتورة شراء {invoice.invoice_number}',
+                            notes=f'إلغاء فاتورة شراء {invoice.invoice_number}'
+                        )
+                        qty_to_remove -= to_deduct
+                    if b.quantity_remaining <= Decimal('0'):
+                        b.delete()
+
+                if qty_to_remove > Decimal('0'):
+                    consume_fifo_batches(
+                        product=line.product,
+                        warehouse=invoice.warehouse,
+                        quantity_needed=qty_to_remove,
+                        reference=f'إلغاء فاتورة شراء {invoice.invoice_number}',
+                        notes=f'إلغاء فاتورة شراء {invoice.invoice_number} (خصم من مخزون متاح)',
+                        movement_type='OUT'
+                    )
+
+        elif invoice.invoice_type == Invoice.RETURN_SALE:
+            for line in lines:
+                if line.product.product_type == 'SERVICE':
+                    continue
+
+                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                base_qty = line.quantity * conv
+                consume_fifo_batches(
+                    product=line.product,
+                    warehouse=invoice.warehouse,
+                    quantity_needed=base_qty,
+                    reference=f'إلغاء مرتجع مبيعات {invoice.invoice_number}'
+                )
+
+        elif invoice.invoice_type == Invoice.RETURN_PURCHASE:
+            for line in lines:
+                if line.product.product_type == 'SERVICE':
+                    continue
+
+                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                base_qty = line.quantity * conv
+                unit_cost = line.product.get_average_cost(invoice.warehouse) or line.product.last_purchase_price
+                add_inventory_batch(
+                    product=line.product,
+                    warehouse=invoice.warehouse,
+                    quantity=base_qty,
+                    unit_cost=unit_cost,
+                    invoice_line=line,
+                    reference=f'إلغاء مرتجع مشتريات {invoice.invoice_number}'
+                )
+
+    # Restore returned_quantity on parent invoice lines if this was a return invoice
+    if invoice.parent_invoice and invoice.invoice_type in (Invoice.RETURN_SALE, Invoice.RETURN_PURCHASE):
+        for rline in invoice.lines.all():
+            pline = invoice.parent_invoice.lines.filter(product=rline.product).first()
+            if pline:
+                pline.returned_quantity = max(Decimal('0'), pline.returned_quantity - rline.quantity)
+                pline.save(update_fields=['returned_quantity'])
+
+    # Update invoice status
+    invoice.status = Invoice.CANCELLED
+    invoice.save(update_fields=['status', 'journal_entry', 'updated_at'])
+
+    return invoice
+
+

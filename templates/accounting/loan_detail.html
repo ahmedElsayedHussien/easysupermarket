@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+{% load static l10n %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <!-- الهيدر والأزرار الإجرائية -->
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
+        <div>
+            <div class="d-flex align-items-center gap-3 flex-wrap">
+                <h2 style="margin: 0; color: #fff; font-weight: 800;">
+                    <i class="fas fa-landmark text-warning" style="margin-left: 0.5rem;"></i> {{ loan.name }}
+                </h2>
+                <span class="badge" style="background: rgba(255,255,255,0.1); font-size: 0.95rem; font-weight: 600; color: #ff9500; padding: 0.4rem 0.8rem;">
+                    {{ loan.code }}
+                </span>
+                {% if loan.status == 'ACTIVE' %}
+                    <span class="badge bg-success-subtle text-success border border-success px-3 py-1" style="font-size: 0.85rem;">
+                        <i class="fas fa-spinner fa-spin me-1"></i> نشط وقيد السداد الدوري
+                    </span>
+                {% elif loan.status == 'FULLY_PAID' %}
+                    <span class="badge bg-primary-subtle text-primary border border-primary px-3 py-1" style="font-size: 0.85rem;">
+                        <i class="fas fa-check-double me-1"></i> تم السداد بالكامل
+                    </span>
+                {% else %}
+                    <span class="badge bg-danger-subtle text-danger border border-danger px-3 py-1" style="font-size: 0.85rem;">
+                        <i class="fas fa-exclamation-triangle me-1"></i> متوقف / متعثر
+                    </span>
+                {% endif %}
+            </div>
+            <small class="text-white-50 mt-1 d-block">
+                {{ loan.get_loan_type_display }} • الجهة الممولة: <strong class="text-info">{{ loan.lender_name }}</strong>
+                {% if loan.contract_number %} • عقد رقم: {{ loan.contract_number }}{% endif %}
+                • تاريخ الاستلام: {{ loan.start_date|date:"Y-m-d" }}
+            </small>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="{% url 'accounting:loan_list' %}" class="btn btn-outline-secondary" style="border-radius: 8px;">
+                <i class="fas fa-arrow-right"></i> قائمة القروض
+            </a>
+            {% if loan.disbursement_entry %}
+            <a href="{% url 'accounting:journal_detail' loan.disbursement_entry.id %}" class="btn btn-outline-info" style="border-radius: 8px;" target="_blank">
+                <i class="fas fa-book"></i> قيد استلام القرض
+            </a>
+            {% endif %}
+            <button type="button" class="btn btn-outline-light" onclick="window.print()" style="border-radius: 8px;">
+                <i class="fas fa-print"></i> طباعة الجدول
+            </button>
+        </div>
+    </div>
+
+    <!-- كروت البيانات المالية السريعة -->
+    <div class="row g-3 mb-4">
+        <!-- أصل القرض المستلم -->
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(0, 229, 255, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-white-50 small d-block mb-1">أصل القرض الممنوح</span>
+                        <h4 class="mb-0 fw-bold" style="color: #00e5ff;">{{ loan.principal_amount|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                        <small class="text-white-50">{{ loan.installments_count }} قسط شهري</small>
+                    </div>
+                    <div style="font-size: 2rem; color: rgba(0, 229, 255, 0.4);"><i class="fas fa-coins"></i></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- إجمالي الفوائد والأرباح -->
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 184, 0, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-white-50 small d-block mb-1">إجمالي الفوائد / الأرباح</span>
+                        <h4 class="mb-0 fw-bold" style="color: #ffb800;">{{ loan.total_interest_amount|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                        <small class="text-white-50">فائدة سنوية {{ loan.interest_rate }}%</small>
+                    </div>
+                    <div style="font-size: 2rem; color: rgba(255, 184, 0, 0.4);"><i class="fas fa-percentage"></i></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- إجمالي ما تم سداده -->
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(16, 185, 129, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-white-50 small d-block mb-1">إجمالي المسدد حتى اليوم</span>
+                        <h4 class="mb-0 fw-bold" style="color: #10b981;">{{ loan.total_paid|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                        <small class="text-white-50">أصل: {{ loan.paid_principal|floatformat:2 }} | فوائد: {{ loan.paid_interest|floatformat:2 }}</small>
+                    </div>
+                    <div style="font-size: 2rem; color: rgba(16, 185, 129, 0.4);"><i class="fas fa-check-circle"></i></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- المتبقي لسداده من أصل القرض -->
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(239, 68, 68, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-white-50 small d-block mb-1">المتبقي من أصل القرض (التزام دفتري)</span>
+                        <h4 class="mb-0 fw-bold" style="color: #ef4444;">{{ loan.remaining_principal|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                        <small class="text-white-50">إجمالي متبقي بالفوائد: {{ loan.remaining_total|floatformat:2 }}</small>
+                    </div>
+                    <div style="font-size: 2rem; color: rgba(239, 68, 68, 0.4);"><i class="fas fa-file-invoice-dollar"></i></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- شريط تقدم سداد القرض ومؤشر الأقساط -->
+    <div class="card p-3 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-bold" style="color: #e2e8f0;">
+                <i class="fas fa-chart-line text-warning me-1"></i> مؤشر إنجاز سداد القرض
+                {% if loan.overdue_count > 0 %}
+                <span class="badge bg-danger ms-2 px-2 py-1"><i class="fas fa-exclamation-circle"></i> يوجد {{ loan.overdue_count }} قسط متأخر عن موعده!</span>
+                {% endif %}
+            </span>
+            <span class="badge" style="background: rgba(255, 115, 0, 0.2); color: #ff9500; font-weight: 700; font-size: 0.95rem; border: 1px solid rgba(255, 115, 0, 0.4);">
+                {{ loan.repayment_progress_percent }}% مسدد
+            </span>
+        </div>
+        <div class="progress" style="height: 14px; background: rgba(255,255,255,0.08); border-radius: 7px;">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" 
+                 style="width: {{ loan.repayment_progress_percent }}%; background: linear-gradient(90deg, #ff7300, #10b981); border-radius: 7px;"></div>
+        </div>
+        <div class="d-flex justify-content-between text-white-50 small mt-2">
+            <span>إجمالي الالتزام الكلي: {{ loan.total_amount|floatformat:2 }} ج.م</span>
+            <span>المسدد: {{ loan.total_paid|floatformat:2 }} ج.م</span>
+            <span>المتبقي الكلي: {{ loan.remaining_total|floatformat:2 }} ج.م</span>
+        </div>
+    </div>
+
+    <!-- تفاصيل السياسة المحاسبية والحسابات المرتبطة -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            <div class="card p-3 h-100" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+                <h5 class="mb-3" style="color: #00e5ff; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                    <i class="fas fa-balance-scale"></i> الربط المحاسبي بشجرة الحسابات
+                </h5>
+                <table class="table table-sm table-borderless text-white mb-0">
+                    <tbody>
+                        <tr>
+                            <td class="text-white-50" style="width: 45%;">حساب الالتزام (خصوم):</td>
+                            <td class="fw-bold text-warning">
+                                {{ loan.loan_account.code }} - {{ loan.loan_account.name }}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="text-white-50">حساب مصروف الفوائد:</td>
+                            <td class="fw-bold text-danger">
+                                {{ loan.interest_expense_account.code }} - {{ loan.interest_expense_account.name }}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="text-white-50">طريقة احتساب الفائدة:</td>
+                            <td class="fw-bold text-info">{{ loan.get_interest_type_display }}</td>
+                        </tr>
+                        {% if loan.notes %}
+                        <tr>
+                            <td class="text-white-50">ملاحظات وشروط إضافية:</td>
+                            <td class="text-white">{{ loan.notes }}</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card p-3 h-100" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+                <h5 class="mb-3" style="color: #10b981; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                    <i class="fas fa-calendar-alt"></i> جدول الاستحقاقات والأقساط
+                </h5>
+                <table class="table table-sm table-borderless text-white mb-0">
+                    <tbody>
+                        <tr>
+                            <td class="text-white-50" style="width: 45%;">عدد الأقساط الإجمالي:</td>
+                            <td class="fw-bold">{{ loan.installments_count }} قسط</td>
+                        </tr>
+                        <tr>
+                            <td class="text-white-50">تاريخ أول قسط:</td>
+                            <td class="fw-bold text-info">{{ loan.first_due_date|date:"Y-m-d" }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-white-50">القسط القادم المستحق:</td>
+                            <td>
+                                {% with next_inst=loan.next_pending_installment %}
+                                {% if next_inst %}
+                                    <span class="badge bg-warning text-dark fw-bold">قسط #{{ next_inst.installment_number }} في {{ next_inst.due_date|date:"Y-m-d" }} ({{ next_inst.total_amount|floatformat:2 }} ج.م)</span>
+                                {% else %}
+                                    <span class="badge bg-success">تم سداد جميع الأقساط بحمد الله</span>
+                                {% endif %}
+                                {% endwith %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="text-white-50">أقساط متأخرة:</td>
+                            <td>
+                                {% if loan.overdue_count > 0 %}
+                                    <span class="badge bg-danger">{{ loan.overdue_count }} قسط متأخر السداد</span>
+                                {% else %}
+                                    <span class="badge bg-success-subtle text-success">لا يوجد أي متأخرات</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- جدول الأقساط الشهري التفصيلي -->
+    <div class="card mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden;">
+        <div class="card-header d-flex justify-content-between align-items-center" style="background: rgba(15, 23, 42, 0.9); border-bottom: 1px solid rgba(255,255,255,0.08); padding: 1rem 1.5rem;">
+            <h5 class="mb-0 fw-bold" style="color: #fff;">
+                <i class="fas fa-list-ol text-warning me-1"></i> جدول أقساط القرض التفصيلي ({{ installments|length }} قسط)
+            </h5>
+            <div class="small text-white-50">
+                <span class="me-3"><i class="fas fa-circle text-success" style="font-size:0.6rem;"></i> مسدد</span>
+                <span class="me-3"><i class="fas fa-circle text-warning" style="font-size:0.6rem;"></i> قادم مستحق</span>
+                <span><i class="fas fa-circle text-danger" style="font-size:0.6rem;"></i> متأخر</span>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="color: #e2e8f0; font-size: 0.9rem; min-width: 1050px; white-space: nowrap;">
+                <thead style="background: rgba(30, 41, 59, 0.8); border-bottom: 1px solid rgba(255,255,255,0.1);">
+                    <tr>
+                        <th class="text-center" style="width: 60px;">#</th>
+                        <th>تاريخ الاستحقاق</th>
+                        <th class="text-end">أصل القرض</th>
+                        <th class="text-end">الفائدة</th>
+                        <th class="text-end">إجمالي القسط</th>
+                        <th class="text-center">حالة السداد</th>
+                        <th>تاريخ وقيد السداد</th>
+                        <th>طريقة السداد</th>
+                        <th class="text-center" style="width: 140px;">الإجراء</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for inst in installments %}
+                    <tr style="{% if inst.is_paid %}background: rgba(16, 185, 129, 0.05);{% elif inst.is_overdue %}background: rgba(239, 68, 68, 0.08);{% endif %} border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td class="text-center fw-bold text-white-50">{{ inst.installment_number }}</td>
+                        <td class="fw-bold">
+                            {{ inst.due_date|date:"Y-m-d" }}
+                            {% if inst.is_overdue %}
+                                <span class="badge bg-danger ms-1" style="font-size: 0.65rem;">متأخر</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end font-monospace" style="color: #00e5ff;">{{ inst.principal_amount|floatformat:2 }} ج.م</td>
+                        <td class="text-end font-monospace" style="color: #ffb800;">{{ inst.interest_amount|floatformat:2 }} ج.م</td>
+                        <td class="text-end font-monospace fw-bold" style="color: #fff; font-size: 1rem;">{{ inst.total_amount|floatformat:2 }} ج.م</td>
+                        <td class="text-center">
+                            {% if inst.is_paid %}
+                                <span class="badge bg-success-subtle text-success border border-success px-2 py-1">
+                                    <i class="fas fa-check-circle"></i> تم السداد
+                                </span>
+                            {% elif inst.is_overdue %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger px-2 py-1">
+                                    <i class="fas fa-exclamation-circle"></i> متأخر
+                                </span>
+                            {% else %}
+                                <span class="badge bg-warning-subtle text-warning border border-warning px-2 py-1">
+                                    <i class="fas fa-clock"></i> في الانتظار
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if inst.is_paid %}
+                                <div class="small">
+                                    <i class="fas fa-calendar-check text-success"></i> {{ inst.payment_date|date:"Y-m-d" }}
+                                    {% if inst.payment_entry %}
+                                    <br>
+                                    <a href="{% url 'accounting:journal_detail' inst.payment_entry.id %}" target="_blank" class="text-info text-decoration-none">
+                                        <i class="fas fa-external-link-alt" style="font-size: 0.75rem;"></i> {{ inst.payment_entry.reference }}
+                                    </a>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class="text-white-50 small">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if inst.is_paid %}
+                                <div class="small text-white-50">
+                                    {% if inst.paid_bank %}
+                                        <i class="fas fa-university text-info"></i> {{ inst.paid_bank.name }}
+                                    {% elif inst.paid_treasury %}
+                                        <i class="fas fa-cash-register text-warning"></i> {{ inst.paid_treasury.name }}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                    {% if inst.payment_notes %}
+                                    <div class="text-muted" style="font-size: 0.75rem;">{{ inst.payment_notes }}</div>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class="text-white-50 small">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if not inst.is_paid %}
+                                <button type="button" 
+                                        class="btn btn-sm btn-orange" 
+                                        style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 6px; box-shadow: 0 2px 8px rgba(255,115,0,0.3); padding: 0.35rem 0.75rem;"
+                                        onclick="openPayModal('{{ inst.id }}', '{{ inst.installment_number }}', '{{ inst.total_amount|unlocalize }}', '{{ inst.principal_amount|unlocalize }}', '{{ inst.interest_amount|unlocalize }}', '{{ inst.due_date|date:"Y-m-d" }}')">
+                                    <i class="fas fa-money-bill-wave"></i> سداد القسط
+                                </button>
+                            {% else %}
+                                <span class="text-success small fw-bold"><i class="fas fa-check"></i> مكتمل</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="9" class="text-center py-4 text-white-50">
+                            لا يوجد أقساط مسجلة لهذا القرض.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- نافذة منبثقة (Modal) لسداد القسط بنقرة واحدة -->
+<div class="modal fade" id="payInstallmentModal" tabindex="-1" aria-labelledby="payInstallmentModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background: #1e293b; border: 1px solid rgba(255,115,0,0.4); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.1); background: rgba(15, 23, 42, 0.6);">
+                <h5 class="modal-title text-white fw-bold" id="payInstallmentModalLabel">
+                    <i class="fas fa-money-bill-wave text-warning me-2"></i> سداد قسط القرض
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="payInstallmentForm" method="post" action="">
+                {% csrf_token %}
+                <div class="modal-body p-4 text-white">
+                    <!-- ملخص تفاصيل القسط -->
+                    <div class="p-3 mb-3 rounded-3" style="background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.05);">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-white-50">رقم القسط:</span>
+                            <span class="fw-bold text-warning" id="modalInstNumber">#1</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-white-50">تاريخ الاستحقاق:</span>
+                            <span class="fw-bold" id="modalInstDueDate">-</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-white-50">أصل القرض (تخفيض التزام 2210):</span>
+                            <span class="fw-bold text-info" id="modalInstPrincipal">0.00 ج.م</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-2">
+                            <span class="text-white-50">الفوائد (مصروف تمويلي 5500):</span>
+                            <span class="fw-bold text-danger" id="modalInstInterest">0.00 ج.م</span>
+                        </div>
+                        <hr style="border-color: rgba(255,255,255,0.1); margin: 0.5rem 0;">
+                        <div class="d-flex justify-content-between">
+                            <span class="fw-bold">إجمالي المبلغ المطلوب خصمه:</span>
+                            <span class="fw-bold text-success fs-5" id="modalInstTotal">0.00 ج.م</span>
+                        </div>
+                    </div>
+
+                    <!-- نموذج السداد والخصم -->
+                    <div class="mb-3">
+                        <label class="form-label text-white-50 small">{{ pay_form.payment_date.label }}</label>
+                        {{ pay_form.payment_date }}
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label text-white-50 small">{{ pay_form.payment_destination.label }}</label>
+                        {{ pay_form.payment_destination }}
+                    </div>
+
+                    <div class="mb-3" id="modalBankGroup">
+                        <label class="form-label text-white-50 small">{{ pay_form.bank_account.label }}</label>
+                        {{ pay_form.bank_account }}
+                    </div>
+
+                    <div class="mb-3" id="modalTreasuryGroup" style="display: none;">
+                        <label class="form-label text-white-50 small">{{ pay_form.treasury.label }}</label>
+                        {{ pay_form.treasury }}
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label text-white-50 small">{{ pay_form.payment_notes.label }}</label>
+                        {{ pay_form.payment_notes }}
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-top: 1px solid rgba(255,255,255,0.1); background: rgba(15, 23, 42, 0.6);">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">إلغاء</button>
+                    <button type="submit" class="btn btn-orange" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 12px rgba(255,115,0,0.3); padding: 0.55rem 1.5rem;">
+                        <i class="fas fa-check-circle me-1"></i> تأكيد السداد وتوليد القيد
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function openPayModal(instId, instNum, total, principal, interest, dueDate) {
+    const parseNum = (v) => {
+        if (typeof v === 'number') return v;
+        const cleaned = String(v || '').replace(/,/g, '').replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 1632).trim();
+        return parseFloat(cleaned) || 0;
+    };
+
+    const numPrincipal = parseNum(principal);
+    const numInterest = parseNum(interest);
+    const numTotal = parseNum(total);
+
+    document.getElementById('modalInstNumber').textContent = '#' + instNum;
+    document.getElementById('modalInstDueDate').textContent = dueDate;
+    document.getElementById('modalInstPrincipal').textContent = numPrincipal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+    document.getElementById('modalInstInterest').textContent = numInterest.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+    document.getElementById('modalInstTotal').textContent = numTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+    
+    // Set form action URL dynamically
+    const form = document.getElementById('payInstallmentForm');
+    form.action = "{% url 'accounting:loan_installment_pay' 0 %}".replace('/0/', '/' + instId + '/');
+    
+    // Show modal
+    const modalEl = document.getElementById('payInstallmentModal');
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const destSelect = document.getElementById('id_installment_pay_dest');
+    const bankGroup = document.getElementById('modalBankGroup');
+    const treasuryGroup = document.getElementById('modalTreasuryGroup');
+
+    function toggleDest() {
+        if (destSelect.value === 'BANK') {
+            bankGroup.style.display = 'block';
+            treasuryGroup.style.display = 'none';
+        } else {
+            bankGroup.style.display = 'none';
+            treasuryGroup.style.display = 'block';
+        }
+    }
+
+    if (destSelect) {
+        destSelect.addEventListener('change', toggleDest);
+        toggleDest();
+    }
+});
+</script>
+{% endblock %}

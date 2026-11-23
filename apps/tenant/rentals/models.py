@@ -129,6 +129,8 @@ class Rental(models.Model):
     refund_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_refund', blank=True, null=True, verbose_name='قيد المرتجع')
     settlement_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_settlement', blank=True, null=True, verbose_name='قيد التسوية النقدية')
 
+    pos_session = models.ForeignKey('invoicing.POSSession', on_delete=models.SET_NULL, null=True, blank=True, related_name='rentals', verbose_name='وردية نقطة البيع')
+
     from django.conf import settings
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, verbose_name='بواسطة')
     created_at = models.DateTimeField(auto_now_add=True)

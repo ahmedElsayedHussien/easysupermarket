@@ -24,7 +24,17 @@ urlpatterns = [
     path('reports/sales/detailed/', reports_views.DetailedSalesReportView.as_view(), name='report_sales_detailed'),
     path('reports/sales/customer-balances/', reports_views.CustomerBalancesReportView.as_view(), name='report_customer_balances'),
     path('reports/sales/shifts/', reports_views.ShiftReportView.as_view(), name='report_shifts'),
+    path('reports/sales/shifts/<int:pk>/', reports_views.ShiftDetailView.as_view(), name='report_shift_detail'),
+    path('reports/sales/shifts/<int:pk>/excel/', reports_views.export_shift_detail_excel, name='report_shift_detail_excel'),
+    path('reports/sales/shifts/<int:pk>/api/', reports_views.shift_detail_api, name='report_shift_detail_api'),
+
     path('settings/system/', views.SystemSettingUpdateView.as_view(), name='system_settings'),
+    path('settings/backup/', views.database_backup_view, name='database_backup'),
+    path('settings/backup/create/', views.database_backup_create, name='database_backup_create'),
+    path('settings/backup/download/<str:filename>/', views.database_backup_download, name='database_backup_download'),
+    path('settings/backup/delete/<str:filename>/', views.database_backup_delete, name='database_backup_delete'),
+    path('settings/backup/restore/', views.database_backup_restore, name='database_backup_restore'),
+    path('settings/backup/restore/<str:filename>/', views.database_backup_restore, name='database_backup_restore_file'),
     # Purchase Reports
     path('reports/purchases/product/', reports_views.ProductPurchasesReportView.as_view(), name='report_product_purchases'),
     path('reports/purchases/detailed/', reports_views.DetailedPurchasesReportView.as_view(), name='report_detailed_purchases'),
@@ -37,16 +47,31 @@ urlpatterns = [
     
     # Inventory Reports
     path('reports/inventory/low-stock/', reports_views.LowStockReportView.as_view(), name='report_low_stock'),
+    path('reports/inventory/overstock/', reports_views.OverstockReportView.as_view(), name='report_overstock'),
     path('reports/inventory/expiry/', reports_views.ProductExpiryReportView.as_view(), name='report_product_expiry'),
     path('reports/inventory/warehouse-stock/', reports_views.WarehouseStockReportView.as_view(), name='report_warehouse_stock'),
     path('reports/inventory/movement/', reports_views.ItemMovementReportView.as_view(), name='report_item_movement'),
     path('reports/inventory/slow-moving/', reports_views.SlowMovingReportView.as_view(), name='report_slow_moving'),
     path('reports/accounting/income-statement/', reports_views.IncomeStatementReportView.as_view(), name='report_income_statement'),
+    path('reports/accounting/income-statement/detail/', reports_views.IncomeStatementDetailView.as_view(), name='report_income_statement_detail'),
     path('reports/accounting/expenses/', reports_views.ExpenseReportView.as_view(), name='report_expenses'),
     path('reports/accounting/treasury/', reports_views.TreasuryStatementReportView.as_view(), name='report_treasury'),
     path('reports/accounting/trial-balance/', reports_views.TrialBalanceReportView.as_view(), name='report_trial_balance'),
     path('reports/accounting/general-ledger/', reports_views.GeneralLedgerReportView.as_view(), name='report_general_ledger'),
     path('reports/accounting/tax/', reports_views.TaxReportView.as_view(), name='report_taxes'),
     path('reports/accounting/einvoicing/', reports_views.EInvoicingReportView.as_view(), name='report_einvoicing'),
+    path('reports/accounting/fixed-assets/', reports_views.FixedAssetReportView.as_view(), name='report_fixed_assets'),
+    path('reports/accounting/loans/', reports_views.LoanReportView.as_view(), name='report_loans'),
     path('reports/inventory/valuation/', reports_views.InventoryValuationReportView.as_view(), name='report_inventory_valuation'),
+    path('reports/partners/', reports_views.PartnersReportView.as_view(), name='report_partners'),
+    
+    # Liquidity Reports
+    path('reports/liquidity/position/', reports_views.LiquidityPositionReportView.as_view(), name='report_liquidity_position'),
+    path('reports/liquidity/vouchers/', reports_views.CashVouchersReportView.as_view(), name='report_cash_vouchers'),
+    path('reports/liquidity/transfers/', reports_views.InternalTransfersReportView.as_view(), name='report_liquidity_transfers'),
+    
+    # Dashboard API routes
+    path('api/branch-status/', views.branch_status_api, name='branch_status_api'),
+    path('api/warehouses/', views.warehouses_by_branch_api, name='warehouses_by_branch_api'),
 ]
+

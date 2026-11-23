@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <!-- الهيدر وأزرار الإضافة -->
+    <div class="top-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            <h2 style="margin: 0; color: #fff; font-weight: 800;">
+                <i class="fas fa-money-check-alt text-warning" style="margin-left: 0.5rem;"></i> {{ title }}
+            </h2>
+            <small class="text-white-50">متابعة وإدارة دورة حياة أوراق القبض وأوراق الدفع والتحصيل البنكي</small>
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <a href="{% url 'accounting:cheque_book_list' %}" class="btn btn-outline-info" style="border-radius: 8px; font-weight: 600;">
+                <i class="fas fa-book"></i> دفاتر الشيكات
+            </a>
+            <a href="{% url 'accounting:cheque_payable_create' %}" class="btn" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 12px rgba(255,115,0,0.3);">
+                <i class="fas fa-file-invoice-dollar"></i> تحرير شيك دفع (مورد)
+            </a>
+            <a href="{% url 'accounting:cheque_receivable_create' %}" class="btn" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 12px rgba(255,115,0,0.3);">
+                <i class="fas fa-plus"></i> استلام شيك قبض (عميل)
+            </a>
+        </div>
+    </div>
+
+    <!-- كروت الإحصائيات السريعة ومؤشرات السيولة -->
+    <div class="row g-3 mb-4">
+        <!-- شيكات قبض تحت التحصيل (الحساب الوسيط 1180) -->
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(0, 229, 255, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-white-50 small d-block mb-1">شيكات قبض (تحت التحصيل)</span>
+                        <h4 class="mb-0 fw-bold" style="color: #00e5ff;">{{ stats.under_collection_amount|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                        <small class="text-white-50">{{ stats.under_collection_count }} شيك بالحساب الوسيط</small>
+                    </div>
+                    <div style="font-size: 2rem; color: rgba(0, 229, 255, 0.4);"><i class="fas fa-clock"></i></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- شيكات قبض تم تحصيلها -->
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(16, 185, 129, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-white-50 small d-block mb-1">شيكات قبض (تم تحصيلها)</span>
+                        <h4 class="mb-0 fw-bold" style="color: #10b981;">{{ stats.collected_amount|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                        <small class="text-white-50">{{ stats.collected_count }} شيك تم إيداعه</small>
+                    </div>
+                    <div style="font-size: 2rem; color: rgba(16, 185, 129, 0.4);"><i class="fas fa-check-double"></i></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- أوراق دفع محررة لموردين (الحساب الوسيط 2170) -->
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(239, 68, 68, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-white-50 small d-block mb-1">شيكات دفع صادرة لموردين</span>
+                        <h4 class="mb-0 fw-bold" style="color: #ef4444;">{{ stats.payable_issued_amount|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                        <small class="text-white-50">{{ stats.payable_issued_count }} شيك برسم السداد</small>
+                    </div>
+                    <div style="font-size: 2rem; color: rgba(239, 68, 68, 0.4);"><i class="fas fa-file-invoice-dollar"></i></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- تنبيهات الاستحقاق والتأخير -->
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(139, 92, 246, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span class="text-white-50 small d-block mb-1">مستحق خلال 7 أيام / متأخر</span>
+                        <h4 class="mb-0 fw-bold" style="color: #c084fc;">{{ stats.due_week_count }} <small style="font-size:0.8rem; color: #fff;">قادمة</small> | <span style="color: #ff4757;">{{ stats.overdue_count }}</span> <small style="font-size:0.8rem; color:#ff4757;">متأخر</small></h4>
+                        <small class="text-white-50">إجمالي: {{ stats.due_week_amount|floatformat:2 }} ج.م</small>
+                    </div>
+                    <div style="font-size: 2rem; color: rgba(139, 92, 246, 0.4);"><i class="fas fa-bell"></i></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- شريط البحث والفلترة -->
+    <div class="p-3 rounded-3 mb-4" style="background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(255,255,255,0.08);">
+        <form method="get" class="row g-2 align-items-center">
+            <!-- نوع الشيك -->
+            <div class="col-md-2 col-sm-4">
+                <select name="type" class="form-select bg-dark text-white border-secondary form-select-sm" onchange="this.form.submit()">
+                    <option value="">-- جميع الأنواع --</option>
+                    <option value="RECEIVABLE" {% if current_type == 'RECEIVABLE' %}selected{% endif %}>📥 شيكات قبض (عملاء)</option>
+                    <option value="PAYABLE" {% if current_type == 'PAYABLE' %}selected{% endif %}>📤 شيكات دفع (موردين)</option>
+                </select>
+            </div>
+
+            <!-- الحالة -->
+            <div class="col-md-2 col-sm-4">
+                <select name="status" class="form-select bg-dark text-white border-secondary form-select-sm" onchange="this.form.submit()">
+                    <option value="">-- جميع الحالات --</option>
+                    <option value="UNDER_COLLECTION" {% if current_status == 'UNDER_COLLECTION' %}selected{% endif %}>تحت التحصيل (شيكات قبض)</option>
+                    <option value="COLLECTED" {% if current_status == 'COLLECTED' %}selected{% endif %}>تم التحصيل</option>
+                    <option value="BOUNCED" {% if current_status == 'BOUNCED' %}selected{% endif %}>مرتد (مرفوض)</option>
+                    <option value="ISSUED" {% if current_status == 'ISSUED' %}selected{% endif %}>صادر برسم السداد (شيكات دفع)</option>
+                    <option value="CLEARED" {% if current_status == 'CLEARED' %}selected{% endif %}>مصروف من البنك</option>
+                    <option value="CANCELLED" {% if current_status == 'CANCELLED' %}selected{% endif %}>ملغي</option>
+                </select>
+            </div>
+
+            <!-- تواريخ الاستحقاق -->
+            <div class="col-md-2 col-sm-4">
+                <select name="due" class="form-select bg-dark text-white border-secondary form-select-sm" onchange="this.form.submit()">
+                    <option value="">-- تصفية الاستحقاق --</option>
+                    <option value="today" {% if current_due == 'today' %}selected{% endif %}>يستحق اليوم ⚡</option>
+                    <option value="week" {% if current_due == 'week' %}selected{% endif %}>يستحق خلال الأسبوع 📅</option>
+                    <option value="overdue" {% if current_due == 'overdue' %}selected{% endif %}>متأخر عن الاستحقاق ⚠️</option>
+                </select>
+            </div>
+
+            <!-- البحث بالنص -->
+            <div class="col-md-4 col-sm-8">
+                <div class="input-group input-group-sm">
+                    <input type="text" name="q" class="form-control bg-dark text-white border-secondary" placeholder="ابحث برقم الشيك أو اسم العميل / المورد..." value="{{ search_query }}">
+                    <button class="btn" type="submit" style="background-color: #ff7300; color: white;">
+                        <i class="fas fa-search"></i> بحث
+                    </button>
+                </div>
+            </div>
+
+            <div class="col-md-2 col-sm-4 text-end">
+                <a href="{% url 'accounting:cheque_list' %}" class="btn btn-sm btn-outline-secondary w-100">
+                    <i class="fas fa-redo"></i> إعادة تعيين
+                </a>
+            </div>
+        </form>
+    </div>
+
+    <!-- جدول الشيكات -->
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم الشيك</th>
+                    <th>النوع</th>
+                    <th>الشريك (عميل / مورد)</th>
+                    <th>البنك / الخزينة</th>
+                    <th>المبلغ</th>
+                    <th>تاريخ الاستحقاق</th>
+                    <th>الحالة</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for chq in cheques %}
+                <tr>
+                    <td>
+                        <a href="{% url 'accounting:cheque_detail' chq.pk %}" style="color: #00e5ff; font-weight: 700; text-decoration: none;">
+                            #{{ chq.cheque_number }}
+                        </a>
+                        {% if chq.attachment %}
+                            <i class="fas fa-paperclip text-muted ms-1" title="مرفق صورة للشيك"></i>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if chq.cheque_type == 'RECEIVABLE' %}
+                            <span class="badge" style="background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #10b981; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;">
+                                <i class="fas fa-arrow-down me-1"></i> قبض
+                            </span>
+                        {% else %}
+                            <span class="badge" style="background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #ef4444; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;">
+                                <i class="fas fa-arrow-up me-1"></i> صرف
+                            </span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <strong style="color: #fff;">{{ chq.partner.name }}</strong>
+                        {% if chq.payee_name and chq.payee_name != chq.partner.name %}
+                            <small class="text-white-50 d-block">المستفيد: {{ chq.payee_name }}</small>
+                        {% endif %}
+                    </td>
+                    <td style="color: rgba(255,255,255,0.8); font-size: 0.85rem;">
+                        {% if chq.cheque_type == 'RECEIVABLE' %}
+                            <div>{{ chq.drawer_bank_name|default:'-' }}</div>
+                            {% if chq.status == 'UNDER_COLLECTION' or chq.status == 'COLLECTED' %}
+                                <small class="text-info d-block"><i class="fas fa-university"></i> {{ chq.collecting_bank.name }}</small>
+                            {% elif chq.treasury %}
+                                <small class="text-muted d-block"><i class="fas fa-vault"></i> {{ chq.treasury.name }}</small>
+                            {% endif %}
+                        {% else %}
+                            <div>{{ chq.bank_account.name }}</div>
+                            {% if chq.cheque_book %}
+                                <small class="text-muted d-block">دفتر: {{ chq.cheque_book.book_number }}</small>
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                    <td style="font-weight: 800; font-size: 1.05rem; color: #ff7300; white-space: nowrap;">
+                        {{ chq.amount|floatformat:2 }} ج.م
+                    </td>
+                    <td>
+                        <span style="color: #fff; font-weight: 600;">{{ chq.due_date|date:"Y-m-d" }}</span>
+                        {% if chq.status in 'IN_PORTFOLIO,UNDER_COLLECTION,ISSUED' %}
+                            {% now "Y-m-d" as current_date %}
+                            {% if chq.due_date|date:"Y-m-d" < current_date %}
+                                <span class="badge bg-danger ms-1" style="font-size: 0.65rem;">متأخر</span>
+                            {% elif chq.due_date|date:"Y-m-d" == current_date %}
+                                <span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem;">اليوم ⚡</span>
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if chq.status == 'UNDER_COLLECTION' or chq.status == 'IN_PORTFOLIO' %}
+                            <span class="badge" style="background: rgba(0, 229, 255, 0.15); border: 1px solid #00e5ff; color: #00e5ff; padding: 4px 8px; border-radius: 6px;">تحت التحصيل</span>
+                        {% elif chq.status == 'COLLECTED' %}
+                            <span class="badge" style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #10b981; padding: 4px 8px; border-radius: 6px;">تم التحصيل ✓</span>
+                        {% elif chq.status == 'BOUNCED' %}
+                            <span class="badge" style="background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #ef4444; padding: 4px 8px; border-radius: 6px;">مرتد ⚠️</span>
+                        {% elif chq.status == 'ISSUED' %}
+                            <span class="badge" style="background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #f59e0b; padding: 4px 8px; border-radius: 6px;">صادر (برسم السداد)</span>
+                        {% elif chq.status == 'CLEARED' %}
+                            <span class="badge" style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #10b981; padding: 4px 8px; border-radius: 6px;">مصروف من البنك ✓</span>
+                        {% elif chq.status == 'CANCELLED' %}
+                            <span class="badge" style="background: rgba(100, 116, 139, 0.2); border: 1px solid #64748b; color: #94a3b8; padding: 4px 8px; border-radius: 6px;">ملغي</span>
+                        {% else %}
+                            <span class="badge bg-secondary">{{ chq.get_status_display }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'accounting:cheque_detail' chq.pk %}" class="btn btn-sm btn-outline-info" style="border-radius: 6px; padding: 2px 8px;" title="عرض التفاصيل والإجراءات">
+                            <i class="fas fa-eye"></i> التفاصيل
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" style="text-align: center; padding: 3rem; color: rgba(255,255,255,0.5);">
+                        <i class="fas fa-money-check fa-3x mb-3 d-block text-muted"></i>
+                        لا توجد شيكات مسجلة تطابق معايير البحث الحالية.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ترقيم الصفحات Pagination -->
+    {% if is_paginated %}
+    <div class="d-flex justify-content-between align-items-center mt-4 flex-wrap gap-2">
+        <div class="text-white-50 small">
+            عرض صفحة <strong class="text-white">{{ page_obj.number }}</strong> من إجمالي <strong class="text-white">{{ page_obj.paginator.num_pages }}</strong> صفحات (إجمالي {{ page_obj.paginator.count }} شيك)
+        </div>
+        <nav aria-label="Page navigation">
+            <ul class="pagination pagination-sm mb-0">
+                {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link bg-dark text-white border-secondary" href="?page=1{% if current_type %}&type={{ current_type }}{% endif %}{% if current_status %}&status={{ current_status }}{% endif %}{% if current_due %}&due={{ current_due }}{% endif %}{% if current_partner %}&partner={{ current_partner }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}">
+                            <i class="fas fa-angle-double-right"></i> الأولى
+                        </a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link bg-dark text-white border-secondary" href="?page={{ page_obj.previous_page_number }}{% if current_type %}&type={{ current_type }}{% endif %}{% if current_status %}&status={{ current_status }}{% endif %}{% if current_due %}&due={{ current_due }}{% endif %}{% if current_partner %}&partner={{ current_partner }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}">
+                            السابق
+                        </a>
+                    </li>
+                {% endif %}
+                <li class="page-item active">
+                    <span class="page-link" style="background-color: #ff7300; border-color: #ff7300; font-weight: 700;">{{ page_obj.number }}</span>
+                </li>
+                {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link bg-dark text-white border-secondary" href="?page={{ page_obj.next_page_number }}{% if current_type %}&type={{ current_type }}{% endif %}{% if current_status %}&status={{ current_status }}{% endif %}{% if current_due %}&due={{ current_due }}{% endif %}{% if current_partner %}&partner={{ current_partner }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}">
+                            التالي
+                        </a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link bg-dark text-white border-secondary" href="?page={{ page_obj.paginator.num_pages }}{% if current_type %}&type={{ current_type }}{% endif %}{% if current_status %}&status={{ current_status }}{% endif %}{% if current_due %}&due={{ current_due }}{% endif %}{% if current_partner %}&partner={{ current_partner }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}">
+                            الأخيرة <i class="fas fa-angle-double-left"></i>
+                        </a>
+                    </li>
+                {% endif %}
+            </ul>
+        </nav>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

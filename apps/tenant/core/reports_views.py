@@ -1,5 +1,6 @@
-from django.shortcuts import render
-from django.views.generic import View, ListView, TemplateView
+from django.shortcuts import render, redirect
+from django.views.generic import View, ListView, TemplateView, DetailView
+from django.db import models
 from django.db.models import Sum, Count, F, Q, FloatField
 from django.db.models.functions import TruncDay, TruncMonth, Cast
 from django.utils import timezone
@@ -7,7 +8,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from apps.tenant.core.mixins import CustomPermissionRequiredMixin
-from apps.tenant.invoicing.models import Invoice, InvoiceLine
+from apps.tenant.invoicing.models import Invoice, InvoiceLine, POSSession
 from apps.tenant.inventory.models import Product
 from apps.tenant.partners.models import Partner
 import io
@@ -220,20 +221,23 @@ class PeriodSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListV
     csv_filename = "period_sales_report.csv"
 
     def get_csv_headers(self):
-        return ['الفترة', 'إجمالي المبيعات', 'المرتجعات', 'صافي المبيعات', 'الضريبة']
+        return ['الفترة', 'عدد الفواتير', 'الإيرادات (قبل الضريبة)', 'إجمالي الخصومات', 'تكلفة البضاعة المباعة', 'الربح التقريبي']
 
     def get_csv_row(self, obj):
+        period = obj.get('period')
+        period_str = period.strftime('%Y-%m-%d') if hasattr(period, 'strftime') else str(period or '')
         return [
-            obj['period'].strftime('%Y-%m-%d') if hasattr(obj['period'], 'strftime') else obj['period'],
-            obj['total_sales'],
-            obj['total_returns'],
-            obj['net_sales'],
-            obj['net_tax']
+            period_str,
+            obj.get('invoice_count', 0),
+            obj.get('total_revenue', 0),
+            obj.get('total_discount', 0),
+            obj.get('total_cogs', 0),
+            obj.get('total_profit', 0)
         ]
 
     def get_queryset(self):
         qs = InvoiceLine.objects.filter(
-            invoice__invoice_type=Invoice.SALE,
+            invoice__invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
             invoice__status=Invoice.POSTED
         )
         
@@ -260,22 +264,25 @@ class PeriodSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListV
         else:
             trunc_func = TruncDay('invoice__date')
             
+        from django.db.models import Sum, Case, When, DecimalField, F, ExpressionWrapper
         # Aggregate
         # Note: Querying InvoiceLine directly avoids duplicate sums from JOINs!
         aggregated = qs.annotate(
             period=trunc_func
         ).values('period').annotate(
             invoice_count=Count('invoice_id', distinct=True),
-            total_revenue=Sum('subtotal'),
-            total_tax=Sum('tax_amount'),
-            total_discount=Sum('discount_amount'),
-            total_cogs=Sum('cogs_amount')
+            gross_revenue=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='subtotal'), default=0, output_field=DecimalField())),
+            returned_revenue=Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then='subtotal'), default=0, output_field=DecimalField())),
+            gross_cogs=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='cogs_amount'), default=0, output_field=DecimalField())),
+            returned_cogs=Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then='cogs_amount'), default=0, output_field=DecimalField())),
+            total_tax=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='tax_amount'), When(invoice__invoice_type=Invoice.RETURN_SALE, then=-F('tax_amount')), default=0, output_field=DecimalField())),
+            total_discount=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='discount_amount'), When(invoice__invoice_type=Invoice.RETURN_SALE, then=-F('discount_amount')), default=0, output_field=DecimalField())),
+        ).annotate(
+            total_revenue=F('gross_revenue') - F('returned_revenue'),
+            total_cogs=F('gross_cogs') - F('returned_cogs')
+        ).annotate(
+            total_profit=ExpressionWrapper(F('total_revenue') - F('total_cogs'), output_field=DecimalField())
         ).order_by('-period')
-        
-        # Calculate profit
-        aggregated = aggregated.annotate(
-            total_profit=F('total_revenue') - F('total_cogs')
-        )
         
         return aggregated
         
@@ -320,7 +327,7 @@ class DetailedSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
     csv_filename = "detailed_sales_report.csv"
 
     def get_csv_headers(self):
-        return ['التاريخ', 'رقم الفاتورة', 'نوع الحركة', 'العميل', 'الصنف', 'الكمية', 'السعر', 'الإجمالي']
+        return ['التاريخ', 'رقم الفاتورة', 'نوع الحركة', 'العميل', 'الصنف', 'بيان/ملاحظات الفاتورة', 'الكمية', 'السعر', 'الإجمالي']
 
     def get_csv_row(self, obj):
         return [
@@ -329,6 +336,7 @@ class DetailedSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
             'مبيعات' if obj.invoice.invoice_type == Invoice.SALE else 'مرتجع',
             obj.invoice.partner.name if obj.invoice.partner else 'عميل نقدي/طياري',
             obj.product.name if obj.product else '',
+            obj.invoice.notes or '-',
             obj.quantity,
             obj.unit_price,
             obj.total_amount
@@ -360,7 +368,7 @@ class DetailedSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
             calculated_total=F('subtotal') + F('tax_amount') - F('wht_amount')
         )
             
-        return qs.order_by('-invoice__date', '-invoice__created_at', 'id')
+        return qs.order_by('-invoice__date', '-invoice__created_at', '-id')
         
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -406,141 +414,18 @@ class DetailedSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
         
         return context
 
-class CustomerBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
+class CustomerBalancesReportView(CustomPermissionRequiredMixin, View):
+    """
+    إعادة توجيه كشف حساب العميل إلى تقرير الشركاء الموحد الشامل
+    """
     permission_required = 'core.view_sales_reports'
-    template_name = 'reports/customer_balances.html'
-    context_object_name = 'transactions'
-    csv_filename = "customer_statement.csv"
 
-    def get_csv_headers(self):
-        return ['التاريخ', 'رقم الحركة', 'نوع الحركة', 'مدين (مبيعات)', 'دائن (سداد)', 'الرصيد التراكمي']
-
-    def get_csv_row(self, obj):
-        return [
-            obj['date'].strftime('%Y-%m-%d') if hasattr(obj['date'], 'strftime') else obj['date'],
-            obj['reference'],
-            obj['type'],
-            obj['debit'],
-            obj['credit'],
-            obj['balance']
-        ]
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        from django.core.paginator import Paginator
-        from decimal import Decimal
-        from apps.tenant.partners.models import Partner
-        
-        partner_id = self.request.GET.get('partner_id')
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
-        
-        context['partners'] = Partner.objects.filter(partner_type__in=[Partner.CUSTOMER, Partner.BOTH]).order_by('name')
-        context['start_date'] = start_date
-        context['end_date'] = end_date
-        
-        if partner_id and partner_id.isdigit():
-            context['partner_id'] = int(partner_id)
-            try:
-                partner = Partner.objects.get(id=int(partner_id))
-                context['selected_partner'] = partner
-                
-                invoices = partner.invoices.filter(status='POSTED')
-                payments = partner.payments.filter(status='POSTED')
-                
-                transactions = []
-                from datetime import timedelta
-                
-                for inv in invoices:
-                    debit = Decimal('0')
-                    credit = Decimal('0')
-                    if inv.invoice_type == 'SALE':
-                        # فاتورة مبيعات: مدين على العميل
-                        debit = inv.total_amount
-                    elif inv.invoice_type == 'RETURN_SALE':
-                        # مرتجع مبيعات: دائن للعميل (يقلل رصيده)
-                        credit = inv.total_amount
-                    else:
-                        # فواتير مشتريات أو أنواع أخرى: تجاهل في كشف العميل
-                        continue
-                        
-                    transactions.append({
-                        'date': inv.date,
-                        'created_at': inv.created_at,
-                        'type': inv.get_invoice_type_display(),
-                        'reference': inv.invoice_number,
-                        'debit': debit,
-                        'credit': credit,
-                    })
-                    
-                    if inv.payment_type != 'CREDIT':
-                        sim_debit = credit
-                        sim_credit = debit
-                        payment_display = inv.get_payment_type_display()
-                        
-                        transactions.append({
-                            'date': inv.date,
-                            'created_at': inv.created_at + timedelta(seconds=1),
-                            'type': f'سداد فوري ({payment_display})',
-                            'reference': f'تسوية {inv.invoice_number}',
-                            'debit': sim_debit,
-                            'credit': sim_credit,
-                        })
-                    
-                for pay in payments:
-                    debit = Decimal('0')
-                    credit = Decimal('0')
-                    if pay.payment_type == 'RECEIPT':
-                        credit = pay.amount
-                    else:
-                        debit = pay.amount
-                        
-                    transactions.append({
-                        'date': pay.date,
-                        'created_at': pay.created_at,
-                        'type': pay.get_payment_type_display(),
-                        'reference': pay.reference,
-                        'debit': debit,
-                        'credit': credit,
-                    })
-                    
-                # Sort transactions by date, then created_at
-                transactions.sort(key=lambda x: (x['date'], x['created_at']))
-                
-                # Calculate running balance and filter
-                running_balance = Decimal('0')
-                opening_balance = Decimal('0')
-                filtered_transactions = []
-                
-                for txn in transactions:
-                    running_balance += txn['debit']
-                    running_balance -= txn['credit']
-                    txn['balance'] = running_balance
-                    
-                    include = True
-                    if start_date and str(txn['date']) < start_date:
-                        include = False
-                        opening_balance = running_balance
-                    if end_date and str(txn['date']) > end_date:
-                        include = False
-                        
-                    if include:
-                        filtered_transactions.append(txn)
-                
-                page_number = self.request.GET.get('page', 1)
-                paginator = Paginator(filtered_transactions, 50)
-                page_obj = paginator.get_page(page_number)
-                
-                context['transactions'] = page_obj
-                context['page_obj'] = page_obj
-                context['is_paginated'] = page_obj.has_other_pages()
-                context['opening_balance'] = opening_balance
-                context['final_balance'] = running_balance
-                context['period_debit'] = sum(t['debit'] for t in filtered_transactions)
-                context['period_credit'] = sum(t['credit'] for t in filtered_transactions)
-            except Partner.DoesNotExist:
-                pass
-        return context
+    def get(self, request, *args, **kwargs):
+        partner_id = request.GET.get('partner_id')
+        if partner_id:
+            return redirect('partners:partner_ledger', pk=partner_id)
+        from django.urls import reverse
+        return redirect(reverse('core:report_partners') + '?partner_type=CUSTOMER')
 
 class ItemProfitabilityReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
     permission_required = 'core.view_sales_reports'
@@ -550,24 +435,27 @@ class ItemProfitabilityReportView(CsvExportMixin, CustomPermissionRequiredMixin,
     csv_filename = "item_profitability_report.csv"
 
     def get_csv_headers(self):
-        return ['الباركود', 'اسم الصنف', 'النوع', 'صافي الكمية المباعة', 'صافي قيمة المبيعات', 'متوسط التكلفة', 'إجمالي التكلفة', 'الربح', 'نسبة الهامش %']
+        return ['الباركود', 'اسم الصنف', 'النوع', 'إجمالي الكمية المباعة', 'إجمالي الإيرادات', 'إجمالي التكلفة', 'صافي الربح', 'نسبة الهامش %']
 
     def get_csv_row(self, obj):
+        rev = float(obj.get('total_revenue') or 0)
+        prof = float(obj.get('total_profit') or 0)
+        margin = round((prof / rev * 100), 1) if rev > 0 else 0
+        p_type = 'خدمة' if obj.get('product__product_type') == 'SERVICE' else 'منتج'
         return [
-            obj['product__barcode'],
-            obj['product__name'],
-            'منتج' if obj['product__type'] == 'PRODUCT' else 'خدمة',
-            obj['net_qty'],
-            obj['net_sales'],
-            obj['avg_cost'],
-            obj['total_cost'],
-            obj['profit'],
-            obj['margin_percent']
+            obj.get('product__barcode') or '',
+            obj.get('product__name') or '',
+            p_type,
+            obj.get('total_qty') or 0,
+            obj.get('total_revenue') or 0,
+            obj.get('total_cogs') or 0,
+            obj.get('total_profit') or 0,
+            f"{margin}%"
         ]
 
     def get_queryset(self):
         qs = InvoiceLine.objects.filter(
-            invoice__invoice_type=Invoice.SALE,
+            invoice__invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
             invoice__status=Invoice.POSTED
         )
         start_date = self.request.GET.get('start_date')
@@ -581,19 +469,24 @@ class ItemProfitabilityReportView(CsvExportMixin, CustomPermissionRequiredMixin,
                 Q(product__barcode__icontains=search_query)
             )
 
+        from django.db.models import Sum, Case, When, DecimalField, F, ExpressionWrapper
         aggregated = qs.values(
             'product__id',
             'product__name',
             'product__barcode',
             'product__product_type'
         ).annotate(
-            total_qty=Sum('quantity'),
-            total_revenue=Sum('subtotal'),
-            total_cogs=Sum('cogs_amount')
-        )
-        
-        from django.db.models import ExpressionWrapper, DecimalField
-        aggregated = aggregated.annotate(
+            sold_qty=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='quantity'), default=0, output_field=DecimalField())),
+            returned_qty=Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then='quantity'), default=0, output_field=DecimalField())),
+            gross_revenue=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='subtotal'), default=0, output_field=DecimalField())),
+            returned_revenue=Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then='subtotal'), default=0, output_field=DecimalField())),
+            gross_cogs=Sum(Case(When(invoice__invoice_type=Invoice.SALE, then='cogs_amount'), default=0, output_field=DecimalField())),
+            returned_cogs=Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then='cogs_amount'), default=0, output_field=DecimalField())),
+        ).annotate(
+            total_qty=F('sold_qty') - F('returned_qty'),
+            total_revenue=F('gross_revenue') - F('returned_revenue'),
+            total_cogs=F('gross_cogs') - F('returned_cogs')
+        ).annotate(
             total_profit=ExpressionWrapper(F('total_revenue') - F('total_cogs'), output_field=DecimalField())
         ).order_by('-total_profit')
 
@@ -611,17 +504,20 @@ class ItemProfitabilityReportView(CsvExportMixin, CustomPermissionRequiredMixin,
             prof = item.get('total_profit') or Decimal('0')
             item['profit_margin'] = (prof / rev * 100) if rev > 0 else Decimal('0')
             
-        # Grand totals
+        # Grand totals via database aggregation
+        from django.db.models import Value, DecimalField
+        from django.db.models.functions import Coalesce
         qs = self.get_queryset()
-        if qs:
-            gt_profit = sum(x['total_profit'] or 0 for x in qs)
-            gt_revenue = sum(x['total_revenue'] or 0 for x in qs)
-            context['grand_totals'] = {
-                'gt_profit': gt_profit,
-                'gt_margin': (gt_profit / gt_revenue * 100) if gt_revenue > 0 else 0,
-            }
-        else:
-            context['grand_totals'] = {'gt_profit': 0, 'gt_margin': 0}
+        totals = qs.aggregate(
+            gt_profit=Coalesce(Sum('total_profit'), Value(0), output_field=DecimalField()),
+            gt_revenue=Coalesce(Sum('total_revenue'), Value(0), output_field=DecimalField())
+        )
+        gt_profit = totals['gt_profit'] or Decimal('0')
+        gt_revenue = totals['gt_revenue'] or Decimal('0')
+        context['grand_totals'] = {
+            'gt_profit': gt_profit,
+            'gt_margin': (gt_profit / gt_revenue * 100) if gt_revenue > 0 else 0,
+        }
         return context
 
 class UserSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
@@ -682,7 +578,7 @@ class UserSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVie
             total_returns=Sum('total_amount', filter=Q(invoice_type=Invoice.RETURN_SALE)),
             total_tax_sales=Sum('tax_amount', filter=Q(invoice_type=Invoice.SALE)),
             total_tax_returns=Sum('tax_amount', filter=Q(invoice_type=Invoice.RETURN_SALE))
-        )
+        ).order_by('-total_sales')
         
         return aggregated
 
@@ -699,18 +595,21 @@ class UserSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVie
             item['net_sales'] = ts - tr
             item['net_tax'] = (item['total_tax_sales'] or Decimal('0')) - (item['total_tax_returns'] or Decimal('0'))
             
-        # Grand totals
+        # Grand totals via database aggregation
+        from django.db.models import Value, DecimalField
+        from django.db.models.functions import Coalesce
         qs = self.get_queryset()
-        if qs:
-            gt_sales = sum((x['total_sales'] or 0) for x in qs)
-            gt_returns = sum((x['total_returns'] or 0) for x in qs)
-            context['grand_totals'] = {
-                'gt_sales': gt_sales,
-                'gt_returns': gt_returns,
-                'gt_net': gt_sales - gt_returns
-            }
-        else:
-            context['grand_totals'] = {'gt_sales': 0, 'gt_returns': 0, 'gt_net': 0}
+        totals = qs.aggregate(
+            gt_sales=Coalesce(Sum('total_sales'), Value(0), output_field=DecimalField()),
+            gt_returns=Coalesce(Sum('total_returns'), Value(0), output_field=DecimalField())
+        )
+        gt_sales = totals['gt_sales'] or Decimal('0')
+        gt_returns = totals['gt_returns'] or Decimal('0')
+        context['grand_totals'] = {
+            'gt_sales': gt_sales,
+            'gt_returns': gt_returns,
+            'gt_net': gt_sales - gt_returns
+        }
             
         return context
 
@@ -728,8 +627,8 @@ class CustomerDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
         return [
             obj.name,
             obj.phone,
-            obj.tax_number,
-            obj.outstanding_balance
+            getattr(obj, 'tax_id', '') or getattr(obj, 'tax_number', ''),
+            obj.customer_balance
         ]
 
     def get_queryset(self):
@@ -747,8 +646,11 @@ class CustomerDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
         context = super().get_context_data(**kwargs)
         context['search_query'] = self.request.GET.get('search_query', '')
         
-        # Calculate it for the paginated subset to avoid long load times:
-        page_total = sum(c.outstanding_balance for c in context['customers'] if c.outstanding_balance > 0)
+        # Batch compute balances for the paginated subset to avoid N+1 queries:
+        from apps.tenant.partners.services import batch_get_partners_balances
+        page_customers = list(context['customers'])
+        batch_get_partners_balances(partner_qs=page_customers)
+        page_total = sum(c.customer_balance for c in page_customers if c.customer_balance > 0)
         context['page_total_debt'] = page_total
         
         return context
@@ -967,15 +869,18 @@ class DetailedPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin,
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         qs = self.get_queryset()
-        
-        purchases = qs.filter(invoice__invoice_type=Invoice.PURCHASE)
-        returns = qs.filter(invoice__invoice_type=Invoice.RETURN_PURCHASE)
-        
+        from django.db.models import Sum, Q
+        from django.db.models.functions import Coalesce
+
+        agg = qs.aggregate(
+            total_purchases=Coalesce(Sum('total_amount', filter=Q(invoice__invoice_type=Invoice.PURCHASE)), Decimal('0.00')),
+            total_returns=Coalesce(Sum('total_amount', filter=Q(invoice__invoice_type=Invoice.RETURN_PURCHASE)), Decimal('0.00')),
+        )
         grand_totals = {
-            'total_purchases': sum(line.total_amount for line in purchases) or Decimal('0.00'),
-            'total_returns': sum(line.total_amount for line in returns) or Decimal('0.00'),
+            'total_purchases': agg['total_purchases'],
+            'total_returns': agg['total_returns'],
+            'net_purchases': agg['total_purchases'] - agg['total_returns'],
         }
-        grand_totals['net_purchases'] = grand_totals['total_purchases'] - grand_totals['total_returns']
         context['grand_totals'] = grand_totals
         
         return context
@@ -1158,133 +1063,75 @@ class PurchasePriceVariationReportView(CsvExportMixin, CustomPermissionRequiredM
 # ---------------------------------------------------------
 # Supplier Balances (كشف حساب مورد)
 # ---------------------------------------------------------
-class SupplierBalancesReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
+class SupplierBalancesReportView(CustomPermissionRequiredMixin, View):
+    """
+    إعادة توجيه كشف حساب المورد إلى تقرير الشركاء الموحد الشامل
+    """
     permission_required = 'core.view_sales_reports'
-    template_name = 'reports/supplier_balances.html'
-    context_object_name = 'transactions'
-    csv_filename = "supplier_statement.csv"
 
-    def get_csv_headers(self):
-        return ['التاريخ', 'رقم الحركة', 'نوع الحركة', 'مدين (سداد للمورد)', 'دائن (مشتريات من المورد)', 'الرصيد التراكمي']
+    def get(self, request, *args, **kwargs):
+        partner_id = request.GET.get('partner_id')
+        if partner_id:
+            return redirect('partners:partner_ledger', pk=partner_id)
+        from django.urls import reverse
+        return redirect(reverse('core:report_partners') + '?partner_type=SUPPLIER')
 
-    def get_csv_row(self, obj):
-        return [
-            obj['date'].strftime('%Y-%m-%d') if hasattr(obj['date'], 'strftime') else obj['date'],
-            obj['reference'],
-            obj['type'],
-            obj['debit'],
-            obj['credit'],
-            obj['balance']
-        ]
+
+# ---------------------------------------------------------
+# Unified Partners Report (تقرير الشركاء الشامل - عملاء وموردين)
+# ---------------------------------------------------------
+class PartnersReportView(CustomPermissionRequiredMixin, TemplateView):
+    """
+    تقرير الشركاء الشامل (عملاء وموردين):
+    يعرض جميع الشركاء وأرصدتهم التفصيلية من مبيعات ومشتريات وسندات
+    مع إمكانية الفلترة والبحث والدخول لكشف حساب أي شريك بنقرة واحدة.
+    """
+    permission_required = 'core.view_sales_reports'
+    template_name = 'reports/partners_report.html'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        
-        partner_id = self.request.GET.get('partner_id')
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
-        
-        context['partners'] = Partner.objects.filter(partner_type__in=[Partner.SUPPLIER, Partner.BOTH]).order_by('name')
-        context['partner_id'] = int(partner_id) if partner_id else None
-        context['transactions'] = []
-        context['initial_balance'] = Decimal('0.00')
-        context['final_balance'] = Decimal('0.00')
-        context['period_debit'] = Decimal('0.00')
-        context['period_credit'] = Decimal('0.00')
-        
-        if partner_id:
-            try:
-                supplier = Partner.objects.get(id=partner_id, partner_type__in=[Partner.SUPPLIER, Partner.BOTH])
-                context['selected_partner'] = supplier
-                
-                # Fetch transactions (Invoices and Vouchers)
-                # For a supplier: Vouchers (Payments to them) are Debit (reducing their balance).
-                # Purchases from them are Credit (increasing their balance).
-                # Returns to them are Debit (reducing their balance).
-                
-                from apps.tenant.accounting.models import Voucher
-                
-                transactions = []
-                
-                # Purchases (Credit)
-                purchases = Invoice.objects.filter(
-                    partner=supplier,
-                    invoice_type=Invoice.PURCHASE,
-                    status=Invoice.POSTED
-                )
-                
-                # Purchase Returns (Debit)
-                returns = Invoice.objects.filter(
-                    partner=supplier,
-                    invoice_type=Invoice.RETURN_PURCHASE,
-                    status=Invoice.POSTED
-                )
-                
-                # Vouchers (Debit)
-                vouchers = Voucher.objects.filter(
-                    partner=supplier,
-                    voucher_type=Voucher.PAYMENT,
-                    status=Voucher.POSTED
-                )
-                
-                for p in purchases:
-                    transactions.append({
-                        'date': p.date,
-                        'reference': p.invoice_number,
-                        'type': 'فاتورة مشتريات',
-                        'debit': Decimal('0.00'),
-                        'credit': p.total_amount,
-                    })
-                    
-                for r in returns:
-                    transactions.append({
-                        'date': r.date,
-                        'reference': r.invoice_number,
-                        'type': 'مرتجع مشتريات',
-                        'debit': r.total_amount,
-                        'credit': Decimal('0.00'),
-                    })
-                    
-                for v in vouchers:
-                    transactions.append({
-                        'date': v.date,
-                        'reference': v.voucher_number,
-                        'type': 'سند صرف',
-                        'debit': v.amount,
-                        'credit': Decimal('0.00'),
-                    })
-                    
-                transactions.sort(key=lambda x: x['date'])
-                
-                filtered_transactions = []
-                initial_balance = Decimal('0.00')
-                running_balance = Decimal('0.00')
-                
-                for t in transactions:
-                    date_str = t['date'].strftime('%Y-%m-%d') if hasattr(t['date'], 'strftime') else str(t['date'])
-                    
-                    if start_date and date_str < start_date:
-                        initial_balance -= t['debit']
-                        initial_balance += t['credit']
-                        running_balance = initial_balance
-                    else:
-                        if end_date and date_str > end_date:
-                            continue
-                        
-                        running_balance -= t['debit']
-                        running_balance += t['credit']
-                        
-                        t_copy = t.copy()
-                        t_copy['balance'] = running_balance
-                        filtered_transactions.append(t_copy)
-                        
-                context['transactions'] = filtered_transactions
-                context['initial_balance'] = initial_balance
-                context['final_balance'] = running_balance
-                context['period_debit'] = sum(t['debit'] for t in filtered_transactions)
-                context['period_credit'] = sum(t['credit'] for t in filtered_transactions)
-            except Partner.DoesNotExist:
-                pass
+        from apps.tenant.partners.services import get_all_partners_summary
+        from django.core.paginator import Paginator
+
+        partner_type = self.request.GET.get('partner_type', '')
+        balance_status = self.request.GET.get('balance_status', '')
+        search_query = self.request.GET.get('search_query', '')
+        page_number = self.request.GET.get('page', 1)
+        per_page = self.request.GET.get('per_page', 25)
+
+        try:
+            per_page = int(per_page)
+            if per_page not in [10, 25, 50, 100, 200]:
+                per_page = 25
+        except (ValueError, TypeError):
+            per_page = 25
+
+        summary = get_all_partners_summary(
+            partner_type=partner_type if partner_type else None,
+            balance_filter=balance_status if balance_status else None,
+            search_query=search_query if search_query else None
+        )
+
+        paginator = Paginator(summary['partners'], per_page)
+        page_obj = paginator.get_page(page_number)
+
+        context.update({
+            'title': 'تقرير الشركاء الشامل (عملاء وموردين)',
+            'partners': page_obj,
+            'page_obj': page_obj,
+            'paginator': paginator,
+            'is_paginated': page_obj.has_other_pages(),
+            'per_page': per_page,
+            'total_partners_count': summary['total_partners_count'],
+            'total_receivables': summary['total_receivables'],
+            'total_payables': summary['total_payables'],
+            'net_position': summary['net_position'],
+            'total_balanced_count': summary['total_balanced_count'],
+            'selected_partner_type': partner_type,
+            'selected_balance_status': balance_status,
+            'search_query': search_query,
+        })
         return context
 
 # ---------------------------------------------------------
@@ -1304,8 +1151,8 @@ class SupplierDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
         return [
             obj.name,
             obj.phone,
-            obj.tax_number,
-            obj.outstanding_balance
+            getattr(obj, 'tax_id', '') or getattr(obj, 'tax_number', ''),
+            obj.supplier_balance
         ]
 
     def get_queryset(self):
@@ -1325,10 +1172,12 @@ class SupplierDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        suppliers = context[self.context_object_name]
+        from apps.tenant.partners.services import batch_get_partners_balances
+        suppliers = list(context[self.context_object_name])
+        batch_get_partners_balances(partner_qs=suppliers)
         
         # Calculate total debt
-        total_debts = sum(s.outstanding_balance for s in suppliers if s.outstanding_balance > 0)
+        total_debts = sum(s.supplier_balance for s in suppliers if s.supplier_balance > 0)
         context['total_debts'] = total_debts
             
         return context
@@ -1515,6 +1364,90 @@ class LowStockReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView
         context['search_query'] = self.request.GET.get('search_query', '')
         return context
 
+class OverstockReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
+    permission_required = 'core.view_inventory_reports'
+    template_name = 'reports/inventory_overstock.html'
+    context_object_name = 'products'
+    paginate_by = 50
+    csv_filename = "overstock_report.xlsx"
+
+    def get_csv_headers(self):
+        return ['الباركود', 'اسم الصنف', 'الرصيد الحالي', 'الحد الأقصى للمخزون', 'الكمية الفائضة', 'تكلفة الوحدة', 'إجمالي رأس المال الفائض']
+
+    def get_csv_row(self, obj):
+        cost = obj.last_purchase_price or Decimal('0')
+        excess = getattr(obj, 'excess_qty', None)
+        if excess is None:
+            excess = obj.current_stock - obj.max_stock_level if obj.current_stock > obj.max_stock_level else Decimal('0')
+        excess_val = excess * cost
+        return [
+            obj.barcode or '-',
+            obj.name,
+            float(obj.current_stock),
+            float(obj.max_stock_level),
+            float(excess),
+            float(cost),
+            float(excess_val)
+        ]
+
+    def get_queryset(self):
+        from django.db.models import OuterRef, Subquery, Value, DecimalField, F, Q, Sum, Count, Case, When
+        from django.db.models.functions import Coalesce
+        from apps.tenant.inventory.models import SerialItem
+
+        stock_subquery = InventoryBatch.objects.filter(
+            product_id=OuterRef('pk')
+        ).values('product_id').annotate(
+            total=Sum('quantity_remaining')
+        ).values('total')
+
+        serial_subquery = SerialItem.objects.filter(
+            product_id=OuterRef('pk'),
+            is_sold=False
+        ).values('product_id').annotate(
+            total=Count('id')
+        ).values('total')
+
+        qs = Product.objects.filter(is_active=True, max_stock_level__gt=0).annotate(
+            current_stock=Case(
+                When(product_type='SERIALIZED', then=Coalesce(Subquery(serial_subquery), Value(0), output_field=DecimalField())),
+                default=Coalesce(Subquery(stock_subquery), Value(0), output_field=DecimalField()),
+                output_field=DecimalField()
+            )
+        ).filter(current_stock__gt=F('max_stock_level')).order_by('-current_stock')
+
+        search_query = self.request.GET.get('search_query')
+        if search_query:
+            qs = qs.filter(Q(name__icontains=search_query) | Q(barcode__icontains=search_query))
+        
+        return qs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'تقرير فائض وتكدس المخزون (Overstock)'
+        context['search_query'] = self.request.GET.get('search_query', '')
+        
+        object_list = context.get('products') or []
+        for p in object_list:
+            cost = p.last_purchase_price or Decimal('0')
+            excess = p.current_stock - p.max_stock_level if p.current_stock > p.max_stock_level else Decimal('0')
+            p.excess_qty = excess
+            p.excess_cost = excess * cost
+            p.overstock_pct = round(((p.current_stock - p.max_stock_level) / p.max_stock_level) * 100, 1) if p.max_stock_level > 0 else 0
+
+        # تجميع إجماليات الفائض ورأس المال المجمد مباشرة بقاعدة البيانات
+        base_qs = self.get_queryset()
+        overstock_agg = base_qs.aggregate(
+            total_excess_items=Count('id'),
+            total_excess_qty=Coalesce(Sum(F('current_stock') - F('max_stock_level')), Decimal('0.00')),
+            total_frozen_capital=Coalesce(Sum((F('current_stock') - F('max_stock_level')) * F('last_purchase_price')), Decimal('0.00'))
+        )
+
+        context['total_excess_items'] = overstock_agg['total_excess_items']
+        context['total_excess_qty'] = overstock_agg['total_excess_qty']
+        context['total_frozen_capital'] = overstock_agg['total_frozen_capital']
+        return context
+
 class ProductExpiryReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
     permission_required = 'core.view_inventory_reports'
     template_name = 'reports/inventory_expiry.html'
@@ -1579,12 +1512,17 @@ class InventoryValuationReportView(CsvExportMixin, CustomPermissionRequiredMixin
         return ['الباركود', 'اسم الصنف', 'الرصيد الفعلي', 'متوسط التكلفة', 'القيمة الإجمالية']
 
     def get_csv_row(self, obj):
+        total_val = getattr(obj, 'total_value', getattr(obj, 'total_val', Decimal('0')))
+        curr_stock = getattr(obj, 'current_stock', Decimal('0'))
+        avg_cost = getattr(obj, 'avg_cost', None)
+        if avg_cost is None:
+            avg_cost = round(total_val / curr_stock, 4) if curr_stock > 0 else Decimal('0')
         return [
             obj.barcode or '-',
             obj.name,
-            obj.current_stock,
-            obj.avg_cost,
-            obj.total_value
+            curr_stock,
+            avg_cost,
+            total_val
         ]
 
     def get_queryset(self):
@@ -1615,11 +1553,6 @@ class InventoryValuationReportView(CsvExportMixin, CustomPermissionRequiredMixin
         search_query = self.request.GET.get('search_query')
         if search_query:
             qs = qs.filter(Q(name__icontains=search_query) | Q(barcode__icontains=search_query))
-            
-        # Add python attributes for the template
-        for product in qs:
-            product.total_value = product.total_val
-            product.avg_cost = round(product.total_val / product.current_stock, 4) if product.current_stock > 0 else 0
 
         return qs
 
@@ -1628,15 +1561,24 @@ class InventoryValuationReportView(CsvExportMixin, CustomPermissionRequiredMixin
         context['title'] = 'تقرير جرد المخزون الفعلي (التقييم)'
         context['search_query'] = self.request.GET.get('search_query', '')
         
-        # Calculate grand totals
-        qs = self.get_queryset()
-        total_inventory_qty = sum(p.current_stock for p in qs)
-        total_inventory_value = sum(p.total_value for p in qs)
-        
+        # Calculate grand totals via database aggregation without iterating entire queryset in Python
+        from django.db.models import Value, DecimalField
+        from django.db.models.functions import Coalesce
+        totals = self.get_queryset().aggregate(
+            total_qty=Coalesce(Sum('current_stock'), Value(0), output_field=DecimalField()),
+            total_value=Coalesce(Sum('total_val'), Value(0), output_field=DecimalField())
+        )
         context['grand_totals'] = {
-            'total_qty': total_inventory_qty,
-            'total_value': total_inventory_value
+            'total_qty': totals['total_qty'],
+            'total_value': totals['total_value']
         }
+
+        # Decorate ONLY the products on the current paginated page (lazy evaluation):
+        page_products = context.get('products') or context.get('page_obj') or []
+        for product in page_products:
+            product.total_value = product.total_val
+            product.avg_cost = round(product.total_val / product.current_stock, 4) if product.current_stock > 0 else 0
+
         return context
 
 # ---------------------------------------------------------
@@ -1703,18 +1645,21 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
     csv_filename = "item_movement_report.csv"
 
     def get_csv_headers(self):
-        return ['التاريخ', 'اسم الصنف', 'المستودع', 'نوع الحركة', 'الكمية', 'التكلفة', 'الرصيد بعد الحركة', 'المرجع', 'ملاحظات']
+        return ['التاريخ', 'اسم الصنف', 'المستودع', 'نوع الحركة', 'الكمية', 'سعر الشراء', 'سعر البيع', 'الرصيد بعد الحركة', 'المرجع', 'ملاحظات']
 
     def get_csv_row(self, obj):
         from django.utils.timezone import localtime
         date_str = localtime(obj.created_at).strftime("%Y-%m-%d %H:%M") if obj.created_at else '-'
+        purchase_price = getattr(obj, 'purchase_price', obj.unit_cost or getattr(obj.product, 'last_purchase_price', 0))
+        selling_price = getattr(obj, 'selling_price', getattr(obj.product, 'sale_price', 0))
         return [
             date_str,
             obj.product.name,
             obj.warehouse.name,
             obj.get_movement_type_display(),
             obj.quantity,
-            obj.unit_cost,
+            purchase_price,
+            selling_price,
             getattr(obj, 'running_balance', '-'),
             obj.reference or '-',
             obj.notes or '-'
@@ -1752,7 +1697,7 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
         if warehouse_id:
             qs = qs.filter(warehouse_id=warehouse_id)
             
-        return qs.order_by('created_at', 'id')
+        return qs.order_by('-created_at', '-id')
 
     def get_context_data(self, **kwargs):
         from apps.tenant.inventory.models import StockMovement, Product, Warehouse
@@ -1771,12 +1716,44 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
         context['selected_warehouse'] = warehouse_id or ''
         context['selected_type'] = self.request.GET.get('movement_type', '')
         
-        context['products'] = Product.objects.all()
+        if product_id:
+            context['products'] = Product.objects.filter(id=product_id).only('id', 'name', 'barcode')
+        else:
+            context['products'] = Product.objects.filter(is_active=True).only('id', 'name', 'barcode').order_by('name')[:30]
         context['warehouses'] = Warehouse.objects.all()
         context['movement_types'] = StockMovement.MOVEMENT_TYPES
         
         opening_balance = Decimal('0')
         closing_balance = Decimal('0')
+
+        object_list = context.get('object_list') or []
+        if object_list:
+            from apps.tenant.invoicing.models import InvoiceLine
+            references = [obj.reference for obj in object_list if obj.reference]
+            inv_lines = InvoiceLine.objects.filter(
+                invoice__invoice_number__in=references
+            ).select_related('invoice') if references else []
+            
+            inv_line_map = {}
+            for il in inv_lines:
+                inv_line_map[(il.invoice.invoice_number, il.product_id)] = il
+
+            for obj in object_list:
+                il = inv_line_map.get((obj.reference, obj.product_id))
+                
+                # Purchase Price (سعر الشراء / التكلفة)
+                if obj.unit_cost and obj.unit_cost > Decimal('0'):
+                    obj.purchase_price = obj.unit_cost
+                elif il and il.invoice.invoice_type in ['PURCHASE', 'RETURN_PURCHASE']:
+                    obj.purchase_price = il.unit_price
+                else:
+                    obj.purchase_price = getattr(obj.product, 'last_purchase_price', Decimal('0')) or Decimal('0')
+
+                # Selling Price (سعر البيع)
+                if il and il.invoice.invoice_type in ['SALE', 'RETURN_SALE']:
+                    obj.selling_price = il.unit_price
+                else:
+                    obj.selling_price = getattr(obj.product, 'sale_price', Decimal('0')) or Decimal('0')
         
         if product_id:
             product_id = int(product_id)
@@ -1796,7 +1773,6 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
             
             opening_balance = in_qty - out_qty
             
-            object_list = context['object_list']
             current_balance = opening_balance
             
             if object_list:
@@ -1918,6 +1894,33 @@ class SlowMovingReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVi
 
 from django.views.generic import TemplateView
 
+
+def _get_operating_expense_account_ids():
+    """
+    Returns IDs of all operating expense accounts based on chart-of-accounts tree hierarchy
+    and account_type, regardless of what code numbering convention the user used.
+    Excludes COGS (Cost of Goods Sold) accounts which belong in Gross Profit.
+    """
+    from apps.tenant.accounting.models import Account
+    # 1. Any account with account_type == EXPENSE
+    expense_account_ids = set(Account.objects.filter(account_type=Account.EXPENSE).values_list('id', flat=True))
+
+    # 2. Any descendant of root accounts of type EXPENSE
+    root_expense_accounts = Account.objects.filter(parent__isnull=True, account_type=Account.EXPENSE)
+    for root in root_expense_accounts:
+        expense_account_ids.update(root.get_descendants(include_self=True).values_list('id', flat=True))
+
+    # 3. Exclude COGS accounts (تكلفة البضاعة المباعة) - uses is_cogs=True flag
+    cogs_account_ids = set(Account.objects.filter(id__in=expense_account_ids, is_cogs=True).values_list('id', flat=True))
+    if not cogs_account_ids:
+        cogs_account_ids = set(Account.objects.filter(code__in=['5100', '5105']).values_list('id', flat=True))
+    
+    # Also exclude contra-purchases/returns (5110) if present
+    cogs_account_ids.update(Account.objects.filter(id__in=expense_account_ids, code='5110').values_list('id', flat=True))
+
+    return expense_account_ids - cogs_account_ids
+
+
 class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
     # Depending on your permissions, you can use something appropriate
     permission_required = 'core.view_accounting_reports'
@@ -1996,19 +1999,26 @@ class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
         # 4. Gross Profit
         gross_profit = net_revenue - net_cogs
 
-        # 5. Operating Expenses
-        expenses_qs = Expense.objects.filter(
-            status=Expense.POSTED,
-            date__range=[date_from_obj, date_to_obj]
-        )
-        total_expenses = expenses_qs.aggregate(total=Sum('amount'))['total'] or 0
-        
-        # Group expenses by account
-        expenses_by_account = expenses_qs.values(
-            'expense_account__name', 'expense_account__code'
-        ).annotate(
-            total_amount=Sum('amount')
-        ).order_by('-total_amount')
+        # 5. Operating Expenses (All posted ledger movements on expense accounts hierarchy)
+        from apps.tenant.accounting.models import JournalItem, Account, JournalEntry
+        operating_expense_account_ids = _get_operating_expense_account_ids()
+        operating_expense_items = JournalItem.objects.filter(
+            account_id__in=operating_expense_account_ids,
+            entry__status=JournalEntry.POSTED,
+            entry__date__range=[date_from_obj, date_to_obj]
+        ).select_related('account')
+
+        # تجميع وحساب المصروفات وتصنيفها في قاعدة البيانات مباشرة بـ SQL
+        total_expenses = operating_expense_items.aggregate(
+            total=Coalesce(Sum(F('debit') - F('credit')), Decimal('0.00'))
+        )['total']
+
+        expenses_by_account = [
+            {'expense_account__code': row['account__code'], 'expense_account__name': row['account__name'], 'total_amount': row['total_amount']}
+            for row in operating_expense_items.values('account__code', 'account__name').annotate(
+                total_amount=Coalesce(Sum(F('debit') - F('credit')), Decimal('0.00'))
+            ).filter(total_amount__gt=0).order_by('-total_amount')
+        ]
 
         # 6. Net Profit
         net_profit = gross_profit - total_expenses
@@ -2031,6 +2041,245 @@ class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
         return context
 
 
+class IncomeStatementDetailView(CustomPermissionRequiredMixin, TemplateView):
+    """
+    تقرير تفصيلي لحركات وبنود قائمة الدخل (Drill-Down):
+    يعرض الفواتير والقيود والعمليات المكونة لأي رقم في قائمة الدخل.
+    """
+    permission_required = 'core.view_accounting_reports'
+    template_name = 'reports/accounting_income_statement_detail.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from apps.tenant.invoicing.models import Invoice, InvoiceLine
+        from apps.tenant.accounting.models import JournalItem, Account, JournalEntry
+        from django.db.models import Sum, F, Case, When, Value, DecimalField
+        from django.db.models.functions import Coalesce
+        from django.utils import timezone
+        import datetime
+        from decimal import Decimal
+        from django.core.paginator import Paginator
+        from django.urls import reverse
+
+        detail_type = self.request.GET.get('type', 'gross_sales')
+        account_code = self.request.GET.get('account')
+        date_from = self.request.GET.get('date_from')
+        date_to = self.request.GET.get('date_to')
+
+        today = timezone.now().date()
+        if not date_from:
+            date_from_obj = today.replace(day=1)
+            date_from = date_from_obj.strftime('%Y-%m-%d')
+        else:
+            try:
+                date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            except ValueError:
+                date_from_obj = today.replace(day=1)
+                date_from = date_from_obj.strftime('%Y-%m-%d')
+
+        if not date_to:
+            date_to_obj = today
+            date_to = date_to_obj.strftime('%Y-%m-%d')
+        else:
+            try:
+                date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            except ValueError:
+                date_to_obj = today
+                date_to = date_to_obj.strftime('%Y-%m-%d')
+
+        title = ""
+        badge_type = ""
+        qs = None
+
+        def get_inv_url(inv_id):
+            try:
+                return reverse('invoicing:invoice_detail', kwargs={'invoice_id': inv_id})
+            except Exception:
+                return f"/invoicing/invoice/{inv_id}/"
+
+        def get_entry_url(entry_id):
+            try:
+                return reverse('accounting:journal_detail', kwargs={'pk': entry_id})
+            except Exception:
+                return f"/accounting/journals/{entry_id}/"
+
+        if detail_type in ['gross_sales', 'sales_discount', 'net_sales']:
+            qs = Invoice.objects.filter(
+                invoice_type=Invoice.SALE,
+                status=Invoice.POSTED,
+                date__range=[date_from_obj, date_to_obj]
+            ).select_related('partner', 'branch').order_by('-date', '-id')
+
+            if detail_type == 'sales_discount':
+                title = "تفاصيل خصومات المبيعات"
+                badge_type = "discount"
+                qs = qs.filter(discount_amount__gt=0)
+                total_amount = qs.aggregate(t=Coalesce(Sum('discount_amount'), Value(0), output_field=DecimalField()))['t']
+            elif detail_type == 'gross_sales':
+                title = "تفاصيل إجمالي المبيعات (قبل الخصم)"
+                badge_type = "sales"
+                total_amount = qs.aggregate(t=Coalesce(Sum('subtotal'), Value(0), output_field=DecimalField()))['t']
+            else: # net_sales
+                title = "تفاصيل إجمالي المبيعات الصافية"
+                badge_type = "sales"
+                total_amount = qs.aggregate(
+                    t=Coalesce(Sum(F('subtotal') - Coalesce(F('discount_amount'), Value(0), output_field=DecimalField())), Value(0), output_field=DecimalField())
+                )['t']
+
+        elif detail_type == 'sales_returns':
+            title = "تفاصيل مردودات المبيعات (المرتجعات)"
+            badge_type = "returns"
+            qs = Invoice.objects.filter(
+                invoice_type=Invoice.RETURN_SALE,
+                status=Invoice.POSTED,
+                date__range=[date_from_obj, date_to_obj]
+            ).select_related('partner', 'branch').order_by('-date', '-id')
+            total_amount = qs.aggregate(
+                t=Coalesce(Sum(F('subtotal') - Coalesce(F('discount_amount'), Value(0), output_field=DecimalField())), Value(0), output_field=DecimalField())
+            )['t']
+
+        elif detail_type == 'net_revenue':
+            title = "تفاصيل صافي الإيرادات (المبيعات والمردودات)"
+            badge_type = "net_revenue"
+            qs = Invoice.objects.filter(
+                invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
+                status=Invoice.POSTED,
+                date__range=[date_from_obj, date_to_obj]
+            ).select_related('partner', 'branch').order_by('-date', '-id')
+            net_expr = F('subtotal') - Coalesce(F('discount_amount'), Value(0), output_field=DecimalField())
+            total_amount = qs.aggregate(
+                t=Coalesce(Sum(Case(When(invoice_type=Invoice.RETURN_SALE, then=-net_expr), default=net_expr, output_field=DecimalField())), Value(0), output_field=DecimalField())
+            )['t']
+
+        elif detail_type == 'cogs':
+            title = "تفاصيل تكلفة البضاعة المباعة (COGS)"
+            badge_type = "cogs"
+            qs = InvoiceLine.objects.filter(
+                invoice__invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
+                invoice__status=Invoice.POSTED,
+                invoice__date__range=[date_from_obj, date_to_obj]
+            ).select_related('invoice', 'product', 'invoice__partner', 'invoice__branch').order_by('-invoice__date', '-id')
+            total_amount = qs.aggregate(
+                t=Coalesce(Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then=-Coalesce(F('cogs_amount'), Value(0), output_field=DecimalField())), default=Coalesce(F('cogs_amount'), Value(0), output_field=DecimalField()), output_field=DecimalField())), Value(0), output_field=DecimalField())
+            )['t']
+
+        elif detail_type == 'expenses':
+            badge_type = "expenses"
+            operating_expense_account_ids = _get_operating_expense_account_ids()
+            qs = JournalItem.objects.filter(
+                account_id__in=operating_expense_account_ids,
+                entry__status=JournalEntry.POSTED,
+                entry__date__range=[date_from_obj, date_to_obj]
+            ).select_related('account', 'entry').order_by('-entry__date', '-id')
+
+            if account_code:
+                qs = qs.filter(account__code=account_code)
+                acc = Account.objects.filter(code=account_code).first()
+                acc_name = acc.name if acc else account_code
+                title = f"تفاصيل مصروف: {acc_name} ({account_code})"
+            else:
+                title = "تفاصيل المصروفات التشغيلية الإجمالية"
+
+            total_amount = qs.aggregate(
+                t=Coalesce(Sum(Coalesce(F('debit'), Value(0), output_field=DecimalField()) - Coalesce(F('credit'), Value(0), output_field=DecimalField())), Value(0), output_field=DecimalField())
+            )['t']
+        else:
+            total_amount = Decimal('0')
+            qs = Invoice.objects.none()
+
+        # Database-level pagination (loads only 50 items instead of looping over thousands in memory)
+        page_number = self.request.GET.get('page', 1)
+        paginator = Paginator(qs, 50)
+        page_obj = paginator.get_page(page_number)
+
+        records = []
+        for item in page_obj:
+            if detail_type in ['sales_discount', 'gross_sales', 'net_sales', 'sales_returns', 'net_revenue']:
+                inv = item
+                is_return = inv.invoice_type == Invoice.RETURN_SALE
+                sub = inv.subtotal or Decimal('0')
+                disc = inv.discount_amount or Decimal('0')
+                net_val = sub - disc
+                if detail_type == 'sales_discount':
+                    focus = disc
+                elif detail_type == 'gross_sales':
+                    focus = sub
+                elif detail_type == 'sales_returns':
+                    focus = net_val
+                elif detail_type == 'net_revenue':
+                    focus = -net_val if is_return else net_val
+                else:
+                    focus = net_val
+
+                records.append({
+                    'number': inv.invoice_number,
+                    'id': inv.id,
+                    'url': get_inv_url(inv.id),
+                    'date': inv.date,
+                    'partner': inv.partner.name if inv.partner else 'عميل نقدي',
+                    'branch': inv.branch.name if inv.branch else '—',
+                    'subtotal': -sub if (is_return and detail_type == 'net_revenue') else sub,
+                    'discount': disc,
+                    'net': -net_val if (is_return and detail_type == 'net_revenue') else net_val,
+                    'tax': inv.tax_amount,
+                    'total': -inv.total_amount if (is_return and detail_type == 'net_revenue') else inv.total_amount,
+                    'amount_focus': focus,
+                    'status': inv.get_payment_type_display(),
+                    'is_return': is_return,
+                    'doc_type': 'مرتجع بيع' if is_return else 'فاتورة بيع'
+                })
+            elif detail_type == 'cogs':
+                l = item
+                is_return = l.invoice.invoice_type == Invoice.RETURN_SALE
+                line_cogs = l.cogs_amount or Decimal('0')
+                signed_cogs = -line_cogs if is_return else line_cogs
+                records.append({
+                    'number': l.invoice.invoice_number,
+                    'invoice_id': l.invoice.id,
+                    'url': get_inv_url(l.invoice.id),
+                    'date': l.invoice.date,
+                    'product_name': l.product.name if l.product else '—',
+                    'barcode': l.product.barcode if l.product else '',
+                    'quantity': -l.quantity if is_return else l.quantity,
+                    'unit_price': l.unit_price,
+                    'unit_cost': (line_cogs / l.quantity if l.quantity else Decimal('0')),
+                    'cogs_amount': signed_cogs,
+                    'partner': l.invoice.partner.name if l.invoice.partner else 'عميل نقدي',
+                    'doc_type': 'مرتجع بيع' if is_return else 'فاتورة بيع',
+                    'is_return': is_return
+                })
+            elif detail_type == 'expenses':
+                it = item
+                net_val = (it.debit or Decimal('0')) - (it.credit or Decimal('0'))
+                records.append({
+                    'number': it.entry.reference or f"#{it.entry.id}",
+                    'entry_id': it.entry.id,
+                    'url': get_entry_url(it.entry.id),
+                    'date': it.entry.date,
+                    'account_code': it.account.code,
+                    'account_name': it.account.name,
+                    'description': it.description or it.entry.description or '—',
+                    'debit': it.debit or Decimal('0'),
+                    'credit': it.credit or Decimal('0'),
+                    'net_amount': net_val,
+                })
+
+        context.update({
+            'title': title,
+            'detail_type': detail_type,
+            'account_code': account_code,
+            'badge_type': badge_type,
+            'date_from': date_from,
+            'date_to': date_to,
+            'records': records,
+            'page_obj': page_obj,
+            'is_paginated': page_obj.has_other_pages(),
+            'records_count': paginator.count,
+            'total_amount': total_amount,
+        })
+        return context
+
+
 
 class ExpenseReportView(CustomPermissionRequiredMixin, TemplateView):
     permission_required = 'core.view_accounting_reports'
@@ -2038,10 +2287,10 @@ class ExpenseReportView(CustomPermissionRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        from apps.tenant.accounting.models import Expense
-        from django.db.models import Sum
+        from apps.tenant.accounting.models import JournalItem, Account, JournalEntry, Voucher, Expense
         from django.utils import timezone
         import datetime
+        from decimal import Decimal
 
         date_from = self.request.GET.get('date_from')
         date_to = self.request.GET.get('date_to')
@@ -2051,34 +2300,98 @@ class ExpenseReportView(CustomPermissionRequiredMixin, TemplateView):
             date_from_obj = today.replace(day=1)
             date_from = date_from_obj.strftime('%Y-%m-%d')
         else:
-            date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            try:
+                date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            except ValueError:
+                date_from_obj = today.replace(day=1)
+                date_from = date_from_obj.strftime('%Y-%m-%d')
             
         if not date_to:
             date_to_obj = today
             date_to = date_to_obj.strftime('%Y-%m-%d')
         else:
-            date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            try:
+                date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            except ValueError:
+                date_to_obj = today
+                date_to = date_to_obj.strftime('%Y-%m-%d')
 
-        # Query all posted expenses in the date range
-        expenses_qs = Expense.objects.filter(
-            status=Expense.POSTED,
-            date__range=[date_from_obj, date_to_obj]
-        ).select_related('expense_account', 'payment_account', 'branch')
+        # Query all posted journal items on expense accounts hierarchy (regardless of code digits)
+        operating_expense_account_ids = _get_operating_expense_account_ids()
+        expense_items = JournalItem.objects.filter(
+            account_id__in=operating_expense_account_ids,
+            entry__status=JournalEntry.POSTED,
+            entry__date__range=[date_from_obj, date_to_obj]
+        ).select_related('entry', 'account').prefetch_related('entry__items__account').order_by('-entry__date', '-entry__id')
 
-        # Total Expense
-        total_expenses = expenses_qs.aggregate(total=Sum('amount'))['total'] or 0
+        # Cache voucher and expense lookups for fast linking
+        all_vouchers = {v.voucher_number: v.id for v in Voucher.objects.all().only('id', 'voucher_number')}
+        all_expenses = {e.expense_number: e.id for e in Expense.objects.all().only('id', 'expense_number')}
 
-        # Group by Expense Account
-        expenses_by_account = expenses_qs.values(
-            'expense_account__name', 'expense_account__code'
-        ).annotate(
-            total_amount=Sum('amount')
-        ).order_by('-total_amount')
+        items = []
+        accounts_map = {}
+
+        for it in expense_items:
+            net_amt = (it.debit or Decimal('0')) - (it.credit or Decimal('0'))
+            if net_amt <= Decimal('0'):
+                continue
+
+            ref = it.entry.reference or ''
+            
+            # Determine source type and url
+            if ref.startswith('PAY-'):
+                source_type = 'سند صرف'
+                v_id = all_vouchers.get(ref)
+                url = f"/accounting/vouchers/{v_id}/" if v_id else None
+            elif ref.startswith('EXP-'):
+                source_type = 'مصروف مباشر'
+                e_id = all_expenses.get(ref)
+                url = f"/accounting/expenses/{e_id}/" if e_id else None
+            elif ref.startswith('STK-') or ref.startswith('ADJ-'):
+                source_type = 'تسوية مخزنية'
+                url = None
+            elif ref.startswith('JRN-'):
+                source_type = 'قيد يومية'
+                url = None
+            else:
+                source_type = 'حركة محاسبية'
+                url = None
+
+            # Detect contra (payment/funding) account from the credit side of the entry
+            credit_items = [ci for ci in it.entry.items.all() if ci.credit > 0 and ci.account_id != it.account_id]
+            payment_name = ', '.join([ci.account.name for ci in credit_items]) if credit_items else '-'
+
+            items.append({
+                'date': it.entry.date,
+                'number': ref or f"JE-{it.entry.id}",
+                'source_type': source_type,
+                'branch_name': 'المركز الرئيسي',
+                'expense_account_name': it.account.name,
+                'expense_account_code': it.account.code,
+                'payment_name': payment_name,
+                'amount': net_amt,
+                'vat_amount': Decimal('0'),
+                'total_amount': net_amt,
+                'description': it.description or it.entry.description or '',
+                'url': url,
+            })
+
+        # Total Expense & Grouping calculated in database via SQL aggregation
+        total_expenses = queryset.aggregate(
+            total=Coalesce(Sum(F('debit') - F('credit')), Decimal('0.00'))
+        )['total']
+
+        expenses_by_account = [
+            {'expense_account__code': row['account__code'], 'expense_account__name': row['account__name'], 'total_amount': row['total_amount']}
+            for row in queryset.values('account__code', 'account__name').annotate(
+                total_amount=Coalesce(Sum(F('debit') - F('credit')), Decimal('0.00'))
+            ).filter(total_amount__gt=0).order_by('-total_amount')
+        ]
 
         context.update({
             'date_from': date_from,
             'date_to': date_to,
-            'expenses': expenses_qs.order_by('-date', '-id'),
+            'expenses': items,
             'total_expenses': total_expenses,
             'expenses_by_account': expenses_by_account,
             'title': 'المصروفات التفصيلية'
@@ -2093,14 +2406,25 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        from apps.tenant.accounting.models import Treasury, JournalItem, JournalEntry
+        from apps.tenant.accounting.models import Treasury, BankAccount, EWallet, JournalItem, JournalEntry
         from django.db.models import Sum, F
         from django.utils import timezone
         import datetime
         from decimal import Decimal
 
-        treasuries = Treasury.objects.all()
-        selected_treasury_id = self.request.GET.get('treasury')
+        treasuries = list(Treasury.objects.all().select_related('branch'))
+        bank_accounts = list(BankAccount.objects.all())
+        ewallets = list(EWallet.objects.all())
+
+        # Auto-healing ensuring GL accounts exist
+        for t in treasuries:
+            t.ensure_account()
+        for b in bank_accounts:
+            b.ensure_account()
+        for w in ewallets:
+            w.ensure_account()
+
+        selected_account_val = self.request.GET.get('account') or self.request.GET.get('treasury')
         
         date_from = self.request.GET.get('date_from')
         date_to = self.request.GET.get('date_to')
@@ -2110,32 +2434,67 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
             date_from_obj = today.replace(day=1)
             date_from = date_from_obj.strftime('%Y-%m-%d')
         else:
-            date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            try:
+                date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            except ValueError:
+                date_from_obj = today.replace(day=1)
+                date_from = date_from_obj.strftime('%Y-%m-%d')
             
         if not date_to:
             date_to_obj = today
             date_to = date_to_obj.strftime('%Y-%m-%d')
         else:
-            date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            try:
+                date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            except ValueError:
+                date_to_obj = today
+                date_to = date_to_obj.strftime('%Y-%m-%d')
 
-        selected_treasury = None
+        selected_obj = None
         statement_lines = []
         starting_balance = Decimal('0')
         total_in = Decimal('0')
         total_out = Decimal('0')
         ending_balance = Decimal('0')
+        selected_account_type = ''
+        val_str = ''
 
-        if selected_treasury_id:
-            try:
-                selected_treasury = Treasury.objects.get(id=selected_treasury_id)
-                account = selected_treasury.account
-                
+        if selected_account_val:
+            val_str = str(selected_account_val).strip()
+            if val_str.startswith('treasury_'):
+                t_id = val_str.split('_')[1]
+                selected_obj = next((t for t in treasuries if str(t.id) == str(t_id)), None)
+                selected_account_type = 'خزينة نقدية'
+            elif val_str.startswith('bank_'):
+                b_id = val_str.split('_')[1]
+                selected_obj = next((b for b in bank_accounts if str(b.id) == str(b_id)), None)
+                selected_account_type = 'حساب بنكي'
+            elif val_str.startswith('wallet_'):
+                w_id = val_str.split('_')[1]
+                selected_obj = next((w for w in ewallets if str(w.id) == str(w_id)), None)
+                selected_account_type = 'محفظة إلكترونية'
+            else:
+                # Backward compatibility for plain integer ID
+                selected_obj = next((t for t in treasuries if str(t.id) == str(val_str)), None)
+                if selected_obj:
+                    selected_account_type = 'خزينة نقدية'
+                    val_str = f"treasury_{selected_obj.id}"
+                else:
+                    selected_obj = next((b for b in bank_accounts if str(b.id) == str(val_str)), None)
+                    if selected_obj:
+                        selected_account_type = 'حساب بنكي'
+                        val_str = f"bank_{selected_obj.id}"
+                    else:
+                        selected_obj = next((w for w in ewallets if str(w.id) == str(val_str)), None)
+                        if selected_obj:
+                            selected_account_type = 'محفظة إلكترونية'
+                            val_str = f"wallet_{selected_obj.id}"
+
+            if selected_obj:
+                account = selected_obj.ensure_account()
                 if account:
-                    # 1. Calculate Starting Balance
-                    # Base opening balance of the treasury
-                    starting_balance = selected_treasury.opening_balance
+                    starting_balance = getattr(selected_obj, 'opening_balance', Decimal('0')) or Decimal('0')
                     
-                    # Add/Subtract previous posted journal items (before date_from)
                     prev_items = JournalItem.objects.filter(
                         account=account,
                         entry__status=JournalEntry.POSTED,
@@ -2148,42 +2507,43 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
                     prev_debit = prev_items['total_debit'] or Decimal('0')
                     prev_credit = prev_items['total_credit'] or Decimal('0')
                     
-                    # Asset account: Balance = Debit - Credit
                     starting_balance += (prev_debit - prev_credit)
                     
-                    # 2. Get period transactions
                     period_items = JournalItem.objects.filter(
                         account=account,
                         entry__status=JournalEntry.POSTED,
                         entry__date__range=[date_from_obj, date_to_obj]
                     ).select_related('entry').order_by('entry__date', 'entry__id')
                     
-                    current_balance = starting_balance
-                    
+                    current_bal = starting_balance
                     for item in period_items:
                         debit = item.debit or Decimal('0')
                         credit = item.credit or Decimal('0')
                         
                         total_in += debit
                         total_out += credit
-                        current_balance += (debit - credit)
+                        current_bal += (debit - credit)
                         
                         statement_lines.append({
                             'date': item.entry.date,
                             'reference': item.entry.reference,
-                            'description': item.entry.description,
+                            'description': item.description or item.entry.description,
                             'debit': debit,
                             'credit': credit,
-                            'balance': current_balance
+                            'balance': current_bal
                         })
                         
-                    ending_balance = current_balance
-            except Treasury.DoesNotExist:
-                pass
+                    ending_balance = current_bal
+                    statement_lines.reverse()
 
         context.update({
             'treasuries': treasuries,
-            'selected_treasury': selected_treasury,
+            'bank_accounts': bank_accounts,
+            'ewallets': ewallets,
+            'selected_obj': selected_obj,
+            'selected_treasury': selected_obj,  # for backward compatibility
+            'selected_account_val': val_str,
+            'selected_account_type': selected_account_type,
             'date_from': date_from,
             'date_to': date_to,
             'starting_balance': starting_balance,
@@ -2191,22 +2551,440 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
             'total_out': total_out,
             'ending_balance': ending_balance,
             'statement_lines': statement_lines,
-            'title': 'كشف حساب خزينة / بنك'
+            'title': 'كشف حساب وحركات الخزن والبنوك والمحافظ'
+        })
+        return context
+
+
+class LiquidityPositionReportView(CustomPermissionRequiredMixin, TemplateView):
+    """
+    تقرير موقف وأرصدة السيولة النقدية الشامل:
+    يعرض أرصدة الخزن النقدية، الحسابات البنكية، والمحافظ الإلكترونية، وإجمالي السيولة المتاحة فوراً.
+    """
+    permission_required = 'core.view_accounting_reports'
+    template_name = 'reports/liquidity_position.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
+        from decimal import Decimal
+
+        treasuries = list(Treasury.objects.all().select_related('branch'))
+        bank_accounts = list(BankAccount.objects.all())
+        ewallets = list(EWallet.objects.all())
+
+        for t in treasuries:
+            t.ensure_account()
+        for b in bank_accounts:
+            b.ensure_account()
+        for w in ewallets:
+            w.ensure_account()
+
+        # تجميع وحساب أرصدة كافة الخزن والحسابات دفعة واحدة في استعلام تجميعي واحد (SQL)
+        from apps.tenant.services.journal_service import batch_get_account_balances
+        all_accounts = [t.account for t in treasuries if t.account] + \
+                       [b.account for b in bank_accounts if b.account] + \
+                       [w.account for w in ewallets if w.account]
+        batch_get_account_balances(account_qs=all_accounts)
+
+        total_treasuries = sum((t.current_balance for t in treasuries), Decimal('0'))
+        total_banks = sum((b.current_balance for b in bank_accounts), Decimal('0'))
+        total_wallets = sum((w.current_balance for w in ewallets), Decimal('0'))
+        grand_total_liquidity = total_treasuries + total_banks + total_wallets
+
+        pos_treasuries = max(total_treasuries, Decimal('0'))
+        pos_banks = max(total_banks, Decimal('0'))
+        pos_wallets = max(total_wallets, Decimal('0'))
+        total_positive = pos_treasuries + pos_banks + pos_wallets
+
+        if total_positive > Decimal('0'):
+            treasury_pct = round((pos_treasuries / total_positive) * 100, 1)
+            bank_pct = round((pos_banks / total_positive) * 100, 1)
+            wallet_pct = round((pos_wallets / total_positive) * 100, 1)
+            is_deficit = False
+        elif (abs(total_treasuries) + abs(total_banks) + abs(total_wallets)) > Decimal('0'):
+            # In case accounts have negative balance (net deficit / overdraft share)
+            total_abs = abs(total_treasuries) + abs(total_banks) + abs(total_wallets)
+            treasury_pct = round((abs(total_treasuries) / total_abs) * 100, 1)
+            bank_pct = round((abs(total_banks) / total_abs) * 100, 1)
+            wallet_pct = round((abs(total_wallets) / total_abs) * 100, 1)
+            is_deficit = True
+        else:
+            treasury_pct = bank_pct = wallet_pct = Decimal('0')
+            is_deficit = False
+
+        context.update({
+            'title': 'تقرير موقف وأرصدة السيولة النقدية الشامل',
+            'treasuries': treasuries,
+            'bank_accounts': bank_accounts,
+            'ewallets': ewallets,
+            'total_treasuries': total_treasuries,
+            'total_banks': total_banks,
+            'total_wallets': total_wallets,
+            'grand_total_liquidity': grand_total_liquidity,
+            'treasury_pct': treasury_pct,
+            'bank_pct': bank_pct,
+            'wallet_pct': wallet_pct,
+            'is_deficit': is_deficit,
+        })
+        return context
+
+
+class CashVouchersReportView(CustomPermissionRequiredMixin, TemplateView):
+    """
+    تقرير المقبوضات والمدفوعات وسندات النقدية:
+    تتبع سندات القبض والصرف، الإيرادات والمصروفات النقدية وصافي التدفق النقدي.
+    """
+    permission_required = 'core.view_accounting_reports'
+    template_name = 'reports/liquidity_vouchers.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from apps.tenant.accounting.models import Voucher, Treasury, BankAccount, EWallet
+        from django.utils import timezone
+        import datetime
+        from decimal import Decimal
+
+        date_from = self.request.GET.get('date_from')
+        date_to = self.request.GET.get('date_to')
+        voucher_type = self.request.GET.get('voucher_type')
+        payment_method = self.request.GET.get('payment_method')
+        account_filter = self.request.GET.get('account')
+
+        today = timezone.now().date()
+        if not date_from:
+            date_from_obj = today.replace(day=1)
+            date_from = date_from_obj.strftime('%Y-%m-%d')
+        else:
+            try:
+                date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            except ValueError:
+                date_from_obj = today.replace(day=1)
+                date_from = date_from_obj.strftime('%Y-%m-%d')
+
+        if not date_to:
+            date_to_obj = today
+            date_to = date_to_obj.strftime('%Y-%m-%d')
+        else:
+            try:
+                date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            except ValueError:
+                date_to_obj = today
+                date_to = date_to_obj.strftime('%Y-%m-%d')
+
+        queryset = Voucher.objects.filter(
+            date__range=[date_from_obj, date_to_obj]
+        ).select_related('partner', 'account', 'treasury', 'bank_account', 'ewallet').order_by('-date', '-id')
+
+        if voucher_type:
+            queryset = queryset.filter(voucher_type=voucher_type)
+
+        if payment_method:
+            queryset = queryset.filter(payment_method=payment_method)
+
+        if account_filter:
+            if account_filter.startswith('treasury_'):
+                queryset = queryset.filter(treasury_id=account_filter.split('_')[1])
+            elif account_filter.startswith('bank_'):
+                queryset = queryset.filter(bank_account_id=account_filter.split('_')[1])
+            elif account_filter.startswith('wallet_'):
+                queryset = queryset.filter(ewallet_id=account_filter.split('_')[1])
+
+        from django.db.models import Sum, Q, Count
+        from django.db.models.functions import Coalesce
+
+        v_agg = queryset.aggregate(
+            total_receipts=Coalesce(Sum('amount', filter=Q(voucher_type=Voucher.RECEIPT)), Decimal('0.00')),
+            total_payments=Coalesce(Sum('amount', filter=Q(voucher_type=Voucher.PAYMENT)), Decimal('0.00')),
+        )
+        total_receipts = v_agg['total_receipts']
+        total_payments = v_agg['total_payments']
+        net_flow = total_receipts - total_payments
+
+        vouchers = list(queryset)
+
+        treasuries = Treasury.objects.all()
+        bank_accounts = BankAccount.objects.all()
+        ewallets = EWallet.objects.all()
+
+        context.update({
+            'title': 'تقرير المقبوضات والمدفوعات (سندات النقدية)',
+            'vouchers': vouchers,
+            'date_from': date_from,
+            'date_to': date_to,
+            'selected_voucher_type': voucher_type or '',
+            'selected_payment_method': payment_method or '',
+            'selected_account': account_filter or '',
+            'total_receipts': total_receipts,
+            'total_payments': total_payments,
+            'net_flow': net_flow,
+            'treasuries': treasuries,
+            'bank_accounts': bank_accounts,
+            'ewallets': ewallets,
+        })
+        return context
+
+
+class InternalTransfersReportView(CustomPermissionRequiredMixin, TemplateView):
+    """
+    تقرير التحويلات النقدية بين الحسابات:
+    تتبع حركة نقل الأموال بين الخزن والبنوك والمحافظ الإلكترونية وحالات الترحيل.
+    """
+    permission_required = 'core.view_accounting_reports'
+    template_name = 'reports/liquidity_transfers.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from apps.tenant.accounting.models import InternalTransfer
+        from django.utils import timezone
+        import datetime
+        from decimal import Decimal
+
+        date_from = self.request.GET.get('date_from')
+        date_to = self.request.GET.get('date_to')
+        status = self.request.GET.get('status')
+
+        today = timezone.now().date()
+        if not date_from:
+            date_from_obj = today.replace(day=1)
+            date_from = date_from_obj.strftime('%Y-%m-%d')
+        else:
+            try:
+                date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            except ValueError:
+                date_from_obj = today.replace(day=1)
+                date_from = date_from_obj.strftime('%Y-%m-%d')
+
+        if not date_to:
+            date_to_obj = today
+            date_to = date_to_obj.strftime('%Y-%m-%d')
+        else:
+            try:
+                date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            except ValueError:
+                date_to_obj = today
+                date_to = date_to_obj.strftime('%Y-%m-%d')
+
+        queryset = InternalTransfer.objects.filter(
+            date__range=[date_from_obj, date_to_obj]
+        ).select_related(
+            'from_treasury', 'from_bank_account', 'from_ewallet',
+            'to_treasury', 'to_bank_account', 'to_ewallet',
+            'created_by'
+        ).order_by('-date', '-id')
+
+        if status:
+            queryset = queryset.filter(status=status)
+
+        from django.db.models import Sum, Count, Q
+        from django.db.models.functions import Coalesce
+
+        agg = queryset.aggregate(
+            total_amount=Coalesce(Sum('amount'), Decimal('0.00')),
+            confirmed_count=Count('id', filter=Q(status=InternalTransfer.POSTED)),
+            draft_count=Count('id', filter=Q(status=InternalTransfer.DRAFT)),
+        )
+        total_amount = agg['total_amount']
+        confirmed_count = agg['confirmed_count']
+        draft_count = agg['draft_count']
+
+        transfers = list(queryset)
+
+        context.update({
+            'title': 'تقرير التحويلات النقدية بين الحسابات',
+            'transfers': transfers,
+            'date_from': date_from,
+            'date_to': date_to,
+            'selected_status': status or '',
+            'total_amount': total_amount,
+            'confirmed_count': confirmed_count,
+            'draft_count': draft_count,
         })
         return context
 
 
 
+def get_pos_session_details(session):
+    from apps.tenant.invoicing.models import Invoice
+    from apps.tenant.accounting.models import Voucher
+    from decimal import Decimal
+    from django.db.models import Sum, Count, Q, F, Case, When
+    from django.db.models.functions import Coalesce
+
+    posted_invoices = Invoice.objects.filter(
+        pos_session=session,
+        status=Invoice.POSTED
+    ).select_related('partner', 'branch', 'warehouse').order_by('-created_at')
+
+    # احتساب إجماليات الفواتير وطرق الدفع مباشرة في قاعدة البيانات بـ SQL Aggregation
+    inv_agg = posted_invoices.aggregate(
+        total_gross_sales=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.SALE)), Decimal('0.00')),
+        total_returns_amount=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.RETURN_SALE)), Decimal('0.00')),
+        sales_count=Count('id', filter=Q(invoice_type=Invoice.SALE)),
+        returns_count=Count('id', filter=Q(invoice_type=Invoice.RETURN_SALE)),
+        total_cash_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_cash_refunds=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CASH), then=F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_card_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_card')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CARD), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_card')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CARD), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_ewallet_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_ewallet')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.EWALLET), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_ewallet')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.EWALLET), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_bank_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_bank')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.BANK_TRANSFER), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_bank')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.BANK_TRANSFER), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_credit_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_credit')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CREDIT), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_credit')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CREDIT), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+    )
+
+    total_gross_sales = inv_agg['total_gross_sales']
+    total_returns_amount = inv_agg['total_returns_amount']
+    net_sales_amount = total_gross_sales - total_returns_amount
+    total_cash_sales = inv_agg['total_cash_sales']
+    total_cash_refunds = inv_agg['total_cash_refunds']
+    total_card_sales = inv_agg['total_card_sales']
+    total_ewallet_sales = inv_agg['total_ewallet_sales']
+    total_bank_sales = inv_agg['total_bank_sales']
+    total_credit_sales = inv_agg['total_credit_sales']
+
+    v_base = Voucher.objects.filter(status=Voucher.POSTED).filter(
+        Q(payment_method=Voucher.CASH) | Q(payment_method=Voucher.SPLIT, paid_cash__gt=0)
+    )
+    time_filter = Q(treasury=session.treasury, created_at__gte=session.start_time)
+    if session.end_time:
+        time_filter &= Q(created_at__lte=session.end_time)
+
+    shift_vouchers = v_base.filter(
+        Q(pos_session=session) | (Q(journal_entry__created_by=session.user) & time_filter)
+    ).distinct().select_related('partner').order_by('-created_at')
+
+    # احتساب المقبوضات والمدفوعات النقدية في قاعدة البيانات مباشرة
+    v_cash_expr = Case(
+        When(payment_method=Voucher.SPLIT, then=F('paid_cash')),
+        default=F('amount'),
+        output_field=models.DecimalField(max_digits=18, decimal_places=4)
+    )
+    v_agg = shift_vouchers.aggregate(
+        total_cash_receipts=Coalesce(Sum(v_cash_expr, filter=Q(voucher_type=Voucher.RECEIPT)), Decimal('0.00')),
+        total_cash_payments=Coalesce(Sum(v_cash_expr, filter=Q(voucher_type=Voucher.PAYMENT)), Decimal('0.00')),
+        receipts_count=Count('id', filter=Q(voucher_type=Voucher.RECEIPT)),
+        payments_count=Count('id', filter=Q(voucher_type=Voucher.PAYMENT)),
+    )
+    total_cash_receipts = v_agg['total_cash_receipts']
+    total_cash_payments = v_agg['total_cash_payments']
+
+    # Rentals issued during the shift
+    from apps.tenant.rentals.models import Rental
+    rental_time_filter = Q(created_at__gte=session.start_time)
+    if session.end_time:
+        rental_time_filter &= Q(created_at__lte=session.end_time)
+
+    shift_rentals = Rental.objects.filter(
+        Q(pos_session=session) | (Q(created_by=session.user) & rental_time_filter)
+    ).distinct().select_related('equipment', 'customer').order_by('-created_at')
+
+    rental_agg = shift_rentals.aggregate(
+        total_rentals_amount=Coalesce(Sum('total_amount'), Decimal('0.00')),
+        total_cash_rentals=Coalesce(Sum('total_amount', filter=Q(payment_method=Rental.PAYMENT_CASH)), Decimal('0.00')),
+        total_credit_rentals=Coalesce(Sum('total_amount', filter=~Q(payment_method=Rental.PAYMENT_CASH)), Decimal('0.00')),
+        rentals_count=Count('id'),
+    )
+    total_rentals_amount = rental_agg['total_rentals_amount']
+    total_cash_rentals = rental_agg['total_cash_rentals']
+    total_credit_rentals = rental_agg['total_credit_rentals']
+
+    expected_balance = (
+        session.opening_balance +
+        total_cash_sales -
+        total_cash_refunds +
+        total_cash_receipts -
+        total_cash_payments +
+        total_cash_rentals
+    )
+
+    actual_balance = session.closing_balance_actual if session.status == 'CLOSED' else expected_balance
+    difference = session.difference if session.status == 'CLOSED' else (actual_balance - expected_balance)
+
+    return {
+        'session': session,
+        'posted_invoices': posted_invoices,
+        'sales_count': inv_agg['sales_count'],
+        'returns_count': inv_agg['returns_count'],
+        'total_gross_sales': total_gross_sales,
+        'total_returns_amount': total_returns_amount,
+        'net_sales_amount': net_sales_amount,
+        'total_cash_sales': total_cash_sales,
+        'total_cash_refunds': total_cash_refunds,
+        'total_card_sales': total_card_sales,
+        'total_ewallet_sales': total_ewallet_sales,
+        'total_bank_sales': total_bank_sales,
+        'total_credit_sales': total_credit_sales,
+        'shift_vouchers': shift_vouchers,
+        'total_cash_receipts': total_cash_receipts,
+        'total_cash_payments': total_cash_payments,
+        'shift_rentals': shift_rentals,
+        'rentals_count': rental_agg['rentals_count'],
+        'total_rentals_amount': total_rentals_amount,
+        'total_cash_rentals': total_cash_rentals,
+        'total_credit_rentals': total_credit_rentals,
+        'expected_balance': expected_balance,
+        'actual_balance': actual_balance,
+        'difference': difference,
+    }
+
+
 class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
-    # Depending on your permissions, you can use something appropriate
     permission_required = 'core.view_sales_reports'
     template_name = 'reports/sales_shifts.html'
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        from apps.tenant.invoicing.models import POSSession, Invoice
+        from apps.tenant.invoicing.models import POSSession
         from django.contrib.auth import get_user_model
-        from django.db.models import Sum, Q, Count
+        from django.db.models import Q
         from django.utils import timezone
         import datetime
         from decimal import Decimal
@@ -2214,73 +2992,45 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
         User = get_user_model()
         users = User.objects.all()
 
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from_param = self.request.GET.get('date_from')
+        date_to_param = self.request.GET.get('date_to')
         selected_user_id = self.request.GET.get('user')
-        
+
         today = timezone.now().date()
-        if not date_from:
-            date_from_obj = today
+        if not date_from_param:
+            date_from_obj = today - datetime.timedelta(days=90)
             date_from = date_from_obj.strftime('%Y-%m-%d')
         else:
-            date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
-            
-        if not date_to:
+            date_from_obj = datetime.datetime.strptime(date_from_param, '%Y-%m-%d').date()
+            date_from = date_from_param
+
+        if not date_to_param:
             date_to_obj = today
             date_to = date_to_obj.strftime('%Y-%m-%d')
         else:
-            date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            date_to_obj = datetime.datetime.strptime(date_to_param, '%Y-%m-%d').date()
+            date_to = date_to_param
 
-        # Query sessions
         sessions_qs = POSSession.objects.filter(
-            start_time__date__range=[date_from_obj, date_to_obj]
-        ).select_related('user', 'branch', 'treasury').order_by('-start_time')
+            Q(start_time__date__gte=date_from_obj, start_time__date__lte=date_to_obj) |
+            Q(end_time__date__gte=date_from_obj, end_time__date__lte=date_to_obj) |
+            Q(status=POSSession.OPEN)
+        ).select_related('user', 'branch', 'treasury').order_by('-start_time').distinct()
 
         if selected_user_id:
             sessions_qs = sessions_qs.filter(user_id=selected_user_id)
 
-        # Annotate with sales and returns
-        # Actually, using Django annotation for this might be tricky due to join duplicates if there are multiple lines.
-        # But we can annotate Invoices simply.
         sessions_data = []
-        
         total_expected = Decimal('0')
         total_actual = Decimal('0')
         total_diff = Decimal('0')
 
         for session in sessions_qs:
-            # Get sales
-            sales_aggr = Invoice.objects.filter(
-                pos_session=session,
-                invoice_type=Invoice.SALE,
-                status=Invoice.POSTED
-            ).aggregate(total_sales=Sum('total_amount'), count=Count('id'))
-            
-            # Get returns
-            returns_aggr = Invoice.objects.filter(
-                pos_session=session,
-                invoice_type=Invoice.RETURN_SALE,
-                status=Invoice.POSTED
-            ).aggregate(total_returns=Sum('total_amount'), count=Count('id'))
-            
-            sales_amount = sales_aggr['total_sales'] or Decimal('0')
-            sales_count = sales_aggr['count'] or 0
-            
-            returns_amount = returns_aggr['total_returns'] or Decimal('0')
-            returns_count = returns_aggr['count'] or 0
-            
-            total_expected += session.closing_balance_expected
-            total_actual += session.closing_balance_actual
-            total_diff += session.difference
-            
-            sessions_data.append({
-                'session': session,
-                'sales_amount': sales_amount,
-                'sales_count': sales_count,
-                'returns_amount': returns_amount,
-                'returns_count': returns_count,
-                'net_sales': sales_amount - returns_amount
-            })
+            dt = get_pos_session_details(session)
+            total_expected += dt['expected_balance']
+            total_actual += dt['actual_balance']
+            total_diff += dt['difference']
+            sessions_data.append(dt)
 
         context.update({
             'date_from': date_from,
@@ -2294,6 +3044,215 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
             'title': 'يومية الكاشير (الورديات)'
         })
         return context
+
+    def get(self, request, *args, **kwargs):
+        if request.GET.get('export') == 'excel':
+            context = self.get_context_data(**kwargs)
+            sessions_data = context.get('sessions_data', [])
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "يومية الورديات"
+            ws.views.sheetView[0].rightToLeft = True
+
+            # Styles
+            title_font = Font(name='Calibri', size=14, bold=True, color='1F4E79')
+            header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+            header_fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+            summary_fill = PatternFill(start_color='F2F4F8', end_color='F2F4F8', fill_type='solid')
+            summary_font = Font(name='Calibri', size=11, bold=True)
+            data_font = Font(name='Calibri', size=10)
+            align_center = Alignment(horizontal='center', vertical='center')
+            align_right = Alignment(horizontal='right', vertical='center')
+            thin_border = Border(
+                left=Side(style='thin', color='D9D9D9'),
+                right=Side(style='thin', color='D9D9D9'),
+                top=Side(style='thin', color='D9D9D9'),
+                bottom=Side(style='thin', color='D9D9D9')
+            )
+
+            # Title
+            ws.merge_cells('A1:M1')
+            ws['A1'] = f"تقرير يومية الكاشير (الورديات) — الفترة من {context['date_from']} إلى {context['date_to']}"
+            ws['A1'].font = title_font
+            ws['A1'].alignment = align_center
+
+            def to_dec(val):
+                if val is None:
+                    return Decimal('0.00')
+                return Decimal(str(val)).quantize(Decimal('0.01'))
+
+            # KPI Summary
+            ws.append([])
+            ws.append([
+                "إجمالي النقدية المتوقعة بالدرج", to_dec(context.get('total_expected')),
+                "إجمالي النقدية الفعلية (المسلمة)", to_dec(context.get('total_actual')),
+                "إجمالي العجز / الزيادة", to_dec(context.get('total_diff'))
+            ])
+            for col in range(1, 7):
+                cell = ws.cell(row=3, column=col)
+                cell.font = summary_font
+                cell.fill = summary_fill
+                cell.border = thin_border
+                cell.alignment = align_center
+
+            ws.append([])
+
+            # Headers
+            headers = [
+                'رقم الوردية', 'تاريخ الفتح', 'تاريخ الإغلاق', 'الكاشير', 'الخزنة',
+                'صافي المبيعات', 'مبيعات كاش', 'إلكتروني/شبكة', 'عهدة افتتاحية',
+                'متوقع بالدرج', 'فعلي مسلّم', 'العجز / الزيادة', 'الحالة'
+            ]
+            ws.append(headers)
+            header_row_idx = ws.max_row
+            for col_idx, h in enumerate(headers, 1):
+                cell = ws.cell(row=header_row_idx, column=col_idx)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = align_center
+                cell.border = thin_border
+
+            # Data rows
+            for item in sessions_data:
+                s = item['session']
+                status_str = 'مفتوحة' if s.status == 'OPEN' else 'مغلقة'
+                start_str = s.start_time.strftime('%Y-%m-%d %H:%M') if s.start_time else ''
+                end_str = s.end_time.strftime('%Y-%m-%d %H:%M') if s.end_time else '—'
+                digital_sales = to_dec(item.get('total_card_sales')) + to_dec(item.get('total_ewallet_sales')) + to_dec(item.get('total_bank_sales'))
+                row = [
+                    f"#{s.id}",
+                    start_str,
+                    end_str,
+                    s.user.get_full_name() or s.user.username,
+                    s.treasury.name if s.treasury else '',
+                    to_dec(item.get('net_sales_amount')),
+                    to_dec(item.get('total_cash_sales')),
+                    digital_sales,
+                    to_dec(s.opening_balance),
+                    to_dec(item.get('expected_balance')),
+                    to_dec(item.get('actual_balance')),
+                    to_dec(item.get('difference')),
+                    status_str
+                ]
+                ws.append(row)
+                r_idx = ws.max_row
+                for col_idx in range(1, len(row) + 1):
+                    cell = ws.cell(row=r_idx, column=col_idx)
+                    cell.font = data_font
+                    cell.border = thin_border
+                    if col_idx in [6, 7, 8, 9, 10, 11, 12]:
+                        cell.number_format = '#,##0.00'
+                        cell.alignment = align_right
+                    else:
+                        cell.alignment = align_center
+
+            for col in ws.columns:
+                max_len = 0
+                col_letter = get_column_letter(col[0].column)
+                for cell in col:
+                    val_str = str(cell.value or '')
+                    if len(val_str) > max_len:
+                        max_len = len(val_str)
+                ws.column_dimensions[col_letter].width = max(max_len + 4, 13)
+
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            resp = HttpResponse(
+                output.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            resp['Content-Disposition'] = f'attachment; filename="cashier_shifts_{context["date_from"]}_{context["date_to"]}.xlsx"'
+            return resp
+
+        return super().get(request, *args, **kwargs)
+
+
+class ShiftDetailView(CustomPermissionRequiredMixin, DetailView):
+    permission_required = 'core.view_sales_reports'
+    model = POSSession
+    template_name = 'reports/pos_session_detail.html'
+    context_object_name = 'session_obj'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        details = get_pos_session_details(self.object)
+        context['details'] = details
+        context['title'] = f"تقرير مفصل للوردية #{self.object.id}"
+        return context
+
+
+from django.contrib.auth.decorators import login_required
+from apps.tenant.core.decorators import custom_permission_required
+
+@login_required
+@custom_permission_required('core.view_sales_reports', redirect_url='core:report_shifts')
+def shift_detail_api(request, pk):
+    from django.http import JsonResponse
+    from django.shortcuts import get_object_or_404
+    from apps.tenant.invoicing.models import POSSession
+
+    session = get_object_or_404(POSSession, pk=pk)
+    dt = get_pos_session_details(session)
+
+    invoices_json = [
+        {
+            'id': inv.id,
+            'number': inv.invoice_number,
+            'time': inv.created_at.strftime('%H:%M:%S') if inv.created_at else '',
+
+            'type': inv.get_invoice_type_display(),
+            'type_code': inv.invoice_type,
+            'customer': inv.partner.name if inv.partner else 'عميل نقدي',
+            'payment_type': inv.get_payment_type_display(),
+            'total': float(inv.total_amount)
+        } for inv in dt['posted_invoices']
+    ]
+
+    vouchers_json = [
+        {
+            'id': v.id,
+            'number': v.voucher_number,
+            'time': v.created_at.strftime('%H:%M:%S') if v.created_at else '',
+            'type': v.get_voucher_type_display(),
+            'type_code': v.voucher_type,
+            'partner': v.partner.name if v.partner else 'سند كاش',
+            'notes': v.description or '-',
+            'amount': float(v.amount)
+
+        } for v in dt['shift_vouchers']
+    ]
+
+    data = {
+        'id': session.id,
+        'user': session.user.get_full_name() or session.user.username,
+        'treasury': session.treasury.name if session.treasury else '-',
+        'branch': session.branch.name if session.branch else '-',
+        'start_time': session.start_time.strftime('%Y-%m-%d %H:%M') if session.start_time else '',
+        'end_time': session.end_time.strftime('%Y-%m-%d %H:%M') if session.end_time else 'مفتوحة حالياً',
+        'status': session.get_status_display(),
+        'status_code': session.status,
+        'notes': session.notes or '',
+        'opening_balance': float(session.opening_balance),
+        'sales_count': dt['sales_count'],
+        'returns_count': dt['returns_count'],
+        'net_sales_amount': float(dt['net_sales_amount']),
+        'total_cash_sales': float(dt['total_cash_sales']),
+        'total_cash_refunds': float(dt['total_cash_refunds']),
+        'total_card_sales': float(dt['total_card_sales']),
+        'total_ewallet_sales': float(dt['total_ewallet_sales']),
+        'total_bank_sales': float(dt['total_bank_sales']),
+        'total_credit_sales': float(dt['total_credit_sales']),
+        'total_cash_receipts': float(dt['total_cash_receipts']),
+        'total_cash_payments': float(dt['total_cash_payments']),
+        'expected_balance': float(dt['expected_balance']),
+        'actual_balance': float(dt['actual_balance']),
+        'difference': float(dt['difference']),
+        'invoices': invoices_json,
+        'vouchers': vouchers_json
+    }
+    return JsonResponse(data)
 
 class TrialBalanceReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
     permission_required = 'core.view_accounting_reports'
@@ -2468,6 +3427,7 @@ class GeneralLedgerReportView(CsvExportMixin, CustomPermissionRequiredMixin, Tem
                     total_debit += debit
                     total_credit += credit
                     
+                transactions.reverse()
                 context['transactions'] = transactions
                 context['total_debit'] = total_debit
                 context['total_credit'] = total_credit
@@ -2588,12 +3548,18 @@ class EInvoicingReportView(CustomPermissionRequiredMixin, TemplateView):
             
         logs = logs.order_by('-invoice__date', '-created_at')
         
-        total_invoices = logs.count()
-        
-        total_amount = sum(log.invoice.subtotal for log in logs) if total_invoices > 0 else Decimal('0.00')
-        total_vat = sum(log.invoice.tax_amount for log in logs) if total_invoices > 0 else Decimal('0.00')
-        total_wht = sum(log.invoice.wht_amount for log in logs) if total_invoices > 0 else Decimal('0.00')
-        total_net = sum(log.invoice.total_amount for log in logs) if total_invoices > 0 else Decimal('0.00')
+        agg = logs.aggregate(
+            total_invoices=Count('id'),
+            total_amount=Coalesce(Sum('invoice__subtotal'), Decimal('0.00')),
+            total_vat=Coalesce(Sum('invoice__tax_amount'), Decimal('0.00')),
+            total_wht=Coalesce(Sum('invoice__wht_amount'), Decimal('0.00')),
+            total_net=Coalesce(Sum('invoice__total_amount'), Decimal('0.00')),
+        )
+        total_invoices = agg['total_invoices']
+        total_amount = agg['total_amount']
+        total_vat = agg['total_vat']
+        total_wht = agg['total_wht']
+        total_net = agg['total_net']
         
         context.update({
             'start_date': start_date,
@@ -2607,3 +3573,635 @@ class EInvoicingReportView(CustomPermissionRequiredMixin, TemplateView):
             'title': 'تقرير الفواتير الإلكترونية المعتمدة'
         })
         return context
+
+
+@login_required
+@custom_permission_required('core.view_sales_reports', redirect_url='core:report_shifts')
+def export_shift_detail_excel(request, pk):
+    """Exports a comprehensive Excel report (.xlsx) for a POS Session / Shift."""
+    from decimal import Decimal
+    from django.http import HttpResponse
+    from django.shortcuts import get_object_or_404
+    from apps.tenant.invoicing.models import POSSession
+
+    session = get_object_or_404(POSSession, pk=pk)
+    dt = get_pos_session_details(session)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = f"وردية #{session.id}"
+    ws.views.sheetView[0].rightToLeft = True
+
+    # Formatting styles
+    title_font = Font(name='Calibri', size=15, bold=True, color='1F4E79')
+    header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+    section_fill = PatternFill(start_color='D9E1F2', end_color='D9E1F2', fill_type='solid')
+    section_font = Font(name='Calibri', size=12, bold=True, color='1F4E79')
+    total_fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+    data_font = Font(name='Calibri', size=11)
+    bold_font = Font(name='Calibri', size=11, bold=True)
+    align_center = Alignment(horizontal='center', vertical='center')
+    align_right = Alignment(horizontal='right', vertical='center')
+    thin_border = Border(
+        left=Side(style='thin', color='D9D9D9'),
+        right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'),
+        bottom=Side(style='thin', color='D9D9D9')
+    )
+
+    def to_dec(val):
+        if val is None:
+            return Decimal('0.00')
+        return Decimal(str(val)).quantize(Decimal('0.01'))
+
+    # 1. Main Title
+    ws.merge_cells('A1:F1')
+    cell_title = ws['A1']
+    cell_title.value = f"تقرير تسوية وتقفيل الوردية رقم #{session.id} - مسار ERP"
+    cell_title.font = title_font
+    cell_title.alignment = align_center
+
+    # 2. Metadata Section
+    metadata = [
+        ["الكاشير المسؤول", session.user.get_full_name() or session.user.username, "الخزينة المعتمدة", session.treasury.name if session.treasury else '-'],
+        ["الفرع", session.branch.name if session.branch else '-', "حالة الوردية", session.get_status_display()],
+        ["تاريخ ووقت الفتح", session.start_time.strftime('%Y-%m-%d %H:%M') if session.start_time else '-', "تاريخ ووقت الإغلاق", session.end_time.strftime('%Y-%m-%d %H:%M') if session.end_time else 'مفتوحة حالياً'],
+    ]
+    if session.notes:
+        metadata.append(["ملاحظات الإغلاق", session.notes, "", ""])
+
+    for row in metadata:
+        ws.append(row)
+        for col_idx in range(1, len(row) + 1):
+            cell = ws.cell(row=ws.max_row, column=col_idx)
+            cell.font = bold_font if col_idx % 2 != 0 else data_font
+            cell.border = thin_border
+            cell.alignment = align_right
+
+    ws.append([])
+
+    # 3. Cash Reconciliation Table
+    ws.append(["💵 مطابقة وحركة النقدية بالدرج (Cash Drawer Settlement)", "", "", "", "", ""])
+    ws.merge_cells(f'A{ws.max_row}:F{ws.max_row}')
+    sec_cell = ws.cell(row=ws.max_row, column=1)
+    sec_cell.font = section_font
+    sec_cell.fill = section_fill
+
+    recon_headers = ["بيان الحركة النقدية", "المبلغ (ج.م)", "طبيعة الحركة"]
+    ws.append(recon_headers)
+    for c_idx in [1, 2, 3]:
+        cell = ws.cell(row=ws.max_row, column=c_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = align_center
+
+    recon_rows = [
+        ["الرصيد الافتتاحي (العهدة المستلمة)", to_dec(session.opening_balance), "رصيد بدء الوردية"],
+        ["(+) المقبوضات النقدية من المبيعات", to_dec(dt['total_cash_sales']), "مقبوض كاش من نقاط البيع"],
+    ]
+    if to_dec(dt['total_cash_rentals']) > 0:
+        recon_rows.append(["(+) المقبوضات النقدية من إيجار المعدات", to_dec(dt['total_cash_rentals']), "عقود إيجار مسددة نقداً"])
+    if to_dec(dt['total_cash_receipts']) > 0:
+        recon_rows.append(["(+) سندات القبض النقدية المقبوضة بالوردية", to_dec(dt['total_cash_receipts']), "مقبوضات سندات كاش"])
+    recon_rows.append(["(-) المرتجعات النقدية المسددة من الدرج", -to_dec(dt['total_cash_refunds']), "مرتجعات مبيعات كاش"])
+    if to_dec(dt['total_cash_payments']) > 0:
+        recon_rows.append(["(-) سندات الصرف النقدية والمصروفات", -to_dec(dt['total_cash_payments']), "مصروفات مسددة نقداً"])
+    recon_rows.extend([
+        ["(=) النقدية المتوقعة بالدرج (دفترياً)", to_dec(dt['expected_balance']), "الرصيد الدفتري المفترض"],
+        ["(📥) النقدية الفعلية المسلمة عند الإغلاق", to_dec(dt['actual_balance']), "الجرد الفعلي للكاش"],
+        ["(⚖️) الفارق النهائي (العجز / الزيادة)", to_dec(dt['difference']), "مطابق" if to_dec(dt['difference']) == 0 else ("زيادة" if to_dec(dt['difference']) > 0 else "عجز")],
+    ])
+
+    for r in recon_rows:
+        ws.append(r)
+        cell_label = ws.cell(row=ws.max_row, column=1)
+        cell_val = ws.cell(row=ws.max_row, column=2)
+        cell_desc = ws.cell(row=ws.max_row, column=3)
+        cell_label.font = bold_font
+        cell_label.border = thin_border
+        cell_val.font = bold_font
+        cell_val.border = thin_border
+        cell_val.alignment = align_right
+        cell_val.number_format = '#,##0.00'
+        cell_desc.font = data_font
+        cell_desc.border = thin_border
+        cell_desc.alignment = align_center
+
+        if "العجز / الزيادة" in r[0]:
+            diff_val = to_dec(dt['difference'])
+            if diff_val < 0:
+                cell_val.font = Font(name='Calibri', size=11, bold=True, color='9C0006')
+                cell_val.fill = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+            elif diff_val > 0:
+                cell_val.font = Font(name='Calibri', size=11, bold=True, color='006100')
+                cell_val.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+
+    ws.append([])
+
+    # 4. Payment Types Breakdown & Sales Summary
+    ws.append(["💳 ملخص مبيعات الوردية وتوزيع طرق التحصيل", "", "", "", "", ""])
+    ws.merge_cells(f'A{ws.max_row}:F{ws.max_row}')
+    sec_cell = ws.cell(row=ws.max_row, column=1)
+    sec_cell.font = section_font
+    sec_cell.fill = section_fill
+
+    pay_headers = ["طريقة التحصيل / البيان", "المبلغ (ج.م)", "ملاحظات وتفاصيل"]
+    ws.append(pay_headers)
+    for c_idx in [1, 2, 3]:
+        cell = ws.cell(row=ws.max_row, column=c_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = align_center
+
+    pay_rows = [
+        ["صافي إجمالي المبيعات (Net Sales)", to_dec(dt['net_sales_amount']), f"إجمالي البيع: {to_dec(dt['total_gross_sales'])} | المرتجع: {to_dec(dt['total_returns_amount'])}"],
+        ["- مبيعات نقدية (كاش بالدرج)", to_dec(dt['total_cash_sales']), "مقبوضات كاش"],
+        ["- مبيعات بطاقات (فيزا / شبكة)", to_dec(dt['total_card_sales']), "نقاط البيع الإلكترونية POS"],
+        ["- مبيعات محافظ إلكترونية", to_dec(dt['total_ewallet_sales']), "محافظ الهاتف الذكي"],
+        ["- مبيعات تحويلات بنكية", to_dec(dt['total_bank_sales']), "حسابات البنوك"],
+        ["- مبيعات آجلة (ذمم عملاء)", to_dec(dt['total_credit_sales']), "حسابات العملاء الآجلة"],
+        ["عدد الفواتير الصادرة", len(dt['posted_invoices']), f"بيع: {dt['sales_count']} | مرتجع: {dt['returns_count']}"],
+    ]
+    for r in pay_rows:
+        ws.append(r)
+        c1 = ws.cell(row=ws.max_row, column=1)
+        c2 = ws.cell(row=ws.max_row, column=2)
+        c3 = ws.cell(row=ws.max_row, column=3)
+        c1.font = bold_font
+        c1.border = thin_border
+        c2.font = bold_font
+        c2.border = thin_border
+        c2.alignment = align_right
+        if isinstance(r[1], Decimal):
+            c2.number_format = '#,##0.00'
+        else:
+            c2.alignment = align_center
+        c3.font = data_font
+        c3.border = thin_border
+        c3.alignment = align_center
+
+    ws.append([])
+
+    # 5. Invoices Table
+    ws.append([f"📄 فواتير الوردية ({len(dt['posted_invoices'])} فاتورة)", "", "", "", "", ""])
+    ws.merge_cells(f'A{ws.max_row}:F{ws.max_row}')
+    sec_cell = ws.cell(row=ws.max_row, column=1)
+    sec_cell.font = section_font
+    sec_cell.fill = section_fill
+
+    inv_headers = ["رقم الفاتورة", "الوقت", "النوع", "العميل", "طريقة الدفع", "المبلغ الإجمالي"]
+    ws.append(inv_headers)
+    for c_idx in range(1, 7):
+        cell = ws.cell(row=ws.max_row, column=c_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = align_center
+
+    for inv in dt['posted_invoices']:
+        mult = Decimal('1') if inv.invoice_type == 'SALE' else Decimal('-1')
+        inv_amt = to_dec(inv.total_amount) * mult
+        ws.append([
+            inv.invoice_number,
+            inv.created_at.strftime('%H:%M:%S') if inv.created_at else '',
+            inv.get_invoice_type_display(),
+            inv.partner.name if inv.partner else 'عميل نقدي',
+            inv.get_payment_type_display(),
+            inv_amt
+        ])
+        for c_idx in range(1, 7):
+            cell = ws.cell(row=ws.max_row, column=c_idx)
+            cell.font = data_font
+            cell.border = thin_border
+            if c_idx == 6:
+                cell.alignment = align_right
+                cell.number_format = '#,##0.00'
+            else:
+                cell.alignment = align_center
+
+    # Invoices Total Row
+    ws.append(["الإجمالي", "", "", "", f"{len(dt['posted_invoices'])} فاتورة", to_dec(dt['net_sales_amount'])])
+    for c_idx in range(1, 7):
+        cell = ws.cell(row=ws.max_row, column=c_idx)
+        cell.font = bold_font
+        cell.fill = total_fill
+        cell.border = thin_border
+        if c_idx == 6:
+            cell.alignment = align_right
+            cell.number_format = '#,##0.00'
+        else:
+            cell.alignment = align_center
+
+    ws.append([])
+
+    # 6. Vouchers Table
+    if dt['shift_vouchers']:
+        ws.append([f"🧾 سندات القبض والصرف والمصروفات ({len(dt['shift_vouchers'])} سند)", "", "", "", "", ""])
+        ws.merge_cells(f'A{ws.max_row}:F{ws.max_row}')
+        sec_cell = ws.cell(row=ws.max_row, column=1)
+        sec_cell.font = section_font
+        sec_cell.fill = section_fill
+
+        vouch_headers = ["رقم السند", "الوقت", "النوع", "المحرر / الطرف", "البيان", "المبلغ"]
+        ws.append(vouch_headers)
+        for c_idx in range(1, 7):
+            cell = ws.cell(row=ws.max_row, column=c_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = align_center
+
+        for v in dt['shift_vouchers']:
+            mult = Decimal('1') if v.voucher_type == 'RECEIPT' else Decimal('-1')
+            v_amt = to_dec(v.amount) * mult
+            ws.append([
+                v.voucher_number,
+                v.created_at.strftime('%H:%M:%S') if v.created_at else '',
+                v.get_voucher_type_display(),
+                v.partner.name if v.partner else 'سند كاش / مصروف',
+                v.description or '-',
+                v_amt
+            ])
+            for c_idx in range(1, 7):
+                cell = ws.cell(row=ws.max_row, column=c_idx)
+                cell.font = data_font
+                cell.border = thin_border
+                if c_idx == 6:
+                    cell.alignment = align_right
+                    cell.number_format = '#,##0.00'
+                else:
+                    cell.alignment = align_center
+
+        # Vouchers Total Row
+        net_vouchers = to_dec(dt['total_cash_receipts']) - to_dec(dt['total_cash_payments'])
+        ws.append(["الإجمالي (صافي حركة السندات)", "", "", "", f"{len(dt['shift_vouchers'])} سند", net_vouchers])
+        for c_idx in range(1, 7):
+            cell = ws.cell(row=ws.max_row, column=c_idx)
+            cell.font = bold_font
+            cell.fill = total_fill
+            cell.border = thin_border
+            if c_idx == 6:
+                cell.alignment = align_right
+                cell.number_format = '#,##0.00'
+            else:
+                cell.alignment = align_center
+
+        ws.append([])
+
+    # 7. Rentals Table
+    if dt['shift_rentals']:
+        ws.append([f"🚜 عقود إيجار المعدات بالوردية ({len(dt['shift_rentals'])} عقد)", "", "", "", "", ""])
+        ws.merge_cells(f'A{ws.max_row}:F{ws.max_row}')
+        sec_cell = ws.cell(row=ws.max_row, column=1)
+        sec_cell.font = section_font
+        sec_cell.fill = section_fill
+
+        rent_headers = ["رقم العقد", "الوقت", "المعدة", "العميل", "طريقة الدفع", "المبلغ الإجمالي"]
+        ws.append(rent_headers)
+        for c_idx in range(1, 7):
+            cell = ws.cell(row=ws.max_row, column=c_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = align_center
+
+        for r in dt['shift_rentals']:
+            pm_str = "كاش" if r.payment_method == 'CASH' else "آجل"
+            ws.append([
+                f"#{r.id}",
+                r.created_at.strftime('%H:%M:%S') if r.created_at else '',
+                f"{r.equipment.name} ({r.equipment.code})",
+                r.customer.name if r.customer else '-',
+                pm_str,
+                to_dec(r.total_amount or 0)
+            ])
+            for c_idx in range(1, 7):
+                cell = ws.cell(row=ws.max_row, column=c_idx)
+                cell.font = data_font
+                cell.border = thin_border
+                if c_idx == 6:
+                    cell.alignment = align_right
+                    cell.number_format = '#,##0.00'
+                else:
+                    cell.alignment = align_center
+
+        # Rentals Total Row
+        ws.append(["الإجمالي", "", "", "", f"{len(dt['shift_rentals'])} عقد", to_dec(dt['total_rentals_amount'])])
+        for c_idx in range(1, 7):
+            cell = ws.cell(row=ws.max_row, column=c_idx)
+            cell.font = bold_font
+            cell.fill = total_fill
+            cell.border = thin_border
+            if c_idx == 6:
+                cell.alignment = align_right
+                cell.number_format = '#,##0.00'
+            else:
+                cell.alignment = align_center
+
+    # Auto-fit Column Widths
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.coordinate in ['A1', 'A2']:
+                continue
+            val_str = str(cell.value or '')
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 16)
+
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f'attachment; filename="Shift_Report_#{session.id}.xlsx"'
+    wb.save(response)
+    return response
+
+
+class FixedAssetReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
+    """
+    تقرير سجل الأصول الثابتة والإهلاك:
+    يعرض كافة الأصول وتكلفتها ومجمع الإهلاك وصافي القيمة الدفترية ومعدلات الاستهلاك مع إمكانية التصدير.
+    """
+    permission_required = 'core.view_accounting_reports'
+    template_name = 'reports/fixed_assets_report.html'
+    csv_filename = "fixed_assets_report.csv"
+
+    def get_csv_headers(self):
+        return [
+            'كود الأصل', 'اسم الأصل', 'التصنيف', 'تاريخ الشراء',
+            'تكلفة الشراء', 'مجمع الإهلاك', 'صافي القيمة الدفترية',
+            'نسبة الاستهلاك %', 'القسط الشهري', 'الحالة'
+        ]
+
+    def get_csv_row(self, obj):
+        return [
+            obj['code'],
+            obj['name'],
+            obj['category_display'],
+            obj['purchase_date'].strftime('%Y-%m-%d') if hasattr(obj['purchase_date'], 'strftime') else str(obj['purchase_date']),
+            float(obj['purchase_cost']),
+            float(obj['total_accumulated_depreciation']),
+            float(obj['current_book_value']),
+            f"{obj['depreciation_progress_percent']}%",
+            float(obj['monthly_depreciation_amount']),
+            obj['status_display'],
+        ]
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from apps.tenant.accounting.models import FixedAsset
+        from decimal import Decimal
+
+        qs = FixedAsset.objects.all().select_related('branch', 'asset_account').order_by('-purchase_date', '-id')
+
+        category = self.request.GET.get('category')
+        status = self.request.GET.get('status')
+        date_from = self.request.GET.get('date_from')
+        date_to = self.request.GET.get('date_to')
+        q = self.request.GET.get('q')
+
+        if category:
+            qs = qs.filter(category=category)
+        if status:
+            qs = qs.filter(status=status)
+        if date_from:
+            qs = qs.filter(purchase_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(purchase_date__lte=date_to)
+        if q:
+            from django.db.models import Q
+            qs = qs.filter(Q(name__icontains=q) | Q(code__icontains=q) | Q(location__icontains=q))
+
+        asset_rows = []
+        total_cost = Decimal('0.00')
+        total_acc_dep = Decimal('0.00')
+        total_book_val = Decimal('0.00')
+        total_monthly_dep = Decimal('0.00')
+
+        for a in qs:
+            cost = a.purchase_cost
+            acc_dep = a.total_accumulated_depreciation
+            book_val = a.current_book_value
+            monthly_dep = a.monthly_depreciation_amount
+
+            if a.status != FixedAsset.AssetStatus.DISPOSED:
+                total_cost += cost
+                total_acc_dep += acc_dep
+                total_book_val += book_val
+                if a.status == FixedAsset.AssetStatus.ACTIVE:
+                    total_monthly_dep += monthly_dep
+
+            asset_rows.append({
+                'id': a.id,
+                'code': a.code,
+                'name': a.name,
+                'category': a.category,
+                'category_display': a.get_category_display(),
+                'location': a.location,
+                'purchase_date': a.purchase_date,
+                'purchase_cost': cost,
+                'total_accumulated_depreciation': acc_dep,
+                'current_book_value': book_val,
+                'depreciation_progress_percent': a.depreciation_progress_percent,
+                'monthly_depreciation_amount': monthly_dep,
+                'useful_life_years': a.useful_life_years,
+                'depreciation_rate': a.depreciation_rate,
+                'status': a.status,
+                'status_display': a.get_status_display(),
+            })
+
+        context.update({
+            'title': 'سجل الأصول الثابتة والإهلاك',
+            'assets': asset_rows,
+            'categories': FixedAsset.AssetCategory.choices,
+            'statuses': FixedAsset.AssetStatus.choices,
+            'selected_category': category or '',
+            'selected_status': status or '',
+            'date_from': date_from or '',
+            'date_to': date_to or '',
+            'search_query': q or '',
+            'total_cost': total_cost,
+            'total_accumulated_depreciation': total_acc_dep,
+            'total_book_value': total_book_val,
+            'total_monthly_depreciation': total_monthly_dep,
+            'total_count': len(asset_rows),
+            'report_data': asset_rows,
+        })
+
+        if self.request.GET.get('export') == 'csv':
+            return self.export_csv(asset_rows)
+
+        return context
+
+    def export_csv(self, rows):
+        import csv
+        response = HttpResponse(content_type='text/csv; charset=utf-8-sig')
+        response['Content-Disposition'] = f'attachment; filename="{self.csv_filename}"'
+        response.write('\ufeff')
+        writer = csv.writer(response)
+        writer.writerow(self.get_csv_headers())
+        for row in rows:
+            writer.writerow(self.get_csv_row(row))
+        return response
+
+
+class LoanReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
+    """
+    تقرير القروض والتسهيلات البنكية وجداول الأقساط:
+    يعرض كافة القروض والالتزامات القائمة، المسدد، الفوائد، الأقساط المتأخرة،
+    مع إمكانية الفلترة وتصدير التقرير لـ Excel أو CSV.
+    """
+    permission_required = 'core.view_accounting_reports'
+    template_name = 'reports/loans_report.html'
+    csv_filename = "loans_and_financing_report.xlsx"
+
+    def get_csv_headers(self):
+        return [
+            'كود القرض', 'اسم القرض', 'نوع التمويل', 'الجهة الممولة',
+            'تاريخ البدء', 'أصل القرض', 'إجمالي الفوائد', 'إجمالي الالتزام',
+            'المسدد (أصل)', 'المسدد (فوائد)', 'إجمالي المسدد',
+            'المتبقي من أصل القرض', 'المتبقي الإجمالي', 'نسبة السداد %',
+            'الأقساط المتأخرة', 'الحالة'
+        ]
+
+    def get_csv_row(self, obj):
+        return [
+            obj['code'],
+            obj['name'],
+            obj['loan_type_display'],
+            obj['lender_name'],
+            obj['start_date'].strftime('%Y-%m-%d') if hasattr(obj['start_date'], 'strftime') else str(obj['start_date']),
+            float(obj['principal_amount']),
+            float(obj['total_interest_amount']),
+            float(obj['total_amount']),
+            float(obj['paid_principal']),
+            float(obj['paid_interest']),
+            float(obj['total_paid']),
+            float(obj['remaining_principal']),
+            float(obj['remaining_total']),
+            f"{obj['repayment_progress_percent']}%",
+            int(obj['overdue_count']),
+            obj['status_display'],
+        ]
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from apps.tenant.accounting.models import Loan
+        from decimal import Decimal
+
+        qs = Loan.objects.all().select_related('loan_account', 'interest_expense_account').order_by('-start_date', '-id')
+
+        loan_type = self.request.GET.get('loan_type')
+        status = self.request.GET.get('status')
+        date_from = self.request.GET.get('date_from')
+        date_to = self.request.GET.get('date_to')
+        q = self.request.GET.get('q')
+
+        if loan_type:
+            qs = qs.filter(loan_type=loan_type)
+        if status:
+            qs = qs.filter(status=status)
+        if date_from:
+            qs = qs.filter(start_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(start_date__lte=date_to)
+        if q:
+            from django.db.models import Q
+            qs = qs.filter(Q(name__icontains=q) | Q(code__icontains=q) | Q(lender_name__icontains=q) | Q(contract_number__icontains=q))
+
+        loan_rows = []
+        total_principal = Decimal('0.00')
+        total_interest = Decimal('0.00')
+        total_amount = Decimal('0.00')
+        total_paid_principal = Decimal('0.00')
+        total_paid_interest = Decimal('0.00')
+        total_paid = Decimal('0.00')
+        total_remaining_principal = Decimal('0.00')
+        total_remaining_total = Decimal('0.00')
+        total_overdue_count = 0
+
+        for loan in qs:
+            p = loan.principal_amount
+            i = loan.total_interest_amount
+            tot = loan.total_amount
+            paid_p = loan.paid_principal
+            paid_i = loan.paid_interest
+            tot_paid = loan.total_paid
+            rem_p = loan.remaining_principal
+            rem_tot = loan.remaining_total
+            overdue = loan.overdue_count
+
+            total_principal += p
+            total_interest += i
+            total_amount += tot
+            total_paid_principal += paid_p
+            total_paid_interest += paid_i
+            total_paid += tot_paid
+            total_remaining_principal += rem_p
+            total_remaining_total += rem_tot
+            total_overdue_count += overdue
+
+            loan_rows.append({
+                'id': loan.id,
+                'code': loan.code,
+                'name': loan.name,
+                'loan_type': loan.loan_type,
+                'loan_type_display': loan.get_loan_type_display(),
+                'lender_name': loan.lender_name,
+                'contract_number': loan.contract_number or '',
+                'start_date': loan.start_date,
+                'installments_count': loan.installments_count,
+                'interest_rate': loan.interest_rate,
+                'principal_amount': p,
+                'total_interest_amount': i,
+                'total_amount': tot,
+                'paid_principal': paid_p,
+                'paid_interest': paid_i,
+                'total_paid': tot_paid,
+                'remaining_principal': rem_p,
+                'remaining_total': rem_tot,
+                'repayment_progress_percent': loan.repayment_progress_percent,
+                'overdue_count': overdue,
+                'status': loan.status,
+                'status_display': loan.get_status_display(),
+            })
+
+        context.update({
+            'title': 'تقرير القروض والتسهيلات البنكية',
+            'report_data': loan_rows,
+            'loans': loan_rows,
+            'loan_types': Loan.LoanType.choices,
+            'statuses': Loan.LoanStatus.choices,
+            'selected_loan_type': loan_type or '',
+            'selected_status': status or '',
+            'date_from': date_from or '',
+            'date_to': date_to or '',
+            'search_query': q or '',
+            'total_principal': total_principal,
+            'total_interest': total_interest,
+            'total_amount': total_amount,
+            'total_paid_principal': total_paid_principal,
+            'total_paid_interest': total_paid_interest,
+            'total_paid': total_paid,
+            'total_remaining_principal': total_remaining_principal,
+            'total_remaining_total': total_remaining_total,
+            'total_overdue_count': total_overdue_count,
+            'total_count': len(loan_rows),
+        })
+
+        if self.request.GET.get('export') == 'csv':
+            return self.export_csv(loan_rows)
+
+        return context
+
+    def export_csv(self, rows):
+        import csv
+        response = HttpResponse(content_type='text/csv; charset=utf-8-sig')
+        response['Content-Disposition'] = f'attachment; filename="loans_report.csv"'
+        response.write('\ufeff')
+        writer = csv.writer(response)
+        writer.writerow(self.get_csv_headers())
+        for row in rows:
+            writer.writerow(self.get_csv_row(row))
+        return response
+
+

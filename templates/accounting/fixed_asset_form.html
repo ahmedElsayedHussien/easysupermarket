@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem; max-width: 950px; margin: 0 auto;">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <h2 style="margin: 0; color: #fff; font-weight: 800;">
+                <i class="fas fa-cube text-warning" style="margin-left: 0.5rem;"></i> {{ title }}
+            </h2>
+            <small class="text-white-50">أدخل بيانات الأصل الثابت وسياسة الإهلاك المحاسبية</small>
+        </div>
+        <a href="{{ cancel_url }}" class="btn btn-outline-secondary" style="border-radius: 8px;">
+            <i class="fas fa-arrow-right"></i> عودة للأصول
+        </a>
+    </div>
+
+    <form method="post" id="assetForm">
+        {% csrf_token %}
+
+        {% if form.errors %}
+        <div class="alert alert-danger mb-4" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5;">
+            <strong class="d-block mb-1"><i class="fas fa-exclamation-triangle"></i> برجاء مراجعة الأخطاء التالية:</strong>
+            <ul class="mb-0">
+                {% for field, errors in form.errors.items %}
+                    {% for error in errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- 1. البيانات التعريفية للأصل -->
+        <div class="card p-4 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+            <h5 class="mb-3" style="color: #00e5ff; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                <i class="fas fa-tag"></i> 1. البيانات التعريفية والموقع
+            </h5>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">اسم الأصل <span class="text-danger">*</span></label>
+                    {{ form.name }}
+                    <small class="text-white-50">مثال: ثلاجة عرض ألبان 3 متر، سيارة سوزوكي فان توصيل، ماكينة كاشير 1</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">تصنيف الأصل <span class="text-danger">*</span></label>
+                    {{ form.category }}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">الفرع</label>
+                    {{ form.branch }}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">مكان التواجد / القسم الداخلي</label>
+                    {{ form.location }}
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. التكلفة والتمويل -->
+        <div class="card p-4 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+            <h5 class="mb-3" style="color: #10b981; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                <i class="fas fa-coins"></i> 2. بيانات الشراء والتكلفة
+            </h5>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label text-white-50">تاريخ الشراء / بدء الخدمة <span class="text-danger">*</span></label>
+                    {{ form.purchase_date }}
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label text-white-50">تكلفة الشراء التاريخية <span class="text-danger">*</span></label>
+                    {{ form.purchase_cost }}
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label text-white-50">قيمة الخردة / النفاية (Salvage Value)</label>
+                    {{ form.salvage_value }}
+                    <small class="text-white-50">القيمة التقديرية بعد انتهاء الإهلاك (افتراضياً 0)</small>
+                </div>
+
+                {% if not form.instance.pk %}
+                <div class="col-12 mt-3 pt-2" style="border-top: 1px dashed rgba(255,255,255,0.1);">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label text-white-50">طريقة تمويل / شراء الأصل <span class="text-danger">*</span></label>
+                            {{ form.payment_method_type }}
+                        </div>
+                        <div class="col-md-6" id="div_treasury" style="display: none;">
+                            <label class="form-label text-white-50">الخزينة المسدد منها</label>
+                            {{ form.treasury }}
+                        </div>
+                        <div class="col-md-6" id="div_bank" style="display: none;">
+                            <label class="form-label text-white-50">الحساب البنكي المسدد منه</label>
+                            {{ form.bank_account }}
+                        </div>
+                        <div class="col-md-6" id="div_supplier" style="display: none;">
+                            <label class="form-label text-white-50">المورد الدائن</label>
+                            {{ form.supplier }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 mt-3" id="div_opening_balance">
+                    <div class="p-3 rounded-3" style="background: rgba(255, 184, 0, 0.08); border: 1px solid rgba(255, 184, 0, 0.25);">
+                        <div class="form-check form-switch mb-2">
+                            {{ form.is_opening_balance }}
+                            <label class="form-check-label text-warning fw-bold" for="{{ form.is_opening_balance.id_for_label }}">
+                                هذا الأصل تم شراؤه قبل بدء العمل على البرنامج (رصيد افتتاحي)
+                            </label>
+                        </div>
+                        <div class="row mt-2" id="div_opening_dep_amount">
+                            <div class="col-md-6">
+                                <label class="form-label text-white-50">مجمع الإهلاك السابق المحسوب حتى تاريخه</label>
+                                {{ form.opening_accumulated_depreciation }}
+                                <small class="text-white-50">المبلغ الذي استُهلك بالفعل من الأصل قبل اليوم (0 إن كان جديداً)</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 3. سياسة الإهلاك والحسابات -->
+        <div class="card p-4 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+            <h5 class="mb-3" style="color: #ffb800; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                <i class="fas fa-calculator"></i> 3. سياسة الإهلاك (طريقة القسط الثابت)
+            </h5>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">العمر الافتراضي (بالسنوات)</label>
+                    {{ form.useful_life_years }}
+                    <small class="text-white-50">مثال: 5 سنوات (تتحدث نسبة الإهلاك تلقائياً إلى 20%)</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">نسبة الإهلاك السنوية %</label>
+                    {{ form.depreciation_rate }}
+                    <small class="text-white-50">مثال: 20% (يتحدث العمر تلقائياً إلى 5 سنوات)</small>
+                </div>
+
+                <div class="col-12 mt-3 pt-2" style="border-top: 1px dashed rgba(255,255,255,0.1);">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label text-white-50">حساب الأصل (الأستاذ العام)</label>
+                            {{ form.asset_account }}
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label text-white-50">حساب مجمع الإهلاك (الأستاذ العام)</label>
+                            {{ form.accumulated_depreciation_account }}
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label text-white-50">حساب مصروف الإهلاك (قائمة الدخل)</label>
+                            {{ form.depreciation_expense_account }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 mt-3">
+                    <label class="form-label text-white-50">ملاحظات ومواصفات فنية إضافية</label>
+                    {{ form.notes }}
+                </div>
+            </div>
+        </div>
+
+        <!-- زر الحفظ الأساسي بلون برتقالي مميز -->
+        <div class="d-flex justify-content-end gap-2 mt-4">
+            <a href="{{ cancel_url }}" class="btn btn-outline-secondary px-4" style="border-radius: 8px;">إلغاء</a>
+            <button type="submit" class="btn btn-orange px-5" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); font-size: 1.05rem;">
+                <i class="fas fa-save"></i> حفظ بيانات الأصل
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // 1. Sync useful_life_years <-> depreciation_rate
+    const lifeInput = document.getElementById('{{ form.useful_life_years.id_for_label }}');
+    const rateInput = document.getElementById('{{ form.depreciation_rate.id_for_label }}');
+
+    if (lifeInput && rateInput) {
+        lifeInput.addEventListener('input', function() {
+            const life = parseFloat(this.value);
+            if (life > 0) {
+                rateInput.value = (100.0 / life).toFixed(2);
+            }
+        });
+
+        rateInput.addEventListener('input', function() {
+            const rate = parseFloat(this.value);
+            if (rate > 0) {
+                lifeInput.value = (100.0 / rate).toFixed(2);
+            }
+        });
+    }
+
+    // 2. Toggle financing fields
+    const paySelect = document.getElementById('id_payment_method_type');
+    const divTreasury = document.getElementById('div_treasury');
+    const divBank = document.getElementById('div_bank');
+    const divSupplier = document.getElementById('div_supplier');
+    const divOpening = document.getElementById('div_opening_balance');
+    const openingCheck = document.getElementById('{{ form.is_opening_balance.id_for_label }}');
+
+    function updateFinancingFields() {
+        if (!paySelect) return;
+        const val = paySelect.value;
+        if (divTreasury) divTreasury.style.display = (val === 'TREASURY') ? 'block' : 'none';
+        if (divBank) divBank.style.display = (val === 'BANK') ? 'block' : 'none';
+        if (divSupplier) divSupplier.style.display = (val === 'SUPPLIER') ? 'block' : 'none';
+
+        if (openingCheck) {
+            if (val === 'OPENING') {
+                openingCheck.checked = true;
+            } else {
+                openingCheck.checked = false;
+            }
+        }
+    }
+
+    if (paySelect) {
+        paySelect.addEventListener('change', updateFinancingFields);
+        updateFinancingFields();
+    }
+});
+</script>
+{% endblock %}

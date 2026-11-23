@@ -1,0 +1,190 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}عرض سعر {{ quotation.quotation_number }}{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <!-- Top Action Bar -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            <h2 style="margin: 0; color: #fff;">
+                <i class="fas fa-file-contract" style="color: #ff7300; margin-left: 0.5rem;"></i>
+                عرض سعر <span class="en" style="color: #ff7300;">{{ quotation.quotation_number }}</span>
+            </h2>
+            <div style="margin-top: 0.3rem;">
+                {% if quotation.status == 'CONVERTED' %}
+                <span style="background: rgba(52, 211, 153, 0.2); color: #34d399; padding: 0.25rem 0.75rem; border-radius: 6px; font-weight: bold;">
+                    <i class="fas fa-check-circle"></i> تم التسليم وعمل فاتورة بيع مؤكدة
+                    {% if quotation.converted_invoice %}
+                    <a href="{% url 'invoicing:invoice_detail' quotation.converted_invoice.id %}" style="color: #6ee7b7; text-decoration: underline; margin-right: 0.5rem;">
+                        ({{ quotation.converted_invoice.invoice_number }})
+                    </a>
+                    {% endif %}
+                </span>
+                {% elif quotation.status == 'POSTED' %}
+                <span style="background: rgba(52, 211, 153, 0.2); color: #34d399; padding: 0.25rem 0.75rem; border-radius: 6px; font-weight: bold;">مرحّل ومؤكد</span>
+                {% else %}
+                <span style="background: rgba(251, 191, 36, 0.2); color: #fbbf24; padding: 0.25rem 0.75rem; border-radius: 6px; font-weight: bold;">عرض سعر (بانتظار التسليم)</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Action Buttons (Orange Primary per AGENTS.md rules) -->
+        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+            <a href="{% url 'invoicing:quotation_list' %}" style="background-color: #ff7300; color: #fff; padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: bold; text-decoration: none; box-shadow: 0 4px 12px rgba(255, 115, 0, 0.3);">
+                ⬅️ العودة لعروض الأسعار
+            </a>
+            <a href="{% url 'invoicing:quotation_create' %}" class="btn-ghost" style="padding: 0.6rem 1.2rem; border-radius: 8px; color: #00e5ff; border: 1px solid rgba(0,229,255,0.4); text-decoration: none; font-weight: bold;">
+                ➕ عرض سعر جديد
+            </a>
+            <a href="{% url 'invoicing:quotation_print' quotation.id %}" target="_blank" class="btn-ghost" style="padding: 0.6rem 1.2rem; border-radius: 8px; color: #fff; border: 1px solid rgba(255,255,255,0.1); text-decoration: none;">
+                <i class="fas fa-print"></i> طباعة / معاينة
+            </a>
+
+            {% if quotation.status != 'CONVERTED' %}
+            <form method="POST" action="{% url 'invoicing:quotation_convert' quotation.id %}" style="display: inline;" onsubmit="return confirm('تأكيد تسليم البضاعة وإصدار فاتورة بيع مؤكدة وخصم المخزون؟');">
+                {% csrf_token %}
+                <button type="submit" class="btn-orange" style="background-color: #ff7300; color: #fff; border: none; padding: 0.65rem 1.4rem; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 14px rgba(255, 115, 0, 0.4); font-size: 1rem; display: inline-flex; align-items: center; gap: 0.5rem;">
+                    <i class="fas fa-truck-loading"></i> تسليم وعمل فاتورة بيع مؤكدة
+                </button>
+            </form>
+
+            <a href="{% url 'invoicing:quotation_edit' quotation.id %}" class="btn-ghost" style="padding: 0.6rem 1.2rem; border-radius: 8px; color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.3); text-decoration: none;">
+                <i class="fas fa-edit"></i> تعديل
+            </a>
+
+            <a href="{% url 'invoicing:quotation_delete' quotation.id %}" class="btn-ghost" style="padding: 0.6rem 1.2rem; border-radius: 8px; color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); text-decoration: none;">
+                <i class="fas fa-trash"></i> حذف
+            </a>
+            {% else %}
+            {% if quotation.converted_invoice %}
+            <a href="{% url 'invoicing:invoice_detail' quotation.converted_invoice.id %}" style="background-color: #2563eb; color: #fff; padding: 0.65rem 1.4rem; border-radius: 8px; font-weight: bold; text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);">
+                <i class="fas fa-file-invoice"></i> عرض الفاتورة المؤكدة ({{ quotation.converted_invoice.invoice_number }})
+            </a>
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Info Grid -->
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.2rem; margin-bottom: 2rem; background: rgba(15, 23, 42, 0.6); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1);">
+        <div>
+            <div style="color: #94a3b8; font-size: 0.85rem;">العميل</div>
+            <div style="color: #fff; font-weight: bold; font-size: 1.05rem; margin-top: 0.2rem;">{{ quotation.partner.name }}</div>
+        </div>
+        <div>
+            <div style="color: #94a3b8; font-size: 0.85rem;">الفرع</div>
+            <div style="color: #fff; font-weight: bold; margin-top: 0.2rem;">{{ quotation.branch.name }}</div>
+        </div>
+        <div>
+            <div style="color: #94a3b8; font-size: 0.85rem;">مستودع الصرف</div>
+            <div style="color: #fff; font-weight: bold; margin-top: 0.2rem;">{{ quotation.warehouse.name }}</div>
+        </div>
+        <div>
+            <div style="color: #94a3b8; font-size: 0.85rem;">تاريخ العرض</div>
+            <div class="en" style="color: #fff; font-weight: bold; margin-top: 0.2rem;">{{ quotation.date|date:"Y-m-d" }}</div>
+        </div>
+        <div>
+            <div style="color: #94a3b8; font-size: 0.85rem;">تاريخ انقضاء الصلاحية</div>
+            <div class="en" style="color: #fff; font-weight: bold; margin-top: 0.2rem;">{{ quotation.valid_until|date:"Y-m-d"|default:"غير محدد" }}</div>
+        </div>
+        <div>
+            <div style="color: #94a3b8; font-size: 0.85rem;">أنشئ بواسطة</div>
+            <div style="color: #fff; margin-top: 0.2rem;">{{ quotation.created_by.username|default:"النظام" }}</div>
+        </div>
+    </div>
+
+    <!-- Items Table -->
+    <div style="background: rgba(15, 23, 42, 0.6); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 2rem;">
+        <h4 style="color: #ff7300; margin-top: 0; margin-bottom: 1rem;"><i class="fas fa-list-ol"></i> بنود عرض السعر والضرائب</h4>
+        <div style="overflow-x: auto;">
+            <table class="data-table" style="width: 100%; border-collapse: collapse; color: #fff;">
+                <thead>
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); text-align: right;">
+                        <th style="padding: 0.75rem;">#</th>
+                        <th style="padding: 0.75rem;">الصنف / الخدمة</th>
+                        <th style="padding: 0.75rem;">النوع</th>
+                        <th style="padding: 0.75rem;">الكمية</th>
+                        <th style="padding: 0.75rem;">الوحدة</th>
+                        <th style="padding: 0.75rem;">سعر الوحدة</th>
+                        <th style="padding: 0.75rem;">الخصم</th>
+                        <th style="padding: 0.75rem;">صافي قبل الضريبة</th>
+                        <th style="padding: 0.75rem;">ض.ق.م (VAT)</th>
+                        <th style="padding: 0.75rem;">ض.خصم (WHT)</th>
+                        <th style="padding: 0.75rem;">الإجمالي النهائي</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for line in quotation.lines.all %}
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="padding: 0.75rem;">{{ forloop.counter }}</td>
+                        <td style="padding: 0.75rem; font-weight: bold;">{{ line.product.name }}</td>
+                        <td style="padding: 0.75rem;">
+                            {% if line.product.product_type == 'SERVICE' %}
+                            <span style="color: #a78bfa; font-size: 0.85rem;">خدمة (بدون مخزون)</span>
+                            {% else %}
+                            <span style="color: #34d399; font-size: 0.85rem;">مخزني</span>
+                            {% endif %}
+                        </td>
+                        <td class="en" style="padding: 0.75rem;">{{ line.quantity|floatformat:2 }}</td>
+                        <td style="padding: 0.75rem;">
+                            <span style="color: #38bdf8; font-weight: bold;">{{ line.unit_name }}</span>
+                            {% if line.conversion_factor and line.conversion_factor > 1 %}
+                            <span style="display: block; font-size: 0.75rem; color: #94a3b8;">(معامل: {{ line.conversion_factor|floatformat:2 }})</span>
+                            {% endif %}
+                        </td>
+                        <td class="en" style="padding: 0.75rem;">{{ line.unit_price|floatformat:2 }}</td>
+                        <td class="en" style="padding: 0.75rem;">{{ line.discount_amount|floatformat:2 }} ({{ line.discount_pct }}%)</td>
+                        <td class="en" style="padding: 0.75rem; font-weight: bold;">{{ line.subtotal|floatformat:2 }}</td>
+                        <td class="en" style="padding: 0.75rem; color: #38bdf8;">{{ line.tax_amount|floatformat:2 }} ({{ line.tax_rate }}%)</td>
+                        <td class="en" style="padding: 0.75rem; color: #f472b6;">{{ line.wht_amount|floatformat:2 }} ({{ line.wht_rate }}%)</td>
+                        <td class="en" style="padding: 0.75rem; color: #fbbf24; font-weight: bold;">{{ line.total_amount|floatformat:2 }} ج.م</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="11" style="text-align: center; padding: 1.5rem; color: #94a3b8;">لا توجد بنود في عرض السعر هذا.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Financial Totals Summary Card -->
+    <div style="display: flex; justify-content: flex-end;">
+        <div style="background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 115, 0, 0.3); border-radius: 12px; padding: 1.5rem; width: 100%; max-width: 400px; color: #fff;">
+            <h4 style="color: #ff7300; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">
+                <i class="fas fa-calculator"></i> الملخص المالي والضريبي
+            </h4>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.6rem;">
+                <span style="color: #94a3b8;">الإجمالي قبل الضريبة والخصم:</span>
+                <span class="en" style="font-weight: bold;">{{ quotation.subtotal|floatformat:2 }} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.6rem; color: #f87171;">
+                <span>إجمالي الخصومات:</span>
+                <span class="en" style="font-weight: bold;">- {{ quotation.discount_amount|floatformat:2 }} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.6rem; color: #38bdf8;">
+                <span>ضريبة القيمة المضافة (VAT):</span>
+                <span class="en" style="font-weight: bold;">+ {{ quotation.tax_amount|floatformat:2 }} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.6rem; color: #f472b6;">
+                <span>ضريبة الخصم والإضافة (WHT):</span>
+                <span class="en" style="font-weight: bold;">- {{ quotation.wht_amount|floatformat:2 }} ج.م</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 1rem; padding-top: 0.75rem; border-top: 2px dashed rgba(255,115,0,0.4); font-size: 1.25rem; font-weight: bold; color: #fbbf24;">
+                <span>الإجمالي النهائي:</span>
+                <span class="en">{{ quotation.total_amount|floatformat:2 }} ج.م</span>
+            </div>
+        </div>
+    </div>
+
+    {% if quotation.notes %}
+    <div style="margin-top: 1.5rem; background: rgba(15, 23, 42, 0.4); padding: 1rem; border-radius: 8px; border-right: 4px solid #ff7300; color: #cbd5e1;">
+        <strong>ملاحظات وشروط العرض:</strong><br>
+        {{ quotation.notes|linebreaksbr }}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

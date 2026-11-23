@@ -3,8 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تسجيل الدخول - EasySupermarket</title>
+    <title>تسجيل الدخول - مسار Masar ERP</title>
     {% load static %}
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
+    <link rel="shortcut icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
+    <link rel="apple-touch-icon" href="{% static 'img/logo.png' %}">
     <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
     <style>
         body {
@@ -82,7 +86,8 @@
 <body>
 
     <div class="login-card">
-        <h1>EASYSTORE</h1>
+        <img src="{% static 'img/logo.png' %}" alt="مسار" style="height:90px; margin-bottom:1rem; border-radius:12px; object-fit:contain;">
+        <h1 style="font-size:1.5rem; margin-bottom:1.5rem; color:var(--neon-cyan);">مسار — Masar</h1>
         
         {% if form.errors %}
         <div class="error-message">

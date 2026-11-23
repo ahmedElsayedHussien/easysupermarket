@@ -6,12 +6,12 @@
 {% block extra_css %}
 <style>
 .command-hub { max-width: 1200px; margin: 0 auto; }
-.section-title { font-size: 1rem; color: var(--text-muted); letter-spacing: 2px; }
+.section-title { font-size: 1.15rem; font-weight: 800; color: var(--neon-cyan); letter-spacing: 2px; }
 .hub-search { margin: 1rem 0; }
 .module-card { min-height: 150px; }
 .shortcut-hint {
-    font-family: var(--font-english); font-size: 0.6rem;
-    color: var(--text-muted); margin-top: 0.25rem; letter-spacing: 0.5px;
+    font-family: var(--font-english); font-size: 0.72rem; font-weight: 700;
+    color: rgba(255, 255, 255, 0.9); margin-top: 0.25rem; letter-spacing: 0.5px;
 }
 </style>
 {% endblock %}
@@ -22,7 +22,7 @@
     <!-- Section Header -->
     <div style="text-align:center;margin-bottom:1.5rem;">
         <h2 class="section-title">⚡ Fast Access Command Hub</h2>
-        <p style="font-size:0.78rem;color:var(--text-muted);margin-top:0.4rem;">اختر الوحدة للبدء السريع</p>
+        <p style="font-size:0.9rem;color:#cbd5e1;font-weight:700;margin-top:0.4rem;">اختر الوحدة للبدء السريع</p>
     </div>
 
     <!-- ============================================================
@@ -113,7 +113,8 @@
          ============================================================ -->
     <div class="module-grid module-grid-5">
 
-        <!-- Branches - Lime -->
+        <!-- Branches - Lime (Admin Only) -->
+        {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
         <a href="{% url 'core:branch_list' %}" class="module-card card-lime">
             <div class="card-icon">
                 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -125,6 +126,7 @@
                 <div class="card-subtitle">Branches & Entities</div>
             </div>
         </a>
+        {% endif %}
 
         <!-- Suppliers - Blue -->
         <a href="{% url 'partners:supplier_list' %}" class="module-card card-blue">
@@ -139,7 +141,8 @@
             </div>
         </a>
 
-        <!-- Finance - Gold -->
+        <!-- Finance - Gold (Admin Only) -->
+        {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
         <a href="{% url 'accounting:journal_list' %}" class="module-card card-gold">
             <div class="card-icon">
                 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -151,9 +154,10 @@
                 <div class="card-subtitle">Accounts & Finance</div>
             </div>
         </a>
+        {% endif %}
 
         <!-- Reports - Purple -->
-        <a href="#" class="module-card card-purple">
+        <a href="{% url 'core:reports_index' %}" class="module-card card-purple">
             <div class="card-icon">
                 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                     <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
@@ -165,7 +169,9 @@
             </div>
         </a>
 
-        <!-- Settings - Gray -->
+
+        <!-- Settings - Gray (Admin Only) -->
+        {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
         <a href="{% url 'core:settings_dashboard' %}" class="module-card card-gray">
             <div class="card-icon">
                 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -177,16 +183,18 @@
                 <div class="card-subtitle">System Settings</div>
             </div>
         </a>
+        {% endif %}
 
     </div>
 
-    <!-- E-Service Full-Width Card -->
+    <!-- E-Service Full-Width Card (Admin Only) -->
+    {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
     <div style="margin-top:1rem;">
-    <div class="module-card" style="display:flex;flex-wrap:wrap;align-items:center;gap:1.5rem;padding:1.25rem 1.5rem;background:linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05));border:2px solid rgba(255,115,0,0.5);border-radius:12px;transition:all 0.2s;" onmouseover="this.style.borderColor='#ff7300';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.25),rgba(255,115,0,0.1))'" onmouseout="this.style.borderColor='rgba(255,115,0,0.5)';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05))'">
+        <div class="module-card" style="display:flex;flex-wrap:wrap;align-items:center;gap:1.5rem;padding:1.25rem 1.5rem;background:linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05));border:2px solid rgba(255,115,0,0.5);border-radius:12px;transition:all 0.2s;" onmouseover="this.style.borderColor='#ff7300';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.25),rgba(255,115,0,1))'" onmouseout="this.style.borderColor='rgba(255,115,0,0.5)';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05))'">
             <div style="font-size:2.5rem;flex-shrink:0;">💳</div>
             <div style="flex:1;min-width:250px;">
-                <div style="color:#ff7300;font-size:1.1rem;font-weight:800;">خدمات الشحن والدفع الإلكتروني</div>
-                <div style="color:#94a3b8;font-size:0.8rem;margin-top:0.25rem;">إدارة ماكينات فوري وأمان والبنوك | سحب وإيداع وتحويل رصيد للعملاء | شحن الماكينات من المناديب</div>
+                <div style="color:#ff7300;font-size:1.15rem;font-weight:800;">خدمات الشحن والدفع الإلكتروني</div>
+                <div style="color:#cbd5e1;font-size:0.88rem;font-weight:600;margin-top:0.25rem;">إدارة ماكينات فوري وأمان والبنوك | سحب وإيداع وتحويل رصيد للعملاء | شحن الماكينات من المناديب</div>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:0.75rem;position:relative;z-index:10;justify-content:flex-start;">
                 <a href="{% url 'accounting:eservice_history' %}" style="padding:0.5rem 1rem;border-radius:6px;border:1px solid rgba(255,255,255,0.2);color:#fff;font-size:0.8rem;font-weight:700;text-decoration:none;display:flex;align-items:center;gap:5px;">📜 السجل</a>
@@ -195,6 +203,8 @@
             </div>
         </div>
     </div>
+    {% endif %}
+
 
     <!-- ============================================================
          QUICK STATS ROW (Admin Only)

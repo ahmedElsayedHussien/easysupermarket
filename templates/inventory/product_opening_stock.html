@@ -1,0 +1,290 @@
+{% extends 'base.html' %}
+{% load i18n static %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .glass-card {
+        background: rgba(15, 23, 42, 0.75);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        backdrop-filter: blur(10px);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .badge-opening {
+        background: rgba(255, 115, 0, 0.15);
+        color: #ff7300;
+        border: 1px solid rgba(255, 115, 0, 0.4);
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-weight: bold;
+    }
+    .stat-pill {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+        text-align: center;
+    }
+    .stat-pill .num {
+        font-size: 1.25rem;
+        font-weight: 800;
+        font-family: var(--font-english);
+    }
+    .stat-pill .lbl {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 1000px;">
+
+    <!-- Header -->
+    <div class="d-flex justify-between align-center mb-4 flex-wrap gap-2">
+        <div>
+            <h2 class="text-neon-cyan mb-1" style="font-weight: 800;">📦 تعديل رصيد أول المدة والقيد المحاسبي</h2>
+            <div style="color: var(--text-muted); font-size: 0.9rem;">
+                المنتج: <strong style="color: #fff;">{{ product.name }}</strong> 
+                {% if product.barcode %}| باركود: <code style="color: #38bdf8;">{{ product.barcode }}</code>{% endif %}
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost" style="border: 1px solid rgba(0, 229, 255, 0.4); color: #00e5ff; border-radius: 8px;">
+                <i class="fas fa-arrow-right"></i> عودة للمنتجات
+            </a>
+            <a href="{% url 'inventory:opening_stock_list' %}" class="btn btn-ghost" style="border: 1px solid rgba(0, 229, 255, 0.4); color: #00e5ff; border-radius: 8px;">
+                <i class="fas fa-boxes"></i> كل الأرصدة الافتتاحية
+            </a>
+        </div>
+    </div>
+
+    <!-- Main Card -->
+    <div class="glass-card">
+        <!-- Warehouse Selector Form -->
+        <form method="GET" class="mb-4 pb-3 border-bottom border-secondary d-flex align-items-center gap-3 flex-wrap">
+            <label style="font-weight: 700; color: #cbd5e1;">🏢 المستودع المستهدف:</label>
+            <select name="warehouse" class="form-select" style="max-width: 250px;" onchange="this.form.submit()">
+                {% for wh in warehouses %}
+                <option value="{{ wh.id }}" {% if wh.id == warehouse.id %}selected{% endif %}>{{ wh.name }}</option>
+                {% endfor %}
+            </select>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">اختر المستودع لعرض وتعديل رصيد أول المدة الخاص به</span>
+        </form>
+
+        <!-- Current State Summary -->
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-md-3">
+                <div class="stat-pill">
+                    <div class="num" style="color: #00e5ff;">{{ opening_info.quantity|floatformat:"-2" }}</div>
+                    <div class="lbl">الرصيد الافتتاحي الحالي</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-pill">
+                    <div class="num" style="color: #ef4444;">{{ opening_info.consumed_quantity|floatformat:"-2" }}</div>
+                    <div class="lbl">الكمية المصروفة / المباعة</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-pill">
+                    <div class="num" style="color: #10b981;">{{ opening_info.remaining_quantity|floatformat:"-2" }}</div>
+                    <div class="lbl">المتبقي من الافتتاحي</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-pill">
+                    <div class="num" style="color: #38bdf8;">{{ opening_info.total_cost|floatformat:2 }} ج.م</div>
+                    <div class="lbl">إجمالي القيمة الدفترية</div>
+                </div>
+            </div>
+        </div>
+
+        {% if opening_info.journal_entry_ref %}
+        <div class="alert alert-info d-flex align-items-center justify-content-between mb-4" style="background: rgba(14, 165, 233, 0.1); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 8px;">
+            <div>
+                <i class="fas fa-file-invoice me-2"></i>
+                القيد المحاسبي المرتبط حالياً: <strong style="color: #38bdf8; font-family: monospace;">{{ opening_info.journal_entry_ref }}</strong>
+            </div>
+            <span class="badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4);">مرحّل في الحسابات العامة</span>
+        </div>
+        {% endif %}
+
+        <!-- Update Form -->
+        <form method="POST" id="openingStockForm">
+            {% csrf_token %}
+            <input type="hidden" name="warehouse" value="{{ warehouse.id }}">
+
+            <div class="row g-3">
+                <div class="col-md-6 form-group">
+                    <label style="font-weight: 700; color: #00e5ff; margin-bottom: 0.4rem;">
+                        الكمية الافتتاحية الجديدة (رصيد أول المدة) <span class="text-danger">*</span>
+                    </label>
+                    <input type="number" step="any" min="{{ opening_info.consumed_quantity|default:'0' }}" class="form-control" name="quantity" id="inputQuantity" value="{{ opening_info.quantity|floatformat:'-2' }}" required style="font-size: 1.15rem; font-weight: bold; background: rgba(0,0,0,0.3); color: #fff;">
+                    <small class="text-muted d-block mt-1">
+                        {% if opening_info.consumed_quantity > 0 %}
+                        ⚠️ تم بيع/استهلاك {{ opening_info.consumed_quantity|floatformat:"-2" }} وحدة، لذلك الحد الأدنى المسموح به هو <strong>{{ opening_info.consumed_quantity|floatformat:"-2" }}</strong>
+                        {% else %}
+                        أدخل الكمية الصحيحة لرصيد أول المدة لهذا الصنف.
+                        {% endif %}
+                    </small>
+                </div>
+
+                <div class="col-md-6 form-group">
+                    <label style="font-weight: 700; color: #38bdf8; margin-bottom: 0.4rem;">
+                        تكلفة الوحدة (سعر الشراء الافتتاحي) <span class="text-neon-cyan" style="font-size: 0.8rem;">(مستدعى تلقائياً)</span>
+                    </label>
+                    <input type="number" step="0.01" min="0" class="form-control" name="unit_cost" id="inputCost" 
+                        value="{% if opening_info.unit_cost and opening_info.unit_cost > 0 %}{{ opening_info.unit_cost|floatformat:2 }}{% elif opening_info.default_cost and opening_info.default_cost > 0 %}{{ opening_info.default_cost|floatformat:2 }}{% elif product.last_purchase_price and product.last_purchase_price > 0 %}{{ product.last_purchase_price|floatformat:2 }}{% else %}0.00{% endif %}" 
+                        style="font-size: 1.15rem; font-weight: bold; background: rgba(0,0,0,0.3); color: #fff; border-color: rgba(0, 229, 255, 0.3);">
+                    <small class="text-muted d-block mt-1">
+                        التكلفة المعتمدة في تقييم رصيد المخزون والقيد الافتتاحي (تم استدعاؤها من سعر الشراء ويمكنك تعديلها بحرية).
+                    </small>
+                </div>
+
+                <div class="col-12 form-group">
+                    <label style="font-weight: 600; color: #cbd5e1; margin-bottom: 0.4rem;">ملاحظات / سبب التعديل (اختياري)</label>
+                    <input type="text" class="form-control" name="reason" placeholder="مثال: تصحيح خطأ جرد أولي، تعديل كمية الدفعة الافتتاحية..." style="background: rgba(0,0,0,0.2); color: #fff;">
+                </div>
+            </div>
+
+            <!-- Live Preview Calculation Box -->
+            <div id="diffPreviewBox" class="p-3 mt-3 mb-4 rounded" style="background: rgba(0, 229, 255, 0.08); border: 1px dashed rgba(0, 229, 255, 0.4);">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div>
+                        <span style="color: #cbd5e1; font-size: 0.9rem;">الفارق في كمية المخزون:</span>
+                        <strong id="diffQty" style="font-size: 1.1rem; margin-inline-start: 6px;">0</strong>
+                    </div>
+                    <div>
+                        <span style="color: #cbd5e1; font-size: 0.9rem;">الأثر المحاسبي على القيد:</span>
+                        <strong id="diffVal" style="font-size: 1.1rem; margin-inline-start: 6px;">0.00 ج.م</strong>
+                    </div>
+                </div>
+                <div id="accountingExplanation" style="font-size: 0.8rem; color: #94a3b8; margin-top: 6px;">
+                    سيتم تلقائياً تحديث كمية المخزون (FIFO) وتعديل أو ترحيل قيد تسوية رصيد أول المدة (حساب المخزون 1140 مقابل رأس المال 3999).
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center mt-4 pt-3 border-top border-secondary">
+                <button type="submit" class="btn btn-primary px-4 py-2" style="font-weight: 800; font-size: 1.05rem; box-shadow: 0 0 20px rgba(0, 229, 255, 0.4); border-radius: 8px;">
+                    <i class="fas fa-save me-1"></i> حفظ التعديل وترحيل القيد المحاسبي
+                </button>
+                <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost px-4 py-2" style="border-radius: 8px;">إلغاء</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Audit History Card -->
+    {% if opening_movements %}
+    <div class="glass-card">
+        <h4 style="font-size: 1.05rem; font-weight: 700; color: #cbd5e1; margin-bottom: 1rem;">
+            📜 سجل الحركات وتعديلات رصيد أول المدة
+        </h4>
+        <div class="table-responsive">
+            <table class="data-table" style="font-size: 0.85rem;">
+                <thead>
+                    <tr>
+                        <th>التاريخ</th>
+                        <th>الكمية</th>
+                        <th>التكلفة</th>
+                        <th>الملاحظات / البيان</th>
+                        <th>المرجع</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for m in opening_movements %}
+                    <tr>
+                        <td>{{ m.created_at|date:"Y-m-d H:i" }}</td>
+                        <td style="font-weight: bold; color: #00e5ff;">{{ m.quantity|floatformat:"-2" }}</td>
+                        <td>{{ m.unit_cost|floatformat:2 }} ج.م</td>
+                        <td>{{ m.notes|default:"-" }}</td>
+                        <td><code style="color: #38bdf8;">{{ m.reference|default:"-" }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const origQty = parseFloat("{{ opening_info.quantity|default:'0' }}") || 0;
+    const origCost = parseFloat("{{ opening_info.unit_cost|default:'0' }}") || 0;
+    const defaultCost = parseFloat("{{ opening_info.default_cost|default:product.last_purchase_price|default:'0' }}") || 0;
+    const consumedQty = parseFloat("{{ opening_info.consumed_quantity|default:'0' }}") || 0;
+
+    const inputQty = document.getElementById('inputQuantity');
+    const inputCost = document.getElementById('inputCost');
+    const diffQtyEl = document.getElementById('diffQty');
+    const diffValEl = document.getElementById('diffVal');
+    const explanationEl = document.getElementById('accountingExplanation');
+
+    // Auto-fill cost from default purchase price if empty or zero
+    if (!inputCost.value || parseFloat(inputCost.value) <= 0) {
+        if (defaultCost > 0) {
+            inputCost.value = defaultCost.toFixed(2);
+        }
+    }
+
+    const form = document.getElementById('openingStockForm');
+    if (form) {
+        form.addEventListener('submit', function() {
+            if (!inputCost.value || isNaN(parseFloat(inputCost.value))) {
+                inputCost.value = defaultCost > 0 ? defaultCost.toFixed(2) : "0.00";
+            }
+        });
+    }
+
+    function calculateDiff() {
+        const newQty = parseFloat(inputQty.value) || 0;
+        const newCost = parseFloat(inputCost.value) || 0;
+
+        const deltaQty = newQty - origQty;
+        const oldTotal = origQty * origCost;
+        const newTotal = newQty * newCost;
+        const deltaVal = newTotal - oldTotal;
+
+        // Display qty diff
+        if (deltaQty > 0) {
+            diffQtyEl.textContent = `+${deltaQty.toFixed(2)} (زيادة رصيد)`;
+            diffQtyEl.style.color = '#10b981';
+        } else if (deltaQty < 0) {
+            diffQtyEl.textContent = `${deltaQty.toFixed(2)} (تخفيض رصيد)`;
+            diffQtyEl.style.color = '#ef4444';
+        } else {
+            diffQtyEl.textContent = 'لا يوجد تغيير في الكمية';
+            diffQtyEl.style.color = '#cbd5e1';
+        }
+
+        // Display value diff
+        if (deltaVal > 0) {
+            diffValEl.textContent = `+${deltaVal.toFixed(2)} ج.م (مدين المخزون 1140 / دائن رأس المال 3999)`;
+            diffValEl.style.color = '#10b981';
+            explanationEl.textContent = `✅ سيتم زيادة قيمة المخزون بمقدار ${deltaVal.toFixed(2)} ج.م وإثباتها بالقيد المحاسبي تلقائياً.`;
+        } else if (deltaVal < 0) {
+            diffValEl.textContent = `${deltaVal.toFixed(2)} ج.م (دائن المخزون 1140 / مدين رأس المال 3999)`;
+            diffValEl.style.color = '#ef4444';
+            explanationEl.textContent = `⚠️ سيتم تخفيض قيمة المخزون بمقدار ${Math.abs(deltaVal).toFixed(2)} ج.م وإثبات القيد العكسي تلقائياً.`;
+        } else {
+            diffValEl.textContent = '0.00 ج.م (لا يوجد أثر مالي)';
+            diffValEl.style.color = '#cbd5e1';
+            explanationEl.textContent = 'الكمية والتكلفة مطابقة للرصيد المسجل حالياً.';
+        }
+    }
+
+    inputQty.addEventListener('input', calculateDiff);
+    inputCost.addEventListener('input', calculateDiff);
+    calculateDiff();
+});
+</script>
+{% endblock %}

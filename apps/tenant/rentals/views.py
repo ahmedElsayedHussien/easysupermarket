@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.http import HttpResponse
 from django.urls import reverse_lazy
 from django.contrib import messages
 from django.views.generic import ListView, CreateView, UpdateView, View, DetailView
@@ -20,6 +21,8 @@ class EquipmentListView(CustomPermissionRequiredMixin, ListView):
     model = Equipment
     template_name = 'rentals/equipment_list.html'
     context_object_name = 'equipments'
+    paginate_by = 25
+    ordering = ['name']
 
 class EquipmentCreateView(CustomPermissionRequiredMixin, CreateView):
     permission_required = 'rentals.add_equipment'
@@ -53,6 +56,7 @@ class RentalListView(CustomPermissionRequiredMixin, ListView):
     model = Rental
     template_name = 'rentals/rental_list.html'
     context_object_name = 'rentals'
+    paginate_by = 25
     
     def get_queryset(self):
         return Rental.objects.select_related('equipment', 'customer').order_by('-created_at')
@@ -64,11 +68,21 @@ class RentalCreateView(CustomPermissionRequiredMixin, CreateView):
     template_name = 'rentals/rental_form.html'
     success_url = reverse_lazy('rentals:rental_list')
 
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['user'] = self.request.user
+        return kwargs
+
     def form_valid(self, form):
         from django.db import transaction
+        from apps.tenant.invoicing.models import POSSession
         rental = form.save(commit=False)
         rental.created_by = self.request.user
         
+        open_session = POSSession.objects.filter(user=self.request.user, status=POSSession.OPEN).first()
+        if open_session:
+            rental.pos_session = open_session
+
         try:
             with transaction.atomic():
                 rental.save()
@@ -210,3 +224,291 @@ class OverdueRentalsReportView(CustomPermissionRequiredMixin, View):
             'report_data': report_data,
             'title': 'المتأخرات'
         })
+
+from decimal import Decimal
+from apps.tenant.partners.models import Partner
+
+class DetailedRentalsReportView(CustomPermissionRequiredMixin, View):
+    permission_required = 'rentals.view_rental'
+
+    def get(self, request):
+        import datetime
+        today = datetime.date.today()
+        
+        start_date_str = request.GET.get('start_date', '').strip()
+        end_date_str = request.GET.get('end_date', '').strip()
+        equipment_id = request.GET.get('equipment_id', '').strip()
+        customer_id = request.GET.get('customer_id', '').strip()
+        status_filter = request.GET.get('status', '').strip()
+        payment_method = request.GET.get('payment_method', '').strip()
+
+        qs = Rental.objects.select_related('equipment', 'customer', 'created_by').all()
+
+        if start_date_str:
+            try:
+                s_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d').date()
+                qs = qs.filter(start_date__gte=s_date)
+            except ValueError:
+                pass
+
+        if end_date_str:
+            try:
+                e_date = datetime.datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                qs = qs.filter(start_date__lte=e_date)
+            except ValueError:
+                pass
+
+        if equipment_id:
+            qs = qs.filter(equipment_id=equipment_id)
+
+        if customer_id:
+            qs = qs.filter(customer_id=customer_id)
+
+        if status_filter == 'ACTIVE':
+            qs = qs.filter(status=Rental.STATUS_ACTIVE)
+        elif status_filter == 'RETURNED':
+            qs = qs.filter(status=Rental.STATUS_RETURNED)
+        elif status_filter == 'OVERDUE':
+            qs = qs.filter(status=Rental.STATUS_ACTIVE, end_date__lt=today)
+
+        if payment_method in ['CASH', 'CREDIT']:
+            qs = qs.filter(payment_method=payment_method)
+
+        rentals_list = []
+        total_gross = Decimal('0')
+        total_refunds = Decimal('0')
+        total_penalties = Decimal('0')
+        total_net_profit = Decimal('0')
+        total_days = 0
+
+        for r in qs.order_by('-start_date', '-id'):
+            gross = r.total_amount or Decimal('0')
+            refund = r.refund_amount or Decimal('0')
+            penalty = r.penalty_amount or Decimal('0')
+            net = gross - refund + penalty
+            days = r.days_rented or 1
+            is_overdue = (r.status == Rental.STATUS_ACTIVE and r.end_date and r.end_date < today)
+
+            rentals_list.append({
+                'rental': r,
+                'gross': gross,
+                'refund': refund,
+                'penalty': penalty,
+                'net_profit': net,
+                'days': days,
+                'is_overdue': is_overdue,
+            })
+
+            total_gross += gross
+            total_refunds += refund
+            total_penalties += penalty
+            total_net_profit += net
+            total_days += days
+
+        context = {
+            'title': 'تقرير المعدات المؤجرة التفصيلي',
+            'rentals_list': rentals_list,
+            'summary': {
+                'count': len(rentals_list),
+                'total_days': total_days,
+                'total_gross': total_gross,
+                'total_refunds': total_refunds,
+                'total_penalties': total_penalties,
+                'total_net_profit': total_net_profit,
+            },
+            'equipments': Equipment.objects.filter(is_active=True).order_by('name'),
+            'customers': Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH']).order_by('name'),
+            'filters': {
+                'start_date': start_date_str,
+                'end_date': end_date_str,
+                'equipment_id': equipment_id,
+                'customer_id': customer_id,
+                'status': status_filter,
+                'payment_method': payment_method,
+            }
+        }
+        return render(request, 'rentals/report_detailed_rentals.html', context)
+
+
+def export_detailed_rentals_excel(request):
+    import datetime
+    import openpyxl
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    today = datetime.date.today()
+    start_date_str = request.GET.get('start_date', '').strip()
+    end_date_str = request.GET.get('end_date', '').strip()
+    equipment_id = request.GET.get('equipment_id', '').strip()
+    customer_id = request.GET.get('customer_id', '').strip()
+    status_filter = request.GET.get('status', '').strip()
+    payment_method = request.GET.get('payment_method', '').strip()
+
+    qs = Rental.objects.select_related('equipment', 'customer', 'created_by').all()
+
+    if start_date_str:
+        try:
+            s_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            qs = qs.filter(start_date__gte=s_date)
+        except ValueError:
+            pass
+
+    if end_date_str:
+        try:
+            e_date = datetime.datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            qs = qs.filter(start_date__lte=e_date)
+        except ValueError:
+            pass
+
+    if equipment_id:
+        qs = qs.filter(equipment_id=equipment_id)
+
+    if customer_id:
+        qs = qs.filter(customer_id=customer_id)
+
+    if status_filter == 'ACTIVE':
+        qs = qs.filter(status=Rental.STATUS_ACTIVE)
+    elif status_filter == 'RETURNED':
+        qs = qs.filter(status=Rental.STATUS_RETURNED)
+    elif status_filter == 'OVERDUE':
+        qs = qs.filter(status=Rental.STATUS_ACTIVE, end_date__lt=today)
+
+    if payment_method in ['CASH', 'CREDIT']:
+        qs = qs.filter(payment_method=payment_method)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "تقرير المعدات المؤجرة"
+    ws.views.sheetView[0].rightToLeft = True
+
+    title_font = Font(name='Segoe UI', size=16, bold=True, color='1F2937')
+    header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='1E293B', end_color='1E293B', fill_type='solid')
+    sub_font = Font(name='Segoe UI', size=10, italic=True, color='475569')
+    data_font = Font(name='Segoe UI', size=10)
+    bold_font = Font(name='Segoe UI', size=10, bold=True)
+    border_thin = Border(
+        left=Side(style='thin', color='CBD5E1'),
+        right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='CBD5E1'),
+        bottom=Side(style='thin', color='CBD5E1')
+    )
+
+    ws.append(["🚜 Masar ERP — تقرير المعدات المؤجرة التفصيلي"])
+    ws.cell(row=1, column=1).font = title_font
+    ws.row_dimensions[1].height = 30
+
+    date_label = f"تاريخ الاستخراج: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    ws.append([date_label])
+    ws.cell(row=2, column=1).font = sub_font
+    ws.append([])
+
+    headers = [
+        "رقم العقد", "اسم المعدة", "كود المعدة", "اسم العميل",
+        "تاريخ البدء", "تاريخ العودة المتوقع", "عدد الأيام", "السعر اليومي",
+        "إجمالي المبلغ", "المرتجع/المسترد", "الغرامات/التلفيات", "صافي المكسب/الإيراد",
+        "طريقة الدفع", "حالة العقد"
+    ]
+    ws.append(headers)
+    header_row_num = 4
+    ws.row_dimensions[header_row_num].height = 25
+    for col_num in range(1, len(headers) + 1):
+        cell = ws.cell(row=header_row_num, column=col_num)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    current_row = 5
+    tot_days = 0
+    tot_gross = Decimal('0')
+    tot_refunds = Decimal('0')
+    tot_penalties = Decimal('0')
+    tot_net = Decimal('0')
+
+    for r in qs.order_by('-start_date', '-id'):
+        gross = r.total_amount or Decimal('0')
+        refund = r.refund_amount or Decimal('0')
+        penalty = r.penalty_amount or Decimal('0')
+        net = gross - refund + penalty
+        days = r.days_rented or 1
+
+        if r.status == Rental.STATUS_ACTIVE:
+            if r.end_date and r.end_date < today:
+                st_display = "متأخر (تجاوز الموعد)"
+            else:
+                st_display = "نشط (مؤجرة)"
+        else:
+            st_display = "تم الإرجاع"
+
+        pm_display = "كاش" if r.payment_method == Rental.PAYMENT_CASH else "آجل"
+
+        row_data = [
+            f"#{r.id}",
+            r.equipment.name,
+            r.equipment.code,
+            r.customer.name,
+            r.start_date.strftime('%Y-%m-%d') if r.start_date else '',
+            r.end_date.strftime('%Y-%m-%d') if r.end_date else '',
+            days,
+            float(r.daily_rate or 0),
+            float(gross),
+            float(refund),
+            float(penalty),
+            float(net),
+            pm_display,
+            st_display
+        ]
+        ws.append(row_data)
+
+        tot_days += days
+        tot_gross += gross
+        tot_refunds += refund
+        tot_penalties += penalty
+        tot_net += net
+
+        ws.row_dimensions[current_row].height = 20
+        for col_num in range(1, len(headers) + 1):
+            cell = ws.cell(row=current_row, column=col_num)
+            cell.font = data_font
+            cell.border = border_thin
+            if col_num in [8, 9, 10, 11, 12]:
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal='right', vertical='center')
+            elif col_num in [1, 5, 6, 7, 13, 14]:
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+            else:
+                cell.alignment = Alignment(horizontal='right', vertical='center')
+        current_row += 1
+
+    tot_row = [
+        "الإجمالي الكلي", "", "", f"عدد العقود: {qs.count()}",
+        "", "", tot_days, "",
+        float(tot_gross), float(tot_refunds), float(tot_penalties), float(tot_net),
+        "", ""
+    ]
+    ws.append(tot_row)
+    ws.row_dimensions[current_row].height = 25
+    for col_num in range(1, len(headers) + 1):
+        cell = ws.cell(row=current_row, column=col_num)
+        cell.font = bold_font
+        cell.fill = PatternFill(start_color='F1F5F9', end_color='F1F5F9', fill_type='solid')
+        cell.border = border_thin
+        if col_num in [9, 10, 11, 12]:
+            cell.number_format = '#,##0.00'
+            cell.alignment = Alignment(horizontal='right', vertical='center')
+        else:
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            val_str = str(cell.value or '')
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition'] = f'attachment; filename="Detailed_Rentals_Report_{today.strftime("%Y%m%d")}.xlsx"'
+    wb.save(response)
+    return response

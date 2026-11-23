@@ -58,7 +58,9 @@ urlpatterns = [
     
     # Common Voucher endpoints
     path('vouchers/<int:pk>/', views.VoucherDetailView.as_view(), name='voucher_detail'),
+    path('vouchers/<int:pk>/update/', views.VoucherUpdateView.as_view(), name='voucher_update'),
     path('vouchers/<int:pk>/confirm/', views.VoucherConfirmView.as_view(), name='voucher_confirm'),
+    path('vouchers/<int:pk>/cancel/', views.VoucherCancelView.as_view(), name='voucher_cancel'),
 
     # POS Machines (ماكينات الدفع الإلكتروني)
     path('pos-machines/', views.pos_machine_list, name='pos_machine_list'),
@@ -70,4 +72,41 @@ urlpatterns = [
     path('eservice/history/', views.eservice_history, name='eservice_history'),
     path('eservice/<int:pk>/', views.eservice_detail, name='eservice_detail'),
     path('eservice/<int:pk>/post/', views.eservice_post, name='eservice_post'),
+
+    # Internal Transfers (تحويل الأموال بين الحسابات)
+    path('transfers/', views.InternalTransferListView.as_view(), name='transfer_list'),
+    path('transfers/create/', views.InternalTransferCreateView.as_view(), name='transfer_create'),
+    path('transfers/<int:pk>/', views.InternalTransferDetailView.as_view(), name='transfer_detail'),
+    path('transfers/<int:pk>/confirm/', views.InternalTransferConfirmView.as_view(), name='transfer_confirm'),
+    path('transfers/<int:pk>/cancel/', views.InternalTransferCancelView.as_view(), name='transfer_cancel'),
+
+    # Cheques Management (إدارة الشيكات: أوراق القبض وأوراق الدفع)
+    path('cheques/', views.ChequeListView.as_view(), name='cheque_list'),
+    path('cheques/receivable/create/', views.ReceivableChequeCreateView.as_view(), name='cheque_receivable_create'),
+    path('cheques/payable/create/', views.PayableChequeCreateView.as_view(), name='cheque_payable_create'),
+    path('cheques/<int:pk>/', views.ChequeDetailView.as_view(), name='cheque_detail'),
+    path('cheques/<int:pk>/collect/', views.ChequeCollectActionView.as_view(), name='cheque_collect'),
+    path('cheques/<int:pk>/bounce/', views.ChequeBounceActionView.as_view(), name='cheque_bounce'),
+    path('cheques/<int:pk>/clear-payable/', views.ChequeClearPayableActionView.as_view(), name='cheque_clear_payable'),
+    path('cheques/<int:pk>/cancel-payable/', views.ChequeCancelPayableActionView.as_view(), name='cheque_cancel_payable'),
+
+    # Cheque Books (دفاتر الشيكات)
+    path('cheque-books/', views.ChequeBookListView.as_view(), name='cheque_book_list'),
+    path('cheque-books/create/', views.ChequeBookCreateView.as_view(), name='cheque_book_create'),
+
+    # Fixed Assets & Depreciation (الأصول الثابتة والإهلاك)
+    path('fixed-assets/', views.FixedAssetListView.as_view(), name='fixed_asset_list'),
+    path('fixed-assets/create/', views.FixedAssetCreateView.as_view(), name='fixed_asset_create'),
+    path('fixed-assets/<int:pk>/', views.FixedAssetDetailView.as_view(), name='fixed_asset_detail'),
+    path('fixed-assets/<int:pk>/update/', views.FixedAssetUpdateView.as_view(), name='fixed_asset_update'),
+    path('fixed-assets/<int:pk>/dispose/', views.FixedAssetDisposalView.as_view(), name='fixed_asset_dispose'),
+    path('fixed-assets/depreciation/run/', views.FixedAssetDepreciationRunView.as_view(), name='fixed_asset_depreciation_run'),
+
+    # Loans & Financing (القروض والتسهيلات وسداد الأقساط)
+    path('loans/', views.LoanListView.as_view(), name='loan_list'),
+    path('loans/create/', views.LoanCreateView.as_view(), name='loan_create'),
+    path('loans/<int:pk>/', views.LoanDetailView.as_view(), name='loan_detail'),
+    path('loans/installments/<int:pk>/pay/', views.LoanInstallmentPayView.as_view(), name='loan_installment_pay'),
 ]
+
+

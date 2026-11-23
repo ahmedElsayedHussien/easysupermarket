@@ -1,0 +1,463 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h2 style="margin: 0; color: #fff;">
+            <i class="fas fa-file-invoice text-warning" style="margin-left: 0.5rem;"></i> {{ title }}
+        </h2>
+        <a href="{% url 'invoicing:quotation_list' %}" class="btn-ghost" style="padding: 0.5rem 1rem; border-radius: 8px; color: #fff; text-decoration: none; border: 1px solid rgba(255,255,255,0.1);">
+            <i class="fas fa-arrow-right"></i> عودة لقائمة العروض
+        </a>
+    </div>
+
+    <form method="POST" id="quotation-form">
+        {% csrf_token %}
+        
+        <!-- Header Info -->
+        <div style="background: rgba(15, 23, 42, 0.6); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 2rem;">
+            <h4 style="color: #ff7300; margin-top: 0; margin-bottom: 1rem;"><i class="fas fa-info-circle"></i> البيانات الأساسية</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+                <div>
+                    <label style="color: #94a3b8; display: block; margin-bottom: 0.3rem;">العميل <span style="color:red;">*</span></label>
+                    {{ form.partner }}
+                    {% if form.partner.errors %}<div style="color:#f87171; font-size:0.85rem;">{{ form.partner.errors }}</div>{% endif %}
+                </div>
+                <div>
+                    <label style="color: #94a3b8; display: block; margin-bottom: 0.3rem;">الفرع <span style="color:red;">*</span></label>
+                    {{ form.branch }}
+                    {% if form.branch.errors %}<div style="color:#f87171; font-size:0.85rem;">{{ form.branch.errors }}</div>{% endif %}
+                </div>
+                <div>
+                    <label style="color: #94a3b8; display: block; margin-bottom: 0.3rem;">المستودع للصرف <span style="color:red;">*</span></label>
+                    {{ form.warehouse }}
+                    {% if form.warehouse.errors %}<div style="color:#f87171; font-size:0.85rem;">{{ form.warehouse.errors }}</div>{% endif %}
+                </div>
+                <div>
+                    <label style="color: #94a3b8; display: block; margin-bottom: 0.3rem;">تاريخ العرض</label>
+                    {{ form.date }}
+                </div>
+                <div>
+                    <label style="color: #94a3b8; display: block; margin-bottom: 0.3rem;">تاريخ الانتهاء (اختياري)</label>
+                    {{ form.valid_until }}
+                </div>
+            </div>
+            <div style="margin-top: 1rem;">
+                <label style="color: #94a3b8; display: block; margin-bottom: 0.3rem;">ملاحظات وشروط العرض</label>
+                {{ form.notes }}
+            </div>
+        </div>
+
+        <!-- Lines Formset -->
+        <div style="background: rgba(15, 23, 42, 0.6); padding: 1.5rem; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h4 style="color: #ff7300; margin: 0;"><i class="fas fa-cubes"></i> بنود عرض السعر والوحدات والضرائب</h4>
+                <button type="button" id="add-row-btn" class="btn-orange" style="background-color: #ff7300; color: #fff; border: none; padding: 0.5rem 1.25rem; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 14px rgba(255, 115, 0, 0.4); display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="fas fa-plus"></i> إضافة بند جديد
+                </button>
+            </div>
+            
+            {{ formset.management_form }}
+            <div style="overflow-x: auto;">
+                <table class="data-table" style="width: 100%; border-collapse: collapse; color: #fff;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); text-align: right;">
+                            <th style="padding: 0.6rem; width: 25%;">المنتج / الخدمة</th>
+                            <th style="padding: 0.6rem; width: 15%;">الوحدة</th>
+                            <th style="padding: 0.6rem; width: 10%;">الكمية</th>
+                            <th style="padding: 0.6rem; width: 12%;">سعر الوحدة</th>
+                            <th style="padding: 0.6rem; width: 8%;">الخصم %</th>
+                            <th style="padding: 0.6rem; width: 9%;">ض.ق.م (VAT) %</th>
+                            <th style="padding: 0.6rem; width: 9%;">ض.خصم (WHT) %</th>
+                            <th style="padding: 0.6rem; width: 12%; text-align: center;">الإجمالي</th>
+                            <th style="padding: 0.6rem; width: 5%; text-align: center;">حذف</th>
+                        </tr>
+                    </thead>
+                    <tbody id="lines-body">
+                        {% for line_form in formset %}
+                        <tr class="line-form-row" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td style="padding: 0.5rem;">
+                                {{ line_form.id }}
+                                {{ line_form.product }}
+                                {% if line_form.product.errors %}<div style="color:#f87171; font-size:0.8rem;">{{ line_form.product.errors }}</div>{% endif %}
+                            </td>
+                            <td style="padding: 0.5rem;">
+                                {{ line_form.uom }}
+                                {% if line_form.uom.errors %}<div style="color:#f87171; font-size:0.8rem;">{{ line_form.uom.errors }}</div>{% endif %}
+                            </td>
+                            <td style="padding: 0.5rem;">
+                                {{ line_form.quantity }}
+                                {% if line_form.quantity.errors %}<div style="color:#f87171; font-size:0.8rem; margin-top:0.2rem;">{{ line_form.quantity.errors.0 }}</div>{% endif %}
+                            </td>
+                            <td style="padding: 0.5rem;">
+                                {{ line_form.unit_price }}
+                                {% if line_form.unit_price.errors %}<div style="color:#f87171; font-size:0.8rem; margin-top:0.2rem;">{{ line_form.unit_price.errors.0 }}</div>{% endif %}
+                            </td>
+                            <td style="padding: 0.5rem;">
+                                {{ line_form.discount_pct }}
+                                {% if line_form.discount_pct.errors %}<div style="color:#f87171; font-size:0.8rem; margin-top:0.2rem;">{{ line_form.discount_pct.errors.0 }}</div>{% endif %}
+                            </td>
+                            <td style="padding: 0.5rem;">
+                                {{ line_form.tax_rate }}
+                                {% if line_form.tax_rate.errors %}<div style="color:#f87171; font-size:0.8rem; margin-top:0.2rem;">{{ line_form.tax_rate.errors.0 }}</div>{% endif %}
+                            </td>
+                            <td style="padding: 0.5rem;">
+                                {{ line_form.wht_rate }}
+                                {% if line_form.wht_rate.errors %}<div style="color:#f87171; font-size:0.8rem; margin-top:0.2rem;">{{ line_form.wht_rate.errors.0 }}</div>{% endif %}
+                            </td>
+                            <td style="padding: 0.5rem; font-weight: bold; color: #fbbf24; text-align: center;" class="line-total-cell">0.00 ج.م</td>
+                            <td style="padding: 0.5rem; text-align: center;">
+                                {% if formset.can_delete %}
+                                <div style="display:none;">{{ line_form.DELETE }}</div>
+                                <button type="button" class="btn-delete-row" title="حذف البند" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 0.4rem 0.65rem; cursor: pointer;">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Dynamic Live Totals Summary -->
+            <div style="margin-top: 1.5rem; display: flex; justify-content: flex-end;">
+                <div style="background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 115, 0, 0.3); border-radius: 10px; padding: 1.25rem; width: 100%; max-width: 380px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.95rem; color: #94a3b8;">
+                        <span>الإجمالي قبل الضريبة:</span>
+                        <span id="summary-subtotal" style="color: #fff; font-weight: bold;">0.00 ج.م</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.95rem; color: #f87171;">
+                        <span>إجمالي الخصم:</span>
+                        <span id="summary-discount" style="font-weight: bold;">0.00 ج.م</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.95rem; color: #38bdf8;">
+                        <span>ضريبة القيمة المضافة:</span>
+                        <span id="summary-vat" style="font-weight: bold;">0.00 ج.م</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.95rem; color: #f472b6;">
+                        <span>ضريبة الخصم والإضافة:</span>
+                        <span id="summary-wht" style="font-weight: bold;">0.00 ج.م</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.1); font-size: 1.15rem;">
+                        <span style="color: #ff7300; font-weight: bold;">الإجمالي النهائي:</span>
+                        <span id="summary-grand-total" style="color: #fbbf24; font-weight: bold;">0.00 ج.م</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Submit Button in Orange -->
+        <div style="display: flex; justify-content: flex-end; gap: 1rem;">
+            <a href="{% url 'invoicing:quotation_list' %}" class="btn-ghost" style="padding: 0.75rem 1.5rem; border-radius: 8px; color: #fff; text-decoration: none; border: 1px solid rgba(255,255,255,0.1);">
+                إلغاء
+            </a>
+            <button type="submit" class="btn-orange" style="background-color: #ff7300; color: #fff; border: none; padding: 0.75rem 2.25rem; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 14px rgba(255, 115, 0, 0.4); font-size: 1.05rem;">
+                <i class="fas fa-save"></i> حفظ عرض السعر
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- Empty Row Template for Adding Items Dynamically -->
+<template id="empty-row-template">
+    <tr class="line-form-row" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+        <td style="padding: 0.5rem;">
+            {{ formset.empty_form.id }}
+            {{ formset.empty_form.product }}
+        </td>
+        <td style="padding: 0.5rem;">
+            {{ formset.empty_form.uom }}
+        </td>
+        <td style="padding: 0.5rem;">{{ formset.empty_form.quantity }}</td>
+        <td style="padding: 0.5rem;">{{ formset.empty_form.unit_price }}</td>
+        <td style="padding: 0.5rem;">{{ formset.empty_form.discount_pct }}</td>
+        <td style="padding: 0.5rem;">{{ formset.empty_form.tax_rate }}</td>
+        <td style="padding: 0.5rem;">{{ formset.empty_form.wht_rate }}</td>
+        <td style="padding: 0.5rem; font-weight: bold; color: #fbbf24; text-align: center;" class="line-total-cell">0.00 ج.م</td>
+        <td style="padding: 0.5rem; text-align: center;">
+            <div style="display:none;">{{ formset.empty_form.DELETE }}</div>
+            <button type="button" class="btn-delete-row" title="حذف البند" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 0.4rem 0.65rem; cursor: pointer;">
+                <i class="fas fa-trash-alt"></i>
+            </button>
+        </td>
+    </tr>
+</template>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const productsData = {{ products_json|safe }};
+    const totalFormsInput = document.querySelector('#id_lines-TOTAL_FORMS') || document.querySelector('[name$="-TOTAL_FORMS"]');
+    const template = document.getElementById('empty-row-template');
+    const linesBody = document.getElementById('lines-body');
+
+    function updateRowUoms(row, preserveSelected = true) {
+        const prodSelect = row.querySelector('.product-select');
+        const uomSelect = row.querySelector('.uom-select');
+        if (!prodSelect || !uomSelect) return;
+        
+        const prodId = prodSelect.value;
+        const currentVal = uomSelect.value;
+        
+        uomSelect.innerHTML = '';
+        
+        if (prodId && productsData[prodId]) {
+            const prod = productsData[prodId];
+            prod.uoms.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                opt.textContent = u.name;
+                opt.dataset.factor = u.factor;
+                if (preserveSelected && String(u.id) === String(currentVal)) {
+                    opt.selected = true;
+                }
+                uomSelect.appendChild(opt);
+            });
+        } else {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = 'الوحدة الأساسية (افتراضية)';
+            uomSelect.appendChild(opt);
+        }
+    }
+
+    function handleProductChange(row) {
+        const prodSelect = row.querySelector('.product-select');
+        const prodId = prodSelect ? prodSelect.value : null;
+        if (!prodId || !productsData[prodId]) return;
+
+        const prod = productsData[prodId];
+        
+        // Update UoMs dropdown
+        updateRowUoms(row, false);
+        
+        // Default quantity
+        const qtyInput = row.querySelector('.qty-input');
+        if (qtyInput && (!qtyInput.value || parseFloat(qtyInput.value) <= 0)) {
+            qtyInput.value = '1.00';
+        }
+        
+        // Base sale price
+        const priceInput = row.querySelector('.price-input');
+        if (priceInput) {
+            priceInput.value = Number(prod.sale_price).toFixed(2);
+            priceInput.dataset.basePrice = prod.sale_price;
+
+            // Multi-Tier pricing lookup (Customer -> Sector -> Default)
+            const partnerSelect = document.querySelector('select[name="partner"]');
+            const partnerId = partnerSelect ? partnerSelect.value : '';
+            if (partnerId) {
+                fetch(`/pricing/api/resolve-price/?product_id=${prodId}&partner_id=${partnerId}`)
+                    .then(r => r.json())
+                    .then(res => {
+                        if (res && res.success && res.price) {
+                            priceInput.value = Number(res.price).toFixed(2);
+                            priceInput.dataset.basePrice = res.price;
+                            recalcRow(row);
+                            updateSummary();
+                        }
+                    }).catch(() => {});
+            }
+        }
+        
+        // Taxes & Discount
+        const taxInput = row.querySelector('.tax-input');
+        if (taxInput) taxInput.value = Number(prod.tax_rate !== undefined && prod.tax_rate !== null ? prod.tax_rate : 0).toFixed(2);
+
+        const whtInput = row.querySelector('.wht-input');
+        if (whtInput) whtInput.value = Number(prod.wht_rate !== undefined && prod.wht_rate !== null ? prod.wht_rate : 0).toFixed(2);
+
+        const discInput = row.querySelector('.disc-input');
+        if (discInput && !discInput.value) discInput.value = '0.00';
+        
+        recalcRow(row);
+        updateSummary();
+    }
+
+    function handleUomChange(row) {
+        const prodSelect = row.querySelector('.product-select');
+        const uomSelect = row.querySelector('.uom-select');
+        const priceInput = row.querySelector('.price-input');
+        if (!prodSelect || !uomSelect || !priceInput) return;
+
+        const prodId = prodSelect.value;
+        if (!prodId || !productsData[prodId]) return;
+
+        const prod = productsData[prodId];
+        const basePrice = parseFloat(priceInput.dataset.basePrice !== undefined ? priceInput.dataset.basePrice : prod.sale_price);
+        
+        const selectedOpt = uomSelect.options[uomSelect.selectedIndex];
+        const factor = selectedOpt && selectedOpt.dataset.factor ? parseFloat(selectedOpt.dataset.factor) : 1.0;
+        
+        // Automatically scale unit price based on conversion factor
+        priceInput.value = (basePrice * factor).toFixed(2);
+        recalcRow(row);
+        updateSummary();
+    }
+
+    function recalcRow(row) {
+        if (row.style.display === 'none') return;
+        
+        const qty = parseFloat(row.querySelector('.qty-input')?.value || 0);
+        const price = parseFloat(row.querySelector('.price-input')?.value || 0);
+        const disc = parseFloat(row.querySelector('.disc-input')?.value || 0);
+        const tax = parseFloat(row.querySelector('.tax-input')?.value || 0);
+        const wht = parseFloat(row.querySelector('.wht-input')?.value || 0);
+
+        const gross = qty * price;
+        const discAmount = gross * (disc / 100);
+        const subtotal = gross - discAmount;
+        const taxAmount = subtotal * (tax / 100);
+        const whtAmount = subtotal * (wht / 100);
+        const total = subtotal + taxAmount - whtAmount;
+
+        const totalCell = row.querySelector('.line-total-cell');
+        if (totalCell) {
+            totalCell.textContent = total.toFixed(2) + ' ج.م';
+        }
+    }
+
+    function updateSummary() {
+        let sumGross = 0;
+        let sumDiscount = 0;
+        let sumVat = 0;
+        let sumWht = 0;
+
+        document.querySelectorAll('.line-form-row').forEach(row => {
+            if (row.style.display === 'none') return;
+            const deleteCb = row.querySelector('input[type="checkbox"][name$="-DELETE"]');
+            if (deleteCb && deleteCb.checked) return;
+
+            const qty = parseFloat(row.querySelector('.qty-input')?.value || 0);
+            const price = parseFloat(row.querySelector('.price-input')?.value || 0);
+            const disc = parseFloat(row.querySelector('.disc-input')?.value || 0);
+            const tax = parseFloat(row.querySelector('.tax-input')?.value || 0);
+            const wht = parseFloat(row.querySelector('.wht-input')?.value || 0);
+
+            const gross = qty * price;
+            const discAmount = gross * (disc / 100);
+            const subtotal = gross - discAmount;
+            const taxAmount = subtotal * (tax / 100);
+            const whtAmount = subtotal * (wht / 100);
+
+            sumGross += gross;
+            sumDiscount += discAmount;
+            sumVat += taxAmount;
+            sumWht += whtAmount;
+        });
+
+        const grandTotal = (sumGross - sumDiscount) + sumVat - sumWht;
+
+        const subEl = document.getElementById('summary-subtotal');
+        const discEl = document.getElementById('summary-discount');
+        const vatEl = document.getElementById('summary-vat');
+        const whtEl = document.getElementById('summary-wht');
+        const grandEl = document.getElementById('summary-grand-total');
+
+        if (subEl) subEl.textContent = sumGross.toFixed(2) + ' ج.م';
+        if (discEl) discEl.textContent = sumDiscount.toFixed(2) + ' ج.م';
+        if (vatEl) vatEl.textContent = sumVat.toFixed(2) + ' ج.م';
+        if (whtEl) whtEl.textContent = sumWht.toFixed(2) + ' ج.م';
+        if (grandEl) grandEl.textContent = grandTotal.toFixed(2) + ' ج.م';
+    }
+
+    function attachRowEvents(row) {
+        const prodSelect = row.querySelector('.product-select');
+        if (prodSelect) {
+            prodSelect.addEventListener('change', () => handleProductChange(row));
+        }
+        
+        const uomSelect = row.querySelector('.uom-select');
+        if (uomSelect) {
+            uomSelect.addEventListener('change', () => handleUomChange(row));
+        }
+        
+        const inputs = row.querySelectorAll('.qty-input, .price-input, .disc-input, .tax-input, .wht-input');
+        inputs.forEach(inp => {
+            inp.addEventListener('input', () => {
+                // If user changes price manually, update basePrice cache
+                if (inp.classList.contains('price-input')) {
+                    const uomSelect = row.querySelector('.uom-select');
+                    const selectedOpt = uomSelect ? uomSelect.options[uomSelect.selectedIndex] : null;
+                    const factor = selectedOpt && selectedOpt.dataset.factor ? parseFloat(selectedOpt.dataset.factor) : 1.0;
+                    if (factor > 0) {
+                        inp.dataset.basePrice = parseFloat(inp.value || 0) / factor;
+                    }
+                }
+                recalcRow(row);
+                updateSummary();
+            });
+        });
+        
+        const deleteBtn = row.querySelector('.btn-delete-row');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', function() {
+                const deleteCheckbox = row.querySelector('input[type="checkbox"][name$="-DELETE"]');
+                if (deleteCheckbox) {
+                    deleteCheckbox.checked = true;
+                    row.style.display = 'none';
+                } else {
+                    row.remove();
+                }
+                updateSummary();
+            });
+        }
+    }
+
+    // Attach to initial rows
+    document.querySelectorAll('.line-form-row').forEach(row => {
+        attachRowEvents(row);
+        const prodSelect = row.querySelector('.product-select');
+        if (prodSelect && prodSelect.value) {
+            // Cache base price from current input and factor
+            const priceInput = row.querySelector('.price-input');
+            const uomSelect = row.querySelector('.uom-select');
+            updateRowUoms(row, true);
+            if (priceInput && uomSelect) {
+                const selectedOpt = uomSelect.options[uomSelect.selectedIndex];
+                const factor = selectedOpt && selectedOpt.dataset.factor ? parseFloat(selectedOpt.dataset.factor) : 1.0;
+                priceInput.dataset.basePrice = factor > 0 ? (parseFloat(priceInput.value || 0) / factor) : parseFloat(priceInput.value || 0);
+            }
+        }
+        recalcRow(row);
+    });
+    updateSummary();
+
+    // Add new row button
+    const addRowBtn = document.getElementById('add-row-btn');
+    if (addRowBtn && template && totalFormsInput && linesBody) {
+        addRowBtn.addEventListener('click', function() {
+            let formIdx = parseInt(totalFormsInput.value);
+            let newRowHtml = template.innerHTML.replace(/__prefix__/g, formIdx);
+            
+            let tempWrapper = document.createElement('tbody');
+            tempWrapper.innerHTML = newRowHtml.trim();
+            let newRow = tempWrapper.firstElementChild;
+            
+            linesBody.appendChild(newRow);
+            totalFormsInput.value = formIdx + 1;
+            
+            attachRowEvents(newRow);
+            updateRowUoms(newRow, false);
+            recalcRow(newRow);
+        });
+    }
+
+    // Re-resolve prices when customer changes
+    const quotationPartnerSelect = document.querySelector('select[name="partner"]');
+    if (quotationPartnerSelect) {
+        quotationPartnerSelect.addEventListener('change', function() {
+            document.querySelectorAll('.line-form-row').forEach(row => {
+                const prodSelect = row.querySelector('.product-select');
+                if (prodSelect && prodSelect.value) {
+                    handleProductChange(row);
+                }
+            });
+        });
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>🔄 {{ title }}</h1>
+        <p>متابعة حركة نقل الأموال والتحويلات الداخلية بين الخزن النقدية، الحسابات البنكية، والمحافظ</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">⬅️ العودة للتقارير</a>
+        <a href="{% url 'accounting:transfer_create' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">💸 إنشاء تحويل جديد</a>
+        <button type="button" onclick="window.print()" class="btn btn-secondary">🖨️ طباعة</button>
+        <button type="button" onclick="exportTableToExcel('transfers-table', 'تقرير_تحويلات_السيولة')" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير Excel</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 150px;">
+            <label class="form-label">حالة التحويل</label>
+            <select name="status" class="form-control">
+                <option value="">-- كافة الحالات --</option>
+                <option value="POSTED" {% if selected_status == 'POSTED' %}selected{% endif %}>مُرحل (معتمد)</option>
+                <option value="DRAFT" {% if selected_status == 'DRAFT' %}selected{% endif %}>مسودة (معلق)</option>
+                <option value="CANCELLED" {% if selected_status == 'CANCELLED' %}selected{% endif %}>ملغي</option>
+            </select>
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
+            <button type="submit" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">🔍 تصفية</button>
+            <a href="{% url 'core:report_liquidity_transfers' %}" class="btn btn-secondary">إلغاء</a>
+        </div>
+    </form>
+</div>
+
+<!-- KPI Cards -->
+<div class="reports-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
+    <div class="stat-card" style="border-left: 4px solid var(--neon-cyan); background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(0, 229, 255, 0.15); color: var(--neon-cyan);">💰</div>
+        <div class="stat-details">
+            <h3 class="stat-title">إجمالي المبالغ المحولة</h3>
+            <div class="stat-value" style="color: var(--neon-cyan); font-family: monospace;">{{ total_amount|floatformat:"2" }}</div>
+        </div>
+    </div>
+
+    <div class="stat-card" style="border-left: 4px solid var(--neon-green); background: linear-gradient(135deg, rgba(0, 230, 118, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(0, 230, 118, 0.15); color: var(--neon-green);">✅</div>
+        <div class="stat-details">
+            <h3 class="stat-title">التحويلات المعتمدة</h3>
+            <div class="stat-value" style="color: var(--neon-green); font-family: monospace;">{{ confirmed_count }}</div>
+        </div>
+    </div>
+
+    <div class="stat-card" style="border-left: 4px solid var(--neon-gold); background: linear-gradient(135deg, rgba(255, 184, 0, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(255, 184, 0, 0.15); color: var(--neon-gold);">⏳</div>
+        <div class="stat-details">
+            <h3 class="stat-title">التحويلات المعلقة (مسودات)</h3>
+            <div class="stat-value" style="color: var(--neon-gold); font-family: monospace;">{{ draft_count }}</div>
+        </div>
+    </div>
+
+    <div class="stat-card" style="border-left: 4px solid var(--neon-blue); background: linear-gradient(135deg, rgba(0, 176, 255, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(0, 176, 255, 0.15); color: var(--neon-blue);">🔄</div>
+        <div class="stat-details">
+            <h3 class="stat-title">إجمالي العمليات</h3>
+            <div class="stat-value" style="color: var(--neon-blue); font-family: monospace;">{{ transfers|length }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Transfers Table -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+        <h3 style="margin: 0; color: var(--text-primary);">
+            📋 تفاصيل حركات التحويل الداخلي ({{ transfers|length }} عملية)
+        </h3>
+        <div class="search-box" style="width: 250px;">
+            <input type="text" id="searchInput" class="form-control" placeholder="بحث في التحويلات..." onkeyup="filterTable()">
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table" id="transfers-table">
+            <thead>
+                <tr>
+                    <th>رقم السند</th>
+                    <th>التاريخ</th>
+                    <th>المحول منه (المصدر)</th>
+                    <th>المحول إليه (الوجهة)</th>
+                    <th style="color: var(--neon-cyan);">المبلغ المحول</th>
+                    <th>الحالة</th>
+                    <th>أنشئ بواسطة</th>
+                    <th>البيان</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in transfers %}
+                <tr>
+                    <td style="font-family: monospace; font-weight: bold;">
+                        <a href="{% url 'accounting:transfer_detail' t.id %}" style="color: var(--neon-blue); text-decoration: none;">
+                            {{ t.transfer_number }}
+                        </a>
+                    </td>
+                    <td style="color: var(--text-muted);">{{ t.date|date:"Y-m-d" }}</td>
+                    <td style="color: var(--neon-red); font-weight: 500;">
+                        {% if t.from_treasury %}
+                            🏦 {{ t.from_treasury.name }}
+                        {% elif t.from_bank_account %}
+                            🏛️ {{ t.from_bank_account.name }}
+                        {% elif t.from_ewallet %}
+                            📱 {{ t.from_ewallet.name }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td style="color: var(--neon-green); font-weight: 500;">
+                        {% if t.to_treasury %}
+                            🏦 {{ t.to_treasury.name }}
+                        {% elif t.to_bank_account %}
+                            🏛️ {{ t.to_bank_account.name }}
+                        {% elif t.to_ewallet %}
+                            📱 {{ t.to_ewallet.name }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.1rem; font-weight: bold; color: var(--neon-cyan);">
+                        {{ t.amount|floatformat:2 }}
+                    </td>
+                    <td>
+                        {% if t.status == 'POSTED' %}
+                        <span class="badge" style="background: rgba(0, 230, 118, 0.1); color: var(--neon-green); padding: 0.2rem 0.5rem; border-radius: 4px;">مُرحل</span>
+                        {% elif t.status == 'DRAFT' %}
+                        <span class="badge" style="background: rgba(255, 184, 0, 0.1); color: var(--neon-gold); padding: 0.2rem 0.5rem; border-radius: 4px;">مسودة</span>
+                        {% else %}
+                        <span class="badge" style="background: rgba(255, 23, 68, 0.1); color: var(--neon-red); padding: 0.2rem 0.5rem; border-radius: 4px;">ملغي</span>
+                        {% endif %}
+                    </td>
+                    <td style="color: var(--text-muted);">{{ t.created_by.get_full_name|default:t.created_by.username|default:"-" }}</td>
+                    <td style="color: var(--text-muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ t.notes }}">
+                        {{ t.notes|default:"-" }}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'accounting:transfer_detail' t.id %}" class="btn btn-sm btn-orange" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">
+                            عرض
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="9" class="text-center" style="padding: 2.5rem; color: var(--text-muted);">
+                        لا توجد عمليات تحويل مسجلة في هذه الفترة
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .search-box { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 20px !important; }
+        .data-table th, .data-table td { border-color: #ddd !important; color: black !important; }
+        .stat-card { border: 1px solid #ddd !important; break-inside: avoid; }
+        .stat-icon { display: none !important; }
+        .stat-value { color: black !important; font-weight: bold !important; }
+    }
+</style>
+
+<script>
+function filterTable() {
+    let input = document.getElementById("searchInput");
+    let filter = input.value.toUpperCase();
+    let table = document.getElementById("transfers-table");
+    let tr = table.getElementsByTagName("tr");
+
+    for (let i = 1; i < tr.length; i++) {
+        let textValue = tr[i].textContent || tr[i].innerText;
+        if (textValue.toUpperCase().indexOf(filter) > -1) {
+            tr[i].style.display = "";
+        } else {
+            tr[i].style.display = "none";
+        }
+    }
+}
+
+if (typeof window.exportTableToExcel !== 'function') {
+    window.exportTableToExcel = function(tableId, filename) {
+        let table = document.getElementById(tableId);
+        if (!table) return;
+        filename = (filename || 'تقرير_تحويلات_السيولة') + '.xls';
+        let clone = table.cloneNode(true);
+        clone.querySelectorAll('th, td').forEach(c => {
+            c.querySelectorAll('button, a, input').forEach(el => el.remove());
+            c.textContent = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        });
+        let doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{direction:rtl;text-align:right;} th{background:#1F4E79;color:#fff;border:0.5pt solid #ddd;padding:8px;} td{border:0.5pt solid #ddd;padding:6px;}</style></head><body dir="rtl">' + clone.outerHTML + '</body></html>';
+        let blob = new Blob(['\uFEFF' + doc], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
+}
+</script>
+{% endblock %}

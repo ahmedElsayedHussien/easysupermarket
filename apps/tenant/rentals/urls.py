@@ -14,6 +14,8 @@ urlpatterns = [
     path('<int:pk>/print/', views.RentalPrintView.as_view(), name='rental_print'),
     path('<int:pk>/return/', views.RentalReturnView.as_view(), name='rental_return'),
     path('reports/', views.RentalReportsView.as_view(), name='rental_reports'),
+    path('reports/detailed/', views.DetailedRentalsReportView.as_view(), name='report_detailed_rentals'),
+    path('reports/detailed/excel/', views.export_detailed_rentals_excel, name='report_detailed_rentals_excel'),
     path('reports/utilization/', views.EquipmentUtilizationReportView.as_view(), name='report_equipment_utilization'),
     path('reports/overdue/', views.OverdueRentalsReportView.as_view(), name='report_overdue_rentals'),
 ]

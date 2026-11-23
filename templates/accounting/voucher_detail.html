@@ -151,15 +151,32 @@
     </div>
 
     <!-- Action Buttons -->
-    <div style="display: flex; gap: 1rem; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1);">
-        <a href="{{ list_url }}" class="btn-outline-light">
-            <i class="fas fa-arrow-right"></i> عودة للقائمة
+    <div style="display: flex; gap: 1rem; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap; align-items: center;">
+        <a href="{{ list_url }}" class="btn-orange">
+            ⬅️ العودة لـ {{ list_name|default:"السندات" }}
         </a>
+        <a href="{{ create_url }}" class="btn-outline-light" style="border-color: rgba(0, 229, 255, 0.4); color: #00e5ff;">
+            ➕ {{ create_name|default:"إضافة سند جديد" }}
+        </a>
+        <button type="button" onclick="window.print()" class="btn-outline-light">
+            <i class="fas fa-print"></i> طباعة السند
+        </button>
         {% if voucher.status == 'DRAFT' %}
         <form action="{% url 'accounting:voucher_confirm' voucher.pk %}" method="post" style="margin: 0;">
             {% csrf_token %}
             <button type="submit" class="btn-orange" onclick="return confirm('هل أنت متأكد من ترحيل السند واعتماده؟ لا يمكن التراجع بعد الترحيل.');">
                 <i class="fas fa-check-circle"></i> اعتماد وترحيل السند
+            </button>
+        </form>
+        {% endif %}
+        {% if voucher.status != 'CANCELLED' %}
+        <a href="{% url 'accounting:voucher_update' voucher.pk %}" class="btn-outline-light" style="border-color: rgba(255, 255, 255, 0.3);">
+            <i class="fas fa-edit"></i> تعديل السند
+        </a>
+        <form action="{% url 'accounting:voucher_cancel' voucher.pk %}" method="post" style="margin: 0;">
+            {% csrf_token %}
+            <button type="submit" class="btn" style="background: #dc3545; color: white; font-weight: bold; padding: 0.6rem 1.5rem; border-radius: 8px; border: none; cursor: pointer;" onclick="return confirm('هل أنت متأكد من إلغاء هذا السند؟ سيتم حذف وعكس القيد المحاسبي المربوط به.');">
+                <i class="fas fa-times-circle"></i> إلغاء السند
             </button>
         </form>
         {% endif %}
@@ -185,7 +202,7 @@
         </div>
 
         <!-- تفاصيل الدفع -->
-        <div class="data-card">
+        <div class="data-card" {% if voucher.payment_method == 'SPLIT' %}style="grid-column: span 2;"{% endif %}>
             <h5 style="color: #ffd700; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.5rem;">
                 <i class="fas fa-wallet" style="margin-left: 0.5rem;"></i> تفاصيل الدفع
             </h5>
@@ -194,18 +211,54 @@
                     <span class="data-label">طريقة الدفع</span>
                     <span class="data-value">{{ voucher.get_payment_method_display }}</span>
                 </li>
+                {% if voucher.payment_method == 'SPLIT' %}
+                <li class="data-item flex-column align-items-start mt-2">
+                    <span class="data-label mb-2 fw-bold text-neon-blue">توزيع مبالغ السداد المقسم:</span>
+                    <div class="w-100" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px;">
+                        {% if voucher.paid_cash > 0 %}
+                        <div class="p-2 rounded" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                            <span class="d-block small text-white-50">💵 كاش (نقدي):</span>
+                            <strong class="d-block fs-6 text-success">{{ voucher.paid_cash }} ج.م</strong>
+                            <small class="text-white-50" style="font-size: 0.75rem;">{{ voucher.treasury.name|default:"الخزينة الافتراضية" }}</small>
+                        </div>
+                        {% endif %}
+                        {% if voucher.paid_card > 0 %}
+                        <div class="p-2 rounded" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                            <span class="d-block small text-white-50">💳 بطاقة / فيزا:</span>
+                            <strong class="d-block fs-6 text-info">{{ voucher.paid_card }} ج.م</strong>
+                            <small class="text-white-50" style="font-size: 0.75rem;">{{ voucher.bank_account.name|default:"ماكينة الفيزا" }}</small>
+                        </div>
+                        {% endif %}
+                        {% if voucher.paid_ewallet > 0 %}
+                        <div class="p-2 rounded" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                            <span class="d-block small text-white-50">📱 محفظة إلكترونية:</span>
+                            <strong class="d-block fs-6" style="color: #c084fc;">{{ voucher.paid_ewallet }} ج.م</strong>
+                            <small class="text-white-50" style="font-size: 0.75rem;">{{ voucher.ewallet.name|default:"المحفظة الافتراضية" }}</small>
+                        </div>
+                        {% endif %}
+                        {% if voucher.paid_bank > 0 %}
+                        <div class="p-2 rounded" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                            <span class="d-block small text-white-50">⚡ إنستاباي / تحويل:</span>
+                            <strong class="d-block fs-6 text-warning">{{ voucher.paid_bank }} ج.م</strong>
+                            <small class="text-white-50" style="font-size: 0.75rem;">{{ voucher.transfer_bank_account.name|default:voucher.bank_account.name|default:"حساب إنستاباي" }}</small>
+                        </div>
+                        {% endif %}
+                    </div>
+                </li>
+                {% else %}
                 <li class="data-item">
                     <span class="data-label">المصدر/الوجهة</span>
                     <span class="data-value" style="color: #00e5ff;">
                         {% if voucher.payment_method == 'CASH' %}
                             {{ voucher.treasury.name|default:"-" }}
-                        {% elif voucher.payment_method == 'BANK_TRANSFER' %}
+                        {% elif voucher.payment_method == 'CARD' or voucher.payment_method == 'BANK_TRANSFER' %}
                             {{ voucher.bank_account.name|default:"-" }}
                         {% elif voucher.payment_method == 'EWALLET' %}
                             {{ voucher.ewallet.name|default:"-" }}
                         {% endif %}
                     </span>
                 </li>
+                {% endif %}
             </ul>
         </div>
 
@@ -243,9 +296,11 @@
     <div style="margin-top: 3rem; padding-top: 2rem; border-top: 1px solid rgba(255,255,255,0.1);">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
             <h4 style="color: #fff; margin: 0;"><i class="fas fa-book" style="color: #00e5ff; margin-left: 0.5rem;"></i> القيد المحاسبي المربوط</h4>
+            {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
             <a href="{% url 'accounting:journal_detail' voucher.journal_entry.pk %}" style="color: #00e5ff; text-decoration: none; border: 1px solid #00e5ff; padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.9rem;">
                 عرض القيد بالكامل <i class="fas fa-external-link-alt" style="margin-right: 0.3rem;"></i>
             </a>
+            {% endif %}
         </div>
         
         <table class="journal-table">

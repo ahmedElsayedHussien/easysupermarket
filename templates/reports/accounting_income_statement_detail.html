@@ -1,0 +1,419 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>🔍 {{ title }}</h1>
+        <p>عرض تفصيلي لكافة الحركات والعمليات التي كونت هذا البند في الفترة من <strong>{{ date_from }}</strong> إلى <strong>{{ date_to }}</strong></p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:report_income_statement' %}?date_from={{ date_from }}&date_to={{ date_to }}" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+            ⬅️ العودة لقائمة الدخل
+        </a>
+        <button type="button" onclick="exportTableToExcel('detail-table', 'تفاصيل_بند_قائمة_الدخل')" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+            📊 تصدير Excel
+        </button>
+        <button type="button" onclick="window.print()" class="btn btn-secondary">
+            🖨️ طباعة
+        </button>
+    </div>
+</div>
+
+<!-- Date Filter Card -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <input type="hidden" name="type" value="{{ detail_type }}">
+        {% if account_code %}
+        <input type="hidden" name="account" value="{{ account_code }}">
+        {% endif %}
+        <div class="form-group" style="flex: 1; min-width: 180px;">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 180px;">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
+            <button type="submit" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+                تحديث الفترة
+            </button>
+            <a href="{% url 'core:report_income_statement' %}?date_from={{ date_from }}&date_to={{ date_to }}" class="btn btn-secondary">
+                عرض القائمة كاملة
+            </a>
+        </div>
+    </form>
+</div>
+
+<!-- KPI Summary Cards -->
+<div class="grid grid-3" style="margin-bottom: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.25rem;">
+    <div class="card stat-card highlight-card">
+        <div class="stat-icon" style="font-size: 2.2rem;">💰</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.95rem; color: var(--text-muted);">إجمالي قيمة البند في الفترة</div>
+            <div class="stat-value" style="font-size: 1.85rem; font-weight: 800; font-family: monospace; color: #ff7300;">
+                {{ total_amount|floatformat:"-2" }} <span style="font-size: 1rem; font-weight: normal; color: var(--text-secondary);">ج.م</span>
+            </div>
+            <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+                مطابق لقيمة البند المدرجة في قائمة الدخل
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-icon" style="font-size: 2.2rem;">📋</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.95rem; color: var(--text-muted);">إجمالي عدد الحركات</div>
+            <div class="stat-value" style="font-size: 1.85rem; font-weight: 800; font-family: monospace; color: var(--neon-cyan, #00e5ff);">
+                {{ records_count }} <span style="font-size: 1rem; font-weight: normal; color: var(--text-secondary);">سجل</span>
+            </div>
+            <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+                عمليات مرحلة ومعتمدة محاسبياً
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-icon" style="font-size: 2.2rem;">📌</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.95rem; color: var(--text-muted);">تصنيف البند</div>
+            <div class="stat-value" style="font-size: 1.35rem; font-weight: 700; margin-top: 4px;">
+                {% if badge_type == 'sales' %}
+                    <span class="badge" style="background: rgba(0, 230, 118, 0.2); color: var(--neon-green, #00e676); border: 1px solid rgba(0, 230, 118, 0.4); padding: 6px 12px; font-size: 0.95rem;">إيرادات مبيعات</span>
+                {% elif badge_type == 'discount' %}
+                    <span class="badge" style="background: rgba(255, 115, 0, 0.2); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.4); padding: 6px 12px; font-size: 0.95rem;">خصومات تجارية</span>
+                {% elif badge_type == 'returns' %}
+                    <span class="badge" style="background: rgba(255, 23, 68, 0.2); color: var(--neon-red, #ff1744); border: 1px solid rgba(255, 23, 68, 0.4); padding: 6px 12px; font-size: 0.95rem;">مردودات مبيعات</span>
+                {% elif badge_type == 'net_revenue' %}
+                    <span class="badge" style="background: rgba(0, 229, 255, 0.2); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4); padding: 6px 12px; font-size: 0.95rem;">صافي إيرادات</span>
+                {% elif badge_type == 'cogs' %}
+                    <span class="badge" style="background: rgba(255, 171, 0, 0.2); color: #ffab00; border: 1px solid rgba(255, 171, 0, 0.4); padding: 6px 12px; font-size: 0.95rem;">تكلفة بضاعة مباعة (COGS)</span>
+                {% elif badge_type == 'expenses' %}
+                    <span class="badge" style="background: rgba(255, 61, 0, 0.2); color: #ff3d00; border: 1px solid rgba(255, 61, 0, 0.4); padding: 6px 12px; font-size: 0.95rem;">مصروفات تشغيلية</span>
+                {% else %}
+                    <span class="badge badge-secondary">حركات مالية</span>
+                {% endif %}
+            </div>
+            <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 6px;">
+                {% if account_code %}كود الحساب: <strong>{{ account_code }}</strong>{% else %}حركات مجمعة{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search & Data Table -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
+        <h3 style="margin: 0; font-size: 1.2rem;">📋 جدول الحركات والعمليات التفصيلية</h3>
+        <div class="search-box" style="flex: 1; max-width: 380px;">
+            <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="🔍 ابحث في النتائج..." class="form-control" style="background: var(--bg-tertiary); border: 1px solid var(--border-default);">
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table" id="detail-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="width: 50px;">#</th>
+                    {% if badge_type == 'cogs' %}
+                        <th>رقم الفاتورة</th>
+                        <th>نوع الحركة</th>
+                        <th>التاريخ</th>
+                        <th>الصنف / الباركود</th>
+                        <th>العميل</th>
+                        <th>الكمية</th>
+                        <th>سعر البيع</th>
+                        <th>تكلفة الوحدة</th>
+                        <th style="background: rgba(255, 115, 0, 0.15); color: #ff7300;">تكلفة البضاعة (COGS)</th>
+                        <th class="no-print">إجراء</th>
+                    {% elif badge_type == 'expenses' %}
+                        <th>رقم القيد</th>
+                        <th>التاريخ</th>
+                        <th>كود الحساب</th>
+                        <th>اسم الحساب</th>
+                        <th>البيان / الشرح</th>
+                        <th>مدين (ج.م)</th>
+                        <th>دائن (ج.م)</th>
+                        <th style="background: rgba(255, 115, 0, 0.15); color: #ff7300;">صافي المصروف (ج.م)</th>
+                        <th class="no-print">إجراء</th>
+                    {% else %}
+                        {# sales, discount, net_sales, returns, net_revenue #}
+                        <th>رقم الفاتورة</th>
+                        <th>نوع الحركة</th>
+                        <th>التاريخ</th>
+                        <th>العميل</th>
+                        <th>الفرع</th>
+                        <th>قبل الخصم</th>
+                        <th>الخصم</th>
+                        <th>الصافي</th>
+                        <th>الضريبة</th>
+                        <th>الإجمالي</th>
+                        <th style="background: rgba(255, 115, 0, 0.15); color: #ff7300;">القيمة في قائمة الدخل</th>
+                        <th>حالة السداد</th>
+                        <th class="no-print">إجراء</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in records %}
+                <tr>
+                    <td>{{ forloop.counter0|add:page_obj.start_index }}</td>
+
+                    {% if badge_type == 'cogs' %}
+                        <td>
+                            <a href="{{ r.url }}" class="table-link" target="_blank" title="عرض الفاتورة">
+                                <strong>{{ r.number }}</strong>
+                            </a>
+                        </td>
+                        <td>
+                            {% if r.is_return %}
+                                <span class="badge" style="background: rgba(255, 23, 68, 0.15); color: #ff1744;">مرتجع بيع</span>
+                            {% else %}
+                                <span class="badge" style="background: rgba(0, 230, 118, 0.15); color: #00e676;">فاتورة بيع</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ r.date|date:"Y-m-d" }}</td>
+                        <td>
+                            <strong>{{ r.product_name }}</strong>
+                            {% if r.barcode %}
+                                <br><small style="color: var(--text-muted); font-family: monospace;">{{ r.barcode }}</small>
+                            {% endif %}
+                        </td>
+                        <td>{{ r.partner }}</td>
+                        <td style="font-family: monospace; font-weight: bold;">{{ r.quantity }}</td>
+                        <td style="font-family: monospace;">{{ r.unit_price|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace;">{{ r.unit_cost|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace; font-weight: bold; background: rgba(255, 115, 0, 0.08); color: #ff7300;">
+                            {{ r.cogs_amount|floatformat:"-2" }}
+                        </td>
+                        <td class="no-print">
+                            <a href="{{ r.url }}" target="_blank" class="btn btn-sm btn-orange" style="padding: 3px 8px; font-size: 0.8rem; background: #ff7300; border-color: #ff7300; color: #fff;">
+                                👁️ عرض
+                            </a>
+                        </td>
+
+                    {% elif badge_type == 'expenses' %}
+                        <td>
+                            <a href="{{ r.url }}" class="table-link" target="_blank" title="عرض القيد المحاسبي">
+                                <strong>{{ r.number }}</strong>
+                            </a>
+                        </td>
+                        <td>{{ r.date|date:"Y-m-d" }}</td>
+                        <td style="font-family: monospace; font-weight: bold;">{{ r.account_code }}</td>
+                        <td><strong>{{ r.account_name }}</strong></td>
+                        <td style="max-width: 250px; white-space: normal;">{{ r.description }}</td>
+                        <td style="font-family: monospace;">{{ r.debit|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace;">{{ r.credit|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace; font-weight: bold; background: rgba(255, 115, 0, 0.08); color: #ff7300;">
+                            {{ r.net_amount|floatformat:"-2" }}
+                        </td>
+                        <td class="no-print">
+                            <a href="{{ r.url }}" target="_blank" class="btn btn-sm btn-orange" style="padding: 3px 8px; font-size: 0.8rem; background: #ff7300; border-color: #ff7300; color: #fff;">
+                                👁️ عرض
+                            </a>
+                        </td>
+
+                    {% else %}
+                        {# sales / discounts / returns / net_revenue #}
+                        <td>
+                            <a href="{{ r.url }}" class="table-link" target="_blank" title="عرض الفاتورة">
+                                <strong>{{ r.number }}</strong>
+                            </a>
+                        </td>
+                        <td>
+                            {% if r.is_return %}
+                                <span class="badge" style="background: rgba(255, 23, 68, 0.15); color: #ff1744;">مرتجع بيع</span>
+                            {% else %}
+                                <span class="badge" style="background: rgba(0, 230, 118, 0.15); color: #00e676;">فاتورة بيع</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ r.date|date:"Y-m-d" }}</td>
+                        <td><strong>{{ r.partner }}</strong></td>
+                        <td>{{ r.branch }}</td>
+                        <td style="font-family: monospace;">{{ r.subtotal|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace; color: var(--neon-red, #ff1744);">{{ r.discount|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace; font-weight: bold;">{{ r.net|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace; color: var(--text-muted);">{{ r.tax|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace; font-weight: bold;">{{ r.total|floatformat:"-2" }}</td>
+                        <td style="font-family: monospace; font-weight: bold; background: rgba(255, 115, 0, 0.08); color: #ff7300; font-size: 1.05rem;">
+                            {{ r.amount_focus|floatformat:"-2" }}
+                        </td>
+                        <td>
+                            <span class="badge badge-secondary" style="font-size: 0.8rem;">{{ r.status }}</span>
+                        </td>
+                        <td class="no-print">
+                            <a href="{{ r.url }}" target="_blank" class="btn btn-sm btn-orange" style="padding: 3px 8px; font-size: 0.8rem; background: #ff7300; border-color: #ff7300; color: #fff;">
+                                👁️ عرض
+                            </a>
+                        </td>
+                    {% endif %}
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="14" class="text-center" style="padding: 3rem; color: var(--text-muted); font-size: 1.1rem;">
+                        ⚠️ لا توجد حركات مسجلة لهذا البند خلال الفترة المحددة
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            {% if records %}
+            <tfoot>
+                <tr style="background: rgba(255, 115, 0, 0.1); font-weight: bold; border-top: 2px solid #ff7300;">
+                    {% if badge_type == 'cogs' %}
+                        <td colspan="9" style="text-align: left; padding: 12px 16px; font-size: 1.1rem;">
+                            الإجمالي الكلي لتكلفة البضاعة المباعة (COGS):
+                        </td>
+                        <td style="font-family: monospace; font-size: 1.2rem; color: #ff7300;">
+                            {{ total_amount|floatformat:"-2" }} ج.م
+                        </td>
+                        <td class="no-print"></td>
+                    {% elif badge_type == 'expenses' %}
+                        <td colspan="7" style="text-align: left; padding: 12px 16px; font-size: 1.1rem;">
+                            الإجمالي الكلي للمصروفات:
+                        </td>
+                        <td style="font-family: monospace; font-size: 1.2rem; color: #ff7300;">
+                            {{ total_amount|floatformat:"-2" }} ج.م
+                        </td>
+                        <td class="no-print"></td>
+                    {% else %}
+                        <td colspan="10" style="text-align: left; padding: 12px 16px; font-size: 1.1rem;">
+                            الإجمالي الكلي المحسوب في قائمة الدخل:
+                        </td>
+                        <td style="font-family: monospace; font-size: 1.2rem; color: #ff7300;">
+                            {{ total_amount|floatformat:"-2" }} ج.م
+                        </td>
+                        <td colspan="2" class="no-print"></td>
+                    {% endif %}
+                </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+    </div>
+
+    <!-- Pagination & Summary Footer -->
+    {% if is_paginated %}
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 1.1rem 1.5rem; flex-wrap: wrap; gap: 1rem; border-top: 1px solid var(--border-default); background: var(--bg-secondary); border-radius: 0 0 10px 10px;" class="no-print">
+        <div style="color: var(--text-muted); font-size: 0.95rem;">
+            عرض الحركات: <strong style="color: var(--text-primary);">{{ page_obj.start_index }} - {{ page_obj.end_index }}</strong> من إجمالي <strong style="color: #ff7300;">{{ records_count }}</strong> حركة
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1{% if detail_type %}&type={{ detail_type }}{% endif %}{% if account_code %}&account={{ account_code }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-sm btn-secondary" title="الصفحة الأولى">
+                ⏮️ الأولى
+            </a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if detail_type %}&type={{ detail_type }}{% endif %}{% if account_code %}&account={{ account_code }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.3);">
+                ⬅️ السابق
+            </a>
+            {% endif %}
+
+            <span class="btn btn-sm" style="background: var(--bg-card); border: 1px solid var(--border-default); pointer-events: none; font-weight: 700; color: var(--text-primary); padding: 4px 12px;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if detail_type %}&type={{ detail_type }}{% endif %}{% if account_code %}&account={{ account_code }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.3);">
+                التالي ➡️
+            </a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if detail_type %}&type={{ detail_type }}{% endif %}{% if account_code %}&account={{ account_code }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}" class="btn btn-sm btn-secondary" title="الصفحة الأخيرة">
+                الأخيرة ⏭️
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .highlight-card {
+        border: 2px solid rgba(255, 115, 0, 0.4) !important;
+        background: linear-gradient(135deg, rgba(255, 115, 0, 0.08) 0%, rgba(255, 115, 0, 0.02) 100%) !important;
+        box-shadow: 0 4px 20px rgba(255, 115, 0, 0.15) !important;
+    }
+    .stat-card {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        padding: 1.25rem 1.5rem;
+        border-radius: 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-default);
+    }
+    .table-link {
+        color: var(--neon-cyan, #00e5ff);
+        text-decoration: none;
+        transition: color 0.2s ease;
+    }
+    .table-link:hover {
+        color: #ff7300;
+        text-decoration: underline;
+    }
+    .data-table th, .data-table td {
+        padding: 10px 12px;
+        text-align: right;
+        border-bottom: 1px solid var(--border-default);
+        vertical-align: middle;
+    }
+    .data-table th {
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+    .data-table tbody tr:hover {
+        background: rgba(255, 255, 255, 0.02);
+    }
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .search-box, .no-print { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 20px !important; }
+        .data-table th, .data-table td { border-color: #ddd !important; color: black !important; }
+        .stat-card { border: 1px solid #ddd !important; break-inside: avoid; }
+        .stat-icon { display: none !important; }
+        .stat-value { color: black !important; font-weight: bold !important; }
+    }
+</style>
+
+<script>
+function filterTable() {
+    let input = document.getElementById("searchInput");
+    let filter = input.value.toUpperCase();
+    let table = document.getElementById("detail-table");
+    let tbody = table.getElementsByTagName("tbody")[0];
+    let tr = tbody.getElementsByTagName("tr");
+
+    for (let i = 0; i < tr.length; i++) {
+        let textValue = tr[i].textContent || tr[i].innerText;
+        if (textValue.toUpperCase().indexOf(filter) > -1) {
+            tr[i].style.display = "";
+        } else {
+            tr[i].style.display = "none";
+        }
+    }
+}
+
+if (typeof window.exportTableToExcel !== 'function') {
+    window.exportTableToExcel = function(tableId, filename) {
+        let table = document.getElementById(tableId);
+        if (!table) return;
+        filename = (filename || 'تفاصيل_بند_قائمة_الدخل') + '.xls';
+        let clone = table.cloneNode(true);
+        clone.querySelectorAll('.no-print').forEach(el => el.remove());
+        clone.querySelectorAll('th, td').forEach(c => {
+            c.querySelectorAll('button, a, input').forEach(el => el.remove());
+            c.textContent = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        });
+        let doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{direction:rtl;text-align:right;} th{background:#1F4E79;color:#fff;border:0.5pt solid #ddd;padding:8px;} td{border:0.5pt solid #ddd;padding:6px;}</style></head><body dir="rtl">' + clone.outerHTML + '</body></html>';
+        let blob = new Blob(['\uFEFF' + doc], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
+}
+</script>
+{% endblock %}

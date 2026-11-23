@@ -1,42 +1,42 @@
-{% extends 'core/base.html' %}
+{% extends "base.html" %}
 
 {% block title %}تقرير تغير أسعار الشراء{% endblock %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="mb-0"><i class="fas fa-chart-line text-primary me-2"></i> تقرير تغير أسعار الشراء</h2>
-        <a href="{% url 'core:reports_index' %}" class="btn btn-secondary">
-            <i class="fas fa-arrow-left me-1"></i> عودة للتقارير
-        </a>
+<div class="content-header mb-4">
+    <div class="content-title">
+        <h1>📈 تقرير تغير أسعار الشراء</h1>
+        <p>متابعة حركة وتغير أسعار الشراء للأصناف ومقارنة أدنى وأعلى ومتوسط الأسعار</p>
     </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-ghost">⬅️ عودة للتقارير</a>
+    </div>
+</div>
 
-    <!-- Filters -->
-    <div class="card mb-4">
-        <div class="card-body">
-            <form method="get" class="row g-3 align-items-end">
-                <div class="col-md-3">
-                    <label class="form-label">من تاريخ</label>
-                    <input type="date" name="start_date" class="form-control" value="{{ request.GET.start_date }}">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">إلى تاريخ</label>
-                    <input type="date" name="end_date" class="form-control" value="{{ request.GET.end_date }}">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">بحث (صنف / باركود)</label>
-                    <input type="text" name="search_query" class="form-control" placeholder="اسم الصنف أو الباركود..." value="{{ request.GET.search_query }}">
-                </div>
-                <div class="col-md-3">
-                    <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
-                        <button type="submit" class="btn btn-primary">تصفية النتائج</button>
-                        <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
-                        <a href="{% url 'core:report_purchase_price_variation' %}" class="btn btn-orange">إعادة ضبط</a>
-                    </div>
-                </div>
-            </form>
+<!-- Filters -->
+<div class="card p-3 mb-4">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="start_date" class="form-control" value="{{ request.GET.start_date }}">
         </div>
-    </div>
+        <div class="col-md-3">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="end_date" class="form-control" value="{{ request.GET.end_date }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">بحث (صنف / باركود)</label>
+            <input type="text" name="search_query" class="form-control" placeholder="اسم الصنف أو الباركود..." value="{{ request.GET.search_query }}">
+        </div>
+        <div class="col-md-3">
+            <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+                <button type="submit" class="btn btn-orange">تصفية النتائج</button>
+                <button type="submit" name="export" value="excel" class="btn btn-orange" style="background-color: #ff7300; color: white; border: none; font-weight: bold; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير إكسيل</button>
+                <a href="{% url 'core:report_purchase_price_variation' %}" class="btn btn-orange">إعادة ضبط</a>
+            </div>
+        </div>
+    </form>
+</div>
 
     <!-- Data Table -->
     <div class="card">

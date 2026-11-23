@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>💧 {{ title }}</h1>
+        <p>متابعة دقيقة وفورية لكافة الأرصدة النقدية والبنكية والمحافظ في النظام</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">⬅️ العودة للتقارير</a>
+        <a href="{% url 'accounting:transfer_create' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">💸 تحويل بين الحسابات</a>
+        <button type="button" onclick="window.print()" class="btn btn-secondary">🖨️ طباعة</button>
+        <button type="button" onclick="exportAllTablesToExcel(['treasuries-table', 'banks-table', 'wallets-table'], 'تقرير_موقف_السيولة_النقدية')" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير Excel</button>
+    </div>
+</div>
+
+<!-- KPI Summary Cards -->
+<div class="reports-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 1.5rem;">
+    <!-- 1. Total Cash Treasuries -->
+    <div class="stat-card" style="border-left: 4px solid var(--neon-cyan); background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(0, 229, 255, 0.15); color: var(--neon-cyan); font-size: 1.75rem;">💵</div>
+        <div class="stat-details">
+            <h3 class="stat-title">النقدية بالخزن (كاش)</h3>
+            <div class="stat-value" style="color: var(--neon-cyan); font-size: 1.5rem; font-family: monospace;">{{ total_treasuries|floatformat:"2" }}</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">{{ treasuries|length }} خزينة مسجلة</div>
+        </div>
+    </div>
+
+    <!-- 2. Total Bank Accounts -->
+    <div class="stat-card" style="border-left: 4px solid var(--neon-gold); background: linear-gradient(135deg, rgba(255, 184, 0, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(255, 184, 0, 0.15); color: var(--neon-gold); font-size: 1.75rem;">🏛️</div>
+        <div class="stat-details">
+            <h3 class="stat-title">الأرصدة البنكية</h3>
+            <div class="stat-value" style="color: var(--neon-gold); font-size: 1.5rem; font-family: monospace;">{{ total_banks|floatformat:"2" }}</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">{{ bank_accounts|length }} حساب بنكي</div>
+        </div>
+    </div>
+
+    <!-- 3. Total E-Wallets -->
+    <div class="stat-card" style="border-left: 4px solid var(--neon-green); background: linear-gradient(135deg, rgba(0, 230, 118, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(0, 230, 118, 0.15); color: var(--neon-green); font-size: 1.75rem;">📱</div>
+        <div class="stat-details">
+            <h3 class="stat-title">المحافظ الإلكترونية</h3>
+            <div class="stat-value" style="color: var(--neon-green); font-size: 1.5rem; font-family: monospace;">{{ total_wallets|floatformat:"2" }}</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">{{ ewallets|length }} محفظة إلكترونية</div>
+        </div>
+    </div>
+
+    <!-- 4. Grand Total Liquidity -->
+    <div class="stat-card" style="border-left: 4px solid #ff7300; background: linear-gradient(135deg, rgba(255, 115, 0, 0.15), rgba(0,0,0,0.3)); border-color: rgba(255, 115, 0, 0.4);">
+        <div class="stat-icon" style="background: rgba(255, 115, 0, 0.2); color: #ff7300; font-size: 1.75rem;">💎</div>
+        <div class="stat-details">
+            <h3 class="stat-title" style="color: #ff9d42; font-weight: bold;">إجمالي السيولة المتاحة</h3>
+            <div class="stat-value" style="color: #ff7300; font-size: 1.75rem; font-family: monospace; font-weight: 800;">{{ grand_total_liquidity|floatformat:"2" }}</div>
+            <div style="font-size: 0.75rem; color: #ffcaa0; margin-top: 0.25rem;">إجمالي النقدية المتاحة فوراً</div>
+        </div>
+    </div>
+</div>
+
+<!-- Liquidity Distribution Bar -->
+<div class="card" style="margin-bottom: 1.5rem; padding: 1rem 1.25rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+        <span style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);">
+            📊 {% if is_deficit %}توزيع الأرصدة (عجز / سحب مكشوف):{% else %}توزيع السيولة النقدية:{% endif %}
+        </span>
+        <div style="display: flex; gap: 1.25rem; font-size: 0.8rem;">
+            <span style="color: var(--neon-cyan);">● الخزن: {{ treasury_pct }}%</span>
+            <span style="color: var(--neon-gold);">● البنوك: {{ bank_pct }}%</span>
+            <span style="color: var(--neon-green);">● المحافظ: {{ wallet_pct }}%</span>
+        </div>
+    </div>
+    <div style="display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: rgba(255,255,255,0.05);">
+        <div style="width: {{ treasury_pct }}%; background: var(--neon-cyan);" title="الخزن: {{ treasury_pct }}%"></div>
+        <div style="width: {{ bank_pct }}%; background: var(--neon-gold);" title="البنوك: {{ bank_pct }}%"></div>
+        <div style="width: {{ wallet_pct }}%; background: var(--neon-green);" title="المحافظ: {{ wallet_pct }}%"></div>
+    </div>
+</div>
+
+<!-- Section 1: Treasuries -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+        <h3 style="margin: 0; color: var(--neon-cyan); display: flex; align-items: center; gap: 0.5rem;">
+            <span>🏦</span> الخزن النقدية وصناديق الفروع
+        </h3>
+        <span class="badge" style="background: rgba(0, 229, 255, 0.15); color: var(--neon-cyan); padding: 0.25rem 0.75rem; border-radius: 20px; font-weight: bold;">
+            الإجمالي: {{ total_treasuries|floatformat:2 }}
+        </span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table" id="treasuries-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>اسم الخزينة</th>
+                    <th>الفرع التابع له</th>
+                    <th>رصيد أول المدة</th>
+                    <th style="color: var(--neon-cyan);">الرصيد الفعلي الحالي</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in treasuries %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td style="font-weight: bold; color: var(--text-primary);">
+                        <a href="{% url 'core:report_treasury' %}?account=treasury_{{ t.id }}" style="color: var(--neon-cyan); text-decoration: none;">
+                            {{ t.name }}
+                        </a>
+                    </td>
+                    <td style="color: var(--text-muted);">{{ t.branch.name|default:"المركز الرئيسي" }}</td>
+                    <td style="color: var(--text-muted); font-family: monospace;">{{ t.opening_balance|floatformat:2 }}</td>
+                    <td style="font-family: monospace; font-size: 1.1rem; font-weight: bold; {% if t.current_balance < 0 %}color: var(--neon-red);{% else %}color: var(--neon-cyan);{% endif %}">
+                        {{ t.current_balance|floatformat:2 }}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'core:report_treasury' %}?account=treasury_{{ t.id }}" class="btn btn-sm btn-orange" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;">
+                            📜 كشف الحركة
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center" style="color: var(--text-muted); padding: 2rem;">لا توجد خزن نقدية مسجلة</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Section 2: Bank Accounts -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+        <h3 style="margin: 0; color: var(--neon-gold); display: flex; align-items: center; gap: 0.5rem;">
+            <span>🏛️</span> الحسابات البنكية وماكينات الدفع
+        </h3>
+        <span class="badge" style="background: rgba(255, 184, 0, 0.15); color: var(--neon-gold); padding: 0.25rem 0.75rem; border-radius: 20px; font-weight: bold;">
+            الإجمالي: {{ total_banks|floatformat:2 }}
+        </span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table" id="banks-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>اسم الحساب البنكي</th>
+                    <th>رصيد أول المدة</th>
+                    <th style="color: var(--neon-gold);">الرصيد الفعلي الحالي</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for b in bank_accounts %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td style="font-weight: bold; color: var(--text-primary);">
+                        <a href="{% url 'core:report_treasury' %}?account=bank_{{ b.id }}" style="color: var(--neon-gold); text-decoration: none;">
+                            {{ b.name }}
+                        </a>
+                    </td>
+                    <td style="color: var(--text-muted); font-family: monospace;">{{ b.opening_balance|floatformat:2 }}</td>
+                    <td style="font-family: monospace; font-size: 1.1rem; font-weight: bold; {% if b.current_balance < 0 %}color: var(--neon-red);{% else %}color: var(--neon-gold);{% endif %}">
+                        {{ b.current_balance|floatformat:2 }}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'core:report_treasury' %}?account=bank_{{ b.id }}" class="btn btn-sm btn-orange" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;">
+                            📜 كشف الحركة
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center" style="color: var(--text-muted); padding: 2rem;">لا توجد حسابات بنكية مسجلة</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Section 3: E-Wallets -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+        <h3 style="margin: 0; color: var(--neon-green); display: flex; align-items: center; gap: 0.5rem;">
+            <span>📱</span> المحافظ الإلكترونية وإنستاباي
+        </h3>
+        <span class="badge" style="background: rgba(0, 230, 118, 0.15); color: var(--neon-green); padding: 0.25rem 0.75rem; border-radius: 20px; font-weight: bold;">
+            الإجمالي: {{ total_wallets|floatformat:2 }}
+        </span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table" id="wallets-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>اسم المحفظة الإلكترونية</th>
+                    <th>رصيد أول المدة</th>
+                    <th style="color: var(--neon-green);">الرصيد الفعلي الحالي</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in ewallets %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td style="font-weight: bold; color: var(--text-primary);">
+                        <a href="{% url 'core:report_treasury' %}?account=wallet_{{ w.id }}" style="color: var(--neon-green); text-decoration: none;">
+                            {{ w.name }}
+                        </a>
+                    </td>
+                    <td style="color: var(--text-muted); font-family: monospace;">{{ w.opening_balance|floatformat:2 }}</td>
+                    <td style="font-family: monospace; font-size: 1.1rem; font-weight: bold; {% if w.current_balance < 0 %}color: var(--neon-red);{% else %}color: var(--neon-green);{% endif %}">
+                        {{ w.current_balance|floatformat:2 }}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'core:report_treasury' %}?account=wallet_{{ w.id }}" class="btn btn-sm btn-orange" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;">
+                            📜 كشف الحركة
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center" style="color: var(--text-muted); padding: 2rem;">لا توجد محافظ إلكترونية مسجلة</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 20px !important; }
+        .data-table th, .data-table td { border-color: #ddd !important; color: black !important; }
+        .stat-card { border: 1px solid #ddd !important; break-inside: avoid; }
+        .stat-icon { display: none !important; }
+        .stat-value { color: black !important; font-weight: bold !important; }
+    }
+</style>
+
+<script>
+if (typeof window.exportAllTablesToExcel !== 'function') {
+    window.exportAllTablesToExcel = function(tableIds, filename) {
+        let tables = tableIds || ['treasuries-table', 'banks-table', 'wallets-table'];
+        filename = (filename || 'تقرير_موقف_السيولة_النقدية') + '.xls';
+        let fullHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{direction:rtl;text-align:right;} th{background:#1F4E79;color:#fff;border:0.5pt solid #ddd;padding:8px;} td{border:0.5pt solid #ddd;padding:6px;}</style></head><body dir="rtl">';
+        tables.forEach(id => {
+            let el = document.getElementById(id);
+            if(el) {
+                let clone = el.cloneNode(true);
+                clone.querySelectorAll('th, td').forEach(c => {
+                    c.querySelectorAll('button, a, input').forEach(x => x.remove());
+                    c.textContent = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+                });
+                fullHtml += clone.outerHTML + '<br/><br/>';
+            }
+        });
+        fullHtml += '</body></html>';
+
+        let blob = new Blob(['\ufeff', fullHtml], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        let downloadLink = document.createElement("a");
+        downloadLink.href = URL.createObjectURL(blob);
+        downloadLink.download = filename;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+        setTimeout(() => URL.revokeObjectURL(downloadLink.href), 2000);
+    };
+}
+</script>
+{% endblock %}

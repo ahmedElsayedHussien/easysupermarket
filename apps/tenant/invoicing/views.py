@@ -4,13 +4,14 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.contrib import messages
+from django.db import models
 from .models import Invoice, InvoiceLine, POSSession
-from apps.tenant.inventory.models import Product, Warehouse
+from apps.tenant.inventory.models import Product, Warehouse, InventoryBatch
 from apps.tenant.core.models import Branch, SystemSetting
 from apps.tenant.partners.models import Partner
 import json
 from decimal import Decimal
-from apps.tenant.core.decorators import custom_permission_required
+from apps.tenant.core.decorators import custom_permission_required, is_admin_user
 
 from django.views.decorators.cache import never_cache
 
@@ -32,45 +33,80 @@ def pos_view(request):
     customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True)
     
     # Determine if user is admin
-    is_admin = request.user.is_superuser or request.user.is_staff
+    is_admin = is_admin_user(request.user)
     
     # Get user's branch from Employee profile
-    user_branch = None
-    if hasattr(request.user, 'employee_profile'):
-        user_branch = request.user.employee_profile.branch
+    user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
     
     current_branch = None
     branch_id = request.GET.get('branch_id')
-    if branch_id:
-        current_branch = Branch.objects.filter(id=branch_id, is_active=True).first()
+    if branch_id and str(branch_id).isdigit():
+        current_branch = Branch.objects.filter(id=int(branch_id), is_active=True).first()
     
     if not is_admin and user_branch:
         # Non-admin: force their branch
         current_branch = user_branch
     elif not current_branch:
-        if user_branch:
+        req_branch = getattr(request, 'branch', None)
+        if user_branch and warehouses.filter(branch=user_branch).exists():
             current_branch = user_branch
+        elif req_branch and warehouses.filter(branch=req_branch).exists():
+            current_branch = req_branch
         else:
-            current_branch = getattr(request, 'branch', None)
-        if not current_branch:
-            current_branch = Branch.objects.filter(is_active=True).first()
+            first_wh = warehouses.select_related('branch').filter(branch__is_active=True).first()
+            if first_wh and first_wh.branch:
+                current_branch = first_wh.branch
+            else:
+                current_branch = user_branch or req_branch or Branch.objects.filter(is_active=True).first()
         
     current_warehouse = None
     warehouse_id = request.GET.get('warehouse_id')
-    if warehouse_id:
-        current_warehouse = warehouses.filter(id=warehouse_id, branch=current_branch).first()
+    if warehouse_id and str(warehouse_id).isdigit():
+        current_warehouse = warehouses.filter(id=int(warehouse_id), branch=current_branch).first()
     if not current_warehouse:
         current_warehouse = warehouses.filter(branch=current_branch).first() if current_branch else None
     
-    products_list = list(products)
+    # Fetch latest sale prices for products
+    latest_sale_lines = InvoiceLine.objects.filter(
+        invoice__invoice_type='SALE',
+        invoice__status='POSTED'
+    ).order_by('-id').values('product_id', 'unit_price')[:1000]
+    latest_sale_dict = {}
+    for item in latest_sale_lines:
+        pid = item['product_id']
+        if pid not in latest_sale_dict:
+            latest_sale_dict[pid] = item['unit_price']
+
+    products_list = list(products[:50])
+    p_ids = [p.id for p in products_list]
+    from django.db.models import Sum, F
+    if current_warehouse and p_ids:
+        stock_qs = InventoryBatch.objects.filter(
+            product_id__in=p_ids,
+            warehouse=current_warehouse,
+            quantity_remaining__gt=0
+        )
+        stock_map = dict(
+            stock_qs.values('product_id').annotate(total=Sum('quantity_remaining')).values_list('product_id', 'total')
+        )
+        cost_data = stock_qs.values('product_id').annotate(
+            total_qty=Sum('quantity_remaining'),
+            total_val=Sum(F('quantity_remaining') * F('unit_cost'))
+        )
+        cost_map = {
+            item['product_id']: (item['total_val'] / item['total_qty'])
+            for item in cost_data if item['total_qty'] and item['total_qty'] > 0
+        }
+    else:
+        stock_map = {}
+        cost_map = {}
+
     for p in products_list:
         p.sale_price = p.get_price_for_branch(current_branch)
-        if current_warehouse:
-            p.pos_stock = p.get_stock(warehouse=current_warehouse)
-            p.pos_avg_cost = float(p.get_average_cost(warehouse=current_warehouse))
-        else:
-            p.pos_stock = 0
-            p.pos_avg_cost = float(p.get_average_cost())
+        p.pos_stock = stock_map.get(p.id, Decimal('0'))
+        p.pos_avg_cost = cost_map.get(p.id, p.last_purchase_price or Decimal('0'))
+        p.pos_last_purchase = p.last_purchase_price if p.last_purchase_price else p.pos_avg_cost
+        p.pos_last_sale = latest_sale_dict.get(p.id, p.sale_price or Decimal('0'))
     
     from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
     
@@ -87,20 +123,46 @@ def pos_view(request):
         ewallets = EWallet.objects.all()
         branches = Branch.objects.filter(id=current_branch.id) if current_branch else Branch.objects.none()
 
+    last_sale_qs = Invoice.objects.filter(
+        invoice_type='SALE',
+        status='POSTED'
+    )
+    if open_session:
+        last_sale_qs = last_sale_qs.filter(pos_session=open_session)
+    elif current_branch:
+        last_sale_qs = last_sale_qs.filter(branch=current_branch)
+        
+    last_sale = last_sale_qs.order_by('-id').select_related('partner').first()
+    last_sale_info = None
+    if last_sale and last_sale.partner and 'نقدي' not in last_sale.partner.name:
+        last_sale_info = {
+            'customer_id': str(last_sale.partner_id),
+            'customer_name': last_sale.partner.name,
+            'invoice_number': last_sale.invoice_number,
+        }
+
+    fallback_warehouse_branch = None
+    if not current_warehouse and is_admin:
+        first_wh = warehouses.select_related('branch').filter(branch__is_active=True).first()
+        if first_wh and first_wh.branch_id != (current_branch.id if current_branch else None):
+            fallback_warehouse_branch = first_wh.branch
+
     context = {
         'products': products_list,
         'warehouses': warehouses.filter(branch=current_branch),
         'customers': customers,
         'current_warehouse': current_warehouse,
         'current_branch': current_branch,
+        'fallback_warehouse_branch': fallback_warehouse_branch,
         'treasuries': treasuries,
-        'bank_accounts': bank_accounts,
         'bank_accounts': bank_accounts,
         'ewallets': ewallets,
         'branches': branches,
         'is_admin': is_admin,
         'pos_session': open_session,
+        'shift_stats': get_shift_stats_data(open_session),
         'settings': SystemSetting.get_settings(),
+        'last_sale_info': last_sale_info,
     }
     return render(request, 'pos/index.html', context)
 
@@ -161,47 +223,132 @@ def pos_open_shift(request):
 @never_cache
 @login_required
 @custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
+@login_required
+@custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
 def pos_close_shift(request):
     """View to close an active cashier shift"""
     open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
     if not open_session:
+        # If user is admin or supervisor, check for any open session
+        if request.user.is_superuser or (hasattr(request.user, 'employee_profile') and request.user.employee_profile.is_admin()):
+            open_session = POSSession.objects.filter(status=POSSession.OPEN).first()
+
+    if not open_session:
         messages.warning(request, 'ليس لديك وردية مفتوحة لإغلاقها.')
         return redirect('invoicing:pos_open_shift')
 
-    # Calculate Expected Closing Balance and payment breakdowns (including SPLIT payments)
+    # Calculate Expected Closing Balance and payment breakdowns via direct DB Aggregation
+    from django.db.models import Sum, Q, F, Case, When
+    from django.db.models.functions import Coalesce
+
     posted_invoices = Invoice.objects.filter(pos_session=open_session, status=Invoice.POSTED)
+    inv_agg = posted_invoices.aggregate(
+        total_cash_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_cash_refunds=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CASH), then=F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_card_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_card')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CARD), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_card')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CARD), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_ewallet_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_ewallet')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.EWALLET), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_ewallet')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.EWALLET), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_bank_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_bank')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.BANK_TRANSFER), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_bank')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.BANK_TRANSFER), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_credit_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_credit')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CREDIT), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_credit')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CREDIT), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+    )
 
-    total_cash_sales = Decimal('0')
-    total_cash_refunds = Decimal('0')
-    total_card_sales = Decimal('0')
-    total_ewallet_sales = Decimal('0')
-    total_bank_sales = Decimal('0')
-    total_credit_sales = Decimal('0')
+    total_cash_sales = inv_agg['total_cash_sales']
+    total_cash_refunds = inv_agg['total_cash_refunds']
+    total_card_sales = inv_agg['total_card_sales']
+    total_ewallet_sales = inv_agg['total_ewallet_sales']
+    total_bank_sales = inv_agg['total_bank_sales']
+    total_credit_sales = inv_agg['total_credit_sales']
 
-    for inv in posted_invoices:
-        mult = Decimal('1') if inv.invoice_type == Invoice.SALE else Decimal('-1')
+    # Calculate Cash Receipt Vouchers and Cash Payment Vouchers created during the active shift for the treasury
+    from apps.tenant.accounting.models import Voucher
+    v_base = Voucher.objects.filter(status=Voucher.POSTED).filter(
+        Q(payment_method=Voucher.CASH) | Q(payment_method=Voucher.SPLIT, paid_cash__gt=0)
+    )
+    time_filter = Q(treasury=open_session.treasury, created_at__gte=open_session.start_time)
+    if open_session.end_time:
+        time_filter &= Q(created_at__lte=open_session.end_time)
 
-        if inv.payment_type == Invoice.SPLIT:
-            total_cash_sales += (inv.paid_cash * mult)
-            total_card_sales += (inv.paid_card * mult)
-            total_ewallet_sales += (inv.paid_ewallet * mult)
-            total_bank_sales += (inv.paid_bank * mult)
-            total_credit_sales += (inv.paid_credit * mult)
-        elif inv.payment_type == Invoice.CASH:
-            if inv.invoice_type == Invoice.SALE:
-                total_cash_sales += inv.total_amount
-            else:
-                total_cash_refunds += inv.total_amount
-        elif inv.payment_type == Invoice.CARD:
-            total_card_sales += (inv.total_amount * mult)
-        elif inv.payment_type == Invoice.EWALLET:
-            total_ewallet_sales += (inv.total_amount * mult)
-        elif inv.payment_type == Invoice.BANK_TRANSFER:
-            total_bank_sales += (inv.total_amount * mult)
-        elif inv.payment_type == Invoice.CREDIT:
-            total_credit_sales += (inv.total_amount * mult)
+    shift_vouchers = v_base.filter(Q(pos_session=open_session) | time_filter).distinct()
+    v_cash_expr = Case(
+        When(payment_method=Voucher.SPLIT, then=F('paid_cash')),
+        default=F('amount'),
+        output_field=models.DecimalField(max_digits=18, decimal_places=4)
+    )
+    v_agg = shift_vouchers.aggregate(
+        total_cash_receipts=Coalesce(Sum(v_cash_expr, filter=Q(voucher_type=Voucher.RECEIPT)), Decimal('0.00')),
+        total_cash_payments=Coalesce(Sum(v_cash_expr, filter=Q(voucher_type=Voucher.PAYMENT)), Decimal('0.00')),
+    )
+    total_cash_receipts = v_agg['total_cash_receipts']
+    total_cash_payments = v_agg['total_cash_payments']
 
-    expected_balance = open_session.opening_balance + total_cash_sales - total_cash_refunds
+    # Calculate Cash Rentals created during the active shift for the treasury
+    from apps.tenant.rentals.models import Rental
+    rental_time_filter = Q(created_at__gte=open_session.start_time)
+    if open_session.end_time:
+        rental_time_filter &= Q(created_at__lte=open_session.end_time)
+
+    shift_rentals = Rental.objects.filter(
+        rental_time_filter & (Q(created_by=open_session.user) | Q(treasury=open_session.treasury))
+    )
+    total_cash_rentals = shift_rentals.filter(payment_method=Rental.PAYMENT_CASH).aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+
+    expected_balance = (
+        open_session.opening_balance +
+        total_cash_sales -
+        total_cash_refunds +
+        total_cash_receipts -
+        total_cash_payments +
+        total_cash_rentals
+    )
 
     if request.method == 'POST':
         actual_balance_str = request.POST.get('actual_balance', '').strip()
@@ -211,21 +358,21 @@ def pos_close_shift(request):
         try:
             actual_balance = Decimal(actual_balance_str)
             difference = actual_balance - expected_balance
-            
+            notes = request.POST.get('notes', '').strip()
+
             open_session.closing_balance_expected = expected_balance
             open_session.closing_balance_actual = actual_balance
             open_session.difference = difference
             open_session.end_time = timezone.now()
             open_session.status = POSSession.CLOSED
+            if notes:
+                open_session.notes = notes
             open_session.save()
             
-            # Here we could generate manual GL entries if configured, 
-            # but per user request, it's just a report for the accountant.
-            
-            messages.success(request, f'تم إغلاق الوردية. النقدية الفعلية: {actual_balance}، العجز/الزيادة: {difference}')
-            return redirect('invoicing:shift_report')
+            messages.success(request, f'تم إغلاق الوردية رقم #{open_session.id} بنجاح وتحويل حالتها إلى مغلقة.')
+            return redirect('core:report_shift_detail', pk=open_session.id)
         except Exception as e:
-            messages.error(request, f'حدث خطأ: {str(e)}')
+            messages.error(request, f'حدث خطأ أثناء إغلاق الوردية: {str(e)}')
 
     context = {
         'title': 'إغلاق الوردية وجرد الدرج',
@@ -233,6 +380,8 @@ def pos_close_shift(request):
         'expected_balance': expected_balance,
         'total_cash_sales': total_cash_sales,
         'total_cash_refunds': total_cash_refunds,
+        'total_cash_receipts': total_cash_receipts,
+        'total_cash_payments': total_cash_payments,
         'total_card_sales': total_card_sales,
         'total_ewallet_sales': total_ewallet_sales,
         'total_bank_sales': total_bank_sales,
@@ -254,30 +403,57 @@ def purchase_invoice_view(request):
         return str(name).strip().replace('ة', 'ه').replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا').lower()
 
     product_uoms_map = {}
+    product_last_prices = {}
     for p in products:
-        base_name = p.get_unit_display()
-        uoms = [{'id': '', 'name': base_name}]
+        product_last_prices[p.id] = float(p.last_purchase_price) if p.last_purchase_price else 0.0
+        base_name = getattr(p, 'pos_unit_name', None) or p.get_unit_display() or 'وحدة'
+        uoms = [{'id': '', 'name': base_name, 'factor': 1.0}]
         seen_normalized = {normalize_name(base_name)}
         for puom in p.uoms.all():
             norm_name = normalize_name(puom.uom.name)
             if norm_name not in seen_normalized:
-                uoms.append({'id': puom.id, 'name': puom.uom.name})
+                factor = float(puom.conversion_factor) if getattr(puom, 'conversion_factor', None) else 1.0
+                uoms.append({'id': puom.id, 'name': puom.uom.name, 'factor': factor})
                 seen_normalized.add(norm_name)
         product_uoms_map[p.id] = uoms
     product_uoms_json = json.dumps(product_uoms_map)
+    product_last_prices_json = json.dumps(product_last_prices)
 
-    is_admin = False
-    user_branch = None
-    if hasattr(request.user, 'employee_profile'):
-        is_admin = request.user.employee_profile.is_admin()
-        user_branch = request.user.employee_profile.branch
-    else:
-        is_admin = request.user.is_superuser
+    from django.db.models import Sum, Count
+    from apps.tenant.inventory.models import InventoryBatch, SerialItem
+    stock_by_product = dict(
+        InventoryBatch.objects.filter(quantity_remaining__gt=0)
+        .values('product_id')
+        .annotate(total=Sum('quantity_remaining'))
+        .values_list('product_id', 'total')
+    )
+    serial_stock = dict(
+        SerialItem.objects.filter(is_sold=False)
+        .values('product_id')
+        .annotate(total=Count('id'))
+        .values_list('product_id', 'total')
+    )
+
+    product_stock_info = {}
+    for p in products:
+        cur_stock = float(serial_stock.get(p.id, 0)) if p.product_type == 'SERIALIZED' else float(stock_by_product.get(p.id, 0))
+        product_stock_info[p.id] = {
+            'current_stock': cur_stock,
+            'max_stock': float(p.max_stock_level) if p.max_stock_level else 0.0,
+            'min_stock': float(p.min_stock_level) if p.min_stock_level else 0.0,
+        }
+    product_stock_info_json = json.dumps(product_stock_info)
+
+    is_admin = is_admin_user(request.user)
+    user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
 
     branches = Branch.objects.filter(is_active=True) if is_admin else []
+
     
-    from apps.tenant.accounting.models import Treasury
+    from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
     treasuries = Treasury.objects.all()
+    bank_accounts = BankAccount.objects.all()
+    ewallets = EWallet.objects.all()
 
     if request.method == 'POST':
         from django.db import transaction
@@ -287,9 +463,35 @@ def purchase_invoice_view(request):
             supplier_id = request.POST.get('supplier_id')
             warehouse_id = request.POST.get('warehouse_id')
             payment_type = request.POST.get('payment_type')
-            treasury_id = request.POST.get('treasury_id')
-            if not treasury_id:
+            treasury_id = request.POST.get('treasury_id') or None
+            bank_account_id = request.POST.get('bank_account_id') or None
+            ewallet_id = request.POST.get('ewallet_id') or None
+
+            # Reset irrelevant payment source based on payment_type
+            from apps.tenant.core.models import SystemSetting
+            setting = SystemSetting.get_settings()
+            if payment_type == 'CASH':
+                bank_account_id = None
+                ewallet_id = None
+                if not treasury_id:
+                    def_t = getattr(setting, 'default_pos_treasury', None) or Treasury.objects.first()
+                    treasury_id = def_t.id if def_t else None
+            elif payment_type in ['BANK_TRANSFER', 'CARD']:
                 treasury_id = None
+                ewallet_id = None
+                if not bank_account_id:
+                    def_b = getattr(setting, 'default_pos_bank_account', None) or BankAccount.objects.first()
+                    bank_account_id = def_b.id if def_b else None
+            elif payment_type == 'EWALLET':
+                treasury_id = None
+                bank_account_id = None
+                if not ewallet_id:
+                    def_w = getattr(setting, 'default_pos_ewallet', None) or EWallet.objects.first()
+                    ewallet_id = def_w.id if def_w else None
+            elif payment_type == 'CREDIT':
+                treasury_id = None
+                bank_account_id = None
+                ewallet_id = None
             
             product_ids = request.POST.getlist('product_id[]')
             quantities = request.POST.getlist('quantity[]')
@@ -299,6 +501,14 @@ def purchase_invoice_view(request):
             # Ensure uom_ids list matches length of product_ids (fill with None if empty)
             if not uom_ids or len(uom_ids) != len(product_ids):
                 uom_ids = [None] * len(product_ids)
+
+            valid_lines_count = sum(
+                1 for pid, qty, prc in zip(product_ids, quantities, prices)
+                if pid and qty and prc and Decimal(str(qty or '0')) > 0
+            )
+            if valid_lines_count == 0:
+                raise ValueError("يجب إضافة بند واحد على الأقل في الفاتورة بكمية وسعر صحيحين.")
+
             discount_percentage = Decimal(request.POST.get('discount_percentage') or 0)
             
             vat_str = request.POST.get('vat_percentage', '')
@@ -311,6 +521,10 @@ def purchase_invoice_view(request):
                 supplier = Partner.objects.get(id=supplier_id)
                 warehouse = Warehouse.objects.get(id=warehouse_id)
                 
+                if payment_type == 'CREDIT':
+                    if not supplier or 'مورد نقدي' in supplier.name or supplier.name.strip() in ['مورد نقدي', 'نقدي', 'طياري', 'عميل نقدي']:
+                        raise ValueError('لا يمكن إنشاء فاتورة مشتريات (آجلة) لمورد نقدي. يرجى اختيار مورد آخر مخصص للآجل.')
+
                 if is_admin:
                     branch_id = request.POST.get('branch_id')
                     branch = Branch.objects.get(id=branch_id)
@@ -328,6 +542,8 @@ def purchase_invoice_view(request):
                     date=timezone.now().date(),
                     payment_type=payment_type,
                     treasury_id=treasury_id,
+                    bank_account_id=bank_account_id,
+                    ewallet_id=ewallet_id,
                     status=Invoice.DRAFT,
                     cashier=request.user,
                     discount_percentage=discount_percentage,
@@ -340,9 +556,19 @@ def purchase_invoice_view(request):
                     if pid and qty and price:
                         product = Product.objects.get(id=pid)
                         
-                        # Apply global taxes if provided, else 0
-                        wht_r = wht_percentage if wht_percentage is not None else Decimal('0')
-                        tax_r = vat_percentage if vat_percentage is not None else Decimal('0')
+                        # Apply taxes: if explicitly provided on invoice use it, else fallback to product defaults
+                        if vat_percentage is not None:
+                            tax_r = vat_percentage
+                        else:
+                            tax_r = product.tax_rate or Decimal('0')
+
+                        if wht_percentage is not None:
+                            wht_r = wht_percentage
+                        else:
+                            if getattr(supplier, 'is_withholding_tax_subject', False):
+                                wht_r = product.withholding_tax_rate or Decimal('0')
+                            else:
+                                wht_r = Decimal('0')
                         
                         uom_id_val = uom_id if uom_id and uom_id != '' else None
                         
@@ -405,6 +631,19 @@ def purchase_invoice_view(request):
                 
                 invoice.recalculate_totals()
                 
+                # Sync paid breakdown fields
+                if invoice.payment_type == Invoice.CASH:
+                    invoice.paid_cash = invoice.total_amount
+                elif invoice.payment_type == Invoice.CARD:
+                    invoice.paid_card = invoice.total_amount
+                elif invoice.payment_type == Invoice.BANK_TRANSFER:
+                    invoice.paid_bank = invoice.total_amount
+                elif invoice.payment_type == Invoice.EWALLET:
+                    invoice.paid_ewallet = invoice.total_amount
+                elif invoice.payment_type == Invoice.CREDIT:
+                    invoice.paid_credit = invoice.total_amount
+                invoice.save(update_fields=['paid_cash', 'paid_card', 'paid_bank', 'paid_ewallet', 'paid_credit'])
+                
                 from apps.tenant.services.invoice_service import confirm_invoice
                 confirm_invoice(invoice.id)
                 
@@ -417,16 +656,23 @@ def purchase_invoice_view(request):
             
             import json
             posted_lines = []
-            for pid, qty, prc in zip(request.POST.getlist('product_id[]'), request.POST.getlist('quantity[]'), request.POST.getlist('price[]')):
-                posted_lines.append({'product_id': pid, 'quantity': qty, 'price': prc})
+            posted_uoms = request.POST.getlist('uom_id[]')
+            for i, (pid, qty, prc) in enumerate(zip(request.POST.getlist('product_id[]'), request.POST.getlist('quantity[]'), request.POST.getlist('price[]'))):
+                u_id = posted_uoms[i] if i < len(posted_uoms) else ''
+                posted_lines.append({'product_id': pid, 'quantity': qty, 'price': prc, 'uom_id': u_id})
             
             # Re-pass the posted data back to context to prevent form clearing
             context = {
                 'suppliers': suppliers,
                 'warehouses': warehouses,
                 'products': products,
+                'product_uoms_json': product_uoms_json,
+                'product_last_prices_json': product_last_prices_json,
+                'product_stock_info_json': product_stock_info_json,
                 'branches': branches,
                 'treasuries': treasuries,
+                'bank_accounts': bank_accounts,
+                'ewallets': ewallets,
                 'title': 'إنشاء فاتورة مشتريات',
                 'posted_data': request.POST,
                 'posted_lines_json': json.dumps(posted_lines),
@@ -438,8 +684,12 @@ def purchase_invoice_view(request):
         'warehouses': warehouses,
         'products': products,
         'product_uoms_json': product_uoms_json,
+        'product_last_prices_json': product_last_prices_json,
+        'product_stock_info_json': product_stock_info_json,
         'branches': branches,
         'treasuries': treasuries,
+        'bank_accounts': bank_accounts,
+        'ewallets': ewallets,
         'is_admin': is_admin,
         'title': 'فاتورة مشتريات'
     }
@@ -447,69 +697,141 @@ def purchase_invoice_view(request):
 
 @login_required
 @custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
-def sales_invoice_list(request):
-    search_query = request.GET.get('q', '')
-    invoices = Invoice.objects.filter(invoice_type__in=['SALE', 'RETURN_SALE']).order_by('-date', '-created_at')
-    
-    if search_query:
-        invoices = invoices.filter(partner__name__icontains=search_query)
-        
+def _filter_invoices(request, base_types):
+    from django.db.models import Q
     from django.core.paginator import Paginator
-    paginator = Paginator(invoices, 20)
+    
+    invoices = Invoice.objects.filter(
+        invoice_type__in=base_types
+    ).select_related(
+        'partner', 'branch', 'treasury', 'bank_account', 'ewallet'
+    ).prefetch_related('lines').order_by('-date', '-created_at')
+    
+    # 1. Search Query (invoice number, partner name, notes)
+    q = request.GET.get('q', '').strip()
+    if q:
+        invoices = invoices.filter(
+            Q(invoice_number__icontains=q) |
+            Q(partner__name__icontains=q) |
+            Q(notes__icontains=q)
+        )
+        
+    # 2. Payment Type
+    payment_type = request.GET.get('payment_type', '').strip()
+    if payment_type and payment_type != 'ALL':
+        invoices = invoices.filter(payment_type=payment_type)
+        
+    # 3. Invoice Subtype (Sale vs Return)
+    type_filter = request.GET.get('type_filter', '').strip()
+    if type_filter and type_filter in base_types:
+        invoices = invoices.filter(invoice_type=type_filter)
+        
+    # 4. Status Filter
+    status_filter = request.GET.get('status_filter', '').strip()
+    if status_filter and status_filter != 'ALL':
+        if status_filter == 'RETURNED':
+            invoices = invoices.filter(status=Invoice.POSTED, lines__returned_quantity__gt=0).distinct()
+        elif status_filter in [Invoice.POSTED, Invoice.DRAFT, Invoice.CANCELLED]:
+            invoices = invoices.filter(status=status_filter)
+            
+    # 5. Date Range
+    start_date = request.GET.get('start_date', '').strip()
+    if start_date:
+        invoices = invoices.filter(date__gte=start_date)
+        
+    end_date = request.GET.get('end_date', '').strip()
+    if end_date:
+        invoices = invoices.filter(date__lte=end_date)
+        
+    # 6. Branch
+    branch_id = request.GET.get('branch_id', '').strip()
+    if branch_id and branch_id != 'ALL':
+        invoices = invoices.filter(branch_id=branch_id)
+        
+    # 7. Pagination
+    per_page_str = request.GET.get('per_page', '20')
+    try:
+        per_page = int(per_page_str)
+        if per_page not in [10, 20, 50, 100]:
+            per_page = 20
+    except ValueError:
+        per_page = 20
+        
+    paginator = Paginator(invoices, per_page)
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
     
-    context = {
+    params = request.GET.copy()
+    params.pop('page', None)
+    query_string = params.urlencode()
+    
+    return {
         'invoices': page_obj,
         'page_obj': page_obj,
-        'search_query': search_query,
-        'title': 'فواتير المبيعات',
-        'list_type': 'sales'
+        'total_count': paginator.count,
+        'search_query': q,
+        'selected_payment_type': payment_type,
+        'selected_type_filter': type_filter,
+        'selected_status_filter': status_filter,
+        'selected_start_date': start_date,
+        'selected_end_date': end_date,
+        'selected_branch_id': branch_id,
+        'per_page': per_page,
+        'query_string': query_string,
+        'branches': Branch.objects.filter(is_active=True),
     }
-    return render(request, 'invoicing/invoice_list.html', context)
+
+@login_required
+@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
+def sales_invoice_list(request):
+    ctx = _filter_invoices(request, [Invoice.SALE, Invoice.RETURN_SALE])
+    ctx['title'] = 'فواتير المبيعات'
+    ctx['list_type'] = 'sales'
+    return render(request, 'invoicing/invoice_list.html', ctx)
 
 @login_required
 @custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def purchase_invoice_list(request):
-    search_query = request.GET.get('q', '')
-    invoices = Invoice.objects.filter(invoice_type__in=['PURCHASE', 'RETURN_PURCHASE']).order_by('-date', '-created_at')
-    
-    if search_query:
-        invoices = invoices.filter(partner__name__icontains=search_query)
-        
-    from django.core.paginator import Paginator
-    paginator = Paginator(invoices, 20)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-    
-    context = {
-        'invoices': page_obj,
-        'page_obj': page_obj,
-        'search_query': search_query,
-        'title': 'فواتير المشتريات',
-        'list_type': 'purchases'
-    }
-    return render(request, 'invoicing/invoice_list.html', context)
+    ctx = _filter_invoices(request, [Invoice.PURCHASE, Invoice.RETURN_PURCHASE])
+    ctx['title'] = 'فواتير المشتريات'
+    ctx['list_type'] = 'purchases'
+    return render(request, 'invoicing/invoice_list.html', ctx)
 
 @login_required
 @custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
 def invoice_detail(request, invoice_id):
     from django.shortcuts import get_object_or_404
+    from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
+    from apps.tenant.partners.models import Partner
+
     invoice = get_object_or_404(Invoice, id=invoice_id)
-    lines = invoice.lines.select_related('product', 'serial_item', 'uom').all()
+    lines = invoice.lines.select_related('product', 'serial_item', 'uom__uom').all()
     
     is_fully_returned = False
+    has_returns = False
     if lines.exists():
         is_fully_returned = all(line.quantity <= line.returned_quantity for line in lines)
+        has_returns = any(line.returned_quantity > 0 for line in lines)
+
+    has_returns = has_returns or invoice.return_invoices.exclude(status=Invoice.CANCELLED).exists()
         
     for line in lines:
         line.available_return_qty = line.quantity - line.returned_quantity
-        line.display_unit_name = line.uom.uom.name if line.uom else line.product.pos_unit_name
+
+    if invoice.invoice_type in [Invoice.SALE, Invoice.RETURN_SALE]:
+        partners = Partner.objects.filter(partner_type__in=[Partner.CUSTOMER, Partner.BOTH])
+    else:
+        partners = Partner.objects.filter(partner_type__in=[Partner.SUPPLIER, Partner.BOTH])
     
     context = {
         'invoice': invoice,
         'lines': lines,
         'is_fully_returned': is_fully_returned,
+        'has_returns': has_returns,
+        'treasuries': Treasury.objects.all(),
+        'bank_accounts': BankAccount.objects.all(),
+        'ewallets': EWallet.objects.all(),
+        'partners': partners,
         'title': f'تفاصيل فاتورة رقم {invoice.invoice_number}'
     }
     return render(request, 'invoicing/invoice_detail.html', context)
@@ -528,34 +850,154 @@ def confirm_invoice_view(request, invoice_id):
         return JsonResponse({'success': False, 'error': str(e)})
 
 @login_required
-def get_product_by_barcode(request):
-    barcode = request.GET.get('barcode', '').strip()
-    if not barcode:
-        return JsonResponse({'found': False})
-        
+@custom_permission_required('invoicing.change_invoice', redirect_url='core:main_screen')
+def update_invoice_payment_method_view(request, invoice_id):
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
+
+    from apps.tenant.services.invoice_service import update_invoice_payment_method
     try:
-        product = Product.objects.prefetch_related('uoms__uom').get(barcode=barcode, is_active=True)
-        uoms = [{'id': 'base', 'name': product.get_unit_display()}]
+        payment_type = request.POST.get('payment_type', 'CASH')
+        partner_id = request.POST.get('partner') or None
+        treasury_id = request.POST.get('treasury') or None
+        bank_account_id = request.POST.get('bank_account') or None
+        ewallet_id = request.POST.get('ewallet') or None
+        
+        paid_cash = Decimal(request.POST.get('paid_cash', '0') or '0')
+        paid_card = Decimal(request.POST.get('paid_card', '0') or '0')
+        paid_ewallet = Decimal(request.POST.get('paid_ewallet', '0') or '0')
+        paid_bank = Decimal(request.POST.get('paid_bank', '0') or '0')
+
+        invoice = update_invoice_payment_method(
+            invoice_id=invoice_id,
+            payment_type=payment_type,
+            partner_id=int(partner_id) if partner_id else None,
+            treasury_id=int(treasury_id) if treasury_id else None,
+            bank_account_id=int(bank_account_id) if bank_account_id else None,
+            ewallet_id=int(ewallet_id) if ewallet_id else None,
+            paid_cash=paid_cash,
+            paid_card=paid_card,
+            paid_ewallet=paid_ewallet,
+            paid_bank=paid_bank,
+        )
+        return JsonResponse({
+            'success': True,
+            'message': 'تم تحديث طريقة السداد والقيود المحاسبية المربوطة بنجاح.'
+        })
+    except Exception as e:
+        logger.exception("Error updating invoice payment method")
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
+@login_required
+@custom_permission_required('invoicing.change_invoice', redirect_url='core:main_screen')
+def cancel_invoice_view(request, invoice_id):
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
+
+    from apps.tenant.services.invoice_service import cancel_invoice
+    try:
+        invoice = cancel_invoice(invoice_id)
+        return JsonResponse({
+            'success': True,
+            'message': f'تم إلغاء الفاتورة رقم {invoice.invoice_number} وعكس كافة الآثار المخزنية والمحاسبية بنجاح.'
+        })
+    except Exception as e:
+        logger.exception("Error cancelling invoice")
+        return JsonResponse({'success': False, 'error': str(e)})
+
+
+
+@login_required
+def get_product_by_barcode(request):
+    try:
+        barcode = request.GET.get('barcode', '').strip()
+        warehouse_id = request.GET.get('warehouse_id')
+        if not barcode:
+            return JsonResponse({'found': False})
+            
+        product = None
+        selected_uom_id = 'base'
+        
+        # 1. Direct barcode match
+        product = Product.objects.prefetch_related('uoms__uom').filter(barcode=barcode, is_active=True).first()
+        
+        # 2. UoM barcode match
+        if not product:
+            from apps.tenant.inventory.models import ProductUoM
+            puom = ProductUoM.objects.select_related('product', 'uom').filter(barcode=barcode, product__is_active=True).first()
+            if puom:
+                product = puom.product
+                selected_uom_id = puom.id
+
+        # 3. If barcode is numeric, fallback to matching by product ID
+        if not product and barcode.isdigit():
+            try:
+                product = Product.objects.prefetch_related('uoms__uom').filter(id=int(barcode), is_active=True).first()
+            except (ValueError, TypeError):
+                pass
+
+        if not product:
+            return JsonResponse({'found': False})
+
+        uoms = [{'id': 'base', 'name': product.get_unit_display(), 'factor': 1.0}]
         for puom in product.uoms.all():
-            uoms.append({'id': puom.id, 'name': puom.uom.name})
+            uoms.append({
+                'id': puom.id,
+                'name': puom.uom.name,
+                'factor': float(puom.conversion_factor or 1.0)
+            })
             
         current_branch = getattr(request, 'branch', None)
+        current_warehouse = None
+        if warehouse_id and str(warehouse_id).isdigit():
+            current_warehouse = Warehouse.objects.filter(id=int(warehouse_id), is_active=True).first()
+
+        # Multi-Tier Pricing (Customer Price List -> Sector Price List -> Default Product Price)
+        partner_id = request.GET.get('partner_id')
+        qty_str = request.GET.get('quantity', request.GET.get('qty', '1'))
+        partner = None
+        if partner_id:
+            try:
+                partner = Partner.objects.select_related('sector').get(id=partner_id)
+            except (Partner.DoesNotExist, ValueError):
+                partner = None
+
+        try:
+            req_qty = Decimal(str(qty_str or 1))
+        except (InvalidOperation, ValueError):
+            req_qty = Decimal('1')
+
+        from apps.tenant.pricing.services import PricingEngineService
+        pricing_info = PricingEngineService.get_effective_price(
+            product=product,
+            partner=partner,
+            branch=current_branch,
+            quantity=req_qty
+        )
             
         return JsonResponse({
             'found': True,
             'product': {
                 'id': product.id,
                 'name': product.name,
-                'barcode': product.barcode,
+                'barcode': product.barcode or '',
                 'product_type': product.product_type,
-                'sale_price': str(product.get_price_for_branch(current_branch)),
+                'sale_price': str(pricing_info['price']),
+                'original_sale_price': str(pricing_info['original_price']),
+                'pricing_tier': pricing_info['tier'],
+                'pricing_tier_display': pricing_info['tier_display'],
+                'pricing_badge_text': pricing_info['badge_text'],
+                'pricing_badge_color': pricing_info['badge_color'],
                 'tax_rate': str(product.tax_rate),
-                'available_stock': str(product.get_stock()),
-                'uoms': uoms
+                'available_stock': str(product.get_stock(warehouse=current_warehouse) if current_warehouse else Decimal('0')),
+                'allow_negative_stock': product.allow_negative_stock,
+                'uoms': uoms,
+                'selected_uom_id': selected_uom_id
             }
         })
-    except Product.DoesNotExist:
-        return JsonResponse({'found': False})
+    except Exception as e:
+        return JsonResponse({'found': False, 'error': str(e)})
 
 @login_required
 def add_to_cart(request):
@@ -613,13 +1055,20 @@ def complete_sale(request):
         from django.db import transaction
         from apps.tenant.services.invoice_service import confirm_invoice
         
+        if not cart:
+            return JsonResponse({'success': False, 'error': 'السلة فارغة. يرجى إضافة منتجات أولاً.'}, status=400)
+
         with transaction.atomic():
             branch = Branch.objects.get(id=branch_id)
             
             if not warehouse_id:
                 return JsonResponse({'success': False, 'error': 'يجب اختيار مستودع لإتمام عملية البيع'})
             
-            warehouse = Warehouse.objects.get(id=warehouse_id)
+            warehouse = Warehouse.objects.filter(id=warehouse_id, is_active=True).first()
+            if not warehouse:
+                return JsonResponse({'success': False, 'error': 'المستودع المحدد غير صالح أو غير نشط'})
+            if branch and warehouse.branch_id and warehouse.branch_id != branch.id:
+                return JsonResponse({'success': False, 'error': 'المستودع المختار لا يتبع الفرع الحالي'})
             
             if partner_id:
                 partner = Partner.objects.get(id=partner_id)
@@ -634,12 +1083,57 @@ def complete_sale(request):
             if not open_session:
                 return JsonResponse({'success': False, 'error': 'يجب فتح وردية أولاً قبل الدخول لنقطة البيع أو إجراء أي عملية بيع.'}, status=400)
 
+            # Fallback treasury to cashier shift treasury if not specified
+            if not treasury_id and open_session.treasury_id:
+                treasury_id = open_session.treasury_id
+
             payments = data.get('payments', {})
             paid_cash = Decimal(str(payments.get('cash', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CASH' else Decimal('0'))
             paid_card = Decimal(str(payments.get('card', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CARD' else Decimal('0'))
             paid_ewallet = Decimal(str(payments.get('ewallet', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'EWALLET' else Decimal('0'))
             paid_bank = Decimal(str(payments.get('bank', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'BANK_TRANSFER' else Decimal('0'))
             paid_credit = Decimal(str(payments.get('credit', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CREDIT' else Decimal('0'))
+
+            # Validate credit sales are never attributed to cash customer
+            if payment_type == 'CREDIT' or paid_credit > Decimal('0'):
+                if not partner_id:
+                    return JsonResponse({'success': False, 'error': 'يجب اختيار عميل لتسجيل بيع آجل.'}, status=400)
+                if partner and ('عميل نقدي' in partner.name or partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']):
+                    return JsonResponse({'success': False, 'error': 'لا يمكن تسجيل بيع آجل لـ (عميل نقدي). يرجى اختيار أو إضافة حساب العميل أولاً.'}, status=400)
+
+            # For SPLIT: resolve visa_bank_id (card) and insta_bank_id (bank transfer) separately
+            visa_bank_account_id = payments.get('visa_bank_id') if payment_type == 'SPLIT' else None
+            insta_bank_account_id = payments.get('insta_bank_id') if payment_type == 'SPLIT' else None
+
+            setting = SystemSetting.get_settings()
+            if payment_type == 'CARD' or paid_card > Decimal('0'):
+                if visa_bank_account_id:
+                    bank_account_id = visa_bank_account_id
+                elif not bank_account_id:
+                    default_visa = getattr(setting, 'default_pos_bank_account', None)
+                    if default_visa:
+                        bank_account_id = default_visa.id
+                if not bank_account_id:
+                    return JsonResponse({'success': False, 'error': 'يجب اختيار ماكينة الفيزا من القائمة العلوية أو تحديدها في الإعدادات.'}, status=400)
+
+            if payment_type == 'BANK_TRANSFER' or paid_bank > Decimal('0'):
+                if not insta_bank_account_id:
+                    default_insta = getattr(setting, 'default_pos_instapay_account', None) or getattr(setting, 'default_pos_bank_account', None)
+                    if default_insta:
+                        insta_bank_account_id = default_insta.id
+                if not insta_bank_account_id and payment_type == 'BANK_TRANSFER':
+                    insta_bank_account_id = bank_account_id
+                if not insta_bank_account_id and paid_bank > Decimal('0'):
+                    return JsonResponse({'success': False, 'error': 'يجب اختيار حساب إنستاباي / التحويل البنكي من القائمة العلوية أو تحديده في الإعدادات.'}, status=400)
+
+            notes = data.get('notes', '')
+
+            subtotal = Decimal(str(data.get('subtotal', 0)))
+            discount_percentage = Decimal(str(data.get('discount_percentage', 0)))
+            discount_amount = Decimal(str(data.get('discount_amount', 0)))
+            tax_amount = Decimal(str(data.get('tax_amount', 0)))
+            wht_amount = Decimal(str(data.get('wht_amount', 0)))
+            total_amount = Decimal(str(data.get('total_amount', 0)))
 
             # Create Invoice
             invoice = Invoice.objects.create(
@@ -652,6 +1146,7 @@ def complete_sale(request):
                 treasury_id=treasury_id if treasury_id else None,
                 ewallet_id=ewallet_id if ewallet_id else None,
                 bank_account_id=bank_account_id if bank_account_id else None,
+                insta_bank_account_id=insta_bank_account_id if insta_bank_account_id else None,
                 paid_cash=paid_cash,
                 paid_card=paid_card,
                 paid_ewallet=paid_ewallet,
@@ -660,13 +1155,26 @@ def complete_sale(request):
                 status='DRAFT',
                 cashier=request.user,
                 pos_session=open_session,
-                subtotal=Decimal(data.get('subtotal', 0)),
-                tax_amount=Decimal(data.get('tax_amount', 0)),
-                total_amount=Decimal(data.get('total_amount', 0)),
+                subtotal=subtotal,
+                discount_percentage=discount_percentage,
+                discount_amount=discount_amount,
+                tax_amount=tax_amount,
+                wht_amount=wht_amount,
+                total_amount=total_amount,
+                notes=notes,
             )
             
             for item in cart:
-                product = Product.objects.get(id=item['product_id'])
+                pid = item.get('product_id')
+                if not pid:
+                    continue
+                try:
+                    product = Product.objects.get(id=int(pid))
+                except (Product.DoesNotExist, ValueError, TypeError):
+                    return JsonResponse({
+                        'success': False, 
+                        'error': f'الصنف برقم ({pid}) غير موجود في قاعدة البيانات أو تم حذفه. يرجى مراجعة الأصناف بالسلة.'
+                    })
                 uom_id = item.get('uom_id')
                 if uom_id == 'base':
                     uom_id = None
@@ -676,18 +1184,24 @@ def complete_sale(request):
                 serial_item = None
                 if product.product_type == 'SERIALIZED' and serial_item_id:
                     from apps.tenant.inventory.models import SerialItem
-                    serial_item = SerialItem.objects.get(id=serial_item_id)
+                    try:
+                        serial_item = SerialItem.objects.get(id=int(serial_item_id))
+                    except (SerialItem.DoesNotExist, ValueError, TypeError):
+                        return JsonResponse({
+                            'success': False,
+                            'error': f'السيريال المحدد للصنف "{product.name}" غير متاح أو تم بيعه مسبقاً.'
+                        })
 
                 InvoiceLine.objects.create(
                     invoice=invoice,
                     product=product,
                     serial_item=serial_item,
-                    quantity=Decimal(item['quantity']),
-                    unit_price=Decimal(item['unit_price']),
-                    discount_pct=Decimal(item.get('discount_percent', 0)),
+                    quantity=Decimal(str(item['quantity'])),
+                    unit_price=Decimal(str(item['unit_price'])),
+                    discount_pct=Decimal(str(item.get('discount_percent', 0))),
                     uom_id=uom_id,
-                    tax_rate=Decimal(item.get('tax_rate', 0)),
-                    wht_rate=Decimal(item.get('wht_rate', 0)),
+                    tax_rate=Decimal(str(item.get('tax_rate', 0))),
+                    wht_rate=Decimal(str(item.get('wht_rate', 0))),
                 )
                 
             # Confirm
@@ -696,21 +1210,146 @@ def complete_sale(request):
         return JsonResponse({
             'success': True, 
             'invoice_number': confirmed_invoice.invoice_number,
-            'invoice_id': confirmed_invoice.id
+            'invoice_id': confirmed_invoice.id,
+            'partner_id': confirmed_invoice.partner_id if confirmed_invoice.partner else None,
+            'partner_name': confirmed_invoice.partner.name if confirmed_invoice.partner else 'عميل نقدي',
         })
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
 
+def tafqeet_arabic(number):
+    try:
+        from decimal import Decimal
+        num = Decimal(str(number))
+        integer_part = int(num)
+        fraction_part = int(round((num - integer_part) * 100))
+
+        ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة"]
+        tens = ["", "عشرة", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"]
+        teens = ["عشرة", "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"]
+        hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة", "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"]
+
+        def convert_chunk(n):
+            c_res = []
+            h = n // 100
+            rem = n % 100
+            if h > 0:
+                c_res.append(hundreds[h])
+            if 10 <= rem <= 19:
+                c_res.append(teens[rem - 10])
+            else:
+                t = rem // 10
+                o = rem % 10
+                if o > 0 and t > 0:
+                    c_res.append(f"{ones[o]} و{tens[t]}")
+                elif o > 0:
+                    c_res.append(ones[o])
+                elif t > 0:
+                    c_res.append(tens[t])
+            return " و".join(c_res)
+
+        if integer_part == 0:
+            words = "صفر"
+        else:
+            chunks = []
+            millions = (integer_part // 1000000) % 1000
+            thousands = (integer_part // 1000) % 1000
+            rem_units = integer_part % 1000
+
+            if millions > 0:
+                if millions == 1:
+                    chunks.append("مليون")
+                elif millions == 2:
+                    chunks.append("مليونان")
+                elif 3 <= millions <= 10:
+                    chunks.append(f"{convert_chunk(millions)} ملايين")
+                else:
+                    chunks.append(f"{convert_chunk(millions)} مليون")
+
+            if thousands > 0:
+                if thousands == 1:
+                    chunks.append("ألف")
+                elif thousands == 2:
+                    chunks.append("ألفان")
+                elif 3 <= thousands <= 10:
+                    chunks.append(f"{convert_chunk(thousands)} آلاف")
+                else:
+                    chunks.append(f"{convert_chunk(thousands)} ألف")
+
+            if rem_units > 0:
+                chunks.append(convert_chunk(rem_units))
+
+            words = " و".join(chunks)
+
+        res = f"فقط {words} جنيهاً مصرياً"
+        if fraction_part > 0:
+            res += f" و{convert_chunk(fraction_part)} قرشاً"
+        res += " لا غير"
+        return res
+    except Exception:
+        return ""
+
+
 @login_required
 def receipt_view(request, invoice_id):
-    invoice = get_object_or_404(Invoice, id=invoice_id)
-    return render(request, 'pos/receipt.html', {'invoice': invoice})
+    invoice = get_object_or_404(
+        Invoice.objects.select_related('partner', 'branch', 'cashier').prefetch_related('lines__product', 'lines__uom__uom'),
+        id=invoice_id
+    )
+    paper_size = request.GET.get('size', '80mm').strip().lower()
+    if paper_size not in ['80mm', '58mm', 'a4', 'a5']:
+        paper_size = '80mm'
+
+    from apps.tenant.core.models import SystemSetting
+    system_settings = None
+    try:
+        system_settings = SystemSetting.get_settings()
+    except Exception:
+        pass
+
+    store_name = ""
+    tax_id = ""
+    cr_number = ""
+    receipt_footer = ""
+    store_phone = ""
+    store_address = ""
+
+    if system_settings:
+        store_name = system_settings.store_name or system_settings.company_name or ""
+        tax_id = system_settings.tax_number or ""
+        cr_number = getattr(system_settings, 'commercial_register', '') or ""
+        receipt_footer = system_settings.receipt_footer or ""
+
+    if not store_name and hasattr(request, 'tenant'):
+        store_name = request.tenant.name
+
+    if invoice.branch:
+        if not store_phone and invoice.branch.phone:
+            store_phone = invoice.branch.phone
+        if not store_address and invoice.branch.address:
+            store_address = invoice.branch.address
+
+    amount_in_words = tafqeet_arabic(invoice.total_amount)
+
+    return render(request, 'pos/receipt.html', {
+        'invoice': invoice,
+        'paper_size': paper_size,
+        'store_name': store_name,
+        'tax_id': tax_id,
+        'cr_number': cr_number,
+        'receipt_footer': receipt_footer,
+        'store_phone': store_phone,
+        'store_address': store_address,
+        'amount_in_words': amount_in_words,
+        'system_settings': system_settings,
+    })
 
 @login_required
 @require_POST
 def process_invoice_return(request, invoice_id):
-    if not request.user.is_superuser:
+    if not is_admin_user(request.user):
         return JsonResponse({'status': 'error', 'message': 'غير مصرح لك بإجراء هذه العملية.'}, status=403)
+
         
     try:
         data = json.loads(request.body)
@@ -727,25 +1366,57 @@ def process_invoice_return(request, invoice_id):
         
         from django.db import transaction
         import datetime
-        
+        from apps.tenant.core.models import SystemSetting
+        from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
+        from apps.tenant.invoicing.models import POSSession
+
+        payment_type = data.get('payment_type') or original_invoice.payment_type
+        treasury_id = data.get('treasury_id') or (original_invoice.treasury_id if original_invoice.treasury else None)
+        bank_account_id = data.get('bank_account_id') or (original_invoice.bank_account_id if original_invoice.bank_account else None)
+        insta_bank_account_id = data.get('insta_bank_account_id') or (original_invoice.insta_bank_account_id if getattr(original_invoice, 'insta_bank_account', None) else None)
+        ewallet_id = data.get('ewallet_id') or (original_invoice.ewallet_id if original_invoice.ewallet else None)
+
+        setting = SystemSetting.get_settings()
+        split_data = data.get('split_payments', {})
+        req_cash = Decimal(str(split_data.get('cash', 0) or 0)) if payment_type == Invoice.SPLIT else (Decimal('1') if payment_type == Invoice.CASH else Decimal('0'))
+        req_card = Decimal(str(split_data.get('card', 0) or 0)) if payment_type == Invoice.SPLIT else (Decimal('1') if payment_type == Invoice.CARD else Decimal('0'))
+        req_ewallet = Decimal(str(split_data.get('ewallet', 0) or 0)) if payment_type == Invoice.SPLIT else (Decimal('1') if payment_type == Invoice.EWALLET else Decimal('0'))
+        req_bank = Decimal(str(split_data.get('bank', 0) or 0)) if payment_type == Invoice.SPLIT else (Decimal('1') if payment_type == Invoice.BANK_TRANSFER else Decimal('0'))
+
+        if req_cash > 0 and not treasury_id:
+            def_t = getattr(setting, 'default_pos_treasury', None) or Treasury.objects.first()
+            treasury_id = def_t.id if def_t else None
+
+        if (req_card > 0 or req_bank > 0) and not bank_account_id:
+            def_b = getattr(setting, 'default_pos_bank_account', None) or BankAccount.objects.first()
+            bank_account_id = def_b.id if def_b else None
+
+        if req_ewallet > 0 and not ewallet_id:
+            def_w = getattr(setting, 'default_pos_ewallet', None) or EWallet.objects.first()
+            ewallet_id = def_w.id if def_w else None
+
+        open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+        session_to_use = open_session or original_invoice.pos_session
+
         with transaction.atomic():
             # Create Return Invoice
             return_invoice = Invoice.objects.create(
                 invoice_type=return_type,
                 partner=original_invoice.partner,
-                treasury=original_invoice.treasury,
-                ewallet=original_invoice.ewallet,
-                bank_account=original_invoice.bank_account,
+                treasury_id=treasury_id,
+                ewallet_id=ewallet_id,
+                bank_account_id=bank_account_id,
+                insta_bank_account_id=insta_bank_account_id,
                 pos_machine=original_invoice.pos_machine,
                 branch=original_invoice.branch,
                 warehouse=original_invoice.warehouse,
                 date=datetime.date.today(),
-                payment_type=original_invoice.payment_type,
+                payment_type=payment_type,
                 status=Invoice.DRAFT,
                 cashier=request.user,
                 parent_invoice=original_invoice,
                 discount_percentage=original_invoice.discount_percentage,
-                pos_session=original_invoice.pos_session,
+                pos_session=session_to_use,
             )
             
             for item in items:
@@ -779,8 +1450,44 @@ def process_invoice_return(request, invoice_id):
                     wht_rate=original_line.wht_rate,
                 )
             
-            # Recalculate and Confirm
+            # Recalculate Totals
             return_invoice.recalculate_totals()
+            total_amount = return_invoice.total_amount
+
+            # Set Paid Breakdown
+            is_cash_partner = not original_invoice.partner or 'عميل نقدي' in original_invoice.partner.name or 'مورد نقدي' in original_invoice.partner.name or original_invoice.partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']
+            if payment_type == Invoice.SPLIT:
+                paid_cash = Decimal(str(split_data.get('cash', 0) or 0))
+                paid_card = Decimal(str(split_data.get('card', 0) or 0))
+                paid_ewallet = Decimal(str(split_data.get('ewallet', 0) or 0))
+                paid_bank = Decimal(str(split_data.get('bank', 0) or 0))
+                paid_credit = Decimal(str(split_data.get('credit', 0) or 0))
+                
+                total_split = paid_cash + paid_card + paid_ewallet + paid_bank + paid_credit
+                if abs(total_split - total_amount) > Decimal('0.05'):
+                    raise Exception(f'إجمالي مبالغ رد المرتجع ({total_split}) لا يساوي قيمة المرتجع ({total_amount}).')
+                    
+                if paid_credit > 0 and is_cash_partner:
+                    raise Exception('لا يمكن رد جزء من المبلغ كـ (رصيد دائن / آجل) لعميل أو مورد نقدي.')
+
+                return_invoice.paid_cash = paid_cash
+                return_invoice.paid_card = paid_card
+                return_invoice.paid_ewallet = paid_ewallet
+                return_invoice.paid_bank = paid_bank
+                return_invoice.paid_credit = paid_credit
+            else:
+                if payment_type == Invoice.CREDIT and is_cash_partner:
+                    raise Exception('لا يمكن رد المبلغ كـ (رصيد دائن / آجل) لعميل أو مورد نقدي.')
+
+                return_invoice.paid_cash = total_amount if payment_type == Invoice.CASH else Decimal('0')
+                return_invoice.paid_card = total_amount if payment_type == Invoice.CARD else Decimal('0')
+                return_invoice.paid_ewallet = total_amount if payment_type == Invoice.EWALLET else Decimal('0')
+                return_invoice.paid_bank = total_amount if payment_type == Invoice.BANK_TRANSFER else Decimal('0')
+                return_invoice.paid_credit = total_amount if payment_type == Invoice.CREDIT else Decimal('0')
+
+            return_invoice.save(update_fields=['paid_cash', 'paid_card', 'paid_ewallet', 'paid_bank', 'paid_credit'])
+
+            # Confirm
             from apps.tenant.services.invoice_service import confirm_invoice
             confirmed_return = confirm_invoice(return_invoice.id)
             
@@ -792,18 +1499,25 @@ def process_invoice_return(request, invoice_id):
 @login_required
 def shift_report(request):
     import datetime
+    from django.db.models import Sum, Q
+    from django.db.models.functions import Coalesce
+    from decimal import Decimal
+
     today = datetime.date.today()
     invoices = Invoice.objects.filter(date=today, status='POSTED', cashier=request.user)
-    total_cash = sum(inv.total_amount for inv in invoices if inv.payment_type == 'CASH')
-    total_card = sum(inv.total_amount for inv in invoices if inv.payment_type == 'CARD')
-    total_credit = sum(inv.total_amount for inv in invoices if inv.payment_type == 'CREDIT')
+    agg = invoices.aggregate(
+        total_cash=Coalesce(Sum('total_amount', filter=Q(payment_type='CASH')), Decimal('0.00')),
+        total_card=Coalesce(Sum('total_amount', filter=Q(payment_type='CARD')), Decimal('0.00')),
+        total_credit=Coalesce(Sum('total_amount', filter=Q(payment_type='CREDIT')), Decimal('0.00')),
+        total_amount=Coalesce(Sum('total_amount'), Decimal('0.00')),
+    )
     
     context = {
         'invoices': invoices,
-        'total_cash': total_cash,
-        'total_card': total_card,
-        'total_credit': total_credit,
-        'total_amount': total_cash + total_card + total_credit,
+        'total_cash': agg['total_cash'],
+        'total_card': agg['total_card'],
+        'total_credit': agg['total_credit'],
+        'total_amount': agg['total_amount'],
         'title': 'تقرير الوردية (اليوم)'
     }
     return render(request, 'invoicing/shift_report.html', context)
@@ -833,9 +1547,16 @@ def sales_returns_dashboard(request):
 
     customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True)
 
+    from django.core.paginator import Paginator
+    paginator = Paginator(returns_qs, 25)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
     context = {
         'title': 'مركز مرتجعات المبيعات',
-        'returns': returns_qs,
+        'returns': page_obj,
+        'page_obj': page_obj,
+        'is_paginated': page_obj.has_other_pages(),
         'customers': customers,
         'total_returns_count': total_returns_count,
         'total_returns_amount': total_returns_amount,
@@ -1015,4 +1736,495 @@ def create_standalone_sales_return(request):
         'settings': SystemSetting.get_settings(),
     }
     return render(request, 'invoicing/standalone_sales_return_form.html', context)
+
+
+# ---------------------------------------------------------------------------
+# Quotation Views (عروض الأسعار)
+# ---------------------------------------------------------------------------
+from .models import Quotation, QuotationLine
+from .forms import QuotationForm, QuotationLineFormSet
+
+@login_required
+@custom_permission_required('invoicing.view_quotation', redirect_url='core:main_screen')
+def quotation_list(request):
+    """List all quotations with status filtering and pagination."""
+    from django.core.paginator import Paginator
+    status_filter = request.GET.get('status')
+    quotations = Quotation.objects.select_related('partner', 'branch', 'warehouse', 'created_by').order_by('-date', '-created_at')
+    if status_filter:
+        quotations = quotations.filter(status=status_filter)
+    
+    paginator = Paginator(quotations, 25)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+    
+    context = {
+        'quotations': page_obj,
+        'page_obj': page_obj,
+        'is_paginated': page_obj.has_other_pages(),
+        'total_count': paginator.count,
+        'selected_status': status_filter,
+    }
+    return render(request, 'invoicing/quotation_list.html', context)
+
+
+def _get_quotation_products_json():
+    import json
+    products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom')
+    products_dict = {}
+    for p in products:
+        base_unit_name = p.get_unit_display()
+        p_uoms = [{'id': '', 'name': f"{base_unit_name} (أساسية)", 'factor': 1.0}]
+        for pu in p.uoms.all():
+            p_uoms.append({
+                'id': pu.id,
+                'name': f"{pu.uom.name} (معامل: {float(pu.conversion_factor)})",
+                'factor': float(pu.conversion_factor)
+            })
+        products_dict[str(p.id)] = {
+            'name': p.name,
+            'sale_price': float(p.sale_price or 0),
+            'tax_rate': float(p.tax_rate or 0),
+            'wht_rate': float(p.withholding_tax_rate or 0),
+            'base_unit': base_unit_name,
+            'uoms': p_uoms
+        }
+    return json.dumps(products_dict)
+
+
+def _format_quotation_form_errors(form, formset):
+    FIELD_LABELS = {
+        'partner': 'العميل',
+        'branch': 'الفرع',
+        'warehouse': 'المستودع للصرف',
+        'date': 'تاريخ العرض',
+        'valid_until': 'تاريخ الانتهاء',
+        'product': 'المنتج / الخدمة',
+        'uom': 'الوحدة',
+        'quantity': 'الكمية',
+        'unit_price': 'سعر الوحدة',
+        'discount_pct': 'نسبة الخصم %',
+        'tax_rate': 'ضريبة القيمة المضافة (VAT) %',
+        'wht_rate': 'ضريبة الخصم والإضافة (WHT) %',
+    }
+    msgs = []
+    for field, err_list in form.errors.items():
+        fname = FIELD_LABELS.get(field, field)
+        msgs.append(f"{fname}: {', '.join(err_list)}")
+    for idx, f_errors in enumerate(formset.errors):
+        for field, err_list in f_errors.items():
+            fname = FIELD_LABELS.get(field, field)
+            msgs.append(f"البند رقم {idx + 1} ({fname}): {', '.join(err_list)}")
+    if formset.non_form_errors():
+        msgs.extend(formset.non_form_errors())
+    if not msgs:
+        return 'يرجى مراجعة البيانات المدخلة وإضافة بند واحد على الأقل.'
+    return 'تعذر الحفظ: ' + ' | '.join(msgs)
+
+
+@custom_permission_required('invoicing.add_quotation', redirect_url='core:main_screen')
+def quotation_create(request):
+    """Create a new Quotation."""
+    if request.method == 'POST':
+        form = QuotationForm(request.POST)
+        formset = QuotationLineFormSet(request.POST)
+        if form.is_valid() and formset.is_valid():
+            quotation = form.save(commit=False)
+            quotation.created_by = request.user
+            quotation.save()
+            
+            formset.instance = quotation
+            formset.save()
+            quotation.recalculate_totals()
+            
+            messages.success(request, f'تم إنشاء عرض السعر رقم ({quotation.quotation_number}) بنجاح.')
+            return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
+        else:
+            messages.error(request, _format_quotation_form_errors(form, formset))
+    else:
+        # Defaults
+        initial_branch = getattr(request, 'branch', Branch.objects.filter(is_active=True).first())
+        initial_warehouse = Warehouse.objects.filter(is_active=True).first()
+        form = QuotationForm(initial={
+            'branch': initial_branch,
+            'warehouse': initial_warehouse,
+            'date': timezone.now().date(),
+        })
+        formset = QuotationLineFormSet()
+
+    context = {
+        'form': form,
+        'formset': formset,
+        'title': 'إنشاء عرض سعر جديد',
+        'is_edit': False,
+        'products_json': _get_quotation_products_json(),
+    }
+    return render(request, 'invoicing/quotation_form.html', context)
+
+
+@login_required
+@custom_permission_required('invoicing.change_quotation', redirect_url='core:main_screen')
+def quotation_edit(request, quotation_id):
+    """Edit an existing Quotation."""
+    quotation = get_object_or_404(Quotation, id=quotation_id)
+    if quotation.status in [Quotation.CONVERTED]:
+        messages.warning(request, 'لا يمكن تعديل عرض سعر تم تحويله بالفعل إلى فاتورة.')
+        return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
+
+    if request.method == 'POST':
+        form = QuotationForm(request.POST, instance=quotation)
+        formset = QuotationLineFormSet(request.POST, instance=quotation)
+        if form.is_valid() and formset.is_valid():
+            form.save()
+            formset.save()
+            quotation.recalculate_totals()
+            messages.success(request, f'تم تعديل عرض السعر ({quotation.quotation_number}) بنجاح.')
+            return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
+        else:
+            messages.error(request, _format_quotation_form_errors(form, formset))
+    else:
+        form = QuotationForm(instance=quotation)
+        formset = QuotationLineFormSet(instance=quotation)
+
+    context = {
+        'form': form,
+        'formset': formset,
+        'quotation': quotation,
+        'title': f'تعديل عرض السعر {quotation.quotation_number}',
+        'is_edit': True,
+        'products_json': _get_quotation_products_json(),
+    }
+    return render(request, 'invoicing/quotation_form.html', context)
+
+
+@login_required
+@custom_permission_required('invoicing.view_quotation', redirect_url='core:main_screen')
+def quotation_detail(request, quotation_id):
+    """View Quotation details."""
+    quotation = get_object_or_404(
+        Quotation.objects.select_related('partner', 'branch', 'warehouse', 'created_by', 'converted_invoice').prefetch_related('lines__product', 'lines__uom'),
+        id=quotation_id
+    )
+    context = {
+        'quotation': quotation,
+    }
+    return render(request, 'invoicing/quotation_detail.html', context)
+
+
+@login_required
+@custom_permission_required('invoicing.delete_quotation', redirect_url='core:main_screen')
+def quotation_delete(request, quotation_id):
+    """Delete a Quotation."""
+    quotation = get_object_or_404(Quotation, id=quotation_id)
+    if quotation.status == Quotation.CONVERTED:
+        messages.error(request, 'لا يمكن حذف عرض سعر تم تحويله إلى فاتورة.')
+        return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
+
+    if request.method == 'POST':
+        num = quotation.quotation_number
+        quotation.delete()
+        messages.success(request, f'تم حذف عرض السعر {num} بنجاح.')
+        return redirect('invoicing:quotation_list')
+
+    return render(request, 'invoicing/quotation_confirm_delete.html', {'quotation': quotation})
+
+
+@login_required
+@custom_permission_required('invoicing.change_quotation', redirect_url='core:main_screen')
+def quotation_confirm(request, quotation_id):
+    """Post / Confirm quotation (creates stock movements for physical items)."""
+    quotation = get_object_or_404(Quotation, id=quotation_id)
+    if request.method == 'POST':
+        try:
+            quotation.confirm_quotation()
+            messages.success(request, f'تم ترحيل عرض السعر ({quotation.quotation_number}) وتثبيت أثره المخزني بنجاح.')
+        except Exception as e:
+            messages.error(request, f'تعذر ترحيل عرض السعر: {str(e)}')
+    return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
+
+
+@login_required
+@custom_permission_required('invoicing.change_quotation', redirect_url='core:main_screen')
+def quotation_convert(request, quotation_id):
+    """Convert quotation directly into a confirmed Sales Invoice with stock deduction in one step."""
+    quotation = get_object_or_404(Quotation, id=quotation_id)
+    if quotation.status == Quotation.CONVERTED and quotation.converted_invoice:
+        messages.info(request, f'عرض السعر محول مسبقاً إلى فاتورة رقم ({quotation.converted_invoice.invoice_number}).')
+        return redirect('invoicing:invoice_detail', invoice_id=quotation.converted_invoice.id)
+
+    if request.method == 'POST':
+        from django.db import transaction
+        from apps.tenant.services.invoice_service import confirm_invoice
+        try:
+            with transaction.atomic():
+                invoice = quotation.convert_to_invoice(user=request.user)
+                confirm_invoice(invoice.id)
+            
+            messages.success(
+                request,
+                f'تم تسليم البضاعة وعمل فاتورة بيع مؤكدة رقم ({invoice.invoice_number}) وخصم المخزون بنجاح.'
+            )
+            return redirect('invoicing:invoice_detail', invoice_id=invoice.id)
+        except Exception as e:
+            messages.error(request, f'تعذر تسليم وعمل الفاتورة المؤكدة: {str(e)}')
+            return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
+
+    return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
+
+
+@login_required
+@custom_permission_required('invoicing.view_quotation', redirect_url='core:main_screen')
+def quotation_print(request, quotation_id):
+    """Printable Quotation View."""
+    quotation = get_object_or_404(
+        Quotation.objects.select_related('partner', 'branch', 'warehouse').prefetch_related('lines__product', 'lines__uom'),
+        id=quotation_id
+    )
+    system_setting = SystemSetting.get_settings()
+    context = {
+        'quotation': quotation,
+        'setting': system_setting,
+    }
+    return render(request, 'invoicing/quotation_print.html', context)
+
+
+@login_required
+def get_product_last_prices(request):
+    """
+    Returns the last 5 selling prices/invoice lines for a specific product and customer in POS.
+    Query parameters:
+    - product_id (int)
+    - partner_id (int, optional)
+    """
+    from django.http import JsonResponse
+    from apps.tenant.inventory.models import Product
+    from apps.tenant.partners.models import Partner
+    from .models import InvoiceLine, Invoice
+
+    product_id = request.GET.get('product_id')
+    partner_id = request.GET.get('partner_id')
+
+    if not product_id:
+        return JsonResponse({'success': False, 'error': 'معرف الصنف مطلوب'}, status=400)
+
+    try:
+        product = Product.objects.get(id=int(product_id))
+    except (Product.DoesNotExist, ValueError):
+        return JsonResponse({'success': False, 'error': 'الصنف غير موجود'}, status=404)
+
+    lines_qs = InvoiceLine.objects.filter(
+        product_id=product.id,
+        invoice__invoice_type='SALE',
+        invoice__status='POSTED'
+    ).select_related('invoice', 'invoice__partner', 'uom', 'uom__uom')
+
+    partner = None
+    if partner_id and partner_id not in ['null', 'undefined', '']:
+        try:
+            partner_id_int = int(partner_id)
+            if partner_id_int > 0:
+                partner = Partner.objects.get(id=partner_id_int)
+                lines_qs = lines_qs.filter(invoice__partner_id=partner_id_int)
+        except (Partner.DoesNotExist, ValueError):
+            pass
+
+    # Order by invoice created date descending and limit to 5
+    recent_lines = lines_qs.order_by('-invoice__created_at', '-invoice__id')[:5]
+
+    history = []
+    for line in recent_lines:
+        inv = line.invoice
+        uom_name = ''
+        try:
+            if line.uom and hasattr(line.uom, 'uom') and line.uom.uom:
+                uom_name = line.uom.uom.name
+            else:
+                uom_name = product.pos_unit_name
+        except Exception:
+            uom_name = product.get_unit_display() or ''
+
+        history.append({
+            'invoice_id': inv.id,
+            'invoice_number': inv.invoice_number,
+            'date': inv.date.strftime('%Y-%m-%d') if inv.date else inv.created_at.strftime('%Y-%m-%d'),
+            'customer_name': inv.partner.name if inv.partner else 'عميل نقدي',
+            'unit_price': float(line.unit_price),
+            'quantity': float(line.quantity),
+            'discount_pct': float(line.discount_pct),
+            'subtotal': float(line.subtotal),
+            'uom_name': uom_name or '',
+            'payment_type_display': inv.get_payment_type_display(),
+        })
+
+    return JsonResponse({
+        'success': True,
+        'product_name': product.name,
+        'product_barcode': product.barcode or '',
+        'customer_name': partner.name if partner else 'عميل نقدي',
+        'history': history,
+        'count': len(history)
+    })
+
+
+@login_required
+def recent_transactions_api(request):
+    """API returning recent sales transactions for dashboard feed."""
+    invoices = Invoice.objects.filter(invoice_type='SALE')
+    user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
+    if not is_admin_user(request.user) and user_branch:
+        invoices = invoices.filter(branch=user_branch)
+
+    invoices = invoices.select_related('branch').order_by('-created_at')[:10]
+    data = []
+    for inv in invoices:
+        branch_name = inv.branch.name if inv.branch else 'المركز الرئيسي'
+        created_str = inv.created_at.strftime('%Y-%m-%d %H:%M') if inv.created_at else ''
+        data.append({
+            'invoice_number': inv.invoice_number,
+            'branch_name': branch_name,
+            'created_at': created_str,
+            'total_amount': float(inv.total_amount or 0),
+        })
+
+    return JsonResponse({'transactions': data})
+
+
+def get_shift_stats_data(open_session):
+    """Calculates real-time shift statistics and recent invoices for cashier dashboard."""
+    if not open_session:
+        return {
+            'has_open_shift': False,
+            'total_sales': 0.0,
+            'invoices_count': 0,
+            'cash_in_drawer': 0.0,
+            'card_sales': 0.0,
+            'opening_balance': 0.0,
+            'recent_invoices': [],
+        }
+
+    from apps.tenant.accounting.models import Voucher
+    from django.db.models import Sum, Q, F, Case, When
+    from django.db.models.functions import Coalesce
+
+    posted_invoices = Invoice.objects.filter(pos_session=open_session, status=Invoice.POSTED)
+    sales_invoices = posted_invoices.filter(invoice_type=Invoice.SALE)
+    total_sales = sales_invoices.aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+    invoices_count = posted_invoices.count()
+
+    inv_agg = posted_invoices.aggregate(
+        total_cash_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_cash')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CASH), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_card_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_card')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CARD), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_card')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CARD), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_ewallet_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_ewallet')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.EWALLET), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_ewallet')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.EWALLET), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+        total_bank_sales=Coalesce(Sum(
+            Case(
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_bank')),
+                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.BANK_TRANSFER), then=F('total_amount')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_bank')),
+                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.BANK_TRANSFER), then=-F('total_amount')),
+                default=Decimal('0.00'),
+                output_field=models.DecimalField(max_digits=18, decimal_places=4)
+            )
+        ), Decimal('0.00')),
+    )
+    total_cash_sales = inv_agg['total_cash_sales']
+    total_card_sales = inv_agg['total_card_sales']
+    total_ewallet_sales = inv_agg['total_ewallet_sales']
+    total_bank_sales = inv_agg['total_bank_sales']
+
+    v_base = Voucher.objects.filter(status=Voucher.POSTED).filter(
+        Q(payment_method=Voucher.CASH) | Q(payment_method=Voucher.SPLIT, paid_cash__gt=0)
+    )
+    time_filter = Q(treasury=open_session.treasury, created_at__gte=open_session.start_time)
+    if open_session.end_time:
+        time_filter &= Q(created_at__lte=open_session.end_time)
+    shift_vouchers = v_base.filter(Q(pos_session=open_session) | time_filter).distinct()
+    v_cash_expr = Case(
+        When(payment_method=Voucher.SPLIT, then=F('paid_cash')),
+        default=F('amount'),
+        output_field=models.DecimalField(max_digits=18, decimal_places=4)
+    )
+    v_agg = shift_vouchers.aggregate(
+        total_cash_receipts=Coalesce(Sum(v_cash_expr, filter=Q(voucher_type=Voucher.RECEIPT)), Decimal('0.00')),
+        total_cash_payments=Coalesce(Sum(v_cash_expr, filter=Q(voucher_type=Voucher.PAYMENT)), Decimal('0.00')),
+    )
+    total_cash_receipts = v_agg['total_cash_receipts']
+    total_cash_payments = v_agg['total_cash_payments']
+
+    from apps.tenant.rentals.models import Rental
+    rental_time_filter = Q(created_at__gte=open_session.start_time, treasury=open_session.treasury)
+    if open_session.end_time:
+        rental_time_filter &= Q(created_at__lte=open_session.end_time)
+    total_cash_rentals = Rental.objects.filter(rental_time_filter, payment_method=Rental.PAYMENT_CASH).aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
+
+    cash_in_drawer = open_session.opening_balance + total_cash_sales + total_cash_receipts - total_cash_payments + total_cash_rentals
+
+    recent_invoices = []
+    for inv in posted_invoices.select_related('partner').order_by('-id')[:8]:
+        recent_invoices.append({
+            'id': inv.id,
+            'number': inv.invoice_number,
+            'time': inv.created_at.strftime('%I:%M %p') if inv.created_at else '',
+            'customer': inv.partner.name if inv.partner else 'عميل نقدي',
+            'total': float(inv.total_amount or 0),
+            'payment_type': inv.get_payment_type_display(),
+            'is_return': inv.invoice_type == Invoice.RETURN_SALE,
+        })
+
+    return {
+        'has_open_shift': True,
+        'shift_id': open_session.id,
+        'shift_start': open_session.start_time.strftime('%H:%M') if open_session.start_time else '',
+        'treasury_name': open_session.treasury.name if open_session.treasury else '',
+        'total_sales': float(total_sales),
+        'invoices_count': invoices_count,
+        'cash_in_drawer': float(cash_in_drawer),
+        'card_sales': float(total_card_sales),
+        'ewallet_sales': float(total_ewallet_sales),
+        'bank_sales': float(total_bank_sales),
+        'opening_balance': float(open_session.opening_balance),
+        'recent_invoices': recent_invoices,
+    }
+
+
+def pos_shift_stats_api(request):
+    """API endpoint returning live cashier shift stats and recent invoices."""
+    if not request.user.is_authenticated:
+        return JsonResponse({'has_open_shift': False, 'error': 'Unauthorized'}, status=401)
+    open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+    if not open_session and (request.user.is_superuser or (hasattr(request.user, 'employee_profile') and request.user.employee_profile.is_admin())):
+        open_session = POSSession.objects.filter(status=POSSession.OPEN).first()
+    data = get_shift_stats_data(open_session)
+    return JsonResponse(data)
+
+
+
+
+
 

@@ -1,19 +1,73 @@
 {% extends 'base.html' %}
 {% block title %}{{ title }}{% endblock %}
 
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+<style>
+    /* Dark mode overrides for TomSelect */
+    .ts-control {
+        background-color: rgba(15, 23, 42, 0.8) !important;
+        color: #fff !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-radius: 6px;
+        min-height: 42px;
+        padding: 6px 12px;
+    }
+    .ts-dropdown {
+        background-color: #0f172a !important;
+        color: #fff !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+        z-index: 9999 !important;
+    }
+    .ts-dropdown .option {
+        color: #e2e8f0 !important;
+        padding: 8px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .ts-dropdown .option:hover, .ts-dropdown .option.active {
+        background-color: #ff7300 !important;
+        color: #fff !important;
+    }
+    .ts-dropdown .option.selected {
+        background-color: rgba(255, 115, 0, 0.25) !important;
+        color: #ff7300 !important;
+        font-weight: bold;
+    }
+    .ts-control > input {
+        color: #fff !important;
+    }
+    .ts-control .item {
+        color: #fff !important;
+    }
+    .ts-wrapper.single .ts-control:after {
+        border-color: #ff7300 transparent transparent transparent !important;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
     <h2 class="text-neon-cyan mb-4">{{ title }}</h2>
 
     <form method="post" class="card p-4">
         {% csrf_token %}
+        <div style="margin-bottom: 1.5rem; background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 8px; padding: 0.85rem 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 0.75rem; color: #e2e8f0; font-size: 0.9rem;">
+                <i class="fas fa-info-circle text-neon-cyan" style="font-size: 1.2rem;"></i>
+                <span>هل تريد إدخال أو تعديل <strong>رصيد أول المدة</strong> لصنف مع تحديث القيد المحاسبي تلقائياً؟</span>
+            </div>
+            <a href="{% url 'inventory:opening_stock_list' %}" class="btn btn-primary" style="padding: 0.4rem 1rem; font-size: 0.85rem; border-radius: 6px; text-decoration: none; box-shadow: 0 0 12px rgba(0, 229, 255, 0.35);">
+                <i class="fas fa-boxes"></i> الانتقال لشاشة أرصدة أول المدة
+            </a>
+        </div>
+
         <div class="grid grid-cols-4 gap-4 mb-4">
             <div class="form-group">
                 <label>نوع العملية</label>
                 <select name="adjustment_type" id="adjustment_type" class="form-select" required onchange="toggleCostField()">
-                    <option value="OUT" selected>إعدام / تسوية نقص</option>
-                    <option value="IN">تسوية بالزيادة</option>
-                    <option value="OPENING">رصيد افتتاحي</option>
+                    <option value="OUT" selected>إعدام / تسوية نقص (توالف وهالك)</option>
+                    <option value="IN">تسوية بالزيادة (فروق جرد طارئة)</option>
                 </select>
             </div>
             <div class="form-group">
@@ -31,80 +85,236 @@
             </div>
             <div class="form-group">
                 <label>السبب / البيان</label>
-                <input type="text" name="reason" class="form-control" required placeholder="مثال: بضاعة تالفة، رصيد افتتاحي">
+                <input type="text" name="reason" class="form-control" required placeholder="مثال: بضاعة تالفة، كسر أثناء النقل، فرق جرد">
             </div>
         </div>
 
-        <h3 class="mb-3">المنتجات المراد تسويتها (عجز/إعدام)</h3>
+        <h3 class="mb-3" id="sectionHeading">المنتجات المراد تسويتها (عجز/إعدام)</h3>
         <table class="data-table mb-4" id="linesTable">
             <thead>
                 <tr>
-                    <th>المنتج</th>
-                    <th>الكمية</th>
-                    <th class="cost-column" style="display: none;">تكلفة الوحدة (تقديرية)</th>
-                    <th>إجراء</th>
+                    <th style="min-width: 280px;">المنتج</th>
+                    <th style="width: 190px;">الوحدة</th>
+                    <th style="width: 140px;">الكمية</th>
+                    <th class="cost-column" style="display: none; width: 220px;">تكلفة الوحدة (تقديرية)</th>
+                    <th style="width: 70px; text-align: center;">إجراء</th>
                 </tr>
             </thead>
             <tbody>
                 <tr>
                     <td>
-                        <select name="product_id[]" class="form-select" required>
+                        <select name="product_id[]" class="form-select product-select" required>
                             <option value="">-- اختر المنتج --</option>
                             {% for prod in products %}
-                            <option value="{{ prod.id }}">{{ prod.name }}</option>
+                            <option value="{{ prod.id }}" data-barcode="{{ prod.barcode|default:'' }}">{{ prod.name }}</option>
                             {% endfor %}
                         </select>
+                    </td>
+                    <td>
+                        <select name="uom_id[]" class="form-select uom-select" onchange="handleUomChange(this)">
+                            <option value="base" data-factor="1.0">الوحدة الأساسية</option>
+                        </select>
+                        <small class="uom-factor-hint text-neon-cyan" style="display: block; font-size: 11px; margin-top: 3px; font-weight: bold;"></small>
                     </td>
                     <td>
                         <input type="number" step="0.01" name="quantity[]" class="form-control" required min="0.01" placeholder="الكمية">
                     </td>
                     <td class="cost-column" style="display: none;">
                         <input type="number" step="0.0001" name="unit_cost[]" class="form-control cost-input" min="0" placeholder="اتركه فارغاً للتكلفة الآلية">
-                        <small class="text-muted" style="font-size: 10px;">إجباري للزيادة والافتتاحي</small>
+                        <small class="text-muted" style="font-size: 10px;">إجباري لتسوية الزيادة</small>
                     </td>
-                    <td>
-                        <button type="button" class="btn btn-sm btn-ghost" onclick="this.closest('tr').remove()">حذف</button>
+                    <td style="text-align: center;">
+                        <button type="button" class="btn btn-sm btn-ghost" onclick="removeLine(this)">حذف</button>
                     </td>
                 </tr>
             </tbody>
         </table>
         
         <div class="mb-4">
-            <button type="button" class="btn btn-ghost" onclick="addLine()">+ إضافة منتج آخر</button>
+            <button type="button" class="btn-orange" style="background: rgba(255, 115, 0, 0.15); border: 1px solid #ff7300; color: #ff7300; font-weight: bold; padding: 0.5rem 1.2rem; border-radius: 8px;" onclick="addLine()">+ إضافة منتج آخر</button>
         </div>
 
         <div class="d-flex gap-3">
-            <button type="submit" class="btn btn-orange">حفظ كمسودة</button>
-            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-ghost">إلغاء</a>
+            <button type="submit" class="btn-orange" style="background: #ff7300; border-color: #ff7300; color: #fff; font-weight: bold; box-shadow: 0 0 15px rgba(255, 115, 0, 0.4); padding: 0.6rem 2rem; border-radius: 8px;">حفظ كمسودة</button>
+            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-ghost" style="padding: 0.6rem 1.5rem; border-radius: 8px;">إلغاء</a>
         </div>
     </form>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
 <script>
-let availableProducts = [];
-let allProductsHtml = '';
+let availableProducts = [
+    {% for p in products %}
+    {
+        id: {{ p.id }},
+        name: "{{ p.name|escapejs }}",
+        barcode: "{{ p.barcode|default:''|escapejs }}",
+        available_stock: null,
+        base_uom: "{{ p.pos_unit_name|escapejs }}",
+        uoms: [
+            { id: 'base', name: '{{ p.pos_unit_name|escapejs }}', factor: 1.0 },
+            {% for pu in p.uoms.all %}
+            {% if not pu.is_base %}
+            { id: {{ pu.id }}, name: '{{ pu.uom.name|escapejs }}', factor: {{ pu.conversion_factor|stringformat:".4f" }} },
+            {% endif %}
+            {% endfor %}
+        ]
+    },
+    {% endfor %}
+];
+
+function initTomSelect(selectEl) {
+    if (!selectEl || selectEl.tomselect) return;
+    new TomSelect(selectEl, {
+        create: false,
+        maxOptions: 1000,
+        placeholder: "🔍 ابحث بالاسم أو الباركود...",
+        searchField: ['text', 'barcode'],
+        dropdownParent: 'body',
+        render: {
+            option: function(data, escape) {
+                const stockBadge = data.stockText
+                    ? `<span style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.3); font-size: 0.75rem; padding: 2px 7px; border-radius: 4px; font-weight: 600; white-space: nowrap;">${escape(data.stockText)}</span>`
+                    : '';
+                const barcodeBadge = data.barcode
+                    ? `<span style="color: #94a3b8; font-size: 0.75rem; font-family: monospace;">[${escape(data.barcode)}]</span>`
+                    : '';
+                return `<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 10px;">
+                            <div>
+                                <span style="font-weight: 600;">${escape(data.text)}</span>
+                                ${barcodeBadge ? '<div style="margin-top: 2px;">' + barcodeBadge + '</div>' : ''}
+                            </div>
+                            ${stockBadge}
+                        </div>`;
+            },
+            item: function(data, escape) {
+                return `<div>${escape(data.text)}</div>`;
+            }
+        },
+        onChange: function(value) {
+            updateRowUoMs(selectEl, value);
+        }
+    });
+}
+
+function updateRowUoMs(productSelectEl, productId) {
+    const row = productSelectEl.closest('tr');
+    if (!row) return;
+    const uomSelect = row.querySelector('.uom-select');
+    const hint = row.querySelector('.uom-factor-hint');
+    if (!uomSelect) return;
+
+    uomSelect.innerHTML = '';
+    if (hint) hint.textContent = '';
+
+    if (!productId) {
+        uomSelect.innerHTML = '<option value="base" data-factor="1.0">الوحدة الأساسية</option>';
+        return;
+    }
+
+    const prod = availableProducts.find(p => String(p.id) === String(productId));
+    if (!prod || !prod.uoms || prod.uoms.length === 0) {
+        uomSelect.innerHTML = `<option value="base" data-factor="1.0">${prod ? prod.base_uom : 'الوحدة الأساسية'}</option>`;
+        return;
+    }
+
+    prod.uoms.forEach(uom => {
+        const option = document.createElement('option');
+        option.value = uom.id;
+        option.setAttribute('data-factor', uom.factor);
+        const factorLabel = parseFloat(uom.factor) > 1.0 ? ` (معامل: × ${parseFloat(uom.factor)})` : '';
+        option.textContent = uom.name + factorLabel;
+        uomSelect.appendChild(option);
+    });
+
+    handleUomChange(uomSelect);
+}
+
+function handleUomChange(uomSelect) {
+    const row = uomSelect.closest('tr');
+    if (!row) return;
+    const hint = row.querySelector('.uom-factor-hint');
+    const selectedOption = uomSelect.options[uomSelect.selectedIndex];
+    if (!selectedOption || !hint) return;
+
+    const factor = parseFloat(selectedOption.getAttribute('data-factor') || '1.0');
+    if (factor > 1.0) {
+        hint.textContent = `معامل التحويل: 1 وحدة = ${factor} من الأساسية`;
+    } else {
+        hint.textContent = '';
+    }
+}
 
 function addLine() {
     const tbody = document.querySelector('#linesTable tbody');
-    const tr = tbody.querySelector('tr').cloneNode(true);
-    tr.querySelectorAll('input').forEach(i => i.value = '');
-    
-    // For selects, if we have dynamic products, we populate them, else clear selection
-    const select = tr.querySelector('select[name="product_id[]"]');
-    if (availableProducts.length > 0) {
-        populateSelect(select);
-    } else {
-        select.value = '';
-    }
-    
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+        <td>
+            <select name="product_id[]" class="form-select product-select" required>
+                <option value="">-- اختر المنتج --</option>
+            </select>
+        </td>
+        <td>
+            <select name="uom_id[]" class="form-select uom-select" onchange="handleUomChange(this)">
+                <option value="base" data-factor="1.0">الوحدة الأساسية</option>
+            </select>
+            <small class="uom-factor-hint text-neon-cyan" style="display: block; font-size: 11px; margin-top: 3px; font-weight: bold;"></small>
+        </td>
+        <td>
+            <input type="number" step="0.01" name="quantity[]" class="form-control" required min="0.01" placeholder="الكمية">
+        </td>
+        <td class="cost-column" style="display: none;">
+            <input type="number" step="0.0001" name="unit_cost[]" class="form-control cost-input" min="0" placeholder="اتركه فارغاً للتكلفة الآلية">
+            <small class="text-muted" style="font-size: 10px;">إجباري لتسوية الزيادة</small>
+        </td>
+        <td style="text-align: center;">
+            <button type="button" class="btn btn-sm btn-ghost" onclick="removeLine(this)">حذف</button>
+        </td>
+    `;
     tbody.appendChild(tr);
-    toggleCostField(); // Apply current display state to the new row
+
+    const select = tr.querySelector('select[name="product_id[]"]');
+    initTomSelect(select);
+    populateSelect(select);
+    toggleCostField();
+}
+
+function removeLine(btn) {
+    const tbody = document.querySelector('#linesTable tbody');
+    const rows = tbody.querySelectorAll('tr');
+    const tr = btn.closest('tr');
+    const select = tr.querySelector('select[name="product_id[]"]');
+
+    if (rows.length > 1) {
+        if (select && select.tomselect) {
+            select.tomselect.destroy();
+        }
+        tr.remove();
+    } else {
+        tr.querySelectorAll('input').forEach(i => i.value = '');
+        if (select && select.tomselect) {
+            select.tomselect.clear();
+        }
+        const uomSelect = tr.querySelector('.uom-select');
+        if (uomSelect) {
+            uomSelect.innerHTML = '<option value="base" data-factor="1.0">الوحدة الأساسية</option>';
+        }
+        const hint = tr.querySelector('.uom-factor-hint');
+        if (hint) hint.textContent = '';
+    }
 }
 
 function toggleCostField() {
     const type = document.getElementById('adjustment_type').value;
-    const isIncrease = (type === 'IN' || type === 'OPENING');
+    const isIncrease = (type === 'IN');
     
+    // Update Heading Text
+    const heading = document.getElementById('sectionHeading');
+    if (heading) {
+        if (type === 'OUT') heading.textContent = 'المنتجات المراد تسويتها (عجز / إعدام توالف)';
+        else if (type === 'IN') heading.textContent = 'المنتجات المراد تسويتها (زيادة بضاعة / فروق جرد)';
+    }
+
     // Toggle column header
     document.querySelectorAll('th.cost-column').forEach(th => {
         th.style.display = isIncrease ? 'table-cell' : 'none';
@@ -118,23 +328,41 @@ function toggleCostField() {
             input.required = isIncrease;
         }
     });
-    
-    // Update product dropdowns based on new operation type
-    fetchWarehouseProducts();
 }
 
 function populateSelect(selectEl) {
-    const currentValue = selectEl.value;
-    selectEl.innerHTML = '<option value="">-- اختر المنتج --</option>';
-    availableProducts.forEach(p => {
-        const option = document.createElement('option');
-        option.value = p.id;
-        option.textContent = p.name + (p.available_stock > 0 ? ` (المتاح: ${p.available_stock})` : '');
-        selectEl.appendChild(option);
-    });
-    // Try to keep previous selection if it still exists in the new list
-    if (currentValue && availableProducts.find(p => p.id == currentValue)) {
-        selectEl.value = currentValue;
+    if (!selectEl) return;
+    const currentValue = selectEl.tomselect ? selectEl.tomselect.getValue() : selectEl.value;
+
+    if (selectEl.tomselect) {
+        selectEl.tomselect.clear();
+        selectEl.tomselect.clearOptions();
+
+        availableProducts.forEach(p => {
+            const stockText = (p.available_stock !== undefined && p.available_stock !== null)
+                ? `المتاح: ${parseFloat(p.available_stock)}`
+                : '';
+            selectEl.tomselect.addOption({
+                value: String(p.id),
+                text: p.name,
+                barcode: p.barcode || '',
+                stockText: stockText
+            });
+        });
+
+        if (currentValue && availableProducts.some(p => String(p.id) === String(currentValue))) {
+            selectEl.tomselect.setValue(String(currentValue), true);
+        }
+    } else {
+        selectEl.innerHTML = '<option value="">-- اختر المنتج --</option>';
+        availableProducts.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.id;
+            option.textContent = p.name + (p.available_stock > 0 ? ` (المتاح: ${p.available_stock})` : '');
+            if (p.barcode) option.setAttribute('data-barcode', p.barcode);
+            selectEl.appendChild(option);
+        });
+        initTomSelect(selectEl);
     }
 }
 
@@ -143,21 +371,18 @@ function fetchWarehouseProducts() {
     const type = document.getElementById('adjustment_type').value;
     
     if (!warehouseId) {
-        return; // Wait until a warehouse is selected
+        return;
     }
     
     fetch(`{% url 'inventory:api_products' %}?warehouse_id=${warehouseId}`)
         .then(res => res.json())
         .then(data => {
             if (type === 'OUT') {
-                // For Write-off / Decrease: show ONLY items with stock > 0
                 availableProducts = data.products.filter(p => p.available_stock > 0);
             } else {
-                // For Increase / Opening: show all active items
                 availableProducts = data.products;
             }
             
-            // Update all existing selects
             document.querySelectorAll('select[name="product_id[]"]').forEach(select => {
                 populateSelect(select);
             });
@@ -165,14 +390,48 @@ function fetchWarehouseProducts() {
         .catch(err => console.error('Error fetching products:', err));
 }
 
-// Event Listeners
 document.addEventListener('DOMContentLoaded', function() {
     toggleCostField();
+    
+    // Initialize TomSelect on initial row(s)
+    document.querySelectorAll('select[name="product_id[]"]').forEach(select => {
+        initTomSelect(select);
+        populateSelect(select);
+    });
     
     const warehouseSelect = document.querySelector('select[name="warehouse"]');
     warehouseSelect.addEventListener('change', fetchWarehouseProducts);
     
-    document.getElementById('adjustment_type').addEventListener('change', fetchWarehouseProducts);
+    document.getElementById('adjustment_type').addEventListener('change', function() {
+        toggleCostField();
+        fetchWarehouseProducts();
+    });
+
+    // Protection: Prevent submitting adjustment without valid items and positive quantities
+    const form = document.querySelector('form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            let validLinesCount = 0;
+            const rows = document.querySelectorAll('#linesTable tbody tr');
+            
+            rows.forEach(tr => {
+                const productSelect = tr.querySelector('.product-select');
+                const qtyInput = tr.querySelector('input[name="quantity[]"]');
+                const pid = productSelect ? (productSelect.tomselect ? productSelect.tomselect.getValue() : productSelect.value) : null;
+                const qty = qtyInput ? parseFloat(qtyInput.value) : 0;
+                
+                if (pid && !isNaN(qty) && qty > 0) {
+                    validLinesCount++;
+                }
+            });
+
+            if (validLinesCount === 0) {
+                e.preventDefault();
+                alert('⚠️ تنبيه: لا يمكن حفظ التسوية بدون إضافة أصناف! يرجى اختيار صنف واحد على الأقل وتحديد كمية صالحة أكبر من الصفر.');
+                return false;
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

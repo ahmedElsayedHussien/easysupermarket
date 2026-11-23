@@ -77,6 +77,7 @@
                     <th>النوع</th>
                     <th>العميل</th>
                     <th>الصنف</th>
+                    <th>البيان / ملاحظات</th>
                     <th style="text-align: center;">الكمية</th>
                     <th style="text-align: left;">سعر الوحدة</th>
                     <th style="text-align: left;">قبل الضريبة</th>
@@ -89,7 +90,7 @@
                 <tr>
                     <td>{{ line.invoice.date|date:"Y-m-d" }}</td>
                     <td style="font-weight: bold; font-family: monospace;">
-                        <a href="#" style="color: var(--neon-blue); text-decoration: none;">
+                        <a href="{% url 'invoicing:invoice_detail' line.invoice.id %}" style="color: var(--neon-blue); text-decoration: none;">
                             {{ line.invoice.invoice_number }}
                         </a>
                     </td>
@@ -102,6 +103,7 @@
                     </td>
                     <td>{{ line.invoice.partner.name|default:"-" }}</td>
                     <td style="font-weight: bold;">{{ line.product.name }}</td>
+                    <td style="color: #cbd5e1; font-size: 0.88rem;">{{ line.invoice.notes|default:"-" }}</td>
                     <td style="text-align: center;">
                         <span class="badge {% if line.invoice.invoice_type == 'SALE' %}badge-primary{% else %}badge-danger{% endif %}">
                             {{ line.quantity|floatformat:"-2" }}

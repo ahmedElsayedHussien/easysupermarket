@@ -1,0 +1,118 @@
+{% extends 'base.html' %}
+{% load i18n static %}
+
+{% block title %}أرصدة أول المدة للمنتجات{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex flex-column flex-md-row justify-between align-md-center mb-4 gap-3">
+        <div>
+            <h2 class="text-neon-cyan mb-1" style="font-weight: 800;">📦 أرصدة أول المدة للمنتجات (الافتتاحية)</h2>
+            <p class="text-muted mb-0" style="font-size: 0.9rem;">
+                عرض وتعديل أرصدة أول المدة ومزامنة القيود المحاسبية تلقائياً في دفتر الأستاذ العام
+            </p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{% url 'inventory:product_bulk_import' %}" class="btn btn-primary" style="padding: 0.5rem 1.1rem; border-radius: 8px; box-shadow: 0 0 15px rgba(0, 229, 255, 0.35); text-decoration: none; display: inline-flex; align-items: center; gap: 7px;">
+                <i class="fas fa-file-excel"></i> استيراد من إكسيل
+            </a>
+            <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost" style="border: 1px solid rgba(0, 229, 255, 0.4); color: #00e5ff; border-radius: 8px;">
+                <i class="fas fa-boxes"></i> المنتجات
+            </a>
+            <a href="{% url 'inventory:stock_list' %}" class="btn btn-ghost" style="border: 1px solid rgba(0, 229, 255, 0.4); color: #00e5ff; border-radius: 8px;">
+                <i class="fas fa-layer-group"></i> تتبع المخزون FIFO
+            </a>
+        </div>
+    </div>
+
+    <!-- Filter Card -->
+    <div class="card mb-4 p-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px;">
+        <form method="GET" class="d-flex gap-3 align-items-center flex-wrap">
+            <select class="form-select" name="warehouse" style="max-width: 250px;" onchange="this.form.submit()">
+                <option value="">كل المستودعات</option>
+                {% for wh in warehouses %}
+                <option value="{{ wh.id }}" {% if selected_warehouse and selected_warehouse.id == wh.id %}selected{% endif %}>{{ wh.name }}</option>
+                {% endfor %}
+            </select>
+            <input type="text" name="q" class="form-control" placeholder="بحث باسم الصنف أو الباركود..." value="{{ search_query|default:'' }}" style="flex: 1; min-width: 220px; background: rgba(0,0,0,0.3); color: #fff; border: 1px solid rgba(255,255,255,0.15);">
+            <button type="submit" class="btn btn-primary" style="white-space: nowrap; box-shadow: 0 0 12px rgba(0, 229, 255, 0.35);">
+                🔍 بحث
+            </button>
+            {% if selected_warehouse or search_query %}
+            <a href="{% url 'inventory:opening_stock_list' %}" class="btn btn-ghost" style="white-space: nowrap;">إلغاء الفلترة</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <!-- Table -->
+    <div style="overflow-x: auto;">
+        <table class="data-table" style="min-width: 900px;">
+            <thead>
+                <tr>
+                    <th>الباركود</th>
+                    <th>اسم المنتج</th>
+                    <th>المستودع</th>
+                    <th>الكمية الافتتاحية</th>
+                    <th>المتبقي منها</th>
+                    <th>تكلفة الوحدة</th>
+                    <th>إجمالي القيمة</th>
+                    <th>رقم الدفعة / المرجع</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for batch in batches %}
+                <tr>
+                    <td><code>{{ batch.product.barcode|default:"-" }}</code></td>
+                    <td style="font-weight: 700;">{{ batch.product.name }}</td>
+                    <td><span class="badge badge-secondary">{{ batch.warehouse.name }}</span></td>
+                    <td style="font-weight: 800; color: #00e5ff; font-size: 1.05rem;">{{ batch.quantity_original|floatformat:"-2" }}</td>
+                    <td style="color: #10b981; font-weight: 700;">{{ batch.quantity_remaining|floatformat:"-2" }}</td>
+                    <td>{{ batch.unit_cost|floatformat:2 }} ج.م</td>
+                    <td style="font-weight: bold; color: #38bdf8;">{{ batch.total_cost|floatformat:2 }} ج.م</td>
+                    <td><small style="color: var(--text-muted);">{{ batch.batch_number|default:"-" }}</small></td>
+                    <td style="text-align: center; white-space: nowrap;">
+                        <a href="{% url 'inventory:product_opening_stock' batch.product.id %}?warehouse={{ batch.warehouse.id }}" class="btn btn-sm btn-action" style="font-weight: 700; border-radius: 6px; padding: 0.3rem 0.8rem;">
+                            <i class="fas fa-edit me-1"></i> تعديل الكمية والقيد
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="9" class="text-center py-4" style="color: var(--text-muted);">
+                        لا توجد أرصدة افتتاحية مسجلة مطابقة للبحث
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination & Summary Footer -->
+    {% if total_count > 0 %}
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="color: var(--text-muted); font-size: 0.9rem;">
+            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ total_count }}</b> دفعة رصيد أول مدة
+        </div>
+
+        {% if is_paginated %}
+        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1{% if selected_warehouse %}&warehouse={{ selected_warehouse.id }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if selected_warehouse %}&warehouse={{ selected_warehouse.id }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
+            {% endif %}
+
+            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if selected_warehouse %}&warehouse={{ selected_warehouse.id }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if selected_warehouse %}&warehouse={{ selected_warehouse.id }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

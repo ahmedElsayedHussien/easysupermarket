@@ -10,19 +10,31 @@
         {% if invoice.status == 'DRAFT' %}
         <button class="btn btn-neon-red" onclick="confirmInvoice({{ invoice.id }})">ترحيل الفاتورة</button>
         {% endif %}
-        {% if invoice.status == 'POSTED' and request.user.is_superuser %}
-            {% if invoice.invoice_type == 'SALE' or invoice.invoice_type == 'PURCHASE' %}
-                {% if is_fully_returned %}
-                <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; padding: 8px 16px; font-size: 1rem; border-radius: 8px; font-weight: bold; border: 1px solid rgba(239, 68, 68, 0.4); display: flex; align-items: center; justify-content: center; gap: 8px;">
-                    <i class="fas fa-check-circle"></i> مرتجعة بالكامل
-                </span>
-                {% else %}
-                <button class="btn" onclick="openReturnModal()" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; font-weight: bold; border: none; box-shadow: 0 4px 10px rgba(255, 115, 0, 0.3); border-radius: 8px;">🔄 إرجاع أصناف</button>
+        {% if invoice.status != 'CANCELLED' and not is_fully_returned and not has_returns %}
+            {% if request.user.is_superuser or request.user.is_staff or request.user.employee_profile.is_admin %}
+            <button class="btn" onclick="openEditPaymentModal()" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; font-weight: bold; border: none; box-shadow: 0 4px 10px rgba(255, 115, 0, 0.3); border-radius: 8px;">💳 تعديل طريقة السداد</button>
+            <button class="btn btn-neon-red" onclick="cancelInvoice({{ invoice.id }})" style="border-radius: 8px; font-weight: bold;">❌ إلغاء الفاتورة</button>
+            {% endif %}
+        {% endif %}
+        {% if invoice.status == 'POSTED' %}
+            {% if request.user.is_superuser or request.user.is_staff or request.user.employee_profile.is_admin %}
+                {% if invoice.invoice_type == 'SALE' or invoice.invoice_type == 'PURCHASE' %}
+                    {% if is_fully_returned %}
+                    <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; padding: 8px 16px; font-size: 1rem; border-radius: 8px; font-weight: bold; border: 1px solid rgba(239, 68, 68, 0.4); display: flex; align-items: center; justify-content: center; gap: 8px;">
+                        <i class="fas fa-check-circle"></i> مرتجعة بالكامل
+                    </span>
+                    {% else %}
+                    <button class="btn" onclick="openReturnModal()" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; font-weight: bold; border: none; box-shadow: 0 4px 10px rgba(255, 115, 0, 0.3); border-radius: 8px;">🔄 إرجاع أصناف</button>
+                    {% endif %}
                 {% endif %}
             {% endif %}
         {% endif %}
         <button class="btn btn-neon-green" onclick="printThermalReceipt({{ invoice.id }})">🖨 طباعة حرارية</button>
-        <a href="javascript:history.back()" class="btn btn-ghost">العودة للقائمة</a>
+        {% if invoice.invoice_type == 'SALE' or invoice.invoice_type == 'RETURN_SALE' %}
+        <a href="{% url 'invoicing:sales_invoice_list' %}" class="btn" style="background:#ff7300; color:#fff; font-weight:700; border-radius:8px;">⬅️ العودة لفواتير المبيعات</a>
+        {% else %}
+        <a href="{% url 'invoicing:purchase_invoice_list' %}" class="btn" style="background:#ff7300; color:#fff; font-weight:700; border-radius:8px;">⬅️ العودة لفواتير المشتريات</a>
+        {% endif %}
     </div>
 </div>
 
@@ -46,7 +58,18 @@
             <div class="mb-3">
                 <span class="text-muted d-block text-sm">الحالة</span>
                 {% if invoice.status == 'POSTED' %}
-                <span class="badge badge-success">مرحلة</span>
+                    {% if is_fully_returned or invoice.is_fully_returned %}
+                    <span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.4); padding: 5px 12px; font-weight: 700; font-size: 0.88rem; border-radius: 6px;">
+                        <i class="fas fa-undo-alt"></i> مرتجعة بالكامل
+                    </span>
+                    {% elif has_returns or invoice.is_partially_returned %}
+                    <span class="badge badge-success" style="margin-left: 4px;">مرحلة</span>
+                    <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.4); padding: 5px 10px; font-weight: 700; font-size: 0.88rem; border-radius: 6px;">
+                        <i class="fas fa-undo-alt"></i> مرتجعة جزئياً
+                    </span>
+                    {% else %}
+                    <span class="badge badge-success">مرحلة</span>
+                    {% endif %}
                 {% elif invoice.status == 'DRAFT' %}
                 <span class="badge badge-draft">مسودة</span>
                 {% else %}
@@ -72,12 +95,20 @@
             <div class="mb-3">
                 <span class="text-muted d-block text-sm">طريقة الدفع</span>
                 <span class="font-bold">
-                    {% if invoice.payment_type == 'CASH' %}كاش
-                    {% elif invoice.payment_type == 'CARD' %}بطاقة بنكية
+                    {% if invoice.payment_type == 'CASH' %}كاش ({% if invoice.treasury %}{{ invoice.treasury.name }}{% else %}الخزينة الرئيسية{% endif %})
+                    {% elif invoice.payment_type == 'CARD' %}بطاقة بنكية ({% if invoice.treasury %}{{ invoice.treasury.name }}{% else %}شبكة{% endif %})
                     {% elif invoice.payment_type == 'CREDIT' %}آجل
+                    {% elif invoice.payment_type == 'EWALLET' %}محفظة إلكترونية ({% if invoice.ewallet %}{{ invoice.ewallet.name }}{% else %}محفظة{% endif %})
+                    {% elif invoice.payment_type == 'BANK_TRANSFER' %}تحويل بنكي ({% if invoice.bank_account %}{{ invoice.bank_account.name }}{% else %}بنك{% endif %})
+                    {% elif invoice.payment_type == 'SPLIT' %}دفع متعدد (كاش: {{ invoice.paid_cash|floatformat:2 }} | شبكة: {{ invoice.paid_card|floatformat:2 }} | محفظة: {{ invoice.paid_ewallet|floatformat:2 }} | تحويل: {{ invoice.paid_bank|floatformat:2 }})
                     {% endif %}
                 </span>
+            {% if invoice.notes %}
+            <div class="mb-3">
+                <span class="text-muted d-block text-sm">بيان / ملاحظات الفاتورة</span>
+                <span class="font-bold text-neon-gold" style="white-space: pre-wrap;">{{ invoice.notes }}</span>
             </div>
+            {% endif %}
             
             <hr class="border-secondary my-3">
             
@@ -163,80 +194,201 @@
 
 <!-- Return Modal - Premium Design -->
 <div id="returnModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px); align-items:center; justify-content:center;">
-  <div style="background: linear-gradient(145deg, #0f1923, #1a2535); border:1px solid rgba(255,115,0,0.3); border-radius:16px; width:680px; max-width:95vw; max-height:88vh; display:flex; flex-direction:column; box-shadow: 0 25px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,115,0,0.1);">
+  <div style="background: linear-gradient(145deg, #0f1923, #1a2535); border:1px solid rgba(255,115,0,0.3); border-radius:16px; width:740px; max-width:96vw; max-height:90vh; display:flex; flex-direction:column; box-shadow: 0 25px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,115,0,0.1);">
 
     <!-- Header -->
-    <div style="padding:20px 24px; border-bottom:1px solid rgba(255,115,0,0.2); display:flex; justify-content:space-between; align-items:center; background:rgba(255,115,0,0.05); border-radius:16px 16px 0 0;">
+    <div style="padding:18px 24px; border-bottom:1px solid rgba(255,115,0,0.2); display:flex; justify-content:space-between; align-items:center; background:rgba(255,115,0,0.05); border-radius:16px 16px 0 0;">
       <div style="display:flex; align-items:center; gap:12px;">
         <div style="width:40px; height:40px; background:linear-gradient(135deg,#ff7300,#ff9500); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; box-shadow:0 4px 12px rgba(255,115,0,0.4);">🔄</div>
         <div>
           <h5 style="margin:0; color:#ff7300; font-family:'Tajawal',sans-serif; font-size:1.1rem; font-weight:700;">إرجاع أصناف من الفاتورة</h5>
-          <p style="margin:0; color:#94a3b8; font-size:0.8rem;">حدد الأصناف التي تود إرجاعها</p>
+          <p style="margin:0; color:#94a3b8; font-size:0.8rem;">حدد الأصناف وطريقة رد المبلغ للعميل</p>
         </div>
       </div>
       <button onclick="closeReturnModal()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; width:34px; height:34px; border-radius:8px; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center; transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.2)';this.style.color='#ef4444';" onmouseout="this.style.background='rgba(255,255,255,0.08)';this.style.color='#94a3b8';">&times;</button>
     </div>
 
-    <!-- Body - Cards -->
-    <div id="returnItemsList" style="padding:20px 24px; overflow-y:auto; flex-grow:1; display:flex; flex-direction:column; gap:12px;">
-      {% for line in lines %}
-      {% if line.quantity > line.returned_quantity %}
-      <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:16px 20px; display:flex; align-items:center; gap:16px; transition:all 0.2s;" class="return-item-card">
+    <!-- Scrollable Content: Items List + Refund Payment Method -->
+    <div style="overflow-y:auto; flex-grow:1; display:flex; flex-direction:column;">
+      <!-- Body - Cards -->
+      <div id="returnItemsList" style="padding:16px 24px; display:flex; flex-direction:column; gap:10px;">
+        <span style="color:#cbd5e1; font-size:0.85rem; font-weight:600; margin-bottom:2px;">1. الأصناف المتاحة للإرجاع:</span>
+        {% for line in lines %}
+        {% if line.quantity > line.returned_quantity %}
+        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px 18px; display:flex; align-items:center; gap:14px; transition:all 0.2s;" class="return-item-card" data-net-price="{{ line.total_amount|stringformat:'.4f' }}" data-qty="{{ line.quantity|stringformat:'.4f' }}" data-unit-price="{{ line.unit_price|stringformat:'.4f' }}">
 
-        <!-- Product Icon -->
-        <div style="width:48px; height:48px; background:linear-gradient(135deg,#1e3a5f,#0f2040); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.4rem; flex-shrink:0; border:1px solid rgba(59,130,246,0.2);">
-          {% if line.serial_item %}📱{% else %}📦{% endif %}
-        </div>
+          <!-- Product Icon -->
+          <div style="width:44px; height:44px; background:linear-gradient(135deg,#1e3a5f,#0f2040); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.3rem; flex-shrink:0; border:1px solid rgba(59,130,246,0.2);">
+            {% if line.serial_item %}📱{% else %}📦{% endif %}
+          </div>
 
-        <!-- Product Info -->
-        <div style="flex:1; min-width:0;">
-          <div style="color:#f1f5f9; font-family:'Tajawal',sans-serif; font-weight:600; font-size:0.95rem; margin-bottom:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ line.product.name }}</div>
-          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:4px;">
-            <span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:2px 8px; border-radius:20px; font-size:0.75rem;">💰 {{ line.unit_price|floatformat:2 }} ج.م</span>
+          <!-- Product Info -->
+          <div style="flex:1; min-width:0;">
+            <div style="color:#f1f5f9; font-family:'Tajawal',sans-serif; font-weight:600; font-size:0.95rem; margin-bottom:4px; line-height:1.3; word-break:break-word;">{{ line.product.name }}</div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:4px;">
+              <span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:2px 8px; border-radius:20px; font-size:0.75rem;">💰 {{ line.unit_price|floatformat:2 }} ج.م</span>
+              {% if line.serial_item %}
+                {% if line.serial_item.imei_1 %}
+                <span style="background:rgba(16,185,129,0.15); color:#34d399; padding:2px 8px; border-radius:20px; font-size:0.75rem; font-family:monospace;">IMEI: {{ line.serial_item.imei_1 }}</span>
+                {% endif %}
+                {% if line.serial_item.serial_number %}
+                <span style="background:rgba(139,92,246,0.15); color:#a78bfa; padding:2px 8px; border-radius:20px; font-size:0.75rem; font-family:monospace;">S/N: {{ line.serial_item.serial_number }}</span>
+                {% endif %}
+              {% else %}
+                <span style="background:rgba(100,116,139,0.2); color:#94a3b8; padding:2px 8px; border-radius:20px; font-size:0.75rem;">متاح للإرجاع: <b style="color: #fff;">{{ line.available_return_qty|floatformat:2 }}</b> {{ line.display_unit_name }}</span>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Hidden inputs -->
+          <input type="hidden" class="return-max-qty" value="{{ line.available_return_qty }}">
+          <input type="hidden" class="return-line-id" value="{{ line.id }}">
+          <input type="hidden" class="return-serial-id" value="{{ line.serial_item_id|default:'' }}">
+
+          <!-- Return Control -->
+          <div style="flex-shrink:0;">
             {% if line.serial_item %}
-              {% if line.serial_item.imei_1 %}
-              <span style="background:rgba(16,185,129,0.15); color:#34d399; padding:2px 8px; border-radius:20px; font-size:0.75rem; font-family:monospace;">IMEI: {{ line.serial_item.imei_1 }}</span>
-              {% endif %}
-              {% if line.serial_item.serial_number %}
-              <span style="background:rgba(139,92,246,0.15); color:#a78bfa; padding:2px 8px; border-radius:20px; font-size:0.75rem; font-family:monospace;">S/N: {{ line.serial_item.serial_number }}</span>
-              {% endif %}
+            <!-- Toggle Button for Serial Items -->
+            <button type="button" class="return-toggle-btn" onclick="toggleReturnItem(this)"
+              style="background:rgba(255,255,255,0.05); border:2px solid rgba(255,255,255,0.15); color:#94a3b8; padding:8px 18px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-size:0.85rem; font-weight:600; transition:all 0.25s; white-space:nowrap;">
+              إرجاع
+            </button>
+            <input type="hidden" class="return-qty-input" value="0">
             {% else %}
-              <span style="background:rgba(100,116,139,0.2); color:#94a3b8; padding:2px 8px; border-radius:20px; font-size:0.75rem;">متاح للإرجاع: <b style="color: #fff;">{{ line.available_return_qty|floatformat:2 }}</b> {{ line.display_unit_name }}</span>
+            <!-- Quantity Input for Non-Serial Items -->
+            <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:4px 8px;">
+              <span style="color:#64748b; font-size:0.8rem;">الكمية:</span>
+              <input type="number" class="return-qty-input" min="0" max="{{ line.available_return_qty }}" step="any" value="0" oninput="calculateReturnItemsTotal()"
+                style="background:transparent; border:none; color:#f1f5f9; width:65px; font-size:1rem; font-weight:bold; text-align:center; outline:none;">
+            </div>
             {% endif %}
           </div>
         </div>
+        {% endif %}
+        {% endfor %}
+      </div>
 
-        <!-- Hidden inputs -->
-        <input type="hidden" class="return-max-qty" value="{{ line.available_return_qty }}">
-        <input type="hidden" class="return-line-id" value="{{ line.id }}">
-        <input type="hidden" class="return-serial-id" value="{{ line.serial_item_id|default:'' }}">
+      <!-- Refund Payment Settings Section -->
+      <div style="padding:16px 24px; background:rgba(0,0,0,0.22); border-top:1px solid rgba(255,255,255,0.08); display:flex; flex-direction:column; gap:12px;">
+        <span style="color:#cbd5e1; font-size:0.85rem; font-weight:600;">2. طريقة رد المبلغ والجهة المالية:</span>
 
-        <!-- Return Control -->
-        <div style="flex-shrink:0;">
-          {% if line.serial_item %}
-          <!-- Toggle Button for Serial Items -->
-          <button type="button" class="return-toggle-btn" onclick="toggleReturnItem(this)"
-            style="background:rgba(255,255,255,0.05); border:2px solid rgba(255,255,255,0.15); color:#94a3b8; padding:8px 18px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-size:0.85rem; font-weight:600; transition:all 0.25s; white-space:nowrap;">
-            إرجاع
-          </button>
-          <input type="hidden" class="return-qty-input" value="0">
-          {% else %}
-          <!-- Quantity Input for Non-Serial Items -->
-          <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:4px 8px;">
-            <span style="color:#64748b; font-size:0.8rem;">الكمية:</span>
-            <input type="number" class="return-qty-input" min="0" max="{{ line.available_return_qty }}" step="any" value="0"
-              style="background:transparent; border:none; color:#f1f5f9; width:60px; font-size:1rem; font-weight:bold; text-align:center; outline:none;">
+        <!-- Return Amount Summary Banner -->
+        <div style="background:rgba(255,115,0,0.08); border:1px solid rgba(255,115,0,0.25); border-radius:10px; padding:10px 16px; display:flex; justify-content:space-between; align-items:center;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:1.1rem;">💵</span>
+            <span style="color:#f1f5f9; font-weight:700; font-size:0.95rem;">إجمالي قيمة الأصناف المحددة للإرجاع:</span>
           </div>
-          {% endif %}
+          <span id="return_modal_total_amount" style="color:#ff7300; font-weight:800; font-size:1.15rem; font-family:monospace;">0.00 ج.م</span>
+        </div>
+
+        <!-- Payment Method & Destination Accounts Dropdowns -->
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:200px;">
+            <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.8rem; margin-bottom:5px;">طريقة رد المبلغ</label>
+            <select id="return_payment_type" onchange="onReturnPaymentTypeChange()" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:9px 12px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif; font-size:0.9rem;">
+              <option value="CASH" {% if invoice.payment_type == 'CASH' %}selected{% endif %}>💵 نقدي (كاش من الخزينة)</option>
+              <option value="CARD" {% if invoice.payment_type == 'CARD' %}selected{% endif %}>💳 بطاقة بنكية (فيزا)</option>
+              <option value="EWALLET" {% if invoice.payment_type == 'EWALLET' %}selected{% endif %}>📱 محفظة إلكترونية</option>
+              <option value="BANK_TRANSFER" {% if invoice.payment_type == 'BANK_TRANSFER' %}selected{% endif %}>🏦 تحويل بنكي / إنستا باي</option>
+              <option value="SPLIT" {% if invoice.payment_type == 'SPLIT' %}selected{% endif %}>🔀 سداد مقسم (متنوع)</option>
+              <option value="CREDIT" {% if invoice.payment_type == 'CREDIT' %}selected{% endif %}>📋 رصيد دائن للعميل (آجل)</option>
+            </select>
+          </div>
+
+          <!-- Treasury selector (shown if CASH or SPLIT) -->
+          <div id="return_field_treasury" style="flex:1; min-width:200px;">
+            <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.8rem; margin-bottom:5px;">الخزينة (صرف النقدية)</label>
+            <select id="return_treasury_id" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:9px 12px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif; font-size:0.9rem;">
+              {% for t in treasuries %}
+              <option value="{{ t.id }}" {% if invoice.treasury_id == t.id %}selected{% endif %}>{{ t.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <!-- Bank selector (shown if CARD, BANK_TRANSFER, or SPLIT) -->
+          <div id="return_field_bank" style="flex:1; min-width:200px; display:none;">
+            <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.8rem; margin-bottom:5px;">الحساب البنكي / الفيزا</label>
+            <select id="return_bank_account_id" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:9px 12px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif; font-size:0.9rem;">
+              {% for b in bank_accounts %}
+              <option value="{{ b.id }}" {% if invoice.bank_account_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <!-- E-Wallet selector (shown if EWALLET or SPLIT) -->
+          <div id="return_field_ewallet" style="flex:1; min-width:200px; display:none;">
+            <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.8rem; margin-bottom:5px;">المحفظة الإلكترونية</label>
+            <select id="return_ewallet_id" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:9px 12px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif; font-size:0.9rem;">
+              {% for w in ewallets %}
+              <option value="{{ w.id }}" {% if invoice.ewallet_id == w.id %}selected{% endif %}>{{ w.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <!-- SPLIT payment breakdown box -->
+        <div id="return_field_split" style="display:none; flex-direction:column; gap:10px; background:rgba(255,255,255,0.02); border:1px dashed rgba(255,115,0,0.3); border-radius:10px; padding:12px 14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.06); padding-bottom:8px;">
+            <span style="color:#ff7300; font-weight:700; font-size:0.85rem;">توزيع رد المبالغ (سداد مقسم):</span>
+            <div style="font-size:0.8rem; display:flex; gap:12px;">
+              <span style="color:#94a3b8;">المجموع المردود: <b id="split_refund_total_display" style="color:#38bdf8;">0.00</b> ج.م</span>
+              <span style="color:#94a3b8;">المتبقي للتوزيع: <b id="split_refund_remaining_display" style="color:#f59e0b;">0.00</b> ج.م</span>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap:10px;">
+            <!-- Cash -->
+            <div style="background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 10px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="color:#94a3b8; font-size:0.75rem;">💵 نقدي:</span>
+                <button type="button" onclick="fillReturnSplitRemaining('cash')" style="background:linear-gradient(135deg,#ff7300,#ff9500); border:none; color:white; font-size:0.7rem; padding:2px 7px; border-radius:4px; cursor:pointer; font-weight:600; box-shadow:0 2px 6px rgba(255,115,0,0.3);">رد الباقي</button>
+              </div>
+              <input type="number" step="any" min="0" id="split_refund_cash" oninput="calculateReturnSplitTotals()" value="0" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:6px; border-radius:6px; font-weight:bold; font-size:0.9rem;">
+            </div>
+
+            <!-- Card -->
+            <div style="background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 10px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="color:#94a3b8; font-size:0.75rem;">💳 بطاقة (فيزا):</span>
+                <button type="button" onclick="fillReturnSplitRemaining('card')" style="background:linear-gradient(135deg,#ff7300,#ff9500); border:none; color:white; font-size:0.7rem; padding:2px 7px; border-radius:4px; cursor:pointer; font-weight:600; box-shadow:0 2px 6px rgba(255,115,0,0.3);">رد الباقي</button>
+              </div>
+              <input type="number" step="any" min="0" id="split_refund_card" oninput="calculateReturnSplitTotals()" value="0" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:6px; border-radius:6px; font-weight:bold; font-size:0.9rem;">
+            </div>
+
+            <!-- EWallet -->
+            <div style="background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 10px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="color:#94a3b8; font-size:0.75rem;">📱 محفظة إلكترونية:</span>
+                <button type="button" onclick="fillReturnSplitRemaining('ewallet')" style="background:linear-gradient(135deg,#ff7300,#ff9500); border:none; color:white; font-size:0.7rem; padding:2px 7px; border-radius:4px; cursor:pointer; font-weight:600; box-shadow:0 2px 6px rgba(255,115,0,0.3);">رد الباقي</button>
+              </div>
+              <input type="number" step="any" min="0" id="split_refund_ewallet" oninput="calculateReturnSplitTotals()" value="0" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:6px; border-radius:6px; font-weight:bold; font-size:0.9rem;">
+            </div>
+
+            <!-- Bank Transfer -->
+            <div style="background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 10px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="color:#94a3b8; font-size:0.75rem;">🏦 تحويل بنكي:</span>
+                <button type="button" onclick="fillReturnSplitRemaining('bank')" style="background:linear-gradient(135deg,#ff7300,#ff9500); border:none; color:white; font-size:0.7rem; padding:2px 7px; border-radius:4px; cursor:pointer; font-weight:600; box-shadow:0 2px 6px rgba(255,115,0,0.3);">رد الباقي</button>
+              </div>
+              <input type="number" step="any" min="0" id="split_refund_bank" oninput="calculateReturnSplitTotals()" value="0" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:6px; border-radius:6px; font-weight:bold; font-size:0.9rem;">
+            </div>
+
+            <!-- Credit (Deferred / Store credit) -->
+            <div style="background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:8px 10px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="color:#94a3b8; font-size:0.75rem;">📋 رصيد دائن (آجل):</span>
+                <button type="button" onclick="fillReturnSplitRemaining('credit')" style="background:linear-gradient(135deg,#ff7300,#ff9500); border:none; color:white; font-size:0.7rem; padding:2px 7px; border-radius:4px; cursor:pointer; font-weight:600; box-shadow:0 2px 6px rgba(255,115,0,0.3);">رد الباقي</button>
+              </div>
+              <input type="number" step="any" min="0" id="split_refund_credit" oninput="calculateReturnSplitTotals()" value="0" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:6px; border-radius:6px; font-weight:bold; font-size:0.9rem;">
+            </div>
+          </div>
         </div>
       </div>
-      {% endif %}
-      {% endfor %}
     </div>
 
     <!-- Footer -->
-    <div style="padding:16px 24px; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); border-radius:0 0 16px 16px;">
-      <span style="color:#64748b; font-size:0.85rem;">سيتم إنشاء فاتورة مرتجع مقيدة فوراً</span>
+    <div style="padding:16px 24px; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.25); border-radius:0 0 16px 16px;">
+      <span style="color:#64748b; font-size:0.85rem;">سيتم إنشاء فاتورة مرتجع مقيدة واعتمادها فوراً</span>
       <div style="display:flex; gap:10px;">
         <button onclick="closeReturnModal()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; padding:10px 20px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-weight:600; transition:all 0.2s;">إلغاء</button>
         <button onclick="submitReturn()" style="background:linear-gradient(135deg,#ff7300,#ff9500); border:none; color:white; padding:10px 24px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-weight:700; font-size:0.95rem; box-shadow:0 4px 15px rgba(255,115,0,0.4); transition:all 0.2s;" onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 20px rgba(255,115,0,0.5)';" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 15px rgba(255,115,0,0.4)';">✅ تأكيد الإرجاع</button>
@@ -266,6 +418,30 @@ function confirmInvoice(invoiceId) {
     }
 }
 
+function cancelInvoice(invoiceId) {
+    if (confirm('هل أنت متأكد من إلغاء هذه الفاتورة بالكامل؟\nسوف يتم حذف وعكس كافة القيود المحاسبية وحركات المخزون المربوطة بها.')) {
+        fetch(`/invoicing/invoice/${invoiceId}/cancel/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                alert(data.message);
+                window.location.reload();
+            } else {
+                alert('حدث خطأ: ' + data.error);
+            }
+        })
+        .catch(err => {
+            alert('خطأ في الاتصال بالخادم.');
+        });
+    }
+}
+
 function printThermalReceipt(invoiceId) {
     const printWindow = window.open(`/invoicing/receipt/${invoiceId}/`, 'PrintReceipt', 'width=400,height=600');
     if (printWindow) {
@@ -279,10 +455,40 @@ function printThermalReceipt(invoiceId) {
 
 function openReturnModal() {
     document.getElementById('returnModal').style.display = 'flex';
+    onReturnPaymentTypeChange();
+    calculateReturnItemsTotal();
 }
 
 function closeReturnModal() {
     document.getElementById('returnModal').style.display = 'none';
+}
+
+function getReturnItemsTotal() {
+    let total = 0;
+    const cards = document.querySelectorAll('#returnItemsList .return-item-card');
+    cards.forEach(card => {
+        const inputEl = card.querySelector('.return-qty-input');
+        const qtyToReturn = parseFloat(inputEl.value) || 0;
+        if (qtyToReturn > 0) {
+            const lineTotal = parseFloat(card.dataset.netPrice) || 0;
+            const lineQty = parseFloat(card.dataset.qty) || 1;
+            const unitRate = lineQty > 0 ? (lineTotal / lineQty) : (parseFloat(card.dataset.unitPrice) || 0);
+            total += (qtyToReturn * unitRate);
+        }
+    });
+    return total;
+}
+
+function calculateReturnItemsTotal() {
+    const total = getReturnItemsTotal();
+    const totalEl = document.getElementById('return_modal_total_amount');
+    if (totalEl) {
+        totalEl.textContent = total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+    }
+    const ptypeEl = document.getElementById('return_payment_type');
+    if (ptypeEl && ptypeEl.value === 'SPLIT') {
+        calculateReturnSplitTotals();
+    }
 }
 
 function toggleReturnItem(btn) {
@@ -309,6 +515,87 @@ function toggleReturnItem(btn) {
         card.style.border = '1px solid rgba(34,197,94,0.4)';
         card.style.background = 'rgba(34,197,94,0.05)';
     }
+    calculateReturnItemsTotal();
+}
+
+function onReturnPaymentTypeChange() {
+    const ptypeEl = document.getElementById('return_payment_type');
+    if (!ptypeEl) return;
+    const ptype = ptypeEl.value;
+    const isSplit = (ptype === 'SPLIT');
+    const isCash = (ptype === 'CASH');
+    const isCard = (ptype === 'CARD');
+    const isEwallet = (ptype === 'EWALLET');
+    const isBank = (ptype === 'BANK_TRANSFER');
+
+    const fTreasury = document.getElementById('return_field_treasury');
+    const fBank = document.getElementById('return_field_bank');
+    const fEwallet = document.getElementById('return_field_ewallet');
+    const fSplit = document.getElementById('return_field_split');
+
+    if (fTreasury) fTreasury.style.display = (isCash || isSplit) ? 'block' : 'none';
+    if (fBank) fBank.style.display = (isCard || isBank || isSplit) ? 'block' : 'none';
+    if (fEwallet) fEwallet.style.display = (isEwallet || isSplit) ? 'block' : 'none';
+    
+    if (fSplit) {
+        if (isSplit) {
+            fSplit.style.display = 'flex';
+            // Auto-fill cash if all inputs are zero
+            const cashInput = document.getElementById('split_refund_cash');
+            const cardInput = document.getElementById('split_refund_card');
+            const walletInput = document.getElementById('split_refund_ewallet');
+            const bankInput = document.getElementById('split_refund_bank');
+            const creditInput = document.getElementById('split_refund_credit');
+            const sumNow = (parseFloat(cashInput.value)||0) + (parseFloat(cardInput.value)||0) + (parseFloat(walletInput.value)||0) + (parseFloat(bankInput.value)||0) + (parseFloat(creditInput.value)||0);
+            if (sumNow <= 0.01) {
+                cashInput.value = getReturnItemsTotal().toFixed(2);
+            }
+            calculateReturnSplitTotals();
+        } else {
+            fSplit.style.display = 'none';
+        }
+    }
+}
+
+function calculateReturnSplitTotals() {
+    const totalReturn = getReturnItemsTotal();
+    const cash = parseFloat(document.getElementById('split_refund_cash').value) || 0;
+    const card = parseFloat(document.getElementById('split_refund_card').value) || 0;
+    const ewallet = parseFloat(document.getElementById('split_refund_ewallet').value) || 0;
+    const bank = parseFloat(document.getElementById('split_refund_bank').value) || 0;
+    const credit = parseFloat(document.getElementById('split_refund_credit').value) || 0;
+
+    const totalRefunded = cash + card + ewallet + bank + credit;
+    const remaining = totalReturn - totalRefunded;
+
+    const totalEl = document.getElementById('split_refund_total_display');
+    const remEl = document.getElementById('split_refund_remaining_display');
+
+    if (totalEl) totalEl.textContent = totalRefunded.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    if (remEl) {
+        remEl.textContent = remaining.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        if (Math.abs(remaining) < 0.01) {
+            remEl.style.color = '#22c55e';
+        } else if (remaining > 0) {
+            remEl.style.color = '#f59e0b';
+        } else {
+            remEl.style.color = '#ef4444';
+        }
+    }
+}
+
+function fillReturnSplitRemaining(field) {
+    const totalReturn = getReturnItemsTotal();
+    const fields = ['cash', 'card', 'ewallet', 'bank', 'credit'];
+    let othersSum = 0;
+    fields.forEach(f => {
+        if (f !== field) {
+            othersSum += parseFloat(document.getElementById('split_refund_' + f).value) || 0;
+        }
+    });
+    const rem = Math.max(0, totalReturn - othersSum);
+    document.getElementById('split_refund_' + field).value = rem.toFixed(2);
+    calculateReturnSplitTotals();
 }
 
 function submitReturn() {
@@ -340,18 +627,62 @@ function submitReturn() {
         alert('يرجى تحديد الكميات المراد إرجاعها أولاً.');
         return;
     }
-    
-    if (!confirm('هل أنت متأكد من تنفيذ الإرجاع؟ سيتم إنشاء فاتورة مرتجع مقيدة واعتمادها فوراً.')) {
+
+    const totalReturn = getReturnItemsTotal();
+    const ptype = document.getElementById('return_payment_type').value;
+    const splitPayments = {
+        cash: parseFloat(document.getElementById('split_refund_cash').value) || 0,
+        card: parseFloat(document.getElementById('split_refund_card').value) || 0,
+        ewallet: parseFloat(document.getElementById('split_refund_ewallet').value) || 0,
+        bank: parseFloat(document.getElementById('split_refund_bank').value) || 0,
+        credit: parseFloat(document.getElementById('split_refund_credit').value) || 0
+    };
+
+    if (ptype === 'SPLIT') {
+        const totalSplit = splitPayments.cash + splitPayments.card + splitPayments.ewallet + splitPayments.bank + splitPayments.credit;
+        if (Math.abs(totalSplit - totalReturn) > 0.05) {
+            alert('إجمالي مبالغ رد المرتجع (' + totalSplit.toFixed(2) + ' ج.م) يجب أن يساوي قيمة المرتجع (' + totalReturn.toFixed(2) + ' ج.م)!');
+            return;
+        }
+    }
+
+    const partnerName = "{{ invoice.partner.name|default:''|escapejs }}";
+    const isCashPartner = !partnerName || partnerName.includes('عميل نقدي') || partnerName.includes('مورد نقدي') || partnerName.includes('نقدي') || partnerName.includes('طياري');
+    if ((ptype === 'CREDIT' || (ptype === 'SPLIT' && splitPayments.credit > 0)) && isCashPartner) {
+        alert('لا يمكن رد المبلغ كـ (رصيد دائن / آجل) لعميل أو مورد نقدي. يرجى اختيار طريقة رد نقدية أو إلكترونية.');
         return;
     }
-    
+
+    const isPurchase = "{{ invoice.invoice_type }}" === "PURCHASE";
+    const methodLabels = {
+        'CASH': 'نقدي (كاش)',
+        'CARD': 'بطاقة بنكية (فيزا)',
+        'EWALLET': 'محفظة إلكترونية',
+        'BANK_TRANSFER': 'تحويل بنكي / إنستا باي',
+        'SPLIT': 'سداد مقسم',
+        'CREDIT': isPurchase ? 'رصيد دائن للمورد' : 'رصيد دائن للعميل'
+    };
+
+    if (!confirm('تأكيد إنشاء فاتورة مرتجع بقيمة ' + totalReturn.toFixed(2) + ' ج.م بطريقة رد [' + (methodLabels[ptype] || ptype) + ']؟')) {
+        return;
+    }
+
+    const payload = {
+        items: returnData,
+        payment_type: ptype,
+        treasury_id: document.getElementById('return_treasury_id') ? document.getElementById('return_treasury_id').value : null,
+        bank_account_id: document.getElementById('return_bank_account_id') ? document.getElementById('return_bank_account_id').value : null,
+        ewallet_id: document.getElementById('return_ewallet_id') ? document.getElementById('return_ewallet_id').value : null,
+        split_payments: splitPayments
+    };
+
     fetch(`/invoicing/api/invoice/{{ invoice.id }}/return/`, {
         method: 'POST',
         headers: {
             'X-CSRFToken': '{{ csrf_token }}',
             'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ items: returnData })
+        body: JSON.stringify(payload)
     })
     .then(response => response.json())
     .then(data => {
@@ -359,7 +690,96 @@ function submitReturn() {
             alert('تم إنشاء فاتورة المرتجع بنجاح!');
             window.location.reload();
         } else {
-            alert('خطأ: ' + data.message);
+            alert('خطأ: ' + (data.message || data.error));
+        }
+    })
+    .catch(err => {
+        alert('خطأ في الاتصال بالخادم.');
+    });
+}
+
+function openEditPaymentModal() {
+    document.getElementById('editPaymentModal').style.display = 'flex';
+    togglePaymentFields();
+}
+
+function closeEditPaymentModal() {
+    document.getElementById('editPaymentModal').style.display = 'none';
+}
+
+function calculateSplitTotals() {
+    const rawTotalStr = "{{ invoice.total_amount }}".replace(/,/g, '');
+    const totalAmount = parseFloat(rawTotalStr) || 0;
+    const ptype = document.getElementById('modal_payment_type').value;
+
+    let totalPaid = 0;
+    if (ptype === 'SPLIT') {
+        const cash = parseFloat((document.querySelector('[name="paid_cash"]').value || '0').replace(/,/g, '')) || 0;
+        const card = parseFloat((document.querySelector('[name="paid_card"]').value || '0').replace(/,/g, '')) || 0;
+        const ewallet = parseFloat((document.querySelector('[name="paid_ewallet"]').value || '0').replace(/,/g, '')) || 0;
+        const bank = parseFloat((document.querySelector('[name="paid_bank"]').value || '0').replace(/,/g, '')) || 0;
+        totalPaid = cash + card + ewallet + bank;
+    } else if (ptype === 'CREDIT') {
+        totalPaid = 0;
+    } else {
+        totalPaid = totalAmount;
+    }
+
+    const remaining = totalAmount - totalPaid;
+
+    const paidEl = document.getElementById('modal_total_paid');
+    const remainingEl = document.getElementById('modal_remaining');
+
+    if (paidEl) paidEl.textContent = totalPaid.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+    if (remainingEl) {
+        remainingEl.textContent = remaining.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+        if (Math.abs(remaining) < 0.01) {
+            remainingEl.style.color = '#22c55e';
+        } else if (remaining > 0) {
+            remainingEl.style.color = '#f59e0b';
+        } else {
+            remainingEl.style.color = '#ef4444';
+        }
+    }
+}
+
+function togglePaymentFields() {
+    const ptype = document.getElementById('modal_payment_type').value;
+    const isSplit = (ptype === 'SPLIT');
+    const isCredit = (ptype === 'CREDIT');
+
+    document.getElementById('field_partner').style.display = (isCredit || isSplit) ? 'block' : 'none';
+    document.getElementById('field_treasury').style.display = (ptype === 'CASH' || ptype === 'CARD' || isSplit) ? 'block' : 'none';
+    document.getElementById('field_bank').style.display = (ptype === 'BANK_TRANSFER' || isSplit) ? 'block' : 'none';
+    document.getElementById('field_ewallet').style.display = (ptype === 'EWALLET' || isSplit) ? 'block' : 'none';
+    
+    const fieldSplit = document.getElementById('field_split');
+    if (isSplit) {
+        fieldSplit.style.display = 'flex';
+    } else {
+        fieldSplit.style.display = 'none';
+    }
+    calculateSplitTotals();
+}
+
+function submitEditPayment() {
+    const form = document.getElementById('editPaymentForm');
+    const formData = new FormData(form);
+
+    fetch(`/invoicing/invoice/{{ invoice.id }}/update-payment/`, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            window.location.reload();
+        } else {
+            alert('حدث خطأ: ' + data.error);
         }
     })
     .catch(err => {
@@ -367,4 +787,127 @@ function submitReturn() {
     });
 }
 </script>
+
+<!-- Modal: Edit Payment Method -->
+<div id="editPaymentModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.75); backdrop-filter:blur(4px); align-items:center; justify-content:center;">
+  <div style="background: linear-gradient(145deg, #0f1923, #1a2535); border:1px solid rgba(255,115,0,0.3); border-radius:16px; width:540px; max-width:95vw; display:flex; flex-direction:column; box-shadow: 0 25px 60px rgba(0,0,0,0.7);">
+
+    <!-- Header -->
+    <div style="padding:20px 24px; border-bottom:1px solid rgba(255,115,0,0.2); display:flex; justify-content:space-between; align-items:center; background:rgba(255,115,0,0.05); border-radius:16px 16px 0 0;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:40px; height:40px; background:linear-gradient(135deg,#ff7300,#ff9500); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; box-shadow:0 4px 12px rgba(255,115,0,0.4);">💳</div>
+        <div>
+          <h5 style="margin:0; color:#ff7300; font-family:'Tajawal',sans-serif; font-size:1.1rem; font-weight:700;">تعديل طريقة السداد</h5>
+          <p style="margin:0; color:#94a3b8; font-size:0.8rem;">تعديل طريقة الدفع والقيود المحاسبية المربوطة</p>
+        </div>
+      </div>
+      <button onclick="closeEditPaymentModal()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; width:34px; height:34px; border-radius:8px; cursor:pointer; font-size:1.2rem; display:flex; align-items:center; justify-content:center;">&times;</button>
+    </div>
+
+    <!-- Body -->
+    <form id="editPaymentForm" style="padding:20px 24px; display:flex; flex-direction:column; gap:16px;">
+      {% csrf_token %}
+
+      <!-- Invoice Summary Badge Box inside Modal -->
+      <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <span style="color:#94a3b8; font-size:0.8rem; display:block;">إجمالي الفاتورة</span>
+          <span style="color:#f8fafc; font-weight:700; font-size:1.05rem;">{{ invoice.total_amount|floatformat:2 }} ج.م</span>
+        </div>
+        <div>
+          <span style="color:#94a3b8; font-size:0.8rem; display:block;">المجموع المدفوع</span>
+          <span id="modal_total_paid" style="color:#38bdf8; font-weight:700; font-size:1.05rem;">0.00 ج.م</span>
+        </div>
+        <div>
+          <span style="color:#94a3b8; font-size:0.8rem; display:block;">المتبقي</span>
+          <span id="modal_remaining" style="color:#f59e0b; font-weight:700; font-size:1.05rem;">0.00 ج.م</span>
+        </div>
+      </div>
+
+      <div>
+        <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.85rem; margin-bottom:6px;">طريقة السداد</label>
+        <select id="modal_payment_type" name="payment_type" onchange="togglePaymentFields()" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:10px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif;">
+          <option value="CASH" {% if invoice.payment_type == 'CASH' %}selected{% endif %}>نقدي (كاش)</option>
+          <option value="CARD" {% if invoice.payment_type == 'CARD' %}selected{% endif %}>بطاقة بنكية (شبكة)</option>
+          <option value="CREDIT" {% if invoice.payment_type == 'CREDIT' %}selected{% endif %}>آجل (على الحساب)</option>
+          <option value="EWALLET" {% if invoice.payment_type == 'EWALLET' %}selected{% endif %}>محفظة إلكترونية / إنستا باي</option>
+          <option value="BANK_TRANSFER" {% if invoice.payment_type == 'BANK_TRANSFER' %}selected{% endif %}>تحويل بنكي</option>
+          <option value="SPLIT" {% if invoice.payment_type == 'SPLIT' %}selected{% endif %}>دفع متعدد (مقسم)</option>
+        </select>
+      </div>
+
+      <!-- Partner Field (for Credit / Split) -->
+      <div id="field_partner" style="display:none;">
+        <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.85rem; margin-bottom:6px;">تحديد الشريك (العميل/المورد)</label>
+        <select name="partner" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:10px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif;">
+          <option value="">اختر العميل/المورد...</option>
+          {% for p in partners %}
+          <option value="{{ p.id }}" {% if invoice.partner_id == p.id %}selected{% endif %}>{{ p.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Treasury Field -->
+      <div id="field_treasury" style="display:none;">
+        <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.85rem; margin-bottom:6px;">الخزينة المستهدفة</label>
+        <select name="treasury" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:10px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif;">
+          <option value="">اختر الخزينة...</option>
+          {% for t in treasuries %}
+          <option value="{{ t.id }}" {% if invoice.treasury_id == t.id %}selected{% endif %}>{{ t.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Bank Account Field -->
+      <div id="field_bank" style="display:none;">
+        <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.85rem; margin-bottom:6px;">الحساب البنكي</label>
+        <select name="bank_account" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:10px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif;">
+          <option value="">اختر الحساب البنكي...</option>
+          {% for b in bank_accounts %}
+          <option value="{{ b.id }}" {% if invoice.bank_account_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- EWallet Field -->
+      <div id="field_ewallet" style="display:none;">
+        <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.85rem; margin-bottom:6px;">المحفظة الإلكترونية</label>
+        <select name="ewallet" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:10px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif;">
+          <option value="">اختر المحفظة...</option>
+          {% for w in ewallets %}
+          <option value="{{ w.id }}" {% if invoice.ewallet_id == w.id %}selected{% endif %}>{{ w.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Split Fields -->
+      <div id="field_split" style="display:none; flex-wrap:wrap; margin:-5px;" class="row">
+        <div class="col-6 mb-2" style="padding:5px;">
+          <label style="display:block; color:#cbd5e1; font-size:0.8rem;">نقدي (كاش):</label>
+          <input type="number" step="any" name="paid_cash" oninput="calculateSplitTotals()" value="{{ invoice.paid_cash|floatformat:2 }}" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:8px; border-radius:6px;">
+        </div>
+        <div class="col-6 mb-2" style="padding:5px;">
+          <label style="display:block; color:#cbd5e1; font-size:0.8rem;">بطاقة (شبكة):</label>
+          <input type="number" step="any" name="paid_card" oninput="calculateSplitTotals()" value="{{ invoice.paid_card|floatformat:2 }}" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:8px; border-radius:6px;">
+        </div>
+        <div class="col-6 mb-2" style="padding:5px;">
+          <label style="display:block; color:#cbd5e1; font-size:0.8rem;">محفظة / إنستا باي:</label>
+          <input type="number" step="any" name="paid_ewallet" oninput="calculateSplitTotals()" value="{{ invoice.paid_ewallet|floatformat:2 }}" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:8px; border-radius:6px;">
+        </div>
+        <div class="col-6 mb-2" style="padding:5px;">
+          <label style="display:block; color:#cbd5e1; font-size:0.8rem;">تحويل بنكي:</label>
+          <input type="number" step="any" name="paid_bank" oninput="calculateSplitTotals()" value="{{ invoice.paid_bank|floatformat:2 }}" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:8px; border-radius:6px;">
+        </div>
+      </div>
+    </form>
+
+    <!-- Footer -->
+    <div style="padding:16px 24px; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:flex-end; gap:10px; background:rgba(0,0,0,0.2); border-radius:0 0 16px 16px;">
+      <button onclick="closeEditPaymentModal()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#94a3b8; padding:10px 20px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-weight:600;">إلغاء</button>
+      <button onclick="submitEditPayment()" style="background:linear-gradient(135deg,#ff7300,#ff9500); border:none; color:white; padding:10px 24px; border-radius:8px; cursor:pointer; font-family:'Tajawal',sans-serif; font-weight:700; font-size:0.95rem; box-shadow:0 4px 15px rgba(255,115,0,0.4);">💾 حفظ التغييرات</button>
+    </div>
+
+  </div>
+</div>
 {% endblock %}
+

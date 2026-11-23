@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="content-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="content-title">
+        <h1 style="color: #fff; font-weight: 800; margin: 0;">
+            <i class="fas fa-landmark text-warning" style="margin-left: 0.5rem;"></i> تقرير القروض والتسهيلات والتمويل (Loans & Financing Report)
+        </h1>
+        <p style="color: var(--text-muted); margin: 0;">متابعة تفصيلية للقروض والتسهيلات البنكية، أصل الدين، الفوائد المحملة، المسدد، والالتزامات المتبقية</p>
+    </div>
+    <div class="header-actions" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <button type="button" class="btn btn-outline-secondary" onclick="window.print()">
+            <i class="fas fa-print"></i> طباعة
+        </button>
+        <a href="?{{ request.GET.urlencode }}&export=excel" class="btn btn-outline-success">
+            <i class="fas fa-file-excel"></i> تصدير Excel
+        </a>
+        <a href="?{{ request.GET.urlencode }}&export=csv" class="btn btn-outline-info">
+            <i class="fas fa-file-csv"></i> تصدير CSV
+        </a>
+        <a href="{% url 'accounting:loan_list' %}" class="btn btn-orange" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 12px rgba(255,115,0,0.3);">
+            <i class="fas fa-cog"></i> إدارة القروض
+        </a>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> عودة للتقارير
+        </a>
+    </div>
+</div>
+
+<!-- شريط التصفية والبحث (Filters Card) -->
+<div class="card p-3 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+    <form method="get" class="row align-items-end g-3">
+        <div class="col-md-3">
+            <label class="form-label text-white-50 small mb-1">بحث بالقرض أو الكود أو الممول</label>
+            <input type="text" name="q" class="form-control bg-dark text-white border-secondary" value="{{ search_query }}" placeholder="اسم القرض، الكود، البنك...">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-white-50 small mb-1">نوع التمويل</label>
+            <select name="loan_type" class="form-select bg-dark text-white border-secondary">
+                <option value="">جميع أنواع التمويل</option>
+                {% for lt_val, lt_name in loan_types %}
+                <option value="{{ lt_val }}" {% if selected_loan_type == lt_val %}selected{% endif %}>{{ lt_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-white-50 small mb-1">الحالة</label>
+            <select name="status" class="form-select bg-dark text-white border-secondary">
+                <option value="">جميع الحالات</option>
+                {% for st_val, st_name in statuses %}
+                <option value="{{ st_val }}" {% if selected_status == st_val %}selected{% endif %}>{{ st_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-white-50 small mb-1">من تاريخ بدء</label>
+            <input type="date" name="date_from" class="form-control bg-dark text-white border-secondary" value="{{ date_from }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-white-50 small mb-1">إلى تاريخ بدء</label>
+            <input type="date" name="date_to" class="form-control bg-dark text-white border-secondary" value="{{ date_to }}">
+        </div>
+        <div class="col-md-1">
+            <button type="submit" class="btn btn-orange w-100" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 12px rgba(255,115,0,0.3);">
+                عرض
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- ملخص الأرقام المالية (Financial KPI Cards) -->
+<div class="row g-3 mb-4">
+    <!-- إجمالي أصل القروض المقترضة -->
+    <div class="col-md-3 col-sm-6">
+        <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(0, 229, 255, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+            <span class="text-white-50 small d-block mb-1">إجمالي أصل القروض المستلمة</span>
+            <h4 class="mb-0 fw-bold" style="color: #00e5ff;">{{ total_principal|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+            <small class="text-white-50">{{ total_count }} قرض مدرج بالتقرير</small>
+        </div>
+    </div>
+
+    <!-- إجمالي الفوائد المحملة -->
+    <div class="col-md-3 col-sm-6">
+        <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 184, 0, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+            <span class="text-white-50 small d-block mb-1">إجمالي الفوائد / الأرباح</span>
+            <h4 class="mb-0 fw-bold" style="color: #ffb800;">{{ total_interest|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+            <small class="text-white-50">إجمالي الالتزام: {{ total_amount|floatformat:2 }} ج.م</small>
+        </div>
+    </div>
+
+    <!-- إجمالي المبالغ المسددة -->
+    <div class="col-md-3 col-sm-6">
+        <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(16, 185, 129, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+            <span class="text-white-50 small d-block mb-1">إجمالي ما تم سداده فعلياً</span>
+            <h4 class="mb-0 fw-bold" style="color: #10b981;">{{ total_paid|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+            <small class="text-white-50">أصل: {{ total_paid_principal|floatformat:2 }} | فوائد: {{ total_paid_interest|floatformat:2 }}</small>
+        </div>
+    </div>
+
+    <!-- المتبقي لسداده من أصل القرض والالتزام -->
+    <div class="col-md-3 col-sm-6">
+        <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(239, 68, 68, 0.3); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+            <span class="text-white-50 small d-block mb-1">المتبقي من أصل القروض (خصوم بالميزانية)</span>
+            <h4 class="mb-0 fw-bold" style="color: #ef4444;">{{ total_remaining_principal|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+            <small class="text-white-50">
+                {% if total_overdue_count > 0 %}
+                <span class="text-danger fw-bold"><i class="fas fa-exclamation-triangle"></i> {{ total_overdue_count }} قسط متأخر</span>
+                {% else %}
+                لا يوجد متأخرات
+                {% endif %}
+            </small>
+        </div>
+    </div>
+</div>
+
+<!-- ستايل مخصص لجدول تقرير القروض لمنع التكدس -->
+<style>
+    .loan-report-table-wrapper {
+        border-radius: 12px;
+        overflow-x: auto;
+    }
+    .loan-report-table-wrapper::-webkit-scrollbar {
+        height: 8px;
+    }
+    .loan-report-table-wrapper::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.8);
+        border-radius: 6px;
+    }
+    .loan-report-table-wrapper::-webkit-scrollbar-thumb {
+        background: rgba(255, 115, 0, 0.4);
+        border-radius: 6px;
+    }
+    .loan-report-table-wrapper::-webkit-scrollbar-thumb:hover {
+        background: #ff7300;
+    }
+    .loan-report-table th, .loan-report-table td {
+        white-space: nowrap;
+        padding: 1.1rem 1.15rem;
+        vertical-align: middle;
+    }
+</style>
+
+{% if loans %}
+<!-- جدول تقرير القروض التفصيلي -->
+<div class="card" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden;">
+    <div class="table-responsive loan-report-table-wrapper">
+        <table class="table table-hover loan-report-table align-middle mb-0" style="color: #e2e8f0; font-size: 0.9rem; min-width: 1450px;">
+            <thead style="background: rgba(30, 41, 59, 0.95); color: #cbd5e1; border-bottom: 2px solid #ff7300;">
+                <tr>
+                    <th style="padding: 1.1rem 1.15rem; min-width: 130px;">كود القرض</th>
+                    <th style="min-width: 200px;">اسم القرض والجهة الممولة</th>
+                    <th style="min-width: 130px;">نوع التمويل</th>
+                    <th style="min-width: 120px;">تاريخ البدء</th>
+                    <th style="min-width: 120px;">الأقساط</th>
+                    <th style="text-align: left; min-width: 130px;">أصل القرض</th>
+                    <th style="text-align: left; min-width: 120px;">الفوائد</th>
+                    <th style="text-align: left; min-width: 140px;">إجمالي الالتزام</th>
+                    <th style="text-align: left; min-width: 140px;">المسدد الكلي</th>
+                    <th style="text-align: left; min-width: 130px;">المتبقي (أصل)</th>
+                    <th style="text-align: center; min-width: 120px;">نسبة السداد</th>
+                    <th style="text-align: center; min-width: 120px;">الحالة</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for loan in loans %}
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 0.75rem 1rem;">
+                        <a href="{% url 'accounting:loan_detail' loan.id %}" style="color: #ff9500; font-weight: 700; text-decoration: none;">
+                            {{ loan.code }}
+                        </a>
+                    </td>
+                    <td>
+                        <a href="{% url 'accounting:loan_detail' loan.id %}" class="text-white text-decoration-none fw-bold">
+                            {{ loan.name }}
+                        </a>
+                        <div class="text-white-50 small">
+                            <i class="fas fa-university text-info"></i> {{ loan.lender_name }}
+                            {% if loan.contract_number %} • عقد: {{ loan.contract_number }}{% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        <span class="badge" style="background: rgba(255,255,255,0.08); color: #94a3b8;">
+                            {{ loan.loan_type_display }}
+                        </span>
+                    </td>
+                    <td class="text-white-50">{{ loan.start_date|date:"Y-m-d" }}</td>
+                    <td class="text-white-50">
+                        {{ loan.installments_count }} قسط
+                        {% if loan.interest_rate > 0 %}
+                        <div class="small text-muted">{{ loan.interest_rate }}% ف.س</div>
+                        {% endif %}
+                    </td>
+                    <td style="color: #00e5ff; font-weight: 600; text-align: left;">{{ loan.principal_amount|floatformat:2 }}</td>
+                    <td style="color: #ffb800; font-weight: 600; text-align: left;">{{ loan.total_interest_amount|floatformat:2 }}</td>
+                    <td style="color: #fff; font-weight: 700; text-align: left;">{{ loan.total_amount|floatformat:2 }}</td>
+                    <td style="color: #10b981; font-weight: 600; text-align: left;">
+                        {{ loan.total_paid|floatformat:2 }}
+                        <div class="text-muted small" style="font-size:0.75rem;">(أصل: {{ loan.paid_principal|floatformat:2 }})</div>
+                    </td>
+                    <td style="color: #ef4444; font-weight: 700; text-align: left;">{{ loan.remaining_principal|floatformat:2 }}</td>
+                    <td style="text-align: center;">
+                        <span class="badge" style="background: rgba(255,255,255,0.08); color: {% if loan.repayment_progress_percent >= 100 %}#10b981{% elif loan.repayment_progress_percent >= 50 %}#ffb800{% else %}#00e5ff{% endif %};">
+                            {{ loan.repayment_progress_percent }}%
+                        </span>
+                        {% if loan.overdue_count > 0 %}
+                        <div class="badge bg-danger ms-1 mt-1" style="font-size: 0.65rem;">{{ loan.overdue_count }} متأخر</div>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if loan.status == 'ACTIVE' %}
+                            <span class="badge bg-success-subtle text-success border border-success">نشط</span>
+                        {% elif loan.status == 'FULLY_PAID' %}
+                            <span class="badge bg-primary-subtle text-primary border border-primary">مسدد بالكامل</span>
+                        {% else %}
+                            <span class="badge bg-danger-subtle text-danger border border-danger">متعثر</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot style="background: rgba(15, 23, 42, 0.95); font-weight: 700; border-top: 2px solid #ff7300;">
+                <tr>
+                    <td colspan="5" style="padding: 1rem; color: #fff;">الإجمالي العام لجميع القروض المدرجة:</td>
+                    <td style="color: #00e5ff; text-align: left;">{{ total_principal|floatformat:2 }} ج.م</td>
+                    <td style="color: #ffb800; text-align: left;">{{ total_interest|floatformat:2 }} ج.م</td>
+                    <td style="color: #fff; text-align: left;">{{ total_amount|floatformat:2 }} ج.م</td>
+                    <td style="color: #10b981; text-align: left;">{{ total_paid|floatformat:2 }} ج.م</td>
+                    <td style="color: #ef4444; text-align: left;">{{ total_remaining_principal|floatformat:2 }} ج.م</td>
+                    <td></td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% else %}
+<!-- حالة عدم وجود بيانات بتقرير القروض -->
+<div class="empty-state text-center py-5 px-4 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 4px 20px rgba(0,0,0,0.25);">
+    <div style="color: #64748b; font-size: 3.5rem; margin-bottom: 1.25rem;">
+        <i class="fas fa-landmark"></i>
+    </div>
+    <h4 class="text-white fw-bold mb-2">لا توجد بيانات مطابقة لعرضها في التقرير</h4>
+    <p class="text-white-50 mx-auto mb-4" style="max-width: 480px; font-size: 0.95rem;">
+        لم يتم العثور على أي قروض أو تسهيلات تطابق معايير وتواريخ البحث المحددة. جرب تغيير خيارات التصفية أو إعادة التعيين.
+    </p>
+    <a href="{% url 'reports:loans_report' %}" class="btn btn-outline-secondary px-4 py-2" style="border-radius: 8px;">
+        <i class="fas fa-redo me-1"></i> إعادة تعيين الفلترة
+    </a>
+</div>
+{% endif %}
+{% endblock %}

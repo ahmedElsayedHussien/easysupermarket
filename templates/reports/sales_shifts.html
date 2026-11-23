@@ -2,127 +2,149 @@
 {% load static %}
 
 {% block content %}
-<div class="content-header">
+<div class="content-header mb-4">
     <div class="content-title">
         <h1>🕒 {{ title }}</h1>
-        <p>متابعة تقفيل الورديات اليومية، المبيعات، ومطابقة النقدية مع الكاشير</p>
+        <p>متابعة تقفيل الورديات اليومية، تفاصيل المبيعات وطرق الدفع، ومطابقة النقدية والعهدة مع الكاشير</p>
     </div>
     <div class="content-actions">
-        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
-        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
-        <button onclick="exportTableToExcel('shifts-table', 'يومية_الكاشير')" class="btn btn-success">📊 تصدير Excel</button>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-ghost">⬅️ العودة للتقارير</a>
+        <button type="button" onclick="window.print()" class="btn btn-ghost" style="border: 1px solid rgba(255,255,255,0.15);">🖨️ طباعة الجدول</button>
+        <a href="?{{ request.GET.urlencode }}&export=excel" class="btn btn-orange">📊 تصدير Excel</a>
     </div>
 </div>
 
 <!-- Filters -->
-<div class="card" style="margin-bottom: 1.5rem;">
-    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
-        <div class="form-group" style="flex: 1; min-width: 200px;">
-            <label class="form-label">من تاريخ</label>
+<div class="card p-4 mb-4" style="background:#0f1929;">
+    <form method="get" class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label text-light fw-bold">من تاريخ</label>
             <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
         </div>
-        <div class="form-group" style="flex: 1; min-width: 200px;">
-            <label class="form-label">إلى تاريخ</label>
+        <div class="col-md-4">
+            <label class="form-label text-light fw-bold">إلى تاريخ</label>
             <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
         </div>
-        <div class="form-group" style="flex: 1; min-width: 200px;">
-            <label class="form-label">الكاشير (المستخدم)</label>
-            <select name="user" class="form-control">
+        <div class="col-md-3">
+            <label class="form-label text-light fw-bold">الكاشير (المستخدم)</label>
+            <select name="user" class="form-select">
                 <option value="">-- جميع المستخدمين --</option>
                 {% for u in users %}
                 <option value="{{ u.id }}" {% if selected_user_id == u.id|stringformat:"s" %}selected{% endif %}>{{ u.get_full_name|default:u.username }}</option>
                 {% endfor %}
             </select>
         </div>
-        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
-            <button type="submit" class="btn btn-primary">تحديث التقرير</button>
+        <div class="col-md-1">
+            <button type="submit" class="btn btn-orange w-100">تحديث</button>
         </div>
     </form>
 </div>
 
 <!-- Summary Cards -->
-<div class="reports-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
-    <div class="stat-card" style="border-left: 4px solid var(--neon-blue);">
-        <div class="stat-icon" style="background: rgba(0, 176, 255, 0.1); color: var(--neon-blue);">💰</div>
-        <div class="stat-details">
-            <h3 class="stat-title">إجمالي النقدية المتوقعة</h3>
-            <div class="stat-value" style="color: var(--neon-blue);">{{ total_expected|floatformat:"-2" }}</div>
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card p-3 h-100" style="background:#0f1929; border-left: 4px solid #00e5ff; border-radius: 10px;">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <div style="color: #00e5ff; font-weight: bold; font-size: 0.95rem;">إجمالي النقدية المتوقعة بالدرج</div>
+                    <div class="fs-3 fw-bold mt-1" style="color: #00e5ff;">{{ total_expected|floatformat:2 }} ج.م</div>
+                </div>
+                <div class="fs-1">💰</div>
+            </div>
         </div>
     </div>
-    <div class="stat-card" style="border-left: 4px solid var(--neon-green);">
-        <div class="stat-icon" style="background: rgba(0, 230, 118, 0.1); color: var(--neon-green);">💵</div>
-        <div class="stat-details">
-            <h3 class="stat-title">إجمالي النقدية الفعلية (المسلمة)</h3>
-            <div class="stat-value" style="color: var(--neon-green);">{{ total_actual|floatformat:"-2" }}</div>
+    <div class="col-md-4">
+        <div class="card p-3 h-100" style="background:#0f1929; border-left: 4px solid #10b981; border-radius: 10px;">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <div style="color: #10b981; font-weight: bold; font-size: 0.95rem;">إجمالي النقدية الفعلية (المسلمة)</div>
+                    <div class="fs-3 fw-bold mt-1" style="color: #10b981;">{{ total_actual|floatformat:2 }} ج.م</div>
+                </div>
+                <div class="fs-1">💵</div>
+            </div>
         </div>
     </div>
-    <div class="stat-card" style="border-left: 4px solid {% if total_diff >= 0 %}var(--neon-green){% else %}var(--neon-red){% endif %};">
-        <div class="stat-icon" style="background: {% if total_diff >= 0 %}rgba(0, 230, 118, 0.1){% else %}rgba(255, 23, 68, 0.1){% endif %}; color: {% if total_diff >= 0 %}var(--neon-green){% else %}var(--neon-red){% endif %};">⚖️</div>
-        <div class="stat-details">
-            <h3 class="stat-title">إجمالي العجز / الزيادة</h3>
-            <div class="stat-value" style="color: {% if total_diff >= 0 %}var(--neon-green){% else %}var(--neon-red){% endif %};">{{ total_diff|floatformat:"-2" }}</div>
+    <div class="col-md-4">
+        <div class="card p-3 h-100" style="background:#0f1929; border-left: 4px solid {% if total_diff >= 0 %}#10b981{% else %}#ef4444{% endif %}; border-radius: 10px;">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <div style="color: {% if total_diff >= 0 %}#10b981{% else %}#ef4444{% endif %}; font-weight: bold; font-size: 0.95rem;">إجمالي العجز / الزيادة الإجمالية</div>
+                    <div class="fs-3 fw-bold {% if total_diff >= 0 %}text-success{% else %}text-danger{% endif %} mt-1">
+                        {% if total_diff > 0 %}+{% endif %}{{ total_diff|floatformat:2 }} ج.م
+                    </div>
+                </div>
+                <div class="fs-1">⚖️</div>
+            </div>
         </div>
     </div>
 </div>
 
+
 <!-- Details Table -->
-<div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
-        <h3 style="margin: 0; color: var(--text-primary);">
-            📝 تفاصيل الورديات (Shifts)
+<div class="card p-4" style="background:#0f1929;">
+    <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom border-secondary">
+        <h3 class="m-0 text-light fs-5">
+            📝 قائمة تفاصيل الورديات (Shifts Log)
         </h3>
-        <div class="search-box" style="width: 250px;">
-            <input type="text" id="searchInput" class="form-control" placeholder="بحث في الورديات..." onkeyup="filterTable()">
+        <div style="width: 250px;">
+            <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="بحث باسم الكاشير أو رقم الوردية..." onkeyup="filterTable()">
         </div>
     </div>
     
     <div class="table-responsive">
-        <table class="data-table" id="shifts-table">
+        <table class="table table-dark table-hover align-middle" id="shifts-table">
             <thead>
                 <tr>
+                    <th># الوردية</th>
                     <th>تاريخ الفتح</th>
                     <th>الكاشير</th>
                     <th>الخزنة</th>
-                    <th>المبيعات (فواتير)</th>
-                    <th>المرتجعات</th>
-                    <th style="color: var(--neon-blue);">رصيد افتتاحي</th>
-                    <th style="color: var(--neon-gold);">رصيد متوقع</th>
-                    <th style="color: var(--neon-green);">رصيد فعلي (مُسلم)</th>
+                    <th>صافي المبيعات</th>
+                    <th style="color: #10b981;">مبيعات كاش</th>
+                    <th style="color: #f59e0b;">إلكتروني/شبكة</th>
+                    <th style="color: #00e5ff;">عهدة افتتاحية</th>
+                    <th style="color: #f59e0b;">متوقع</th>
+                    <th style="color: #10b981;">فعلي مسلم</th>
                     <th>العجز / الزيادة</th>
                     <th>الحالة</th>
+                    <th class="text-center">التقرير التفصيلي</th>
                 </tr>
             </thead>
             <tbody>
                 {% for item in sessions_data %}
                 <tr>
-                    <td style="color: var(--text-primary);">{{ item.session.start_time|date:"Y-m-d H:i" }}</td>
-                    <td style="color: var(--text-primary);">{{ item.session.user.get_full_name|default:item.session.user.username }}</td>
-                    <td style="color: var(--text-muted);">{{ item.session.treasury.name }}</td>
-                    <td style="color: var(--text-primary);">
-                        {{ item.sales_amount|floatformat:"-2" }}
-                        <br><small style="color: var(--text-muted);">({{ item.sales_count }} فاتورة)</small>
+                    <td class="fw-bold text-orange" style="color:#ff7300;">#{{ item.session.id }}</td>
+                    <td class="text-light">{{ item.session.start_time|date:"Y-m-d H:i" }}</td>
+                    <td class="fw-bold text-light">{{ item.session.user.get_full_name|default:item.session.user.username }}</td>
+                    <td class="text-muted">{{ item.session.treasury.name }}</td>
+                    <td class="fw-bold text-light">
+                        {{ item.net_sales_amount|floatformat:2 }}
+                        <br><small class="text-muted">({{ item.sales_count }} بيع / {{ item.returns_count }} مرتجع)</small>
                     </td>
-                    <td style="color: var(--neon-red);">
-                        {{ item.returns_amount|floatformat:"-2" }}
-                        <br><small style="color: var(--text-muted);">({{ item.returns_count }} فاتورة)</small>
-                    </td>
-                    <td style="color: var(--neon-blue);">{{ item.session.opening_balance|floatformat:"-2" }}</td>
-                    <td style="color: var(--neon-gold); font-weight: bold;">{{ item.session.closing_balance_expected|floatformat:"-2" }}</td>
-                    <td style="color: var(--neon-green); font-weight: bold;">{{ item.session.closing_balance_actual|floatformat:"-2" }}</td>
-                    <td style="color: {% if item.session.difference > 0 %}var(--neon-green){% elif item.session.difference < 0 %}var(--neon-red){% else %}var(--text-primary){% endif %}; font-weight: bold;">
-                        {{ item.session.difference|floatformat:"-2" }}
+                    <td class="text-success fw-bold">{{ item.total_cash_sales|floatformat:2 }}</td>
+                    <td class="text-warning fw-bold">{{ item.total_card_sales|add:item.total_ewallet_sales|add:item.total_bank_sales|floatformat:2 }}</td>
+                    <td class="text-cyan">{{ item.session.opening_balance|floatformat:2 }}</td>
+                    <td class="text-warning fw-bold">{{ item.expected_balance|floatformat:2 }}</td>
+                    <td class="text-success fw-bold">{{ item.actual_balance|floatformat:2 }}</td>
+                    <td class="fw-bold {% if item.difference > 0 %}text-success{% elif item.difference < 0 %}text-danger{% else %}text-light{% endif %}">
+                        {% if item.difference > 0 %}+{% endif %}{{ item.difference|floatformat:2 }}
                     </td>
                     <td>
                         {% if item.session.status == 'OPEN' %}
-                        <span class="badge" style="background: rgba(0, 176, 255, 0.1); color: var(--neon-blue); padding: 4px 8px; border-radius: 4px;">مفتوحة</span>
+                        <span class="badge bg-info text-dark">مفتوحة</span>
                         {% else %}
-                        <span class="badge" style="background: rgba(255, 255, 255, 0.1); color: var(--text-muted); padding: 4px 8px; border-radius: 4px;">مغلقة</span>
+                        <span class="badge bg-secondary">مغلقة</span>
                         {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <a href="{% url 'core:report_shift_detail' item.session.id %}" class="btn btn-sm btn-orange-primary px-3">
+                            📊 تقرير مفصل
+                        </a>
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="10" class="text-center">لا توجد ورديات مسجلة في هذه الفترة</td>
+                    <td colspan="13" class="text-center py-4 text-muted">لا توجد ورديات مسجلة في هذه الفترة</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -131,14 +153,23 @@
 </div>
 
 <style>
+    .btn-orange-primary {
+        background: #ff7300 !important;
+        border-color: #ff7300 !important;
+        color: #fff !important;
+        font-weight: 700;
+    }
+    .btn-orange-primary:hover {
+        background: #e66800 !important;
+        border-color: #e66800 !important;
+    }
+    .text-cyan { color: #00e5ff !important; }
     @media print {
         body { background: white !important; color: black !important; }
-        .sidebar, .navbar, .content-actions, form, .search-box { display: none !important; }
+        .sidebar, .navbar, .content-actions, form, #searchInput { display: none !important; }
         .card { box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 20px !important; }
-        .data-table th, .data-table td { border-color: #ddd !important; color: black !important; }
-        .stat-card { border: 1px solid #ddd !important; break-inside: avoid; }
-        .stat-icon { display: none !important; }
-        .stat-value { color: black !important; font-weight: bold !important; }
+        .table-dark { background: white !important; color: black !important; }
+        .table-dark th, .table-dark td { border-color: #ddd !important; color: black !important; }
     }
 </style>
 
@@ -150,8 +181,8 @@ function filterTable() {
     let tr = table.getElementsByTagName("tr");
 
     for (let i = 1; i < tr.length; i++) {
-        let textValue = tr[i].textContent || tr[i].innerText;
-        if (textValue.toUpperCase().indexOf(filter) > -1) {
+        let txtValue = tr[i].textContent || tr[i].innerText;
+        if (txtValue.toUpperCase().indexOf(filter) > -1) {
             tr[i].style.display = "";
         } else {
             tr[i].style.display = "none";
@@ -159,25 +190,32 @@ function filterTable() {
     }
 }
 
-function exportTableToExcel(tableID, filename = '') {
-    let downloadLink;
-    let dataType = 'application/vnd.ms-excel';
-    let tableSelect = document.getElementById(tableID);
-    let tableHTML = tableSelect.outerHTML.replace(/ /g, '%20');
-    
-    filename = filename ? filename + '.xls' : 'excel_data.xls';
-    
-    downloadLink = document.createElement("a");
-    document.body.appendChild(downloadLink);
-    
-    if (navigator.msSaveOrOpenBlob) {
-        let blob = new Blob(['\ufeff', tableHTML], { type: dataType });
-        navigator.msSaveOrOpenBlob(blob, filename);
-    } else {
-        downloadLink.href = 'data:' + dataType + ', ' + tableHTML;
-        downloadLink.download = filename;
-        downloadLink.click();
-    }
+// Fallback in case external dashboard.js was cached
+if (typeof window.exportTableToExcel !== 'function') {
+    window.exportTableToExcel = function(tableId, filename) {
+        let table = document.getElementById(tableId);
+        if (!table) return;
+        filename = (filename || 'تقرير') + '.xls';
+        let clone = table.cloneNode(true);
+        // remove details column
+        clone.querySelectorAll('tr').forEach(r => {
+            if (r.children.length > 12) r.removeChild(r.lastElementChild);
+        });
+        clone.querySelectorAll('th, td').forEach(c => {
+            c.querySelectorAll('button, a, input').forEach(el => el.remove());
+            c.textContent = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        });
+        let doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{direction:rtl;text-align:right;} th{background:#1F4E79;color:#fff;border:0.5pt solid #ddd;padding:8px;} td{border:0.5pt solid #ddd;padding:6px;}</style></head><body dir="rtl">' + clone.outerHTML + '</body></html>';
+        let blob = new Blob(['\uFEFF' + doc], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
 }
 </script>
 {% endblock %}

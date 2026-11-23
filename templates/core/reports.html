@@ -20,6 +20,7 @@
         {% endif %}
         {% if perms.core.view_accounting_reports %}
         <button class="reports-tab" onclick="switchReportTab('accounting')">💰 تقارير المحاسبة</button>
+        <button class="reports-tab" onclick="switchReportTab('liquidity')">💧 تقارير السيولة والأرصدة</button>
         {% endif %}
         <button class="reports-tab" onclick="switchReportTab('rentals')">🚜 تقارير التأجير</button>
         <button class="reports-tab" onclick="switchReportTab('maintenance')">🛠️ تقارير الصيانة</button>
@@ -85,9 +86,9 @@
                 <div class="report-card">
                     <div class="report-icon">👥</div>
                     <div class="report-info">
-                        <h4>كشف حساب عميل</h4>
-                        <p>متابعة أرصدة العميل والمبيعات والمدفوعات خلال فترة محددة.</p>
-                        <a href="{% url 'core:report_customer_balances' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                        <h4>تقرير الشركاء (حسابات العملاء)</h4>
+                        <p>تقرير موحد لأرصدة العملاء وكافة حركات البيع والشراء والتحصيلات بالتفصيل.</p>
+                        <a href="{% url 'core:report_partners' %}?partner_type=CUSTOMER" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
                 <div class="report-card">
@@ -150,9 +151,9 @@
                 <div class="report-card">
                     <div class="report-icon">👥</div>
                     <div class="report-info">
-                        <h4>كشف حساب مورد</h4>
-                        <p>متابعة تفصيلية لحركة المشتريات والمدفوعات الخاصة بمورد محدد.</p>
-                        <a href="{% url 'core:report_supplier_balances' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                        <h4>تقرير الشركاء (حسابات الموردين)</h4>
+                        <p>تقرير موحد لأرصدة الموردين وفواتير الشراء والمدفوعات وصافي الحسابات.</p>
+                        <a href="{% url 'core:report_partners' %}?partner_type=SUPPLIER" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
                 <div class="report-card">
@@ -202,6 +203,15 @@
                         <h4>نواقص المخزون</h4>
                         <p>الأصناف التي وصلت لحد الطلب أو نفدت من المخازن.</p>
                         <a href="{% url 'core:report_low_stock' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+
+                <div class="report-card">
+                    <div class="report-icon" style="color: #ff9f43;">📈</div>
+                    <div class="report-info">
+                        <h4>فائض وتكدس المخزون (Overstock)</h4>
+                        <p>الأصناف التي تجاوز رصيدها الحد الأقصى للمخزون ورأس المال المعطل فيها.</p>
+                        <a href="{% url 'core:report_overstock' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
 
@@ -262,6 +272,22 @@
                         <a href="{% url 'accounting:balance_sheet' %}" class="btn btn-sm btn-orange">عرض الميزانية</a>
                     </div>
                 </div>
+                <div class="report-card" style="border: 1px solid rgba(255, 115, 0, 0.4); background: linear-gradient(135deg, rgba(255, 115, 0, 0.08), rgba(0,0,0,0.2));">
+                    <div class="report-icon" style="color: #ff7300;">🏢</div>
+                    <div class="report-info">
+                        <h4 style="color: #ff9d42;">سجل الأصول الثابتة والإهلاك</h4>
+                        <p>بيان شامل بجميع الأصول الثابتة، تكلفة الشراء، مجمع الإهلاك المتراكم، وصافي القيمة الدفترية ومعدل الاستهلاك.</p>
+                        <a href="{% url 'core:report_fixed_assets' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card" style="border: 1px solid rgba(0, 229, 255, 0.4); background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(0,0,0,0.2));">
+                    <div class="report-icon" style="color: #00e5ff;">🏦</div>
+                    <div class="report-info">
+                        <h4 style="color: #00e5ff;">تقرير القروض والتسهيلات والتمويل</h4>
+                        <p>متابعة تفصيلية للقروض والتسهيلات البنكية، إجمالي الالتزام القائم، المسدد، الفوائد، والأقساط المتأخرة.</p>
+                        <a href="{% url 'core:report_loans' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
                 <div class="report-card">
                     <div class="report-icon">🧾</div>
                     <div class="report-info">
@@ -294,20 +320,12 @@
                         <a href="{% url 'core:report_income_statement' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
-                <div class="report-card">
-                    <div class="report-icon">💵</div>
+                <div class="report-card" style="border: 1px solid rgba(0, 229, 255, 0.4); background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(0,0,0,0.2));">
+                    <div class="report-icon" style="color: var(--neon-cyan);">📑</div>
                     <div class="report-info">
-                        <h4>كشف حساب خزانة/بنك</h4>
-                        <p>حركة الصادر والوارد لكل خزانة أو حساب بنكي.</p>
-                        <a href="{% url 'core:report_treasury' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
-                    </div>
-                </div>
-                <div class="report-card">
-                    <div class="report-icon">📉</div>
-                    <div class="report-info">
-                        <h4>المصروفات التفصيلية</h4>
-                        <p>تفصيل المصروفات حسب بنود الصرف خلال فترة.</p>
-                        <a href="{% url 'core:report_expenses' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                        <h4 style="color: var(--neon-cyan);">تقرير الشركاء الشامل (عملاء وموردين)</h4>
+                        <p>تقرير موحد لجميع العملاء والموردين لمتابعة الأرصدة وكافة حركات البيع والشراء والسندات.</p>
+                        <a href="{% url 'core:report_partners' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
                 <div class="report-card">
@@ -322,10 +340,97 @@
         </div>
         {% endif %}
 
+        <!-- Liquidity Tab -->
+        {% if perms.core.view_accounting_reports %}
+        <div id="tab-liquidity" class="report-tab-pane" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 0.75rem;">
+                <div>
+                    <h3 style="color: var(--neon-cyan); margin: 0 0 0.25rem 0;">💧 تقارير السيولة النقدية وموقف الأموال</h3>
+                    <p style="color: var(--text-muted); margin: 0; font-size: 0.85rem;">متابعة لحظية لأرصدة الخزن النقدية، البنوك، والمحافظ الإلكترونية، وحركات النقدية والتحويلات</p>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <a href="{% url 'accounting:transfer_create' %}" class="btn btn-sm btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+                        💸 تحويل مالي بين الحسابات
+                    </a>
+                </div>
+            </div>
+
+            <div class="reports-grid">
+                <!-- 1. Liquidity Position -->
+                <div class="report-card" style="border: 1px solid rgba(0, 229, 255, 0.4); background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(0,0,0,0.2));">
+                    <div class="report-icon" style="color: var(--neon-cyan); background: rgba(0, 229, 255, 0.1);">💰</div>
+                    <div class="report-info">
+                        <h4 style="color: var(--neon-cyan);">موقف وأرصدة السيولة النقدية</h4>
+                        <p>تقرير شامل يعرض الأرصدة اللحظية المتاحة في كافة الخزن النقدية، الحسابات البنكية، والمحافظ الإلكترونية مع إجمالي السيولة بالمنشأة.</p>
+                        <a href="{% url 'core:report_liquidity_position' %}" class="btn btn-sm btn-orange">عرض موقف السيولة</a>
+                    </div>
+                </div>
+
+                <!-- 2. Statement / Movements -->
+                <div class="report-card" style="border: 1px solid rgba(255, 184, 0, 0.4); background: linear-gradient(135deg, rgba(255, 184, 0, 0.08), rgba(0,0,0,0.2));">
+                    <div class="report-icon" style="color: var(--neon-gold); background: rgba(255, 184, 0, 0.1);">🏦</div>
+                    <div class="report-info">
+                        <h4 style="color: var(--neon-gold);">كشف حساب وحركات الخزن والبنوك</h4>
+                        <p>كشف تفصيلي بحركات الوارد والمنصرف والرصيد التراكمي اللحظي لأي خزينة أو حساب بنكي أو محفظة إلكترونية خلال أي فترة محددة.</p>
+                        <a href="{% url 'core:report_treasury' %}" class="btn btn-sm btn-orange">عرض كشف الحركة</a>
+                    </div>
+                </div>
+
+                <!-- 3. Receipts & Payments (Vouchers) -->
+                <div class="report-card">
+                    <div class="report-icon" style="color: var(--neon-green); background: rgba(0, 230, 118, 0.1);">🧾</div>
+                    <div class="report-info">
+                        <h4>المقبوضات والمدفوعات (سندات النقدية)</h4>
+                        <p>سجل تفصيلي لجميع سندات القبض والصرف، الإيرادات والمصروفات النقدية، وتوزيعها حسب طرق السداد وصافي التدفق النقدي.</p>
+                        <a href="{% url 'core:report_cash_vouchers' %}" class="btn btn-sm btn-orange">عرض المقبوضات والمدفوعات</a>
+                    </div>
+                </div>
+
+                <!-- 4. Internal Transfers -->
+                <div class="report-card">
+                    <div class="report-icon" style="color: #60a5fa; background: rgba(96, 165, 250, 0.1);">🔄</div>
+                    <div class="report-info">
+                        <h4>تحويلات الأموال بين الحسابات</h4>
+                        <p>تتبع دقيق لعمليات نقل السيولة والتحويلات الداخلية بين الخزن والبنوك والمحافظ وحالات التأكيد والترحيل المحاسبي.</p>
+                        <a href="{% url 'core:report_liquidity_transfers' %}" class="btn btn-sm btn-orange">عرض سجل التحويلات</a>
+                    </div>
+                </div>
+
+                <!-- 5. Cashier Shifts -->
+                <div class="report-card">
+                    <div class="report-icon" style="color: #fbbf24; background: rgba(251, 191, 36, 0.1);">🕒</div>
+                    <div class="report-info">
+                        <h4>يومية الكاشير وحركة الصندوق</h4>
+                        <p>تقرير تقفيل الورديات، جرد نقدية الدرج، ومطابقة المبيعات النقدية مع العجز والزيادة لكل كاشير.</p>
+                        <a href="{% url 'core:report_shifts' %}" class="btn btn-sm btn-orange">عرض يومية الكاشير</a>
+                    </div>
+                </div>
+
+                <!-- 6. Cash Expenses -->
+                <div class="report-card">
+                    <div class="report-icon" style="color: var(--neon-red); background: rgba(255, 23, 68, 0.1);">📉</div>
+                    <div class="report-info">
+                        <h4>المصروفات النقدية والتشغيلية</h4>
+                        <p>تفصيل المصروفات المسددة من الخزن والبنوك حسب بنود الصرف ومراكز التكلفة وأثرها على السيولة المتاحة.</p>
+                        <a href="{% url 'core:report_expenses' %}" class="btn btn-sm btn-orange">عرض تقرير المصروفات</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Rentals Tab -->
         <div id="tab-rentals" class="report-tab-pane" style="display: none;">
             <h3 style="color: var(--neon-blue); margin-bottom: 1rem;">تقارير التأجير والمعدات المؤجرة</h3>
             <div class="reports-grid">
+                <div class="report-card" style="border: 1px solid rgba(0, 229, 255, 0.4); background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(0,0,0,0.2));">
+                    <div class="report-icon" style="color: var(--neon-cyan);">📋</div>
+                    <div class="report-info">
+                        <h4 style="color: var(--neon-cyan);">تقرير التأجير والمعدات التفصيلي</h4>
+                        <p>تقرير تفصيلي شامل لعقود تأجير المعدات (اسم المعدة، العميل، تاريخ الإيجار، مدة التأجير، التكاليف وصافي الأرباح).</p>
+                        <a href="{% url 'rentals:report_detailed_rentals' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
                 <div class="report-card">
                     <div class="report-icon">🚜</div>
                     <div class="report-info">

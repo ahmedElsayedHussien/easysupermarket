@@ -58,14 +58,26 @@
     </div>
     
     {% if is_paginated %}
-    <div class="pagination-container">
-        {% if page_obj.has_previous %}
-            <a href="?page={{ page_obj.previous_page_number }}" class="btn-page">&laquo; السابق</a>
-        {% endif %}
-        <span style="color: #ffd700; font-weight: bold;">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
-        {% if page_obj.has_next %}
-            <a href="?page={{ page_obj.next_page_number }}" class="btn-page">التالي &raquo;</a>
-        {% endif %}
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="color: var(--text-muted); font-size: 0.9rem;">
+            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ page_obj.paginator.count }}</b> سند
+        </div>
+
+        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
+            <a href="?page={{ page_obj.previous_page_number }}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
+            {% endif %}
+
+            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
+            {% endif %}
+        </div>
     </div>
     {% endif %}
 </div>

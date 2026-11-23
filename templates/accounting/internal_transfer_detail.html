@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="max-width: 900px; margin: 0 auto; padding: 2.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 1rem;">
+        <div>
+            <h2 style="margin: 0; color: #fff;">
+                <i class="fas fa-exchange-alt text-gold" style="margin-left: 0.5rem;"></i> {{ title }}
+            </h2>
+            <div style="margin-top: 0.5rem;">
+                {% if transfer.status == 'DRAFT' %}
+                    <span class="badge-status badge-warning" style="background: rgba(255,193,7,0.2); color: #ffc107; padding: 4px 12px; border-radius: 6px; font-weight: bold;">مسودة (غير مرحل)</span>
+                {% elif transfer.status == 'POSTED' %}
+                    <span class="badge-status badge-success" style="background: rgba(40,167,69,0.2); color: #28a745; padding: 4px 12px; border-radius: 6px; font-weight: bold;">مرحل للقيود المحاسبية</span>
+                {% else %}
+                    <span class="badge-status badge-danger" style="background: rgba(220,53,69,0.2); color: #dc3545; padding: 4px 12px; border-radius: 6px; font-weight: bold;">ملغي</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <a href="{% url 'accounting:transfer_list' %}" class="btn-secondary" style="background: rgba(255,255,255,0.1); color: #fff; padding: 0.5rem 1.2rem; border-radius: 8px; text-decoration: none;">
+            <i class="fas fa-arrow-right"></i> الرجوع لقائمة التحويلات
+        </a>
+    </div>
+
+    <!-- Summary Box -->
+    <div style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem;">
+            <div>
+                <span style="color: rgba(255,255,255,0.6); display: block; font-size: 0.85rem;">رقم التحويل</span>
+                <strong style="color: #00e5ff; font-size: 1.2rem;">{{ transfer.transfer_number }}</strong>
+            </div>
+
+            <div>
+                <span style="color: rgba(255,255,255,0.6); display: block; font-size: 0.85rem;">تاريخ التحويل</span>
+                <strong style="color: #fff; font-size: 1.1rem;">{{ transfer.date|date:"Y-m-d" }}</strong>
+            </div>
+
+            <div>
+                <span style="color: rgba(255,255,255,0.6); display: block; font-size: 0.85rem;">مبلغ التحويل</span>
+                <strong style="color: #ff7300; font-size: 1.4rem; font-weight: 900;">{{ transfer.amount }} ج.م</strong>
+            </div>
+
+            <div>
+                <span style="color: rgba(255,255,255,0.6); display: block; font-size: 0.85rem;">أنشئ بواسطة</span>
+                <strong style="color: #fff; font-size: 1rem;">{{ transfer.created_by.get_full_name|default:transfer.created_by.username|default:"-" }}</strong>
+            </div>
+        </div>
+    </div>
+
+    <!-- Movement Details Cards -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem;">
+        <!-- Source -->
+        <div style="background: rgba(13, 202, 240, 0.05); border: 1px solid rgba(13, 202, 240, 0.2); border-radius: 12px; padding: 1.25rem;">
+            <h4 style="color: #0dcaf0; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid rgba(13,202,240,0.2); padding-bottom: 0.5rem;">
+                <i class="fas fa-arrow-up"></i> من الجهة (خصم من الحساب)
+            </h4>
+            <p style="margin: 0.3rem 0; color: #ddd;"><strong>نوع الحساب:</strong> {{ transfer.get_from_account_type_display }}</p>
+            <p style="margin: 0.3rem 0; color: #fff; font-size: 1.1rem;"><strong>الاسم:</strong> {{ transfer.source_name }}</p>
+            {% if transfer.source_object %}
+                <p style="margin: 0.3rem 0; color: #00e5ff; font-weight: bold;"><strong>الرصيد الحالي بالحساب:</strong> {{ transfer.source_object.current_balance|floatformat:2 }} ج.م</p>
+            {% endif %}
+            {% if transfer.source_gl_account %}
+                <p style="margin: 0.3rem 0; color: rgba(255,255,255,0.6); font-size: 0.85rem;"><strong>حساب شجرة الحسابات:</strong> {{ transfer.source_gl_account.code }} - {{ transfer.source_gl_account.name }}</p>
+            {% endif %}
+        </div>
+
+        <!-- Destination -->
+        <div style="background: rgba(40, 167, 69, 0.05); border: 1px solid rgba(40, 167, 69, 0.2); border-radius: 12px; padding: 1.25rem;">
+            <h4 style="color: #28a745; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid rgba(40,167,69,0.2); padding-bottom: 0.5rem;">
+                <i class="fas fa-arrow-down"></i> إلى الجهة (إضافة للحساب)
+            </h4>
+            <p style="margin: 0.3rem 0; color: #ddd;"><strong>نوع الحساب:</strong> {{ transfer.get_to_account_type_display }}</p>
+            <p style="margin: 0.3rem 0; color: #fff; font-size: 1.1rem;"><strong>الاسم:</strong> {{ transfer.destination_name }}</p>
+            {% if transfer.destination_object %}
+                <p style="margin: 0.3rem 0; color: #28a745; font-weight: bold;"><strong>الرصيد الحالي بالحساب:</strong> {{ transfer.destination_object.current_balance|floatformat:2 }} ج.م</p>
+            {% endif %}
+            {% if transfer.destination_gl_account %}
+                <p style="margin: 0.3rem 0; color: rgba(255,255,255,0.6); font-size: 0.85rem;"><strong>حساب شجرة الحسابات:</strong> {{ transfer.destination_gl_account.code }} - {{ transfer.destination_gl_account.name }}</p>
+            {% endif %}
+        </div>
+
+    </div>
+
+    {% if transfer.description %}
+    <div style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 1rem; margin-bottom: 2rem;">
+        <span style="color: rgba(255,255,255,0.6); display: block; font-size: 0.85rem; margin-bottom: 0.3rem;">البيان / ملاحظات</span>
+        <p style="margin: 0; color: #fff;">{{ transfer.description }}</p>
+    </div>
+    {% endif %}
+
+    {% if transfer.pos_session %}
+    <div style="background: rgba(255,193,7,0.08); border: 1px solid rgba(255,193,7,0.3); border-radius: 8px; padding: 1rem; margin-bottom: 2rem; color: #ffc107;">
+        <i class="fas fa-cash-register"></i> مرتبط بوردية نقطة البيع رقم <strong>#{{ transfer.pos_session.id }}</strong> (الكاشير: {{ transfer.pos_session.user.get_full_name|default:transfer.pos_session.user.username }})
+    </div>
+    {% endif %}
+
+    {% if transfer.journal_entry %}
+    <div style="background: rgba(0,229,255,0.05); border: 1px solid rgba(0,229,255,0.2); border-radius: 12px; padding: 1.25rem; margin-bottom: 2rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h4 style="color: #00e5ff; margin: 0;">
+                    <i class="fas fa-book"></i> القيد المحاسبي المرحل ({{ transfer.journal_entry.reference }})
+                </h4>
+                <p style="margin: 0.3rem 0 0 0; color: rgba(255,255,255,0.7); font-size: 0.9rem;">{{ transfer.journal_entry.description }}</p>
+            </div>
+            {% if user.is_superuser or user.employee_profile.is_admin %}
+                <a href="{% url 'accounting:journal_detail' transfer.journal_entry.pk %}" class="btn-action" style="color: #00e5ff; text-decoration: underline;">
+                    عرض القيد <i class="fas fa-external-link-alt"></i>
+                </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Action Buttons -->
+    <div style="display: flex; gap: 1rem; justify-content: flex-end; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1.5rem;">
+        {% if transfer.status == 'DRAFT' %}
+            <form method="post" action="{% url 'accounting:transfer_confirm' transfer.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="btn-orange" style="padding: 0.7rem 1.8rem; font-weight: bold; border: none; cursor: pointer;">
+                    <i class="fas fa-check-circle"></i> اعتماد وترحيل التحويل
+                </button>
+            </form>
+        {% endif %}
+
+        {% if transfer.status != 'CANCELLED' %}
+            <form method="post" action="{% url 'accounting:transfer_cancel' transfer.pk %}" onsubmit="return confirm('هل أنت تأكد من رغبتك في إلغاء هذا التحويل وحذف القيد المربوط به؟');">
+                {% csrf_token %}
+                <button type="submit" style="background: rgba(220,53,69,0.8); color: #fff; padding: 0.7rem 1.5rem; border-radius: 8px; border: none; cursor: pointer; font-weight: bold;">
+                    <i class="fas fa-times-circle"></i> إلغاء التحويل
+                </button>
+            </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,203 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="content-header d-flex justify-content-between align-items-center mb-4" style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="content-title">
+            <h1 style="color: var(--neon-cyan); margin: 0; font-size: 1.6rem; font-weight: 800;">🏷️ {{ title }}</h1>
+            <p style="color: var(--text-muted); margin: 0.25rem 0 0 0; font-size: 0.9rem;">
+                إدارة منظومة التسعير متعددة المستويات: أسعار العملاء المباشرة (أولوية 1) وأسعار القطاعات (أولوية 2)
+            </p>
+        </div>
+        <div class="content-actions" style="display: flex; gap: 0.75rem;">
+            <a href="{% url 'pricing:sector_list' %}" class="btn btn-secondary" style="border: 1px solid var(--border-default);">🏢 قطاعات العملاء</a>
+            <a href="{% url 'pricing:pricelist_create' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); font-weight: bold; padding: 0.5rem 1.25rem;">
+                ➕ إنشاء قائمة أسعار جديدة
+            </a>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    {% if messages %}
+    <div class="mb-4">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} p-3 rounded" style="background: rgba(0, 229, 255, 0.1); border-right: 4px solid var(--neon-cyan); color: #fff;">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Filter & Search Card -->
+    <div class="card p-3 mb-4" style="background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px;">
+        <form method="GET" class="row g-3 align-items-center" style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 250px;">
+                <input type="text" name="q" class="form-control" placeholder="🔍 ابحث باسم القائمة، الكود، اسم العميل أو القطاع..." value="{{ search_query|default:'' }}" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">
+            </div>
+            
+            <div style="min-width: 180px;">
+                <select name="type" class="form-select form-control" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">
+                    <option value="">-- كل أنواع القوائم --</option>
+                    <option value="CUSTOMER" {% if current_type == 'CUSTOMER' %}selected{% endif %}>⭐ قوائم خاصة بعملاء</option>
+                    <option value="SECTOR" {% if current_type == 'SECTOR' %}selected{% endif %}>🏢 قوائم قطاعات</option>
+                    <option value="GENERAL" {% if current_type == 'GENERAL' %}selected{% endif %}>🌐 قوائم عامة</option>
+                </select>
+            </div>
+
+            <div style="min-width: 140px;">
+                <select name="status" class="form-select form-control" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">
+                    <option value="">-- كل الحالات --</option>
+                    <option value="active" {% if current_status == 'active' %}selected{% endif %}>نشطة</option>
+                    <option value="inactive" {% if current_status == 'inactive' %}selected{% endif %}>معطلة</option>
+                </select>
+            </div>
+
+            <div>
+                <button type="submit" class="btn btn-orange" style="font-weight: 600; padding: 0.5rem 1.5rem;">تصفية</button>
+                {% if search_query or current_type or current_status %}
+                <a href="{% url 'pricing:pricelist_list' %}" class="btn btn-ghost" style="color: var(--text-muted); margin-right: 0.5rem;">إلغاء</a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+
+    <!-- Hierarchy Visual Info -->
+    <div class="row g-3 mb-4" style="display: flex; gap: 1rem; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 280px; background: rgba(255, 115, 0, 0.08); border: 1px solid rgba(255, 115, 0, 0.35); border-radius: 10px; padding: 0.85rem 1.25rem;">
+            <div style="color: #ff7300; font-weight: 800; font-size: 0.95rem; margin-bottom: 0.25rem;">⭐ المستوى الأول (أولوية قصوى)</div>
+            <div style="color: var(--text-muted); font-size: 0.82rem;">قائمة العميل المباشرة: تطبق فوراً وتتجاوز أي سعر قطاع أو سعر عام للصنف.</div>
+        </div>
+        <div style="flex: 1; min-width: 280px; background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.35); border-radius: 10px; padding: 0.85rem 1.25rem;">
+            <div style="color: #00e5ff; font-weight: 800; font-size: 0.95rem; margin-bottom: 0.25rem;">🏢 المستوى الثاني (أولوية القطاع)</div>
+            <div style="color: var(--text-muted); font-size: 0.82rem;">قائمة قطاع العميل: تطبق إذا لم تكن للعميل قائمة مخصصة أو لم يكن الصنف مدرجاً بها.</div>
+        </div>
+        <div style="flex: 1; min-width: 280px; background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 10px; padding: 0.85rem 1.25rem;">
+            <div style="color: #94a3b8; font-weight: 800; font-size: 0.95rem; margin-bottom: 0.25rem;">📦 المستوى الثالث (الافتراضي)</div>
+            <div style="color: var(--text-muted); font-size: 0.82rem;">سعر بطاقة الصنف: يعتمد تلقائياً عند غياب أي قائمة أسعار خاصة.</div>
+        </div>
+    </div>
+
+    <!-- Price Lists Table -->
+    {% if pricelists %}
+    <div class="card p-0" style="background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; overflow: hidden;">
+        <div class="table-responsive">
+            <table class="data-table w-100" style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid var(--border-default);">
+                        <th style="padding: 1rem; text-align: right;">اسم القائمة</th>
+                        <th style="padding: 1rem; text-align: right;">نوع القائمة</th>
+                        <th style="padding: 1rem; text-align: right;">الجهة المرتبطة (عميل / قطاع)</th>
+                        <th style="padding: 1rem; text-align: center;">عدد الأصناف</th>
+                        <th style="padding: 1rem; text-align: center;">فترة السريان</th>
+                        <th style="padding: 1rem; text-align: center;">الحالة</th>
+                        <th style="padding: 1rem; text-align: center;">الإجراءات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pl in pricelists %}
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05); transition: background 0.2s;">
+                        <td style="padding: 1rem; font-weight: 700; color: #fff;">
+                            <a href="{% url 'pricing:pricelist_detail' pl.id %}" style="color: #fff; text-decoration: none; display: flex; align-items: center; gap: 0.5rem;" title="فتح تفاصيل القائمة وإدارة الأصناف">
+                                <span style="color: #ff7300;">🏷️</span>
+                                {{ pl.name }}
+                            </a>
+                            {% if pl.code %}
+                            <span style="font-family: monospace; font-size: 0.75rem; color: var(--text-muted);">[{{ pl.code }}]</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 1rem;">
+                            {% if pl.list_type == 'CUSTOMER' %}
+                            <span class="badge" style="background: rgba(255, 115, 0, 0.15); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.4); font-weight: bold; padding: 0.35rem 0.65rem; border-radius: 6px;">
+                                ⭐ عميل خاص
+                            </span>
+                            {% elif pl.list_type == 'SECTOR' %}
+                            <span class="badge" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4); font-weight: bold; padding: 0.35rem 0.65rem; border-radius: 6px;">
+                                🏢 قطاع
+                            </span>
+                            {% else %}
+                            <span class="badge" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; font-weight: bold; padding: 0.35rem 0.65rem; border-radius: 6px;">
+                                🌐 عامة
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 1rem; color: #fff;">
+                            {% if pl.list_type == 'CUSTOMER' and pl.partner %}
+                            <span style="color: #00e5ff; font-weight: 600;">👤 {{ pl.partner.name }}</span>
+                            {% elif pl.list_type == 'SECTOR' and pl.sector %}
+                            <span style="color: var(--neon-cyan); font-weight: 600;">🏢 {{ pl.sector.name }}</span>
+                            {% else %}
+                            <span style="color: var(--text-muted);">-</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 1rem; text-align: center;">
+                            <span class="badge" style="background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; font-size: 0.85rem; padding: 0.35rem 0.75rem; border-radius: 6px;">
+                                📦 {{ pl.items_count }} صنف
+                            </span>
+                        </td>
+                        <td style="padding: 1rem; text-align: center; font-size: 0.85rem; color: var(--text-muted);">
+                            {% if pl.start_date or pl.end_date %}
+                            <div>{{ pl.start_date|date:"Y-m-d"|default:"مفتوح" }} ➔ {{ pl.end_date|date:"Y-m-d"|default:"مفتوح" }}</div>
+                            {% else %}
+                            <span>سارية دائماً</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 1rem; text-align: center;">
+                            {% if pl.is_active %}
+                            <span class="badge" style="background: rgba(43, 255, 107, 0.15); color: var(--neon-green); padding: 0.35rem 0.65rem; border-radius: 6px;">نشطة</span>
+                            {% else %}
+                            <span class="badge" style="background: rgba(255, 43, 43, 0.15); color: var(--neon-red); padding: 0.35rem 0.65rem; border-radius: 6px;">معطلة</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 1rem; text-align: center; white-space: nowrap;">
+                            <a href="{% url 'pricing:pricelist_detail' pl.id %}" class="btn btn-sm btn-orange" style="margin-left: 0.35rem; font-weight: bold;" title="إدارة بنود القائمة والأسعار">
+                                📝 إدارة البنود
+                            </a>
+                            <a href="{% url 'pricing:pricelist_edit' pl.id %}" class="btn btn-sm btn-ghost" style="color: var(--neon-cyan); margin-left: 0.35rem;" title="تعديل الإعدادات">
+                                ⚙️
+                            </a>
+                            <form method="POST" action="{% url 'pricing:pricelist_delete' pl.id %}" style="display: inline-block;" onsubmit="return confirm('هل أنت متأكد من رغبتك في حذف هذه القائمة وكافة بنودها؟');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-ghost text-danger" style="color: var(--neon-red); border: none; background: transparent; cursor: pointer;">
+                                    🗑️
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if is_paginated %}
+        <div class="p-3 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; border-top: 1px solid var(--border-default);">
+            <span style="color: var(--text-muted); font-size: 0.85rem;">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+            <div style="display: flex; gap: 0.5rem;">
+                {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}&q={{ search_query }}&type={{ current_type }}&status={{ current_status }}" class="btn btn-sm btn-secondary">السابق</a>
+                {% endif %}
+                {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}&q={{ search_query }}&type={{ current_type }}&status={{ current_status }}" class="btn btn-sm btn-secondary">التالي</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="card p-5 text-center" style="background: var(--bg-secondary); border: 1px dashed var(--border-default); border-radius: 12px; margin-top: 1rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">🏷️</div>
+        <h3 style="color: #fff; margin-bottom: 0.5rem;">لا توجد قوائم أسعار مطابقة</h3>
+        <p style="color: var(--text-muted); max-width: 520px; margin: 0 auto 1.5rem auto;">
+            يمكنك إنشاء قوائم أسعار مخصصة لعملاء معينين (أولوية قصوى) أو لقطاعات كالجملة والمطاعم لتقديم أسعار وخصومات خاصة تلقائياً عند البيع.
+        </p>
+        <div>
+            <a href="{% url 'pricing:pricelist_create' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); font-weight: bold; padding: 0.6rem 2rem;">
+                ➕ إنشاء أول قائمة أسعار
+            </a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

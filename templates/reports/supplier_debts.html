@@ -20,8 +20,8 @@
             <input type="text" name="search_query" class="form-control" value="{{ search_query }}" placeholder="اكتب اسم المورد أو الهاتف...">
         </div>
         <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
-            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
-            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <button type="submit" class="btn btn-orange">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-orange" style="background-color: #ff7300; color: white; border: none; font-weight: bold; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير إكسيل</button>
             <a href="{% url 'core:report_supplier_debts' %}" class="btn btn-orange">إعادة ضبط</a>
         </div>
     </form>
@@ -69,8 +69,13 @@
                     <td style="color: var(--text-muted);">
                         {{ customer.tax_number|default:"-" }}
                     </td>
-                    <td style="text-align: left; font-weight: bold; font-size: 1.1rem; {% if customer.outstanding_balance > 0 %}color: var(--neon-red);{% elif customer.outstanding_balance < 0 %}color: var(--neon-green);{% else %}color: var(--text-muted);{% endif %}">
-                        {{ customer.outstanding_balance|floatformat:"-2" }}
+                    <td style="text-align: left; font-weight: bold; font-size: 1.1rem; {% if customer.supplier_balance > 0 %}color: var(--neon-red);{% elif customer.supplier_balance < 0 %}color: var(--neon-green);{% else %}color: var(--text-muted);{% endif %}">
+                        {{ customer.supplier_balance|floatformat:"-2" }}
+                        {% if customer.opening_balance > 0 %}
+                        <div style="font-size: 0.72rem; font-weight: normal; color: var(--text-muted); margin-top: 2px;">
+                            (منها رصيد أول: {{ customer.opening_balance|floatformat:"-2" }})
+                        </div>
+                        {% endif %}
                     </td>
                     <td style="text-align: center;">
                         <a href="{% url 'core:report_supplier_balances' %}?partner_id={{ customer.id }}" class="btn btn-sm btn-orange" style="font-size: 0.75rem; padding: 0.2rem 0.5rem;">
@@ -80,7 +85,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="5" style="text-align: center; padding: 2rem;">لا يوجد عملاء مطابقين للبحث</td>
+                    <td colspan="5" style="text-align: center; padding: 2rem;">لا يوجد موردين مطابقين للبحث</td>
                 </tr>
                 {% endfor %}
             </tbody>

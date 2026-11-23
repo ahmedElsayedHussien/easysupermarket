@@ -1,0 +1,759 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block extra_css %}
+<style>
+    /* Styling for Cheque Details & Tables */
+    .cheque-detail-wrapper {
+        padding: 1.5rem;
+    }
+    
+    .cheque-card {
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 1.4rem;
+        height: 100%;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+        backdrop-filter: blur(10px);
+    }
+    
+    .cheque-card.highlight-card {
+        border: 1.5px solid rgba(255, 115, 0, 0.45);
+        background: linear-gradient(145deg, rgba(20, 28, 48, 0.95), rgba(15, 23, 42, 0.85));
+        box-shadow: 0 0 25px rgba(255, 115, 0, 0.1);
+    }
+
+    .card-title-header {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #ffffff;
+        padding-bottom: 0.75rem;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .cheque-info-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    
+    .cheque-info-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px dashed rgba(255, 255, 255, 0.07);
+    }
+    .cheque-info-row:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+    
+    .info-label {
+        color: #94a3b8;
+        font-size: 0.88rem;
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+    }
+    
+    .info-value {
+        color: #ffffff;
+        font-weight: 600;
+        font-size: 0.92rem;
+        text-align: left;
+    }
+    
+    /* Dedicated Data Table Styling */
+    .cheque-section-container {
+        background: rgba(13, 20, 36, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1.75rem;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    
+    .cheque-section-container.cyan-border {
+        border-color: rgba(0, 229, 255, 0.25);
+    }
+    
+    .section-header-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.25rem;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+    }
+    
+    .section-title {
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+    }
+
+    .cheque-modern-table {
+        width: 100% !important;
+        border-collapse: separate;
+        border-spacing: 0;
+        min-width: 820px;
+    }
+
+    .cheque-modern-table thead th {
+        background: #0f172a !important;
+        color: #f8fafc !important;
+        font-size: 0.9rem;
+        font-weight: 700;
+        padding: 1rem 1.25rem !important;
+        text-align: right;
+        border-bottom: 2px solid #ff7300 !important;
+        white-space: nowrap;
+        letter-spacing: 0.3px;
+    }
+
+    .cheque-modern-table tbody td {
+        padding: 1.05rem 1.25rem !important;
+        color: #e2e8f0;
+        font-size: 0.92rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        vertical-align: middle;
+        text-align: right;
+        background: transparent;
+    }
+
+    .cheque-modern-table tbody tr:hover td {
+        background: rgba(255, 255, 255, 0.035);
+        color: #ffffff;
+    }
+
+    .cheque-modern-table .cell-center {
+        text-align: center !important;
+    }
+
+    .entry-badge {
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="glass-container cheque-detail-wrapper">
+    <!-- الهيدر وأزرار الإجراءات السريعة -->
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3 border-bottom pb-3" style="border-color: rgba(255,255,255,0.1) !important;">
+        <div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <h2 style="color: #fff; margin: 0; font-weight: 800;">
+                    <i class="fas fa-money-check text-warning me-2"></i> {{ title }}
+                </h2>
+                {% if cheque.cheque_type == 'RECEIVABLE' %}
+                    <span class="badge" style="background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #10b981; padding: 6px 14px; border-radius: 8px; font-size: 0.88rem;">
+                        <i class="fas fa-arrow-down me-1"></i> ورقة قبض (عميل)
+                    </span>
+                {% else %}
+                    <span class="badge" style="background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #ef4444; padding: 6px 14px; border-radius: 8px; font-size: 0.88rem;">
+                        <i class="fas fa-arrow-up me-1"></i> ورقة دفع (مورد)
+                    </span>
+                {% endif %}
+            </div>
+            <div class="text-white-50 mt-1 d-flex gap-3 align-items-center flex-wrap">
+                <span>رقم الشيك: <strong class="text-neon-cyan" style="font-family: monospace; font-size: 1rem;">#{{ cheque.cheque_number }}</strong></span>
+                <span>•</span>
+                <span>تاريخ الاستحقاق: <strong class="text-warning">{{ cheque.due_date|date:"Y-m-d" }}</strong></span>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="{% url 'accounting:cheque_list' %}" class="btn btn-outline-secondary" style="border-radius: 8px; font-weight: 600;">
+                <i class="fas fa-arrow-left"></i> العودة للقائمة
+            </a>
+
+            <!-- أزرار الإجراءات بحسب حالة الشيك -->
+            {% if cheque.cheque_type == 'RECEIVABLE' %}
+                {% if cheque.status == 'UNDER_COLLECTION' or cheque.status == 'IN_PORTFOLIO' %}
+                    <!-- شيك تحت التحصيل: تحصيل أو ارتداد -->
+                    <button type="button" class="btn" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 15px rgba(255,115,0,0.35); padding: 0.5rem 1.25rem;" onclick="openModal('collectModal')">
+                        <i class="fas fa-check-circle me-1"></i> تحصيل الشيك
+                    </button>
+                    <button type="button" class="btn btn-outline-danger" style="border-radius: 8px; font-weight: 600; padding: 0.5rem 1.1rem;" onclick="openModal('bounceModal')">
+                        <i class="fas fa-times-circle me-1"></i> إثبات ارتداد الشيك
+                    </button>
+                {% endif %}
+            {% else %}
+                {% if cheque.status == 'ISSUED' %}
+                    <!-- شيك محرر ومسلم لمورد: صرف أو إلغاء -->
+                    <button type="button" class="btn" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 15px rgba(255,115,0,0.35); padding: 0.5rem 1.25rem;" onclick="openModal('clearPayableModal')">
+                        <i class="fas fa-check-circle me-1"></i> تأكيد صرف الشيك من البنك
+                    </button>
+                    <button type="button" class="btn btn-outline-danger" style="border-radius: 8px; font-weight: 600; padding: 0.5rem 1.1rem;" onclick="openModal('cancelPayableModal')">
+                        <i class="fas fa-ban me-1"></i> إلغاء الشيك
+                    </button>
+                {% endif %}
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- بطاقات تفاصيل الشيك الأساسية -->
+    <div class="row g-3 mb-4">
+        <!-- كارت المبلغ والحالة -->
+        <div class="col-lg-4 col-md-6">
+            <div class="cheque-card highlight-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-white-50 small">المبلغ الإجمالي للشيك</span>
+                    <span class="badge" style="background: rgba(255,255,255,0.08); color: #cbd5e1; font-family: monospace;">#{{ cheque.cheque_number }}</span>
+                </div>
+                <h2 class="mb-3 fw-bold" style="color: #ff7300; letter-spacing: 0.5px;">
+                    {{ cheque.amount|floatformat:2 }} <small style="font-size: 1rem; color: #f8fafc;">ج.م</small>
+                </h2>
+                <div class="p-2 rounded-2 mb-3" style="background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.05);">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="text-white-50 small">الحالة الحالية:</span>
+                        <span class="badge fs-6" style="
+                            padding: 6px 12px; border-radius: 8px;
+                            {% if cheque.status == 'COLLECTED' or cheque.status == 'CLEARED' %}background: rgba(16,185,129,0.2); color: #10b981; border: 1px solid #10b981;
+                            {% elif cheque.status == 'BOUNCED' or cheque.status == 'CANCELLED' %}background: rgba(239,68,68,0.2); color: #ef4444; border: 1px solid #ef4444;
+                            {% else %}background: rgba(245,158,11,0.2); color: #f59e0b; border: 1px solid #f59e0b;{% endif %}">
+                            {{ cheque.get_status_display }}
+                        </span>
+                    </div>
+                </div>
+                <div class="small text-white-50 d-flex justify-content-between align-items-center">
+                    <span>الحساب الوسيط:</span>
+                    <strong style="color: #00e5ff;">
+                        {% if cheque.cheque_type == 'RECEIVABLE' %}1180 (أوراق قبض){% else %}2170 (أوراق دفع){% endif %}
+                    </strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- كارت التواريخ والأطراف -->
+        <div class="col-lg-4 col-md-6">
+            <div class="cheque-card">
+                <div class="card-title-header">
+                    <i class="fas fa-users text-info"></i> الأطراف وتواريخ الاستحقاق
+                </div>
+                <div class="cheque-info-list">
+                    <div class="cheque-info-row">
+                        <span class="info-label"><i class="fas fa-user-tie text-secondary"></i> الشريك:</span>
+                        <span class="info-value">{{ cheque.partner.name }}</span>
+                    </div>
+                    {% if cheque.payee_name %}
+                    <div class="cheque-info-row">
+                        <span class="info-label"><i class="fas fa-id-card text-secondary"></i> المستفيد:</span>
+                        <span class="info-value">{{ cheque.payee_name }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="cheque-info-row">
+                        <span class="info-label"><i class="fas fa-calendar-plus text-secondary"></i> الاستلام / التحرير:</span>
+                        <span class="info-value" dir="ltr">{{ cheque.received_date|date:"Y-m-d" }}</span>
+                    </div>
+                    <div class="cheque-info-row">
+                        <span class="info-label"><i class="fas fa-calendar-alt text-warning"></i> تاريخ الاستحقاق:</span>
+                        <span class="info-value text-warning fw-bold" dir="ltr">{{ cheque.due_date|date:"Y-m-d" }}</span>
+                    </div>
+                    {% if cheque.clearance_date %}
+                    <div class="cheque-info-row">
+                        <span class="info-label"><i class="fas fa-calendar-check text-success"></i> التحصيل / الصرف:</span>
+                        <span class="info-value text-success fw-bold" dir="ltr">{{ cheque.clearance_date|date:"Y-m-d" }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- كارت بيانات البنك والخزينة -->
+        <div class="col-lg-4 col-md-12">
+            <div class="cheque-card">
+                <div class="card-title-header">
+                    <i class="fas fa-university text-warning"></i> الحسابات البنكية ومكان الحفظ
+                </div>
+                <div class="cheque-info-list">
+                    {% if cheque.cheque_type == 'RECEIVABLE' %}
+                        <div class="cheque-info-row">
+                            <span class="info-label"><i class="fas fa-bank text-secondary"></i> بنك العميل:</span>
+                            <span class="info-value">{{ cheque.drawer_bank_name|default:'غير محدد' }}</span>
+                        </div>
+                        {% if cheque.drawer_branch %}
+                        <div class="cheque-info-row">
+                            <span class="info-label"><i class="fas fa-code-branch text-secondary"></i> فرع البنك:</span>
+                            <span class="info-value">{{ cheque.drawer_branch }}</span>
+                        </div>
+                        {% endif %}
+                        {% if cheque.treasury %}
+                        <div class="cheque-info-row">
+                            <span class="info-label"><i class="fas fa-vault text-info"></i> خزينة الحفظ:</span>
+                            <span class="info-value text-neon-cyan">{{ cheque.treasury.name }}</span>
+                        </div>
+                        {% endif %}
+                        {% if cheque.collecting_bank %}
+                        <div class="cheque-info-row">
+                            <span class="info-label"><i class="fas fa-building-columns text-success"></i> بنك التحصيل:</span>
+                            <span class="info-value text-success">{{ cheque.collecting_bank.name }}</span>
+                        </div>
+                        {% endif %}
+                        {% if cheque.bank_fee > 0 %}
+                        <div class="cheque-info-row">
+                            <span class="info-label"><i class="fas fa-receipt text-danger"></i> عمولة التحصيل:</span>
+                            <span class="info-value text-danger">{{ cheque.bank_fee|floatformat:2 }} ج.م</span>
+                        </div>
+                        {% endif %}
+                    {% else %}
+                        <div class="cheque-info-row">
+                            <span class="info-label"><i class="fas fa-university text-secondary"></i> حساب بنك الشركة:</span>
+                            <span class="info-value text-white">{{ cheque.bank_account.name }}</span>
+                        </div>
+                        {% if cheque.cheque_book %}
+                        <div class="cheque-info-row">
+                            <span class="info-label"><i class="fas fa-book text-info"></i> دفتر الشيكات:</span>
+                            <span class="info-value text-neon-cyan">{{ cheque.cheque_book.book_number }}</span>
+                        </div>
+                        {% endif %}
+                    {% endif %}
+                    {% if cheque.bounce_reason %}
+                    <div class="p-2 rounded-2 mt-2" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3);">
+                        <span class="small text-danger d-block"><strong>سبب الارتداد:</strong> {{ cheque.bounce_reason }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- القيود المحاسبية التلقائية المرتبطة بالشيك -->
+    <div class="cheque-section-container cyan-border">
+        <div class="section-header-bar">
+            <h5 class="section-title text-neon-cyan">
+                <i class="fas fa-book-open text-warning"></i> القيود المحاسبية الآلية المرتبطة بمراحل الشيك
+            </h5>
+            <span class="badge" style="background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.3); color: #00e5ff; font-size: 0.8rem; padding: 6px 14px; border-radius: 20px;">
+                <i class="fas fa-shield-alt me-1"></i> قيود نظامية تلقائية
+            </span>
+        </div>
+        
+        <div class="table-responsive">
+            <table class="cheque-modern-table">
+                <thead>
+                    <tr>
+                        <th style="width: 22%;">المرحلة المحاسبية</th>
+                        <th style="width: 18%;">رقم القيد والمرجع</th>
+                        <th style="width: 14%;">التاريخ</th>
+                        <th style="width: 30%;">البيان المحاسبي</th>
+                        <th style="width: 8%;" class="cell-center">الحالة</th>
+                        <th style="width: 8%;" class="cell-center">تفاصيل</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- قيد الاستلام / التحرير -->
+                    {% if cheque.entry_receive_issue %}
+                    <tr>
+                        <td>
+                            <span class="entry-badge" style="background: rgba(14, 165, 233, 0.15); border: 1px solid #0ea5e9; color: #38bdf8;">
+                                <i class="fas fa-receipt me-1"></i> 1. الاستلام / التحرير
+                            </span>
+                        </td>
+                        <td>
+                            <strong style="color: #00e5ff; font-family: monospace; font-size: 0.95rem;">
+                                {{ cheque.entry_receive_issue.reference }}
+                            </strong>
+                        </td>
+                        <td dir="ltr" style="font-family: monospace; color: #94a3b8;">
+                            {{ cheque.entry_receive_issue.date|date:"Y-m-d" }}
+                        </td>
+                        <td class="text-white-50">
+                            {{ cheque.entry_receive_issue.description }}
+                        </td>
+                        <td class="cell-center">
+                            <span class="badge bg-success" style="padding: 5px 10px; border-radius: 6px;">مرحل</span>
+                        </td>
+                        <td class="cell-center">
+                            <a href="{% url 'accounting:journal_detail' cheque.entry_receive_issue.pk %}" target="_blank" class="btn btn-sm btn-outline-info" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 6px;">
+                                <i class="fas fa-external-link-alt me-1"></i> عرض
+                            </a>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- قيد التحصيل الفعلي / الصرف -->
+                    {% if cheque.entry_clearance %}
+                    <tr>
+                        <td>
+                            <span class="entry-badge" style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #10b981;">
+                                <i class="fas fa-check-double me-1"></i> 2. التحصيل / الصرف الفعلي
+                            </span>
+                        </td>
+                        <td>
+                            <strong style="color: #00e5ff; font-family: monospace; font-size: 0.95rem;">
+                                {{ cheque.entry_clearance.reference }}
+                            </strong>
+                        </td>
+                        <td dir="ltr" style="font-family: monospace; color: #94a3b8;">
+                            {{ cheque.entry_clearance.date|date:"Y-m-d" }}
+                        </td>
+                        <td class="text-white-50">
+                            {{ cheque.entry_clearance.description }}
+                        </td>
+                        <td class="cell-center">
+                            <span class="badge bg-success" style="padding: 5px 10px; border-radius: 6px;">مرحل</span>
+                        </td>
+                        <td class="cell-center">
+                            <a href="{% url 'accounting:journal_detail' cheque.entry_clearance.pk %}" target="_blank" class="btn btn-sm btn-outline-info" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 6px;">
+                                <i class="fas fa-external-link-alt me-1"></i> عرض
+                            </a>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- قيد الارتداد -->
+                    {% if cheque.entry_bounce %}
+                    <tr>
+                        <td>
+                            <span class="entry-badge" style="background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #ef4444;">
+                                <i class="fas fa-undo-alt me-1"></i> ارتداد / رفض الشيك
+                            </span>
+                        </td>
+                        <td>
+                            <strong style="color: #ff4757; font-family: monospace; font-size: 0.95rem;">
+                                {{ cheque.entry_bounce.reference }}
+                            </strong>
+                        </td>
+                        <td dir="ltr" style="font-family: monospace; color: #94a3b8;">
+                            {{ cheque.entry_bounce.date|date:"Y-m-d" }}
+                        </td>
+                        <td class="text-white-50">
+                            {{ cheque.entry_bounce.description }}
+                        </td>
+                        <td class="cell-center">
+                            <span class="badge bg-success" style="padding: 5px 10px; border-radius: 6px;">مرحل</span>
+                        </td>
+                        <td class="cell-center">
+                            <a href="{% url 'accounting:journal_detail' cheque.entry_bounce.pk %}" target="_blank" class="btn btn-sm btn-outline-info" style="padding: 4px 10px; font-size: 0.8rem; border-radius: 6px;">
+                                <i class="fas fa-external-link-alt me-1"></i> عرض
+                            </a>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    {% if not cheque.entry_receive_issue and not cheque.entry_clearance and not cheque.entry_bounce %}
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-white-50">
+                            <i class="fas fa-info-circle me-1"></i> لا توجد قيود محاسبية مسجلة لهذا الشيك حتى الآن.
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- سجل الحركات والتدقيق (Audit Trail) -->
+    <div class="cheque-section-container">
+        <div class="section-header-bar">
+            <h5 class="section-title text-white">
+                <i class="fas fa-history text-warning"></i> سجل حركات وتاريخ الشيك (Audit Trail)
+            </h5>
+            <span class="badge" style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; font-size: 0.8rem; padding: 6px 14px; border-radius: 20px;">
+                <i class="fas fa-fingerprint me-1"></i> تتبع وسجل العمليات
+            </span>
+        </div>
+
+        <div class="table-responsive">
+            <table class="cheque-modern-table">
+                <thead>
+                    <tr>
+                        <th style="width: 20%;">الإجراء</th>
+                        <th style="width: 14%;">من حالة</th>
+                        <th style="width: 14%;">إلى حالة</th>
+                        <th style="width: 15%;">المستخدم المسؤول</th>
+                        <th style="width: 17%;">التاريخ والوقت</th>
+                        <th style="width: 20%;">الملاحظات والبيان</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in action_logs %}
+                    <tr>
+                        <td>
+                            <strong style="color: #00e5ff;">
+                                <i class="fas fa-circle me-1" style="font-size: 0.5rem; vertical-align: middle;"></i> {{ log.action }}
+                            </strong>
+                        </td>
+                        <td>
+                            <span class="badge" style="
+                                padding: 6px 12px; border-radius: 6px; font-size: 0.82rem;
+                                {% if log.from_status == 'COLLECTED' or log.from_status == 'CLEARED' %}background: rgba(16,185,129,0.15); border: 1px solid #10b981; color: #10b981;
+                                {% elif log.from_status == 'BOUNCED' or log.from_status == 'CANCELLED' %}background: rgba(239,68,68,0.15); border: 1px solid #ef4444; color: #ef4444;
+                                {% elif log.from_status == 'UNDER_COLLECTION' or log.from_status == 'IN_PORTFOLIO' %}background: rgba(0,229,255,0.12); border: 1px solid #00e5ff; color: #00e5ff;
+                                {% elif log.from_status == 'ISSUED' %}background: rgba(245,158,11,0.15); border: 1px solid #f59e0b; color: #f59e0b;
+                                {% else %}background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(148, 163, 184, 0.3); color: #94a3b8;{% endif %}">
+                                {{ log.get_from_status_display|default:log.from_status_display|default:'-' }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge" style="
+                                padding: 6px 12px; border-radius: 6px; font-size: 0.82rem;
+                                {% if log.to_status == 'COLLECTED' or log.to_status == 'CLEARED' %}background: rgba(16,185,129,0.15); border: 1px solid #10b981; color: #10b981;
+                                {% elif log.to_status == 'BOUNCED' or log.to_status == 'CANCELLED' %}background: rgba(239,68,68,0.15); border: 1px solid #ef4444; color: #ef4444;
+                                {% elif log.to_status == 'UNDER_COLLECTION' or log.to_status == 'IN_PORTFOLIO' %}background: rgba(0,229,255,0.12); border: 1px solid #00e5ff; color: #00e5ff;
+                                {% elif log.to_status == 'ISSUED' %}background: rgba(245,158,11,0.15); border: 1px solid #f59e0b; color: #f59e0b;
+                                {% else %}background: rgba(255, 115, 0, 0.15); border: 1px solid rgba(255, 115, 0, 0.3); color: #ff7300;{% endif %}">
+                                {{ log.get_to_status_display|default:log.to_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <span style="color: #f1f5f9;">
+                                <i class="fas fa-user text-secondary me-1"></i> {{ log.user.username|default:'النظام' }}
+                            </span>
+                        </td>
+                        <td dir="ltr" style="font-family: monospace; color: #94a3b8;">
+                            {{ log.created_at|date:"Y-m-d H:i" }}
+                        </td>
+                        <td class="text-white-50">
+                            {{ log.notes|default:'-' }}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center text-white-50 py-4">
+                            <i class="fas fa-info-circle me-1"></i> لا توجد حركات مسجلة حتى الآن.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- مرفق صورة الشيك إن وجد -->
+    {% if cheque.attachment %}
+    <div class="cheque-section-container">
+        <h5 class="section-title text-white mb-3">
+            <i class="fas fa-image text-info"></i> صورة الشيك المرفقة
+        </h5>
+        <div class="text-center p-3 rounded-3" style="background: rgba(0, 0, 0, 0.25); border: 1px dashed rgba(255,255,255,0.15);">
+            <a href="{{ cheque.attachment.url }}" target="_blank">
+                <img src="{{ cheque.attachment.url }}" alt="صورة الشيك" style="max-height: 420px; max-width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 8px 30px rgba(0,0,0,0.5); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
+            </a>
+            <div class="mt-2 text-white-50 small">انقر على الصورة لفتحها بالحجم الكامل في نافذة جديدة</div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- =========================================================================
+     MODALS للإجراءات المباشرة (تحصيل / ارتداد / صرف / إلغاء)
+     تظهر فقط إذا كانت حالة الشيك تتطلب إجراء (غير منتهي)
+     ========================================================================= -->
+
+{% if cheque.cheque_type == 'RECEIVABLE' and cheque.status == 'UNDER_COLLECTION' or cheque.cheque_type == 'RECEIVABLE' and cheque.status == 'IN_PORTFOLIO' %}
+<!-- Modal 1: تأكيد التحصيل الفعلي (بنك أو خزينة) -->
+<div id="collectModal" class="custom-modal-backdrop" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(5px); align-items: center; justify-content: center; padding: 1rem;">
+    <div style="background: linear-gradient(145deg, #0f1923, #1a2535); border: 1px solid rgba(255, 115, 0, 0.35); border-radius: 16px; width: 560px; max-width: 95vw; box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8); overflow: hidden;">
+        <form method="post" action="{% url 'accounting:cheque_collect' cheque.pk %}">
+            {% csrf_token %}
+            <div style="padding: 16px 22px; border-bottom: 1px solid rgba(255, 115, 0, 0.2); display: flex; justify-content: space-between; align-items: center; background: rgba(255, 115, 0, 0.06);">
+                <h5 style="margin: 0; color: #ff7300; font-weight: 700; font-size: 1.1rem;">
+                    <i class="fas fa-check-circle me-2"></i> تحصيل الشيك وإقفال الحساب الوسيط
+                </h5>
+                <button type="button" onclick="closeModal('collectModal')" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 1.2rem; display: flex; align-items: center; justify-content: center;">&times;</button>
+            </div>
+            <div style="padding: 20px 24px;">
+                <p class="text-white-50 small mb-3">
+                    سيتم إقفال الحساب الوسيط (أوراق قبض 1180) وإيداع المبلغ الصافي في الحساب المختار بالقيد المحاسبي.
+                </p>
+                
+                <div class="mb-3">
+                    <label class="form-label text-neon-blue">{{ collect_form.destination_type.label }}</label>
+                    {{ collect_form.destination_type }}
+                </div>
+
+                <div class="mb-3" id="wrap_collect_bank">
+                    <label class="form-label text-neon-blue">{{ collect_form.bank_account.label }}</label>
+                    {{ collect_form.bank_account }}
+                </div>
+
+                <div class="mb-3" id="wrap_collect_treasury" style="display: none;">
+                    <label class="form-label text-neon-blue">{{ collect_form.treasury.label }}</label>
+                    {{ collect_form.treasury }}
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label text-neon-blue">{{ collect_form.clearance_date.label }}</label>
+                    {{ collect_form.clearance_date }}
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label text-neon-blue">{{ collect_form.bank_fee.label }}</label>
+                    {{ collect_form.bank_fee }}
+                    <small class="text-white-50 d-block mt-1">تُقيد كمصروف بنكي (5300) وتُخصم من الصافي المودع بالبنك.</small>
+                </div>
+            </div>
+            <div style="padding: 14px 24px; border-top: 1px solid rgba(255, 255, 255, 0.08); background: rgba(0, 0, 0, 0.2); display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button type="button" class="btn btn-outline-secondary" onclick="closeModal('collectModal')">إلغاء</button>
+                <button type="submit" class="btn" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; box-shadow: 0 4px 15px rgba(255,115,0,0.35);">
+                    <i class="fas fa-check me-1"></i> تأكيد التحصيل والإيداع
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal 2: إثبات ارتداد / رفض الشيك -->
+<div id="bounceModal" class="custom-modal-backdrop" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(5px); align-items: center; justify-content: center; padding: 1rem;">
+    <div style="background: linear-gradient(145deg, #0f1923, #1a2535); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 16px; width: 560px; max-width: 95vw; box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8); overflow: hidden;">
+        <form method="post" action="{% url 'accounting:cheque_bounce' cheque.pk %}">
+            {% csrf_token %}
+            <div style="padding: 16px 22px; border-bottom: 1px solid rgba(239, 68, 68, 0.2); display: flex; justify-content: space-between; align-items: center; background: rgba(239, 68, 68, 0.06);">
+                <h5 style="margin: 0; color: #ef4444; font-weight: 700; font-size: 1.1rem;">
+                    <i class="fas fa-undo-alt me-2"></i> إثبات ارتداد الشيك وإعادة مديونية العميل
+                </h5>
+                <button type="button" onclick="closeModal('bounceModal')" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 1.2rem; display: flex; align-items: center; justify-content: center;">&times;</button>
+            </div>
+            <div style="padding: 20px 24px;">
+                <p class="text-white-50 small mb-3">
+                    سيتم إلغاء الحساب الوسيط وعكس القيد لإعادة مديونية العميل <strong>{{ cheque.partner.name }}</strong> بمبلغ الشيك.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label text-neon-blue">{{ bounce_form.bounce_date.label }}</label>
+                    {{ bounce_form.bounce_date }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-neon-blue">{{ bounce_form.bounce_reason.label }}</label>
+                    {{ bounce_form.bounce_reason }}
+                </div>
+            </div>
+            <div style="padding: 14px 24px; border-top: 1px solid rgba(255, 255, 255, 0.08); background: rgba(0, 0, 0, 0.2); display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button type="button" class="btn btn-outline-secondary" onclick="closeModal('bounceModal')">إلغاء</button>
+                <button type="submit" class="btn btn-danger fw-bold">
+                    <i class="fas fa-times-circle me-1"></i> تسجيل ارتداد الشيك
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% elif cheque.cheque_type == 'PAYABLE' and cheque.status == 'ISSUED' %}
+<!-- Modal 3: تأكيد خصم وصرف شيك الدفع من البنك -->
+<div id="clearPayableModal" class="custom-modal-backdrop" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(5px); align-items: center; justify-content: center; padding: 1rem;">
+    <div style="background: linear-gradient(145deg, #0f1923, #1a2535); border: 1px solid rgba(255, 115, 0, 0.35); border-radius: 16px; width: 560px; max-width: 95vw; box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8); overflow: hidden;">
+        <form method="post" action="{% url 'accounting:cheque_clear_payable' cheque.pk %}">
+            {% csrf_token %}
+            <div style="padding: 16px 22px; border-bottom: 1px solid rgba(255, 115, 0, 0.2); display: flex; justify-content: space-between; align-items: center; background: rgba(255, 115, 0, 0.06);">
+                <h5 style="margin: 0; color: #ff7300; font-weight: 700; font-size: 1.1rem;">
+                    <i class="fas fa-check-circle me-2"></i> صرف الشيك وخصمه من رصيد البنك
+                </h5>
+                <button type="button" onclick="closeModal('clearPayableModal')" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 1.2rem; display: flex; align-items: center; justify-content: center;">&times;</button>
+            </div>
+            <div style="padding: 20px 24px;">
+                <p class="text-white-50 small mb-3">
+                    سيتم خصم مبلغ الشيك فعلياً من حساب <strong>{{ cheque.bank_account.name }}</strong> وإقفال الحساب الوسيط (أوراق دفع 2170).
+                </p>
+                <div class="mb-3">
+                    <label class="form-label text-neon-blue">{{ clear_payable_form.clearance_date.label }}</label>
+                    {{ clear_payable_form.clearance_date }}
+                </div>
+            </div>
+            <div style="padding: 14px 24px; border-top: 1px solid rgba(255, 255, 255, 0.08); background: rgba(0, 0, 0, 0.2); display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button type="button" class="btn btn-outline-secondary" onclick="closeModal('clearPayableModal')">إلغاء</button>
+                <button type="submit" class="btn" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; box-shadow: 0 4px 15px rgba(255,115,0,0.35);">
+                    <i class="fas fa-check me-1"></i> تأكيد الخصم من البنك
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal 4: إلغاء شيك الدفع -->
+<div id="cancelPayableModal" class="custom-modal-backdrop" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(5px); align-items: center; justify-content: center; padding: 1rem;">
+    <div style="background: linear-gradient(145deg, #0f1923, #1a2535); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 16px; width: 560px; max-width: 95vw; box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8); overflow: hidden;">
+        <form method="post" action="{% url 'accounting:cheque_cancel_payable' cheque.pk %}">
+            {% csrf_token %}
+            <div style="padding: 16px 22px; border-bottom: 1px solid rgba(239, 68, 68, 0.2); display: flex; justify-content: space-between; align-items: center; background: rgba(239, 68, 68, 0.06);">
+                <h5 style="margin: 0; color: #ef4444; font-weight: 700; font-size: 1.1rem;">
+                    <i class="fas fa-ban me-2"></i> إلغاء شيك الدفع وإعادة مديونية المورد
+                </h5>
+                <button type="button" onclick="closeModal('cancelPayableModal')" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #94a3b8; width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 1.2rem; display: flex; align-items: center; justify-content: center;">&times;</button>
+            </div>
+            <div style="padding: 20px 24px;">
+                <p class="text-white-50 small mb-3">
+                    سيتم إلغاء ورقة الدفع الوسيطة وإعادة إثبات مستحقات المورد <strong>{{ cheque.partner.name }}</strong>.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label text-neon-blue">{{ cancel_payable_form.cancel_reason.label }}</label>
+                    {{ cancel_payable_form.cancel_reason }}
+                </div>
+            </div>
+            <div style="padding: 14px 24px; border-top: 1px solid rgba(255, 255, 255, 0.08); background: rgba(0, 0, 0, 0.2); display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button type="button" class="btn btn-outline-secondary" onclick="closeModal('cancelPayableModal')">إلغاء</button>
+                <button type="submit" class="btn btn-danger fw-bold">
+                    <i class="fas fa-ban me-1"></i> تأكيد إلغاء الشيك
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function openModal(modalId) {
+    var m = document.getElementById(modalId);
+    if (m) {
+        m.style.display = 'flex';
+    }
+}
+
+function closeModal(modalId) {
+    var m = document.getElementById(modalId);
+    if (m) {
+        m.style.display = 'none';
+    }
+}
+
+// Close on clicking backdrop
+window.addEventListener('click', function(e) {
+    if (e.target && e.target.classList && e.target.classList.contains('custom-modal-backdrop')) {
+        e.target.style.display = 'none';
+    }
+});
+
+// Close on Escape key
+window.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.custom-modal-backdrop').forEach(function(el) {
+            el.style.display = 'none';
+        });
+    }
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    var destTypeSelect = document.getElementById('id_collect_dest_type');
+    var bankWrap = document.getElementById('wrap_collect_bank');
+    var treasuryWrap = document.getElementById('wrap_collect_treasury');
+    function updateDestDisplay() {
+        if (!destTypeSelect) return;
+        if (destTypeSelect.value === 'BANK') {
+            if (bankWrap) bankWrap.style.display = 'block';
+            if (treasuryWrap) treasuryWrap.style.display = 'none';
+        } else {
+            if (bankWrap) bankWrap.style.display = 'none';
+            if (treasuryWrap) treasuryWrap.style.display = 'block';
+        }
+    }
+    if (destTypeSelect) {
+        destTypeSelect.addEventListener('change', updateDestDisplay);
+        updateDestDisplay();
+    }
+});
+</script>
+{% endblock %}

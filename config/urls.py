@@ -2,12 +2,17 @@
 EasySupermarket - URL Configuration
 Root URL dispatcher for the tenant-aware Django project.
 """
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.auth import views as auth_views
+from django.views.generic.base import RedirectView
 
 urlpatterns = [
+    # Favicon and Logo Direct / Relative Fallback Handlers
+    re_path(r'^(?:.*/)?favicon\.ico$', RedirectView.as_view(url='/static/img/favicon.ico', permanent=False)),
+    re_path(r'^(?:.*/)?logo\.(?:png|jpg)$', RedirectView.as_view(url='/static/img/logo.png', permanent=False)),
+
     # Core / Dashboard
     path('', include('apps.tenant.core.urls')),
 
@@ -19,6 +24,9 @@ urlpatterns = [
 
     # Partners (suppliers & customers)
     path('partners/', include('apps.tenant.partners.urls')),
+
+    # Pricing (price lists & customer sectors)
+    path('pricing/', include('apps.tenant.pricing.urls')),
 
     # Accounting (journal, CoA, reports)
     path('accounting/', include('apps.tenant.accounting.urls')),

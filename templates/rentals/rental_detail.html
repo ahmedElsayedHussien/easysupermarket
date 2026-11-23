@@ -78,7 +78,9 @@
                     <td class="text-muted small">{{ rental.accrual_journal_entry.description|truncatechars:50 }}</td>
                     <td class="text-end text-neon-green small">{{ rental.total_amount }} ج.م</td>
                     <td class="text-end">
+                        {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
                         <a href="{% url 'accounting:journal_detail' rental.accrual_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endif %}
@@ -89,7 +91,9 @@
                     <td class="text-muted small">{{ rental.payment_journal_entry.description|truncatechars:50 }}</td>
                     <td class="text-end text-neon-blue small">{{ rental.total_amount }} ج.م</td>
                     <td class="text-end">
+                        {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
                         <a href="{% url 'accounting:journal_detail' rental.payment_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endif %}
@@ -100,7 +104,9 @@
                     <td class="text-muted small">{{ rental.penalty_journal_entry.description|truncatechars:50 }}</td>
                     <td class="text-end text-neon-pink small">{{ rental.penalty_amount }} ج.م</td>
                     <td class="text-end">
+                        {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
                         <a href="{% url 'accounting:journal_detail' rental.penalty_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endif %}
@@ -111,7 +117,9 @@
                     <td class="text-muted small">{{ rental.refund_journal_entry.description|truncatechars:50 }}</td>
                     <td class="text-end text-neon-gold small">{{ rental.refund_amount }} ج.م</td>
                     <td class="text-end">
+                        {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
                         <a href="{% url 'accounting:journal_detail' rental.refund_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endif %}
@@ -123,7 +131,9 @@
                     <td class="text-muted small">{{ rental.settlement_journal_entry.description|truncatechars:50 }}</td>
                     <td class="text-end text-white small">صافي الإرجاع</td>
                     <td class="text-end">
+                        {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
                         <a href="{% url 'accounting:journal_detail' rental.settlement_journal_entry.pk %}" class="btn-action btn-sm" style="font-size:0.75rem;">عرض</a>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endwith %}

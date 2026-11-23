@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="max-width: 950px; margin: 0 auto; padding: 2.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 1rem;">
+        <h2 style="margin: 0; color: #fff;">
+            <i class="fas fa-exchange-alt text-gold" style="margin-left: 0.5rem;"></i> {{ title }}
+        </h2>
+        <a href="{{ cancel_url }}" class="btn-secondary" style="background: rgba(255,255,255,0.1); color: #fff; padding: 0.5rem 1.2rem; border-radius: 8px; text-decoration: none;">
+            <i class="fas fa-arrow-right"></i> إلغاء ورجوع
+        </a>
+    </div>
+
+    <!-- شريط ملخص الأرصدة الحالية في جميع الخزن والبنوك والمحافظ -->
+    <div class="mb-4 p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+        <div class="d-flex justify-content-between align-items-center mb-2 pb-1 border-bottom border-secondary border-opacity-25">
+            <span class="text-white fw-bold small">
+                <i class="fas fa-coins text-warning me-1"></i> الأرصدة المتوفرة حالياً في النظام
+            </span>
+            <span class="badge" style="background: rgba(255, 115, 0, 0.2); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.4);">
+                تحديث مباشر
+            </span>
+        </div>
+        <div class="row g-2">
+            {% for t in treasuries_list %}
+            <div class="col-md-4 col-sm-6">
+                <div class="p-2 rounded bg-dark-glass border border-secondary border-opacity-25 d-flex justify-content-between align-items-center">
+                    <span class="small text-white-50"><i class="fas fa-cash-register text-info me-1"></i> {{ t.name }}</span>
+                    <strong class="{% if t.current_balance >= 0 %}text-success{% else %}text-danger{% endif %} small">{{ t.current_balance|floatformat:2 }} ج.م</strong>
+                </div>
+            </div>
+            {% endfor %}
+            {% for b in banks_list %}
+            <div class="col-md-4 col-sm-6">
+                <div class="p-2 rounded bg-dark-glass border border-secondary border-opacity-25 d-flex justify-content-between align-items-center">
+                    <span class="small text-white-50"><i class="fas fa-university text-primary me-1"></i> {{ b.name }}</span>
+                    <strong class="{% if b.current_balance >= 0 %}text-success{% else %}text-danger{% endif %} small">{{ b.current_balance|floatformat:2 }} ج.م</strong>
+                </div>
+            </div>
+            {% endfor %}
+            {% for w in ewallets_list %}
+            <div class="col-md-4 col-sm-6">
+                <div class="p-2 rounded bg-dark-glass border border-secondary border-opacity-25 d-flex justify-content-between align-items-center">
+                    <span class="small text-white-50"><i class="fas fa-mobile-alt text-warning me-1"></i> {{ w.name }}</span>
+                    <strong class="{% if w.current_balance >= 0 %}text-success{% else %}text-danger{% endif %} small">{{ w.current_balance|floatformat:2 }} ج.م</strong>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <form method="post" id="transferForm" novalidate>
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+        <div class="alert alert-danger" style="background: rgba(220,53,69,0.2); border: 1px solid #dc3545; color: #ff6b6b; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+            {% for error in form.non_field_errors %}
+                <p style="margin: 0;"><i class="fas fa-exclamation-triangle"></i> {{ error }}</p>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+            <div class="form-group">
+                <label style="color: #fff; font-weight: bold; margin-bottom: 0.5rem; display: block;">التاريخ *</label>
+                {{ form.date }}
+                {% if form.date.errors %}
+                    <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.date.errors.0 }}</span>
+                {% endif %}
+            </div>
+
+            <div class="form-group">
+                <label style="color: #fff; font-weight: bold; margin-bottom: 0.5rem; display: block;">مبلغ التحويل (ج.م) *</label>
+                {{ form.amount }}
+                {% if form.amount.errors %}
+                    <span style="color: #ff6b6b; font-size: 0.85rem; display: block; margin-top: 0.3rem;">{{ form.amount.errors.0 }}</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; background: rgba(0,0,0,0.2); padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; border: 1px solid rgba(255,255,255,0.05);">
+            <!-- Source Side -->
+            <div>
+                <h4 style="color: #00e5ff; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid rgba(0,229,255,0.2); padding-bottom: 0.5rem;">
+                    <i class="fas fa-sign-out-alt"></i> الجهة المحول منها (المصدر)
+                </h4>
+                
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="color: #ddd; font-size: 0.9rem; margin-bottom: 0.3rem; display: block;">نوع الحساب المصدر *</label>
+                    {{ form.from_account_type }}
+                    {% if form.from_account_type.errors %}
+                        <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.from_account_type.errors.0 }}</span>
+                    {% endif %}
+                </div>
+
+                <div class="form-group source-field" id="div_from_treasury" style="margin-bottom: 1rem;">
+                    <label style="color: #ddd; font-size: 0.9rem; margin-bottom: 0.3rem; display: block;">اختر الخزينة المصدر *</label>
+                    {{ form.from_treasury }}
+                    {% if form.from_treasury.errors %}
+                        <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.from_treasury.errors.0 }}</span>
+                    {% endif %}
+                </div>
+
+                <div class="form-group source-field" id="div_from_bank_account" style="margin-bottom: 1rem; display: none;">
+                    <label style="color: #ddd; font-size: 0.9rem; margin-bottom: 0.3rem; display: block;">اختر الحساب البنكي المصدر *</label>
+                    {{ form.from_bank_account }}
+                    {% if form.from_bank_account.errors %}
+                        <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.from_bank_account.errors.0 }}</span>
+                    {% endif %}
+                </div>
+
+                <div class="form-group source-field" id="div_from_ewallet" style="margin-bottom: 1rem; display: none;">
+                    <label style="color: #ddd; font-size: 0.9rem; margin-bottom: 0.3rem; display: block;">اختر المحفظة الإلكترونية المصدر *</label>
+                    {{ form.from_ewallet }}
+                    {% if form.from_ewallet.errors %}
+                        <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.from_ewallet.errors.0 }}</span>
+                    {% endif %}
+                </div>
+
+                <!-- Source Live Balance Card -->
+                <div id="from_balance_card" class="mt-3 p-3 rounded-3" style="background: rgba(15, 23, 42, 0.85); border: 1.5px solid rgba(0, 229, 255, 0.4); box-shadow: 0 4px 15px rgba(0, 229, 255, 0.1); display: none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2 pb-1 border-bottom border-secondary border-opacity-25">
+                        <span class="small text-white-50"><i class="fas fa-wallet text-info me-1"></i> الحساب المحدد:</span>
+                        <strong id="from_account_name" class="text-white small">-</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="small text-white-50">الرصيد المتاح حالياً:</span>
+                        <strong id="from_current_balance" class="fs-6">-</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center border-top border-secondary border-opacity-25 pt-1 mt-1">
+                        <span class="small text-white-50">الرصيد المتوقع بعد الخصم:</span>
+                        <strong id="from_after_balance" class="fs-6">-</strong>
+                    </div>
+                    <div id="from_warning" class="alert alert-danger py-1 px-2 mt-2 mb-0 small" style="display: none; background: rgba(220, 53, 69, 0.25); border: 1px solid #dc3545; color: #ff8585;">
+                        <i class="fas fa-exclamation-triangle me-1"></i> <span id="from_warning_text">رصيد الحساب غير كافٍ لمبلغ التحويل المطلوب!</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Destination Side -->
+            <div>
+                <h4 style="color: #28a745; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid rgba(40,167,69,0.2); padding-bottom: 0.5rem;">
+                    <i class="fas fa-sign-in-alt"></i> الجهة المحول إليها (الوجهة)
+                </h4>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="color: #ddd; font-size: 0.9rem; margin-bottom: 0.3rem; display: block;">نوع الحساب الوجهة *</label>
+                    {{ form.to_account_type }}
+                    {% if form.to_account_type.errors %}
+                        <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.to_account_type.errors.0 }}</span>
+                    {% endif %}
+                </div>
+
+                <div class="form-group dest-field" id="div_to_treasury" style="margin-bottom: 1rem;">
+                    <label style="color: #ddd; font-size: 0.9rem; margin-bottom: 0.3rem; display: block;">اختر الخزينة الوجهة *</label>
+                    {{ form.to_treasury }}
+                    {% if form.to_treasury.errors %}
+                        <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.to_treasury.errors.0 }}</span>
+                    {% endif %}
+                </div>
+
+                <div class="form-group dest-field" id="div_to_bank_account" style="margin-bottom: 1rem; display: none;">
+                    <label style="color: #ddd; font-size: 0.9rem; margin-bottom: 0.3rem; display: block;">اختر الحساب البنكي الوجهة *</label>
+                    {{ form.to_bank_account }}
+                    {% if form.to_bank_account.errors %}
+                        <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.to_bank_account.errors.0 }}</span>
+                    {% endif %}
+                </div>
+
+                <div class="form-group dest-field" id="div_to_ewallet" style="margin-bottom: 1rem; display: none;">
+                    <label style="color: #ddd; font-size: 0.9rem; margin-bottom: 0.3rem; display: block;">اختر المحفظة الإلكترونية الوجهة *</label>
+                    {{ form.to_ewallet }}
+                    {% if form.to_ewallet.errors %}
+                        <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.to_ewallet.errors.0 }}</span>
+                    {% endif %}
+                </div>
+
+                <!-- Destination Live Balance Card -->
+                <div id="to_balance_card" class="mt-3 p-3 rounded-3" style="background: rgba(15, 23, 42, 0.85); border: 1.5px solid rgba(40, 167, 69, 0.4); box-shadow: 0 4px 15px rgba(40, 167, 69, 0.1); display: none;">
+                    <div class="d-flex justify-content-between align-items-center mb-2 pb-1 border-bottom border-secondary border-opacity-25">
+                        <span class="small text-white-50"><i class="fas fa-sign-in-alt text-success me-1"></i> الحساب المحدد:</span>
+                        <strong id="to_account_name" class="text-white small">-</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="small text-white-50">الرصيد الحالي قبل التحويل:</span>
+                        <strong id="to_current_balance" class="fs-6">-</strong>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center border-top border-secondary border-opacity-25 pt-1 mt-1">
+                        <span class="small text-white-50">الرصيد الجديد بعد الإيداع:</span>
+                        <strong id="to_after_balance" class="fs-6">-</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom: 2rem;">
+            <label style="color: #fff; font-weight: bold; margin-bottom: 0.5rem; display: block;">البيان / سبب التحويل</label>
+            {{ form.description }}
+            {% if form.description.errors %}
+                <span style="color: #ff6b6b; font-size: 0.85rem;">{{ form.description.errors.0 }}</span>
+            {% endif %}
+        </div>
+
+        <div style="text-align: left; margin-top: 2rem;">
+            <button type="submit" class="btn btn-lg" style="background-color: #ff7300; border-color: #ff7300; color: white; font-weight: bold; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); padding: 0.75rem 2.5rem; cursor: pointer;">
+                <i class="fas fa-save me-1"></i> حفظ مسودة التحويل
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    let accountsData = {};
+    try {
+        accountsData = JSON.parse('{{ accounts_data_json|default:"{}"|escapejs }}');
+    } catch(e) {
+        console.error("Could not parse accounts data:", e);
+    }
+
+    const fromTypeSelect = document.getElementById('id_from_account_type');
+    const toTypeSelect = document.getElementById('id_to_account_type');
+    const amountInput = document.getElementById('id_amount');
+
+    const fromTreasury = document.getElementById('id_from_treasury');
+    const fromBank = document.getElementById('id_from_bank_account');
+    const fromEwallet = document.getElementById('id_from_ewallet');
+
+    const toTreasury = document.getElementById('id_to_treasury');
+    const toBank = document.getElementById('id_to_bank_account');
+    const toEwallet = document.getElementById('id_to_ewallet');
+
+    const fromCard = document.getElementById('from_balance_card');
+    const fromAccountName = document.getElementById('from_account_name');
+    const fromCurrentBalance = document.getElementById('from_current_balance');
+    const fromAfterBalance = document.getElementById('from_after_balance');
+    const fromWarning = document.getElementById('from_warning');
+    const fromWarningText = document.getElementById('from_warning_text');
+
+    const toCard = document.getElementById('to_balance_card');
+    const toAccountName = document.getElementById('to_account_name');
+    const toCurrentBalance = document.getElementById('to_current_balance');
+    const toAfterBalance = document.getElementById('to_after_balance');
+
+    function getAccountInfo(type, selectElement) {
+        if (!selectElement || selectElement.selectedIndex < 0) return null;
+        const opt = selectElement.options[selectElement.selectedIndex];
+        if (!opt || !opt.value) return null;
+
+        const id = String(opt.value);
+        if (accountsData && accountsData[type] && accountsData[type][id]) {
+            return accountsData[type][id];
+        }
+
+        // Fallback: extract from text if needed
+        const text = opt.text || '';
+        let balance = 0;
+        const match = text.match(/(?:الرصيد|الرصيد الحالي):\s*([0-9.,-]+)/);
+        if (match) {
+            balance = parseFloat(match[1].replace(/,/g, '')) || 0;
+        }
+        const name = text.split('(')[0].split('—')[0].trim();
+        return { name: name, balance: balance };
+    }
+
+    function updateSourceDisplay() {
+        const val = fromTypeSelect ? fromTypeSelect.value : 'TREASURY';
+        if (document.getElementById('div_from_treasury')) document.getElementById('div_from_treasury').style.display = (val === 'TREASURY') ? 'block' : 'none';
+        if (document.getElementById('div_from_bank_account')) document.getElementById('div_from_bank_account').style.display = (val === 'BANK') ? 'block' : 'none';
+        if (document.getElementById('div_from_ewallet')) document.getElementById('div_from_ewallet').style.display = (val === 'EWALLET') ? 'block' : 'none';
+
+        let activeSelect = null;
+        if (val === 'TREASURY') activeSelect = fromTreasury;
+        else if (val === 'BANK') activeSelect = fromBank;
+        else if (val === 'EWALLET') activeSelect = fromEwallet;
+
+        const acc = getAccountInfo(val, activeSelect);
+        if (acc) {
+            const curBal = acc.balance;
+            const reqAmt = parseFloat(amountInput ? amountInput.value : 0) || 0;
+            const afterBal = curBal - reqAmt;
+
+            fromAccountName.textContent = acc.name;
+            fromCurrentBalance.textContent = curBal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+            fromCurrentBalance.style.color = (curBal >= 0) ? '#00e5ff' : '#ff6b6b';
+
+            fromAfterBalance.textContent = afterBal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+            fromAfterBalance.style.color = (afterBal >= 0) ? '#10b981' : '#ff6b6b';
+
+            if (reqAmt > 0 && reqAmt > curBal) {
+                fromWarning.style.display = 'block';
+                fromWarningText.textContent = `تنبيه: الرصيد المتاح (${curBal.toLocaleString()} ج.م) غير كافٍ لمبلغ التحويل المطلوب (${reqAmt.toLocaleString()} ج.م)`;
+            } else {
+                fromWarning.style.display = 'none';
+            }
+            fromCard.style.display = 'block';
+        } else {
+            fromCard.style.display = 'none';
+        }
+    }
+
+    function updateDestDisplay() {
+        const val = toTypeSelect ? toTypeSelect.value : 'TREASURY';
+        if (document.getElementById('div_to_treasury')) document.getElementById('div_to_treasury').style.display = (val === 'TREASURY') ? 'block' : 'none';
+        if (document.getElementById('div_to_bank_account')) document.getElementById('div_to_bank_account').style.display = (val === 'BANK') ? 'block' : 'none';
+        if (document.getElementById('div_to_ewallet')) document.getElementById('div_to_ewallet').style.display = (val === 'EWALLET') ? 'block' : 'none';
+
+        let activeSelect = null;
+        if (val === 'TREASURY') activeSelect = toTreasury;
+        else if (val === 'BANK') activeSelect = toBank;
+        else if (val === 'EWALLET') activeSelect = toEwallet;
+
+        const acc = getAccountInfo(val, activeSelect);
+        if (acc) {
+            const curBal = acc.balance;
+            const reqAmt = parseFloat(amountInput ? amountInput.value : 0) || 0;
+            const afterBal = curBal + reqAmt;
+
+            toAccountName.textContent = acc.name;
+            toCurrentBalance.textContent = curBal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+            toCurrentBalance.style.color = (curBal >= 0) ? '#28a745' : '#ff6b6b';
+
+            toAfterBalance.textContent = afterBal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+            toAfterBalance.style.color = '#28a745';
+            toCard.style.display = 'block';
+        } else {
+            toCard.style.display = 'none';
+        }
+    }
+
+    if (fromTypeSelect) {
+        fromTypeSelect.addEventListener('change', updateSourceDisplay);
+    }
+    [fromTreasury, fromBank, fromEwallet].forEach(el => {
+        if (el) el.addEventListener('change', updateSourceDisplay);
+    });
+
+    if (amountInput) {
+        amountInput.addEventListener('input', function() {
+            updateSourceDisplay();
+            updateDestDisplay();
+        });
+    }
+
+    if (toTypeSelect) {
+        toTypeSelect.addEventListener('change', updateDestDisplay);
+    }
+    [toTreasury, toBank, toEwallet].forEach(el => {
+        if (el) el.addEventListener('change', updateDestDisplay);
+    });
+
+    // Auto-select first treasury if only 1 exists and none selected
+    if (fromTreasury && fromTreasury.options.length === 2 && !fromTreasury.value) {
+        fromTreasury.selectedIndex = 1;
+    }
+    if (toTreasury && toTreasury.options.length === 2 && !toTreasury.value) {
+        toTreasury.selectedIndex = 1;
+    }
+
+    updateSourceDisplay();
+    updateDestDisplay();
+});
+</script>
+{% endblock %}

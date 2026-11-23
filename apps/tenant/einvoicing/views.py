@@ -30,6 +30,7 @@ class InvoiceApprovalListView(CustomPermissionRequiredMixin, ListView):
     model = EInvoiceLog
     template_name = 'einvoicing/invoice_list.html'
     context_object_name = 'logs'
+    paginate_by = 25
 
     def get_queryset(self):
         return EInvoiceLog.objects.filter(status='WAITING_APPROVAL').order_by('-created_at')
@@ -39,6 +40,7 @@ class EInvoiceHistoryListView(CustomPermissionRequiredMixin, ListView):
     model = EInvoiceLog
     template_name = 'einvoicing/invoice_history.html'
     context_object_name = 'logs'
+    paginate_by = 25
 
     def get_queryset(self):
         # Exclude 'WAITING_APPROVAL' so we only see ones that have entered the pipeline

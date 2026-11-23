@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>عرض سعر - {{ quotation.quotation_number }}</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: #1e293b;
+            background: #fff;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+        .company-name {
+            font-size: 22px;
+            font-weight: bold;
+            color: #ff7300;
+        }
+        .doc-title {
+            font-size: 26px;
+            font-weight: bold;
+            color: #0f172a;
+        }
+        .meta-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 25px;
+            background: #f8fafc;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 25px;
+        }
+        th, td {
+            border: 1px solid #cbd5e1;
+            padding: 10px;
+            text-align: right;
+        }
+        th {
+            background-color: #f1f5f9;
+            color: #334155;
+            font-weight: bold;
+        }
+        .totals-table {
+            width: 320px;
+            margin-right: auto;
+            border-collapse: collapse;
+        }
+        .totals-table td {
+            border: 1px solid #e2e8f0;
+            padding: 8px 12px;
+        }
+        .totals-table tr.grand-total {
+            background: #fff7ed;
+            font-weight: bold;
+            font-size: 16px;
+            color: #ea580c;
+        }
+        .terms {
+            margin-top: 30px;
+            padding: 15px;
+            background: #f8fafc;
+            border-right: 4px solid #ff7300;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .signatures {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 60px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+            font-weight: bold;
+        }
+        @media print {
+            .no-print { display: none; }
+            body { padding: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print" style="margin-bottom: 20px; text-align: left;">
+        <button onclick="window.print()" style="background: #ff7300; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer;">
+            🖨️ طباعة المستند
+        </button>
+    </div>
+
+    <div class="header">
+        <div>
+            <div class="company-name">{{ setting.company_name|default:"شركتك المحترمة" }}</div>
+            <div>{{ quotation.branch.name }} - {{ quotation.branch.address|default:"" }}</div>
+        </div>
+        <div style="text-align: left;">
+            <div class="doc-title">عرض سعر (Quotation)</div>
+            <div style="font-size: 16px; font-weight: bold; color: #ff7300;">{{ quotation.quotation_number }}</div>
+        </div>
+    </div>
+
+    <div class="meta-grid">
+        <div>
+            <strong>العميل:</strong> {{ quotation.partner.name }}<br>
+            <strong>العنوان:</strong> {{ quotation.partner.address|default:"-" }}<br>
+            <strong>الهاتف:</strong> {{ quotation.partner.phone|default:"-" }}
+        </div>
+        <div style="text-align: left;">
+            <strong>التاريخ:</strong> {{ quotation.date|date:"Y-m-d" }}<br>
+            <strong>صالح حتى:</strong> {{ quotation.valid_until|date:"Y-m-d"|default:"مفتوح" }}<br>
+            <strong>المستودع:</strong> {{ quotation.warehouse.name }}
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 5%;">#</th>
+                <th style="width: 30%;">البند / الخدمة</th>
+                <th style="width: 10%;">الكمية</th>
+                <th style="width: 10%;">الوحدة</th>
+                <th style="width: 13%;">سعر الوحدة</th>
+                <th style="width: 10%;">الخصم</th>
+                <th style="width: 9%;">الضريبة %</th>
+                <th style="width: 13%;">الإجمالي</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in quotation.lines.all %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ line.product.name }}</td>
+                <td>{{ line.quantity|floatformat:2 }}</td>
+                <td>{{ line.unit_name }}</td>
+                <td>{{ line.unit_price|floatformat:2 }}</td>
+                <td>{{ line.discount_amount|floatformat:2 }}</td>
+                <td>{{ line.tax_rate }}%</td>
+                <td style="font-weight: bold;">{{ line.total_amount|floatformat:2 }} ج.م</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <table class="totals-table">
+        <tr>
+            <td>صافي البنود قبل الضريبة:</td>
+            <td>{{ quotation.subtotal|floatformat:2 }} ج.م</td>
+        </tr>
+        {% if quotation.discount_amount > 0 %}
+        <tr>
+            <td>إجمالي الخصم:</td>
+            <td>- {{ quotation.discount_amount|floatformat:2 }} ج.م</td>
+        </tr>
+        {% endif %}
+        <tr>
+            <td>ضريبة القيمة المضافة (VAT):</td>
+            <td>+ {{ quotation.tax_amount|floatformat:2 }} ج.م</td>
+        </tr>
+        {% if quotation.wht_amount > 0 %}
+        <tr>
+            <td>ضريبة الخصم والإضافة (WHT):</td>
+            <td>- {{ quotation.wht_amount|floatformat:2 }} ج.م</td>
+        </tr>
+        {% endif %}
+        <tr class="grand-total">
+            <td>الإجمالي النهائي:</td>
+            <td>{{ quotation.total_amount|floatformat:2 }} ج.م</td>
+        </tr>
+    </table>
+
+    {% if quotation.notes %}
+    <div class="terms">
+        <strong>الشروط والأحكام / ملاحظات العرض:</strong><br>
+        {{ quotation.notes|linebreaksbr }}
+    </div>
+    {% endif %}
+
+    <div class="signatures">
+        <div>إعداد / المسؤول: ..............................</div>
+        <div>اعتماد العميل: ..............................</div>
+    </div>
+</body>
+</html>

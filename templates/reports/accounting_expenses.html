@@ -8,106 +8,174 @@
         <p>تفصيل المصروفات وتوزيعها على بنود الصرف خلال فترة</p>
     </div>
     <div class="content-actions">
-        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
-        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
-        <button onclick="exportTableToExcel('expenses-table', 'المصروفات_التفصيلية')" class="btn btn-success">📊 تصدير Excel</button>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">⬅️ العودة للتقارير</a>
+        <button type="button" onclick="window.print()" class="btn btn-secondary">🖨️ طباعة</button>
+        <button type="button" onclick="exportTableToExcel('expenses-table', 'المصروفات_التفصيلية')" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير Excel</button>
     </div>
 </div>
 
 <!-- Filters -->
 <div class="card" style="margin-bottom: 1.5rem;">
     <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
-        <div class="form-group" style="flex: 1; min-width: 200px;">
+        <div class="form-group" style="flex: 1; min-width: 180px;">
             <label class="form-label">من تاريخ</label>
             <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
         </div>
-        <div class="form-group" style="flex: 1; min-width: 200px;">
+        <div class="form-group" style="flex: 1; min-width: 180px;">
             <label class="form-label">إلى تاريخ</label>
             <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
         </div>
-        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
-            <button type="submit" class="btn btn-primary">تحديث التقرير</button>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.25rem;">
+            <button type="submit" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">🔄 تحديث التقرير</button>
         </div>
     </form>
 </div>
 
-<!-- Summary Cards -->
-<div class="reports-grid" style="grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin-bottom: 1.5rem;">
-    <div class="stat-card" style="border-left: 4px solid var(--neon-red);">
-        <div class="stat-icon" style="background: rgba(255, 23, 68, 0.1); color: var(--neon-red);">📉</div>
-        <div class="stat-details">
-            <h3 class="stat-title">إجمالي المصروفات</h3>
-            <div class="stat-value text-danger" style="color: var(--neon-red);">{{ total_expenses|floatformat:"-2" }} ج.م</div>
+<!-- Summary KPI Cards -->
+<div class="reports-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <!-- 1. Total Expenses -->
+    <div class="stat-card" style="border-inline-start: 4px solid var(--neon-red); background: linear-gradient(135deg, rgba(255, 23, 68, 0.08), rgba(0,0,0,0.2)); display: flex; flex-direction: row; align-items: center; gap: 1rem; padding: 1.25rem;">
+        <div class="stat-icon" style="background: rgba(255, 23, 68, 0.15); color: var(--neon-red); width: 52px; height: 52px; min-width: 52px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; flex-shrink: 0;">📉</div>
+        <div class="stat-details" style="flex: 1; min-width: 0;">
+            <div class="stat-title" style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">إجمالي المصروفات الفعلية</div>
+            <div class="stat-value text-danger" style="color: var(--neon-red); font-family: monospace; font-size: 1.6rem; font-weight: 800; line-height: 1.2; margin-top: 0.25rem;">{{ total_expenses|floatformat:"2" }} <span style="font-size: 0.85rem; font-weight: normal;">ج.م</span></div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">شاملة المصروفات وسندات الصرف</div>
+        </div>
+    </div>
+
+    <!-- 2. Transactions Count -->
+    <div class="stat-card" style="border-inline-start: 4px solid var(--neon-blue); background: linear-gradient(135deg, rgba(0, 176, 255, 0.08), rgba(0,0,0,0.2)); display: flex; flex-direction: row; align-items: center; gap: 1rem; padding: 1.25rem;">
+        <div class="stat-icon" style="background: rgba(0, 176, 255, 0.15); color: var(--neon-blue); width: 52px; height: 52px; min-width: 52px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; flex-shrink: 0;">🔢</div>
+        <div class="stat-details" style="flex: 1; min-width: 0;">
+            <div class="stat-title" style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">عدد حركات الصرف</div>
+            <div class="stat-value" style="color: var(--neon-blue); font-family: monospace; font-size: 1.6rem; font-weight: 800; line-height: 1.2; margin-top: 0.25rem;">{{ expenses|length }} <span style="font-size: 0.85rem; font-weight: normal;">حركة</span></div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">خلال الفترة المحددة</div>
+        </div>
+    </div>
+
+    <!-- 3. Active Accounts Count -->
+    <div class="stat-card" style="border-inline-start: 4px solid var(--neon-gold); background: linear-gradient(135deg, rgba(255, 184, 0, 0.08), rgba(0,0,0,0.2)); display: flex; flex-direction: row; align-items: center; gap: 1rem; padding: 1.25rem;">
+        <div class="stat-icon" style="background: rgba(255, 184, 0, 0.15); color: var(--neon-gold); width: 52px; height: 52px; min-width: 52px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; flex-shrink: 0;">📊</div>
+        <div class="stat-details" style="flex: 1; min-width: 0;">
+            <div class="stat-title" style="font-size: 0.85rem; color: var(--text-muted); font-weight: 600;">بنود الصرف النشطة</div>
+            <div class="stat-value" style="color: var(--neon-gold); font-family: monospace; font-size: 1.6rem; font-weight: 800; line-height: 1.2; margin-top: 0.25rem;">{{ expenses_by_account|length }} <span style="font-size: 0.85rem; font-weight: normal;">بند</span></div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">تم الصرف عليها</div>
+        </div>
+    </div>
+
+    <!-- 4. Top Expense Category -->
+    <div class="stat-card" style="border-inline-start: 4px solid #ff7300; background: linear-gradient(135deg, rgba(255, 115, 0, 0.08), rgba(0,0,0,0.2)); display: flex; flex-direction: row; align-items: center; gap: 1rem; padding: 1.25rem;">
+        <div class="stat-icon" style="background: rgba(255, 115, 0, 0.15); color: #ff7300; width: 52px; height: 52px; min-width: 52px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; flex-shrink: 0;">⭐</div>
+        <div class="stat-details" style="flex: 1; min-width: 0;">
+            <div class="stat-title" style="font-size: 0.85rem; color: #ff9d42; font-weight: 600;">أعلى بند صرف</div>
+            <div class="stat-value" style="color: #ff7300; font-family: monospace; font-size: 1.3rem; font-weight: 800; line-height: 1.2; margin-top: 0.25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="{% if expenses_by_account %}{{ expenses_by_account.0.expense_account__name }}{% else %}-{% endif %}">
+                {% if expenses_by_account %}
+                    {{ expenses_by_account.0.expense_account__name }}
+                {% else %}
+                    -
+                {% endif %}
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                {% if expenses_by_account %}
+                    {{ expenses_by_account.0.total_amount|floatformat:"2" }} ج.م
+                {% else %}
+                    لا توجد مصروفات
+                {% endif %}
+            </div>
         </div>
     </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem; margin-bottom: 1.5rem;" class="expenses-layout">
+<div class="expenses-layout">
     <!-- Grouped Expenses -->
-    <div class="card">
-        <h3 style="margin-bottom: 1rem; color: var(--text-primary); border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+    <div class="card" style="min-width: 0; max-width: 100%;">
+        <h3 style="margin-bottom: 1rem; color: var(--text-primary); border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem; font-size: 1.1rem;">
             📊 المصروفات حسب البند
         </h3>
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>بند المصروف</th>
-                    <th style="text-align: left;">القيمة</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for acc in expenses_by_account %}
-                <tr>
-                    <td>{{ acc.expense_account__name }}</td>
-                    <td style="text-align: left; font-weight: bold; color: var(--neon-red);">{{ acc.total_amount|floatformat:"-2" }}</td>
-                </tr>
-                {% empty %}
-                <tr>
-                    <td colspan="2" class="text-center">لا توجد بيانات</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="table-responsive" style="width: 100%; max-width: 100%;">
+            <table class="data-table summary-table" style="min-width: unset; width: 100%;">
+                <thead>
+                    <tr>
+                        <th style="white-space: nowrap;">بند المصروف</th>
+                        <th style="text-align: left; white-space: nowrap;">القيمة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for acc in expenses_by_account %}
+                    <tr>
+                        <td style="color: var(--text-primary); font-weight: 500;">{{ acc.expense_account__name }}</td>
+                        <td style="text-align: left; font-weight: bold; color: var(--neon-red); font-family: monospace; white-space: nowrap;">{{ acc.total_amount|floatformat:"2" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="2" class="text-center" style="color: var(--text-muted); padding: 1.5rem;">لا توجد مصروفات مسجلة</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <!-- Detailed Expenses Table -->
-    <div class="card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
-            <h3 style="margin: 0; color: var(--text-primary);">
-                📝 تفاصيل حركات الصرف
+    <div class="card" style="min-width: 0; max-width: 100%;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 0.75rem;">
+            <h3 style="margin: 0; color: var(--text-primary); font-size: 1.1rem;">
+                📝 تفاصيل حركات الصرف ({{ expenses|length }})
             </h3>
-            <div class="search-box" style="width: 250px;">
+            <div class="search-box" style="width: 240px; max-width: 100%;">
                 <input type="text" id="searchInput" class="form-control" placeholder="بحث في المصروفات..." onkeyup="filterTable()">
             </div>
         </div>
         
-        <div class="table-responsive">
-            <table class="data-table" id="expenses-table">
+        <div class="table-responsive" style="width: 100%; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+            <table class="data-table" id="expenses-table" style="min-width: 850px; width: 100%; margin-bottom: 0;">
                 <thead>
                     <tr>
-                        <th>التاريخ</th>
-                        <th>رقم الحركة</th>
-                        <th>الفرع</th>
-                        <th>بند المصروف</th>
-                        <th>حساب الدفع</th>
-                        <th>القيمة</th>
-                        <th>الضريبة</th>
+                        <th style="white-space: nowrap;">التاريخ</th>
+                        <th style="white-space: nowrap;">رقم الحركة</th>
+                        <th style="white-space: nowrap;">النوع</th>
+                        <th style="white-space: nowrap;">الفرع</th>
+                        <th style="white-space: nowrap;">بند المصروف</th>
+                        <th style="white-space: nowrap;">حساب الدفع</th>
+                        <th style="white-space: nowrap;">القيمة</th>
+                        <th style="white-space: nowrap;">البيان</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for exp in expenses %}
                     <tr>
-                        <td style="color: var(--text-primary);">{{ exp.date|date:"Y-m-d" }}</td>
-                        <td style="color: var(--text-primary);">{{ exp.expense_number|default:"-" }}</td>
-                        <td style="color: var(--text-primary);">{{ exp.branch.name }}</td>
-                        <td style="color: var(--text-primary);">{{ exp.expense_account.name }}</td>
-                        <td style="color: var(--text-primary);">{{ exp.payment_account.name }}</td>
-                        <td style="color: var(--neon-red); font-weight: bold;">{{ exp.amount|floatformat:"-2" }}</td>
-                        <td style="color: var(--text-muted);">{{ exp.vat_amount|floatformat:"-2" }}</td>
+                        <td style="white-space: nowrap; color: var(--text-primary);">{{ exp.date|date:"Y-m-d" }}</td>
+                        <td style="white-space: nowrap; font-family: monospace; font-weight: bold;">
+                            {% if exp.url %}
+                            <a href="{{ exp.url }}" style="color: var(--neon-blue); text-decoration: none;">
+                                {{ exp.number }}
+                            </a>
+                            {% else %}
+                            {{ exp.number|default:"-" }}
+                            {% endif %}
+                        </td>
+                        <td style="white-space: nowrap;">
+                            {% if exp.source_type == 'سند صرف' %}
+                            <span class="badge" style="background: rgba(255, 184, 0, 0.15); color: var(--neon-gold); padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; white-space: nowrap;">
+                                📤 سند صرف
+                            </span>
+                            {% else %}
+                            <span class="badge" style="background: rgba(0, 176, 255, 0.15); color: var(--neon-blue); padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: bold; white-space: nowrap;">
+                                🧾 مصروف مباشر
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td style="white-space: nowrap; color: var(--text-muted);">{{ exp.branch_name }}</td>
+                        <td style="white-space: nowrap; color: var(--text-primary); font-weight: 500;">{{ exp.expense_account_name }}</td>
+                        <td style="white-space: nowrap; color: var(--text-primary);">{{ exp.payment_name }}</td>
+                        <td style="white-space: nowrap; color: var(--neon-red); font-weight: bold; font-family: monospace;">{{ exp.amount|floatformat:"2" }}</td>
+                        <td style="color: var(--text-muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ exp.description }}">
+                            {{ exp.description|default:"-" }}
+                        </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="7" class="text-center">لا توجد مصروفات مسجلة في هذه الفترة</td>
+                        <td colspan="8" class="text-center" style="color: var(--text-muted); padding: 2rem;">لا توجد مصروفات مسجلة في هذه الفترة</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -117,7 +185,26 @@
 </div>
 
 <style>
-    @media (max-width: 900px) {
+    .expenses-layout {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+        width: 100%;
+        max-width: 100%;
+    }
+    
+    .expenses-layout > * {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .summary-table {
+        min-width: unset !important;
+        width: 100% !important;
+    }
+
+    @media (max-width: 1100px) {
         .expenses-layout {
             grid-template-columns: 1fr !important;
         }
@@ -129,6 +216,10 @@
         .card { box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 20px !important; }
         .data-table th, .data-table td { border-color: #ddd !important; color: black !important; }
         .expenses-layout { grid-template-columns: 1fr !important; display: block !important; }
+        .stat-card { border: 1px solid #ddd !important; break-inside: avoid; }
+        .stat-icon { display: none !important; }
+        .stat-value { color: black !important; font-weight: bold !important; }
+        .data-table { min-width: 100% !important; }
     }
 </style>
 
@@ -149,25 +240,27 @@ function filterTable() {
     }
 }
 
-function exportTableToExcel(tableID, filename = '') {
-    let downloadLink;
-    let dataType = 'application/vnd.ms-excel';
-    let tableSelect = document.getElementById(tableID);
-    let tableHTML = tableSelect.outerHTML.replace(/ /g, '%20');
-    
-    filename = filename ? filename + '.xls' : 'excel_data.xls';
-    
-    downloadLink = document.createElement("a");
-    document.body.appendChild(downloadLink);
-    
-    if (navigator.msSaveOrOpenBlob) {
-        let blob = new Blob(['\ufeff', tableHTML], { type: dataType });
-        navigator.msSaveOrOpenBlob(blob, filename);
-    } else {
-        downloadLink.href = 'data:' + dataType + ', ' + tableHTML;
-        downloadLink.download = filename;
-        downloadLink.click();
-    }
+if (typeof window.exportTableToExcel !== 'function') {
+    window.exportTableToExcel = function(tableId, filename) {
+        let table = document.getElementById(tableId);
+        if (!table) return;
+        filename = (filename || 'المصروفات') + '.xls';
+        let clone = table.cloneNode(true);
+        clone.querySelectorAll('th, td').forEach(c => {
+            c.querySelectorAll('button, a, input').forEach(el => el.remove());
+            c.textContent = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        });
+        let doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{direction:rtl;text-align:right;} th{background:#1F4E79;color:#fff;border:0.5pt solid #ddd;padding:8px;} td{border:0.5pt solid #ddd;padding:6px;}</style></head><body dir="rtl">' + clone.outerHTML + '</body></html>';
+        let blob = new Blob(['\uFEFF' + doc], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
 }
 </script>
 {% endblock %}

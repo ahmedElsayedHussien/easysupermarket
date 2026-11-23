@@ -83,7 +83,8 @@
                     <th>المستودع</th>
                     <th>نوع الحركة</th>
                     <th style="text-align: center;">الكمية</th>
-                    <th style="text-align: left;">التكلفة (للوحدة)</th>
+                    <th style="text-align: center; color: #10b981;">سعر الشراء</th>
+                    <th style="text-align: center; color: var(--neon-gold);">سعر البيع</th>
                     {% if show_balances %}<th style="text-align: center; color: var(--neon-cyan);">الرصيد التراكمي</th>{% endif %}
                     <th>المرجع / الفاتورة</th>
                 </tr>
@@ -106,7 +107,8 @@
                             {% if 'IN' in m.movement_type or m.movement_type == 'OPENING_BALANCE' %}+{% else %}-{% endif %} {{ m.quantity|floatformat:"-2" }}
                         </span>
                     </td>
-                    <td style="text-align: left;">{{ m.unit_cost|floatformat:"-2" }}</td>
+                    <td style="text-align: center; font-weight: 600; color: #10b981;">{{ m.purchase_price|floatformat:"2" }}</td>
+                    <td style="text-align: center; font-weight: 600; color: var(--neon-gold);">{{ m.selling_price|floatformat:"2" }}</td>
                     {% if show_balances %}
                     <td style="text-align: center; font-weight: bold; color: var(--text-primary);">
                         {{ m.running_balance|floatformat:"-2" }}
@@ -116,7 +118,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="{% if show_balances %}8{% else %}7{% endif %}" style="text-align: center; padding: 2rem;">لا توجد حركات مخزنية</td>
+                    <td colspan="{% if show_balances %}9{% else %}8{% endif %}" style="text-align: center; padding: 2rem;">لا توجد حركات مخزنية</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -199,15 +201,45 @@
 <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
     $(document).ready(function() {
-        $('.select2').select2({
+        $('select[name="product_id"]').select2({
             dir: "rtl",
             width: '100%',
-            placeholder: "-- اختر الصنف --",
+            placeholder: "-- ابحث عن الصنف بالاسم أو الباركود --",
+            allowClear: true,
+            ajax: {
+                url: "{% url 'inventory:api_products' %}",
+                dataType: 'json',
+                delay: 250,
+                data: function(params) {
+                    return {
+                        q: params.term || ''
+                    };
+                },
+                processResults: function(data) {
+                    var items = (data && data.products) ? data.products : (Array.isArray(data) ? data : []);
+                    return {
+                        results: items.map(function(item) {
+                            return {
+                                id: item.id,
+                                text: item.name + (item.barcode ? ' (' + item.barcode + ')' : '')
+                            };
+                        })
+                    };
+                },
+                cache: true
+            },
+            minimumInputLength: 0
+        });
+
+        $('.select2:not([name="product_id"])').select2({
+            dir: "rtl",
+            width: '100%',
+            placeholder: "-- اختر --",
             allowClear: true
         });
 
         // Auto-submit form when product changes
-        $('select[name="product_id"]').on('change', function() {
+        $('select[name="product_id"]').on('select2:select', function() {
             if($(this).val()) {
                 $(this).closest('form').submit();
             }

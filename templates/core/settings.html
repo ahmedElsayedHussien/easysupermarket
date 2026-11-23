@@ -1,125 +1,152 @@
 {% extends 'base.html' %}
 {% load static %}
-{% block title %}إعدادات النظام{% endblock %}
+{% block title %}إعدادات النظام والقائمة الجانبية{% endblock %}
 
-{% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-between align-center mb-4">
-        <h2 class="text-neon-gold">⚙ إعدادات النظام</h2>
-        <a href="{% url 'core:admin_dashboard' %}" class="btn btn-ghost">العودة للوحة التحكم</a>
-    </div>
-
-    <form method="POST" class="needs-validation" novalidate>
-        {% csrf_token %}
-        
-        <div class="row">
-            <!-- اعدادات نقطة البيع -->
-            <div class="col-md-6 mb-4">
-                <div class="card p-4 h-100 border-neon-blue">
-                    <h4 class="text-neon-blue mb-4">🛒 إعدادات نقطة البيع (POS)</h4>
-                    
-                    <div class="form-check form-switch mb-3 custom-switch">
-                        {{ form.allow_negative_stock }}
-                        <label class="form-check-label ms-2" for="{{ form.allow_negative_stock.id_for_label }}">السماح بالبيع بالسالب (بدون رصيد)</label>
-                    </div>
-
-                    <div class="form-check form-switch mb-3 custom-switch">
-                        {{ form.auto_print_receipt }}
-                        <label class="form-check-label ms-2" for="{{ form.auto_print_receipt.id_for_label }}">الطباعة التلقائية للإيصال بعد السداد</label>
-                    </div>
-
-                    <div class="form-check form-switch mb-3 custom-switch">
-                        {{ form.allow_pos_price_modification }}
-                        <label class="form-check-label ms-2" for="{{ form.allow_pos_price_modification.id_for_label }}">السماح بتعديل أسعار المنتجات في نقطة البيع</label>
-                    </div>
-
-                    <div class="form-group mb-3 ms-4" id="marginPercentContainer">
-                        <label class="form-label text-muted">{{ form.pos_price_margin_percent.label }}</label>
-                        {{ form.pos_price_margin_percent }}
-                        <small class="text-muted d-block mt-1">{{ form.pos_price_margin_percent.help_text }}</small>
-                    </div>
-
-                    <div class="form-check form-switch mb-3 custom-switch">
-                        {{ form.apply_vat_by_default }}
-                        <label class="form-check-label ms-2" for="{{ form.apply_vat_by_default.id_for_label }}">تطبيق الضريبة الافتراضي على الفواتير</label>
-                    </div>
-
-                    <div class="form-group mt-4">
-                        <label class="form-label text-muted">{{ form.large_amount_requires_customer.label }}</label>
-                        {{ form.large_amount_requires_customer }}
-                        <small class="text-muted d-block mt-1">{{ form.large_amount_requires_customer.help_text }}</small>
-                    </div>
-                </div>
-            </div>
-
-            <!-- إعدادات المخازن والحسابات -->
-            <div class="col-md-6 mb-4">
-                <div class="card p-4 h-100 border-neon-green">
-                    <h4 class="text-neon-green mb-4">📦 إعدادات المخازن والحسابات</h4>
-                    
-                    <div class="form-check form-switch mb-3 custom-switch">
-                        {{ form.enable_expiry_tracking }}
-                        <label class="form-check-label ms-2" for="{{ form.enable_expiry_tracking.id_for_label }}">تتبع تواريخ الصلاحية</label>
-                    </div>
-
-                    <div class="form-group mb-4">
-                        <label class="form-label text-muted">{{ form.low_stock_threshold.label }}</label>
-                        {{ form.low_stock_threshold }}
-                    </div>
-
-                    <hr class="border-secondary my-4">
-
-                    <div class="form-check form-switch mb-3 custom-switch">
-                        {{ form.auto_post_journals }}
-                        <label class="form-check-label ms-2" for="{{ form.auto_post_journals.id_for_label }}">الترحيل التلقائي للقيود المحاسبية</label>
-                    </div>
-                </div>
-            </div>
-
-            <!-- الهوية والطباعة -->
-            <div class="col-md-12 mb-4">
-                <div class="card p-4 border-neon-gold">
-                    <h4 class="text-neon-gold mb-4">🖨 الهوية والطباعة</h4>
-                    
-                    <div class="row">
-                        <div class="col-md-4">
-                            <div class="form-group">
-                                <label class="form-label text-muted">{{ form.store_name.label }}</label>
-                                {{ form.store_name }}
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="form-group">
-                                <label class="form-label text-muted">{{ form.tax_number.label }}</label>
-                                {{ form.tax_number }}
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="form-group">
-                                <label class="form-label text-muted">{{ form.commercial_register.label }}</label>
-                                {{ form.commercial_register }}
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="form-group mt-3">
-                        <label class="form-label text-muted">{{ form.receipt_footer.label }}</label>
-                        {{ form.receipt_footer }}
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- أزرار الحفظ -->
-        <div class="d-flex justify-end gap-3 mt-4">
-            <a href="{% url 'core:admin_dashboard' %}" class="btn btn-ghost px-5">إلغاء</a>
-            <button type="submit" class="btn btn-neon-blue px-5">💾 حفظ الإعدادات</button>
-        </div>
-    </form>
-</div>
-
+{% block extra_css %}
 <style>
-/* Custom Switches styling to make them larger and fit the neon theme */
+/* Settings Navigation Tabs */
+.settings-tabs-container {
+    display: flex;
+    gap: 12px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: 2rem;
+    padding-bottom: 0.5rem;
+}
+.settings-tab-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    padding: 0.75rem 1.5rem;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.settings-tab-btn:hover {
+    background: rgba(255, 115, 0, 0.15);
+    color: #ff7300;
+    border-color: rgba(255, 115, 0, 0.4);
+}
+.settings-tab-btn.active {
+    background: #ff7300;
+    color: #ffffff;
+    border-color: #ff7300;
+    box-shadow: 0 4px 15px rgba(255, 115, 0, 0.35);
+}
+
+/* Tab Content Visibility */
+.tab-content-panel {
+    display: none;
+}
+.tab-content-panel.active {
+    display: block;
+}
+
+/* Sidebar Toggle Cards & Radio Group Styling */
+.nav-toggle-card {
+    background: #0f1929;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    position: relative;
+    overflow: hidden;
+}
+.nav-toggle-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #ff7300, #f59e0b);
+}
+.nav-toggle-card-title {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: #f8fafc;
+    margin-bottom: 1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid #1e293b;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.nav-item-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.65rem 0.85rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
+    margin-bottom: 0.5rem;
+}
+.nav-item-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #e2e8f0;
+}
+.nav-radio-group {
+    display: flex;
+    gap: 8px;
+}
+.nav-radio-group label {
+    margin: 0;
+    cursor: pointer;
+}
+.nav-radio-group input[type="radio"] {
+    display: none;
+}
+.nav-radio-pill {
+    padding: 0.3rem 0.85rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    border: 1px solid #334155;
+    background: rgba(255, 255, 255, 0.05);
+    color: #94a3b8;
+    transition: all 0.2s ease;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.nav-radio-group input[value="True"]:checked + .nav-radio-pill,
+.nav-radio-group input[value="true"]:checked + .nav-radio-pill {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    border-color: #10b981;
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.25);
+}
+.nav-radio-group input[value="False"]:checked + .nav-radio-pill,
+.nav-radio-group input[value="false"]:checked + .nav-radio-pill {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    border-color: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+}
+
+/* Orange primary button rule */
+.btn-orange-primary {
+    background: #ff7300 !important;
+    border-color: #ff7300 !important;
+    color: #ffffff !important;
+    font-weight: 700;
+    box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);
+    transition: all 0.3s ease;
+}
+.btn-orange-primary:hover {
+    background: #e66800 !important;
+    border-color: #e66800 !important;
+    box-shadow: 0 6px 20px rgba(255, 115, 0, 0.6);
+    transform: translateY(-2px);
+}
+
+/* Custom Switches */
 .custom-switch .form-check-input {
     width: 2.5em;
     height: 1.25em;
@@ -128,8 +155,8 @@
     border-color: #4a5065;
 }
 .custom-switch .form-check-input:checked {
-    background-color: var(--neon-blue);
-    border-color: var(--neon-blue);
+    background-color: #ff7300;
+    border-color: #ff7300;
 }
 .custom-switch .form-check-label {
     cursor: pointer;
@@ -139,9 +166,951 @@
 .border-neon-green { border: 1px solid rgba(57, 255, 20, 0.2); }
 .border-neon-gold { border: 1px solid rgba(255, 215, 0, 0.2); }
 </style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 1300px;">
+    
+    <div class="d-flex justify-between align-center mb-4">
+        <h2 class="text-neon-gold">⚙️ لوحة التحكم في إعدادات النظام</h2>
+        <a href="{% url 'core:settings_dashboard' %}" class="btn btn-ghost">العودة للوحة المدير</a>
+    </div>
+
+    <!-- Tab Buttons -->
+    <div class="settings-tabs-container">
+        <button type="button" class="settings-tab-btn active" id="tabBtnGeneral" onclick="switchTab('general')">
+            <i class="fas fa-sliders-h"></i> ⚙️ الإعدادات العامة والنظام
+        </button>
+        <button type="button" class="settings-tab-btn" id="tabBtnSidebar" onclick="switchTab('sidebar')">
+            <i class="fas fa-bars"></i> 📌 التحكم في عناصر القائمة الجانبية
+        </button>
+        <button type="button" class="settings-tab-btn" id="tabBtnPosAccounts" onclick="switchTab('posAccounts')">
+            <i class="fas fa-wallet"></i> 💳 حسابات الدفع الافتراضية (POS)
+        </button>
+    </div>
+
+    <form method="POST" class="needs-validation" novalidate>
+        {% csrf_token %}
+        
+        <!-- TAB 1: GENERAL SYSTEM SETTINGS -->
+        <div id="tabPanelGeneral" class="tab-content-panel active">
+            <div class="row">
+                <!-- اعدادات نقطة البيع -->
+                <div class="col-md-6 mb-4">
+                    <div class="card p-4 h-100 border-neon-blue" style="background:#0f1929;">
+                        <h4 class="text-neon-blue mb-4">🛒 إعدادات نقطة البيع (POS)</h4>
+                        
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.allow_negative_stock }}
+                            <label class="form-check-label ms-2" for="{{ form.allow_negative_stock.id_for_label }}">السماح بالبيع بالسالب (بدون رصيد)</label>
+                            <small class="text-muted d-block mt-1 ms-4">تفعيل هذا الخيار يسمح للكاشير بإتمام عمليات البيع على نقطة البيع (POS) حتى لو كان رصيد الصنف صفر أو غير كافٍ، مع تسجيل العجز المخزني والتكلفة آلياً.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.auto_print_receipt }}
+                            <label class="form-check-label ms-2" for="{{ form.auto_print_receipt.id_for_label }}">الطباعة التلقائية للإيصال بعد السداد</label>
+                        </div>
+
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.allow_pos_price_modification }}
+                            <label class="form-check-label ms-2" for="{{ form.allow_pos_price_modification.id_for_label }}">السماح بتعديل أسعار المنتجات في نقطة البيع</label>
+                        </div>
+
+                        <div class="form-group mb-3 ms-4" id="marginPercentContainer">
+                            <label class="form-label text-muted">{{ form.pos_price_margin_percent.label }}</label>
+                            {{ form.pos_price_margin_percent }}
+                            <small class="text-muted d-block mt-1">{{ form.pos_price_margin_percent.help_text }}</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.apply_vat_by_default }}
+                            <label class="form-check-label ms-2" for="{{ form.apply_vat_by_default.id_for_label }}">تطبيق الضريبة الافتراضي على الفواتير</label>
+                        </div>
+
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.show_pos_cost }}
+                            <label class="form-check-label ms-2" for="{{ form.show_pos_cost.id_for_label }}">{{ form.show_pos_cost.label }}</label>
+                            <small class="text-muted d-block mt-1 ms-4">{{ form.show_pos_cost.help_text }}</small>
+                        </div>
+
+                        <div class="form-group mt-4">
+                            <label class="form-label text-muted">{{ form.large_amount_requires_customer.label }}</label>
+                            {{ form.large_amount_requires_customer }}
+                            <small class="text-muted d-block mt-1">{{ form.large_amount_requires_customer.help_text }}</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- إعدادات المخازن والحسابات -->
+                <div class="col-md-6 mb-4">
+                    <div class="card p-4 h-100 border-neon-green" style="background:#0f1929;">
+                        <h4 class="text-neon-green mb-4">📦 إعدادات المخازن والحسابات</h4>
+                        
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.enable_expiry_tracking }}
+                            <label class="form-check-label ms-2" for="{{ form.enable_expiry_tracking.id_for_label }}">تتبع تواريخ الصلاحية</label>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label class="form-label text-muted">{{ form.low_stock_threshold.label }}</label>
+                            {{ form.low_stock_threshold }}
+                        </div>
+
+                        <hr class="border-secondary my-4">
+
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.auto_post_journals }}
+                            <label class="form-check-label ms-2" for="{{ form.auto_post_journals.id_for_label }}">الترحيل التلقائي للقيود المحاسبية</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- الهوية والطباعة -->
+                <div class="col-md-12 mb-4">
+                    <div class="card p-4 border-neon-gold" style="background:#0f1929;">
+                        <h4 class="text-neon-gold mb-4">🖨️ الهوية والطباعة</h4>
+                        
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label class="form-label text-muted">{{ form.store_name.label }}</label>
+                                    {{ form.store_name }}
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label class="form-label text-muted">{{ form.tax_number.label }}</label>
+                                    {{ form.tax_number }}
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-group">
+                                    <label class="form-label text-muted">{{ form.commercial_register.label }}</label>
+                                    {{ form.commercial_register }}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group mt-3">
+                            <label class="form-label text-muted">{{ form.receipt_footer.label }}</label>
+                            {{ form.receipt_footer }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: SIDEBAR MENU VISIBILITY CONTROL -->
+        <div id="tabPanelSidebar" class="tab-content-panel">
+            <div class="alert alert-info mb-4" style="background: rgba(0, 229, 255, 0.1); border-color: rgba(0, 229, 255, 0.3); color: #00e5ff;">
+                💡 <strong>تحكم شامل في ظهور وإخفاء القائمة الجانبية:</strong> يمكنك تحديد ما يظهر وما يختفي من القائمة الجانبية لكل قسم أو عنصر بالنظام باستخدام نظام الراديو (إظهار / إخفاء).
+            </div>
+
+            <div class="row">
+                <!-- 1. التنقل السريع -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">⚡ التنقل السريع</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">⚡ {{ form.show_nav_dashboard.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_dashboard %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">🖥️ {{ form.show_nav_pos.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_pos %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. المبيعات -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">📋 المبيعات</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📋 {{ form.show_nav_quotations.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_quotations %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📄 {{ form.show_nav_sales_invoices.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_sales_invoices %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">🏷️ {{ form.show_nav_pricelists.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_pricelists %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. المشتريات -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">🛒 المشتريات</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">🛒 {{ form.show_nav_purchase_invoices.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_purchase_invoices %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">➕ {{ form.show_nav_create_purchase.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_create_purchase %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. المخزون -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">📦 المخزون</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📦 {{ form.show_nav_inventory_fifo.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_inventory_fifo %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📋 {{ form.show_nav_stocktake.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_stocktake %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">⚖️ {{ form.show_nav_adjustments.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_adjustments %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">🏷️ {{ form.show_nav_products.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_products %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📐 {{ form.show_nav_uom.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_uom %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. تأجير المعدات -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">🛠️ تأجير المعدات</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">🛠️ {{ form.show_nav_rentals_equipment.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_rentals_equipment %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📜 {{ form.show_nav_rentals_contracts.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_rentals_contracts %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📊 {{ form.show_nav_rentals_reports.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_rentals_reports %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 6. الصيانة -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">🔧 الصيانة</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">🔧 {{ form.show_nav_maintenance_tickets.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_maintenance_tickets %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 7. العمولات والمبيعات -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">⚖️ العمولات والمبيعات</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">⚖️ {{ form.show_nav_commission_rules.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_commission_rules %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📈 {{ form.show_nav_commission_report.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_commission_report %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 8. شؤون الموظفين -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">⏰ شؤون الموظفين (HR)</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">⏰ {{ form.show_nav_hr_attendance.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_hr_attendance %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">💸 {{ form.show_nav_hr_payroll.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_hr_payroll %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 9. الشركاء -->
+                <div class="col-md-6 col-lg-4">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">👥 الشركاء</div>
+                        
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">🚚 {{ form.show_nav_suppliers.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_suppliers %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">👥 {{ form.show_nav_customers.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_customers %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">🏢 {{ form.show_nav_sectors.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_sectors %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="nav-item-row">
+                            <span class="nav-item-label">📑 {{ form.show_nav_partners_report.label }}</span>
+                            <div class="nav-radio-group">
+                                {% for radio in form.show_nav_partners_report %}
+                                    <label>
+                                        {{ radio.tag }}
+                                        <span class="nav-radio-pill">
+                                            {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                        </span>
+                                    </label>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 10. المحاسبة والمالية -->
+                <div class="col-md-6 col-lg-6">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">💰 المحاسبة والمالية</div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">🧾 {{ form.show_nav_expenses.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_expenses %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📥 {{ form.show_nav_receipts.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_receipts %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📤 {{ form.show_nav_payments.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_payments %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📒 {{ form.show_nav_journals.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_journals %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📊 {{ form.show_nav_chart_of_accounts.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_chart_of_accounts %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">💰 {{ form.show_nav_treasuries.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_treasuries %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">🏦 {{ form.show_nav_banks.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_banks %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📱 {{ form.show_nav_ewallets.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_ewallets %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">🔄 {{ form.show_nav_transfers.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_transfers %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📑 {{ form.show_nav_cheques.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_cheques %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">🏛️ {{ form.show_nav_fixed_assets.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_fixed_assets %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">🏦 {{ form.show_nav_loans.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_loans %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 11. الإدارة -->
+                <div class="col-md-6 col-lg-6">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">📈 الإدارة</div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📈 {{ form.show_nav_admin_dashboard.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_admin_dashboard %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">🏪 {{ form.show_nav_branches.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_branches %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">👤 {{ form.show_nav_users.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_users %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📊 {{ form.show_nav_reports.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_reports %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 12. منظومة الضرائب -->
+                <div class="col-md-12">
+                    <div class="nav-toggle-card">
+                        <div class="nav-toggle-card-title">🧾 منظومة الضرائب والفواتير الإلكترونية</div>
+                        
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📤 {{ form.show_nav_einvoice_approval.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_einvoice_approval %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">📖 {{ form.show_nav_einvoice_history.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_einvoice_history %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="nav-item-row">
+                                    <span class="nav-item-label">🧾 {{ form.show_nav_tax_settings.label }}</span>
+                                    <div class="nav-radio-group">
+                                        {% for radio in form.show_nav_tax_settings %}
+                                            <label>
+                                                {{ radio.tag }}
+                                                <span class="nav-radio-pill">
+                                                    {% if radio.choice_value == 'True' or radio.choice_value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                                                </span>
+                                            </label>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div><!-- /.row -->
+        </div>
+
+        <!-- TAB 3: POS DEFAULT PAYMENT ACCOUNTS & LOCKING -->
+        <div id="tabPanelPosAccounts" class="tab-content-panel">
+            <div class="row">
+                <div class="col-md-8 mx-auto mb-4">
+                    <div class="card p-4 border-neon-gold" style="background:#0f1929;">
+                        <h4 class="text-neon-gold mb-3">💳 إعدادات حسابات الدفع الافتراضية لنقطة البيع</h4>
+                        <p class="text-muted mb-4">قم بتحديد الخزينة الحسابية، الحساب البنكي، والمحفظة الإلكترونية الافتراضية التي يتم اختيارها تلقائياً في شاشة نقطة البيع. يمكنك أيضاً تجميد/قفل الاختيار لمنع الكاشير من تغيير هذه الحسابات.</p>
+                        
+                        <div class="form-group mb-4">
+                            <label class="form-label text-light fw-bold">🏛️ {{ form.default_pos_treasury.label }}</label>
+                            {{ form.default_pos_treasury }}
+                            <small class="text-muted d-block mt-1">{{ form.default_pos_treasury.help_text }}</small>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label class="form-label text-light fw-bold">💳 {{ form.default_pos_bank_account.label }}</label>
+                            {{ form.default_pos_bank_account }}
+                            <small class="text-muted d-block mt-1">{{ form.default_pos_bank_account.help_text }}</small>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label class="form-label text-light fw-bold">⚡ {{ form.default_pos_instapay_account.label }}</label>
+                            {{ form.default_pos_instapay_account }}
+                            <small class="text-muted d-block mt-1">{{ form.default_pos_instapay_account.help_text }}</small>
+                        </div>
+
+                        <div class="form-group mb-4">
+                            <label class="form-label text-light fw-bold">📱 {{ form.default_pos_ewallet.label }}</label>
+                            {{ form.default_pos_ewallet }}
+                            <small class="text-muted d-block mt-1">{{ form.default_pos_ewallet.help_text }}</small>
+                        </div>
+
+                        <hr class="border-secondary my-4">
+
+                        <div class="form-check form-switch mb-3 custom-switch p-3 rounded" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);">
+                            {{ form.lock_pos_payment_accounts }}
+                            <label class="form-check-label ms-2 text-danger fw-bold" for="{{ form.lock_pos_payment_accounts.id_for_label }}">
+                                🔒 {{ form.lock_pos_payment_accounts.label }}
+                            </label>
+                            <small class="text-muted d-block mt-1 ms-4">{{ form.lock_pos_payment_accounts.help_text }}</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sticky Save Button Bar -->
+        <div class="d-flex justify-end gap-3 mt-4 pt-3 border-top" style="border-color: rgba(255, 255, 255, 0.1) !important;">
+            <a href="{% url 'core:settings_dashboard' %}" class="btn btn-ghost px-5">إلغاء</a>
+            <button type="submit" class="btn btn-orange-primary px-5" style="font-size: 1.05rem;">💾 حفظ كافة الإعدادات</button>
+        </div>
+    </form>
+</div>
 
 <script>
+function switchTab(tabName) {
+    document.getElementById('tabPanelGeneral').classList.remove('active');
+    document.getElementById('tabPanelSidebar').classList.remove('active');
+    document.getElementById('tabPanelPosAccounts').classList.remove('active');
+
+    document.getElementById('tabBtnGeneral').classList.remove('active');
+    document.getElementById('tabBtnSidebar').classList.remove('active');
+    document.getElementById('tabBtnPosAccounts').classList.remove('active');
+
+    if (tabName === 'sidebar') {
+        document.getElementById('tabPanelSidebar').classList.add('active');
+        document.getElementById('tabBtnSidebar').classList.add('active');
+        window.location.hash = 'sidebar';
+    } else if (tabName === 'posAccounts') {
+        document.getElementById('tabPanelPosAccounts').classList.add('active');
+        document.getElementById('tabBtnPosAccounts').classList.add('active');
+        window.location.hash = 'posAccounts';
+    } else {
+        document.getElementById('tabPanelGeneral').classList.add('active');
+        document.getElementById('tabBtnGeneral').classList.add('active');
+        window.location.hash = 'general';
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    // Check hash URL
+    if (window.location.hash === '#sidebar' || window.location.search.includes('tab=sidebar')) {
+        switchTab('sidebar');
+    } else if (window.location.hash === '#posAccounts' || window.location.search.includes('tab=posAccounts')) {
+        switchTab('posAccounts');
+    }
+
     const allowEditCheckbox = document.getElementById('{{ form.allow_pos_price_modification.id_for_label }}');
     const marginContainer = document.getElementById('marginPercentContainer');
     

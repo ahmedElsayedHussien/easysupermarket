@@ -48,20 +48,128 @@ def _get_system_account(code: str):
         ValueError: If the account does not exist
     """
     from apps.tenant.accounting.models import Account
+    acc = Account.objects.filter(code=code, is_active=True).first()
+    if acc:
+        return acc
+
+    # Auto-seed standard chart of accounts if missing
     try:
-        return Account.objects.get(code=code, is_active=True)
-    except Account.DoesNotExist:
-        if code == '1150':
-            curr_assets = Account.objects.filter(code='1100').first()
-            if curr_assets:
-                return Account.objects.create(
-                    code='1150', name='ضرائب مدينة - خصم منبع', 
-                    account_type=Account.ASSET, parent=curr_assets
-                )
-        raise ValueError(
-            f'الحساب برقم الكود "{code}" غير موجود. '
-            f'الرجاء تشغيل أمر "setup_chart_of_accounts" أولاً.'
+        from apps.tenant.core.management.commands.setup_chart_of_accounts import setup_chart_of_accounts_data
+        setup_chart_of_accounts_data()
+        acc = Account.objects.filter(code=code, is_active=True).first()
+        if acc:
+            return acc
+    except Exception as e:
+        logger.warning(f"Error during setup_chart_of_accounts_data in _get_system_account: {e}")
+
+    # Fallback auto-creation for specific dynamic/special accounts
+    if code == '1150':
+        curr_assets = Account.objects.filter(code='1100').first()
+        if curr_assets:
+            return Account.objects.create(
+                code='1150', name='ضرائب مدينة - خصم منبع', 
+                account_type=Account.ASSET, parent=curr_assets
+            )
+    elif code == '1110':
+        curr_assets = Account.objects.filter(code='1100').first() or Account.objects.filter(code='1000').first()
+        return Account.objects.create(
+            code='1110', name='النقدية والخزينة',
+            account_type=Account.ASSET, parent=curr_assets, is_active=True, allow_reconcile=True
         )
+    elif code == '1120':
+        curr_assets = Account.objects.filter(code='1100').first() or Account.objects.filter(code='1000').first()
+        return Account.objects.create(
+            code='1120', name='البنوك',
+            account_type=Account.ASSET, parent=curr_assets, is_active=True, allow_reconcile=True
+        )
+    elif code == '1160':
+        curr_assets = Account.objects.filter(code='1100').first() or Account.objects.filter(code='1000').first()
+        return Account.objects.create(
+            code='1160', name='المحافظ الإلكترونية',
+            account_type=Account.ASSET, parent=curr_assets, is_active=True, allow_reconcile=True
+        )
+    elif code == '4999':
+        rev_parent = Account.objects.filter(code='4200').first() or Account.objects.filter(code='4000').first()
+        return Account.objects.create(
+            code='4999', name='أرباح وإيرادات فروق جرد وتسويات بالزيادة',
+            account_type=Account.REVENUE, parent=rev_parent, is_active=True
+        )
+    elif code == '5250':
+        exp_parent = Account.objects.filter(code='5200').first() or Account.objects.filter(code='5000').first()
+        return Account.objects.create(
+            code='5250', name='مصاريف تالف وهالك وعجز مخزون',
+            account_type=Account.EXPENSE, parent=exp_parent, is_active=True
+        )
+    elif code == '3999':
+        eq_parent = Account.objects.filter(code='3000').first()
+        return Account.objects.create(
+            code='3999', name='أرصدة افتتاحية وتسويات رأس المال',
+            account_type=Account.EQUITY, parent=eq_parent, is_active=True
+        )
+    elif code == '1140':
+        curr_assets = Account.objects.filter(code='1100').first() or Account.objects.filter(code='1000').first()
+        return Account.objects.create(
+            code='1140', name='المخزون',
+            account_type=Account.ASSET, parent=curr_assets, is_active=True
+        )
+    elif code == '3100':
+        eq_parent = Account.objects.filter(code='3000').first()
+        return Account.objects.create(
+            code='3100', name='رأس المال',
+            account_type=Account.EQUITY, parent=eq_parent, is_active=True
+        )
+    elif code == '1210':
+        fix_parent = Account.objects.filter(code='1200').first() or Account.objects.filter(code='1000').first()
+        return Account.objects.create(
+            code='1210', name='الأصول الثابتة والآلات',
+            account_type=Account.ASSET, parent=fix_parent, is_active=True
+        )
+    elif code == '1220':
+        fix_parent = Account.objects.filter(code='1200').first() or Account.objects.filter(code='1000').first()
+        return Account.objects.create(
+            code='1220', name='مجمع الإهلاك',
+            account_type=Account.ASSET, parent=fix_parent, is_active=True
+        )
+    elif code == '5220':
+        exp_parent = Account.objects.filter(code='5200').first() or Account.objects.filter(code='5000').first()
+        return Account.objects.create(
+            code='5220', name='مصروف الإهلاك',
+            account_type=Account.EXPENSE, parent=exp_parent, is_active=True, allow_direct_payment=False
+        )
+    elif code == '4230':
+        rev_parent = Account.objects.filter(code='4200').first() or Account.objects.filter(code='4000').first()
+        return Account.objects.create(
+            code='4230', name='أرباح بيع واستبعاد أصول ثابتة',
+            account_type=Account.REVENUE, parent=rev_parent, is_active=True
+        )
+    elif code == '5370':
+        admin_exp = Account.objects.filter(code='5300').first() or Account.objects.filter(code='5000').first()
+        return Account.objects.create(
+            code='5370', name='خسائر بيع واستبعاد أصول ثابتة',
+            account_type=Account.EXPENSE, parent=admin_exp, is_active=True, allow_direct_payment=False
+        )
+    elif code == '2210':
+        long_liab = Account.objects.filter(code='2200').first() or Account.objects.filter(code='2000').first()
+        return Account.objects.create(
+            code='2210', name='قروض وتسهيلات بنكية طويلة الأجل',
+            account_type=Account.LIABILITY, parent=long_liab, is_active=True
+        )
+    elif code == '2180':
+        curr_liab = Account.objects.filter(code='2100').first() or Account.objects.filter(code='2000').first()
+        return Account.objects.create(
+            code='2180', name='أقساط قروض قصيرة الأجل ومستحقة',
+            account_type=Account.LIABILITY, parent=curr_liab, is_active=True, allow_reconcile=True
+        )
+    elif code == '5500':
+        exp_parent = Account.objects.filter(code='5000').first()
+        return Account.objects.create(
+            code='5500', name='مصاريف فوائد وتمويل بنكي',
+            account_type=Account.EXPENSE, parent=exp_parent, is_active=True, allow_direct_payment=False
+        )
+    raise ValueError(
+        f'الحساب برقم الكود "{code}" غير موجود. '
+        f'الرجاء تشغيل أمر "setup_chart_of_accounts" أولاً.'
+    )
 
 
 def _next_reference(prefix: str) -> str:
@@ -109,7 +217,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     # --- Totals ---
     subtotal = invoice.subtotal
-    net_subtotal = subtotal - invoice.discount_amount
+    net_subtotal = subtotal
     vat_amount = invoice.tax_amount
     wht_amount = invoice.wht_amount
     total_amount = invoice.total_amount
@@ -136,15 +244,74 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     items_to_create = []
 
-    # Dr: A/R
-    if total_amount > 0:
+    # Dr: Accounts based on payment_type (Cash, Bank, EWallet, A/R)
+    if invoice.payment_type == 'SPLIT':
+        cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
+        card_acc = (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
+        ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
+        insta_bank = getattr(invoice, 'insta_bank_account', None)
+        bank_acc = (insta_bank.account if insta_bank and insta_bank.account_id else None) or (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
+
+        splits = [
+            (cash_acc, invoice.paid_cash or Decimal('0'), f'سداد نقدي - {invoice.invoice_number}'),
+            (card_acc, invoice.paid_card or Decimal('0'), f'سداد بطاقة / فيزا - {invoice.invoice_number}'),
+            (ewallet_acc, invoice.paid_ewallet or Decimal('0'), f'سداد محفظة إلكترونية - {invoice.invoice_number}'),
+            (bank_acc, invoice.paid_bank or Decimal('0'), f'سداد تحويل بنكي / إنستاباي - {invoice.invoice_number}'),
+            (debit_account, invoice.paid_credit or Decimal('0'), f'مبيعات آجلة (عميل) - {invoice.invoice_number}'),
+        ]
+        active_splits = [[acc, amt, desc] for acc, amt, desc in splits if amt > 0]
+        split_sum = sum((item[1] for item in active_splits), Decimal('0'))
+        diff = total_amount - split_sum
+        if diff != 0 and abs(diff) <= Decimal('0.05') and active_splits:
+            active_splits[0][1] += diff
+
+        for acc, amt, desc in active_splits:
+            if amt > 0:
+                items_to_create.append(JournalItem(
+                    entry=entry,
+                    account=acc,
+                    debit=amt,
+                    credit=Decimal('0'),
+                    description=desc
+                ))
+    elif invoice.payment_type == 'CASH':
+        cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
         items_to_create.append(JournalItem(
             entry=entry,
-            account=debit_account,
+            account=cash_acc,
             debit=total_amount,
             credit=Decimal('0'),
-            description=f'استحقاق مبيعات (عميل) - {invoice.invoice_number}'
+            description=f'مبيعات نقدية - {invoice.invoice_number}'
         ))
+    elif invoice.payment_type in ('CARD', 'BANK_TRANSFER'):
+        target_bank = invoice.insta_bank_account if (invoice.payment_type == 'BANK_TRANSFER' and getattr(invoice, 'insta_bank_account_id', None)) else invoice.bank_account
+        bank_acc = (target_bank.account if target_bank and target_bank.account_id else None) or _get_system_account('1120')
+        desc = f'مبيعات بطاقة - {invoice.invoice_number}' if invoice.payment_type == 'CARD' else f'مبيعات تحويل بنكي - {invoice.invoice_number}'
+        items_to_create.append(JournalItem(
+            entry=entry,
+            account=bank_acc,
+            debit=total_amount,
+            credit=Decimal('0'),
+            description=desc
+        ))
+    elif invoice.payment_type == 'EWALLET':
+        ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
+        items_to_create.append(JournalItem(
+            entry=entry,
+            account=ewallet_acc,
+            debit=total_amount,
+            credit=Decimal('0'),
+            description=f'مبيعات محفظة إلكترونية - {invoice.invoice_number}'
+        ))
+    else:  # CREDIT
+        if total_amount > 0:
+            items_to_create.append(JournalItem(
+                entry=entry,
+                account=debit_account,
+                debit=total_amount,
+                credit=Decimal('0'),
+                description=f'استحقاق مبيعات (عميل) - {invoice.invoice_number}'
+            ))
 
     # Dr: WHT (Tax Withheld by customer)
     if wht_amount > 0:
@@ -170,15 +337,12 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     # --- Cr: Revenue ---
     # We must split revenue between normal products and services (Labor).
-    product_revenue_gross = sum(line.subtotal for line in invoice.lines.all() if line.product.product_type != 'SERVICE')
-    service_revenue_gross = sum(line.subtotal for line in invoice.lines.all() if line.product.product_type == 'SERVICE')
+    product_revenue_gross = sum((line.subtotal for line in invoice.lines.all() if line.product.product_type != 'SERVICE'), Decimal('0'))
+    service_revenue_gross = sum((line.subtotal for line in invoice.lines.all() if line.product.product_type == 'SERVICE'), Decimal('0'))
     total_gross = product_revenue_gross + service_revenue_gross
 
-    product_revenue_net = Decimal('0')
-    service_revenue_net = Decimal('0')
-    if total_gross > 0:
-        product_revenue_net = (product_revenue_gross - (invoice.discount_amount * product_revenue_gross / total_gross)).quantize(Decimal('0.00'))
-        service_revenue_net = (service_revenue_gross - (invoice.discount_amount * service_revenue_gross / total_gross)).quantize(Decimal('0.00'))
+    product_revenue_net = product_revenue_gross.quantize(Decimal('0.00'))
+    service_revenue_net = service_revenue_gross.quantize(Decimal('0.00'))
 
     # If rounding causes a tiny discrepancy, adjust the largest one
     diff = net_subtotal - (product_revenue_net + service_revenue_net)
@@ -250,81 +414,12 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
     entry.post()
     logger.info(f'Journal posted for sale invoice {invoice.invoice_number}: {reference}')
 
-    # --- Create Receipt Entry if Paid Immediately or SPLIT ---
-    if (invoice.payment_type in ['CASH', 'CARD', 'EWALLET', 'BANK_TRANSFER', 'SPLIT']) and total_amount > 0:
-        pay_items = []
-        pay_reference = _next_reference('PAY')
-        pay_desc = f'تحصيل فاتورة مبيعات - {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
-
-        if invoice.invoice_type == 'RETURN_SALE':
-            pay_desc = f'استرداد نقدي لمرتجع مبيعات - {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
-
-        pay_entry = JournalEntry.objects.create(
-            date=invoice.date,
-            reference=pay_reference,
-            description=pay_desc,
-            status=JournalEntry.DRAFT,
-        )
-        pay_entry.content_type = ContentType.objects.get_for_model(invoice)
-        pay_entry.object_id = invoice.id
-        pay_entry.save(update_fields=['content_type', 'object_id'])
-
-        if invoice.payment_type == 'SPLIT':
-            # Multi-payment breakdown
-            cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
-            card_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1120')
-            ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
-            bank_acc = (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
-
-            total_paid_immediate = Decimal('0')
-
-            if invoice.paid_cash > 0:
-                pay_items.append(JournalItem(entry=pay_entry, account=cash_acc, debit=invoice.paid_cash, credit=Decimal('0'), description=f'{pay_desc} (نقدي)'))
-                total_paid_immediate += invoice.paid_cash
-
-            if invoice.paid_card > 0:
-                pay_items.append(JournalItem(entry=pay_entry, account=card_acc, debit=invoice.paid_card, credit=Decimal('0'), description=f'{pay_desc} (بطاقة)'))
-                total_paid_immediate += invoice.paid_card
-
-            if invoice.paid_ewallet > 0:
-                pay_items.append(JournalItem(entry=pay_entry, account=ewallet_acc, debit=invoice.paid_ewallet, credit=Decimal('0'), description=f'{pay_desc} (محفظة/إنستا باي)'))
-                total_paid_immediate += invoice.paid_ewallet
-
-            if invoice.paid_bank > 0:
-                pay_items.append(JournalItem(entry=pay_entry, account=bank_acc, debit=invoice.paid_bank, credit=Decimal('0'), description=f'{pay_desc} (تحويل بنكي)'))
-                total_paid_immediate += invoice.paid_bank
-
-            if total_paid_immediate > 0:
-                pay_items.append(JournalItem(entry=pay_entry, account=debit_account, debit=Decimal('0'), credit=total_paid_immediate, description=pay_desc))
-        else:
-            # Single payment method
-            if invoice.payment_type == 'EWALLET' and getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id:
-                treasury_account = invoice.ewallet.account
-            elif invoice.payment_type == 'BANK_TRANSFER' and getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id:
-                treasury_account = invoice.bank_account.account
-            elif invoice.payment_type in ['CASH', 'CARD'] and getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id:
-                treasury_account = invoice.treasury.account
-            else:
-                if invoice.payment_type == 'CASH':
-                    treasury_account = _get_system_account('1110')
-                elif invoice.payment_type == 'EWALLET':
-                    treasury_account = _get_system_account('1160')
-                else:
-                    treasury_account = _get_system_account('1120')
-
-            if invoice.invoice_type == 'RETURN_SALE':
-                pay_items.append(JournalItem(entry=pay_entry, account=debit_account, debit=total_amount, credit=Decimal('0'), description=pay_desc))
-                pay_items.append(JournalItem(entry=pay_entry, account=treasury_account, debit=Decimal('0'), credit=total_amount, description=pay_desc))
-            else:
-                pay_items.append(JournalItem(entry=pay_entry, account=treasury_account, debit=total_amount, credit=Decimal('0'), description=pay_desc))
-                pay_items.append(JournalItem(entry=pay_entry, account=debit_account, debit=Decimal('0'), credit=total_amount, description=pay_desc))
-
-        if pay_items:
-            JournalItem.objects.bulk_create(pay_items)
-            pay_entry.post()
-            logger.info(f'Receipt Journal posted for sale invoice {invoice.invoice_number}: {pay_reference}')
-
     return entry
+
+
+def _create_sale_payment_entry(invoice):
+    """Deprecated: Settlement accounts are integrated directly in post_sale_invoice."""
+    return None
 
 
 @transaction.atomic
@@ -343,7 +438,7 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
 
     # --- Totals ---
     subtotal = invoice.subtotal
-    net_subtotal = subtotal - invoice.discount_amount
+    net_subtotal = subtotal
     vat_amount = invoice.tax_amount
     wht_amount = invoice.wht_amount
     total_amount = invoice.total_amount
@@ -395,15 +490,74 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
             description=f'ضريبة الخصم والإضافة - {invoice.invoice_number}'
         ))
 
-    # Cr: Accounts Payable
-    if total_amount > 0:
+    # Cr: Accounts Payable / Cash / Bank / EWallet / Split
+    if invoice.payment_type == 'SPLIT':
+        cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
+        card_acc = (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
+        ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
+        insta_bank = getattr(invoice, 'insta_bank_account', None)
+        bank_acc = (insta_bank.account if insta_bank and insta_bank.account_id else None) or (invoice.bank_account.account if getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id else None) or _get_system_account('1120')
+
+        splits = [
+            (cash_acc, invoice.paid_cash or Decimal('0'), f'سداد نقدي مشتريات - {invoice.invoice_number}'),
+            (card_acc, invoice.paid_card or Decimal('0'), f'سداد بطاقة مشتريات - {invoice.invoice_number}'),
+            (ewallet_acc, invoice.paid_ewallet or Decimal('0'), f'سداد محفظة مشتريات - {invoice.invoice_number}'),
+            (bank_acc, invoice.paid_bank or Decimal('0'), f'سداد تحويل بنكي مشتريات - {invoice.invoice_number}'),
+            (credit_account, invoice.paid_credit or Decimal('0'), f'مشتريات آجلة (مورد) - {invoice.invoice_number}'),
+        ]
+        active_splits = [[acc, amt, desc] for acc, amt, desc in splits if amt > 0]
+        split_sum = sum((item[1] for item in active_splits), Decimal('0'))
+        diff = total_amount - split_sum
+        if diff != 0 and abs(diff) <= Decimal('0.05') and active_splits:
+            active_splits[0][1] += diff
+
+        for acc, amt, desc in active_splits:
+            if amt > 0:
+                items_to_create.append(JournalItem(
+                    entry=entry,
+                    account=acc,
+                    debit=Decimal('0'),
+                    credit=amt,
+                    description=desc
+                ))
+    elif invoice.payment_type == 'CASH':
+        cash_acc = (invoice.treasury.account if getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id else None) or _get_system_account('1110')
         items_to_create.append(JournalItem(
             entry=entry,
-            account=credit_account,
+            account=cash_acc,
             debit=Decimal('0'),
             credit=total_amount,
-            description=f'استحقاق مشتريات (مورد) - {invoice.invoice_number}'
+            description=f'مشتريات نقدية - {invoice.invoice_number}'
         ))
+    elif invoice.payment_type in ('CARD', 'BANK_TRANSFER'):
+        target_bank = invoice.insta_bank_account if (invoice.payment_type == 'BANK_TRANSFER' and getattr(invoice, 'insta_bank_account_id', None)) else invoice.bank_account
+        bank_acc = (target_bank.account if target_bank and target_bank.account_id else None) or _get_system_account('1120')
+        desc = f'مشتريات بطاقة - {invoice.invoice_number}' if invoice.payment_type == 'CARD' else f'مشتريات تحويل بنكي - {invoice.invoice_number}'
+        items_to_create.append(JournalItem(
+            entry=entry,
+            account=bank_acc,
+            debit=Decimal('0'),
+            credit=total_amount,
+            description=desc
+        ))
+    elif invoice.payment_type == 'EWALLET':
+        ewallet_acc = (invoice.ewallet.account if getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id else None) or _get_system_account('1160')
+        items_to_create.append(JournalItem(
+            entry=entry,
+            account=ewallet_acc,
+            debit=Decimal('0'),
+            credit=total_amount,
+            description=f'مشتريات محفظة إلكترونية - {invoice.invoice_number}'
+        ))
+    else:  # CREDIT
+        if total_amount > 0:
+            items_to_create.append(JournalItem(
+                entry=entry,
+                account=credit_account,
+                debit=Decimal('0'),
+                credit=total_amount,
+                description=f'استحقاق مشتريات (مورد) - {invoice.invoice_number}'
+            ))
 
     # Reverse entries for RETURN_PURCHASE
     if invoice.invoice_type == 'RETURN_PURCHASE':
@@ -422,54 +576,13 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
     entry.post()
     logger.info(f'Journal posted for purchase invoice {invoice.invoice_number}: {reference}')
 
-    # --- Create Payment Entry if Paid Immediately ---
-    if invoice.payment_type in ['CASH', 'CARD', 'EWALLET', 'BANK_TRANSFER'] and total_amount > 0:
-        # Determine Treasury Account
-        if invoice.payment_type == 'EWALLET' and getattr(invoice, 'ewallet_id', None) and invoice.ewallet.account_id:
-            treasury_account = invoice.ewallet.account
-        elif invoice.payment_type == 'BANK_TRANSFER' and getattr(invoice, 'bank_account_id', None) and invoice.bank_account.account_id:
-            treasury_account = invoice.bank_account.account
-        elif invoice.payment_type in ['CASH', 'CARD'] and getattr(invoice, 'treasury_id', None) and invoice.treasury.account_id:
-            treasury_account = invoice.treasury.account
-        else:
-            if invoice.payment_type == 'CASH':
-                treasury_account = _get_system_account('1110')
-            elif invoice.payment_type == 'EWALLET':
-                treasury_account = _get_system_account('1160')
-            else:
-                treasury_account = _get_system_account('1120')
-
-        pay_reference = _next_reference('PAY')
-        pay_desc = f'سداد فاتورة مشتريات نقدية - {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
-        
-        if invoice.invoice_type == 'RETURN_PURCHASE':
-            pay_desc = f'استرداد نقدي لمرتجع مشتريات - {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
-            
-        pay_entry = JournalEntry.objects.create(
-            date=invoice.date,
-            reference=pay_reference,
-            description=pay_desc,
-            status=JournalEntry.DRAFT,
-        )
-        pay_entry.content_type = ContentType.objects.get_for_model(invoice)
-        pay_entry.object_id = invoice.id
-        pay_entry.save(update_fields=['content_type', 'object_id'])
-        
-        pay_items = []
-        if invoice.invoice_type == 'RETURN_PURCHASE':
-            # Receiving cash back
-            pay_items.append(JournalItem(entry=pay_entry, account=treasury_account, debit=total_amount, credit=Decimal('0'), description=pay_desc))
-            pay_items.append(JournalItem(entry=pay_entry, account=credit_account, debit=Decimal('0'), credit=total_amount, description=pay_desc))
-        else:
-            # Paying cash
-            pay_items.append(JournalItem(entry=pay_entry, account=credit_account, debit=total_amount, credit=Decimal('0'), description=pay_desc))
-            pay_items.append(JournalItem(entry=pay_entry, account=treasury_account, debit=Decimal('0'), credit=total_amount, description=pay_desc))
-            
-        JournalItem.objects.bulk_create(pay_items)
-        pay_entry.post()
-        logger.info(f'Payment Journal posted for purchase invoice {invoice.invoice_number}: {pay_reference}')
-
     return entry
+
+
+def _create_purchase_payment_entry(invoice):
+    """Deprecated: Settlement accounts are integrated directly in post_purchase_invoice."""
+    return None
+
 
 
 @transaction.atomic
@@ -578,3 +691,64 @@ def post_payment(payment) -> 'JournalEntry':
 
     logger.info(f'Journal posted for payment {payment.reference}: {reference}')
     return entry
+
+
+def batch_get_account_balances(account_qs=None, account_ids=None):
+    """
+    حساب أرصدة مجموعة حسابات دفعة واحدة في استعلام تجميعي واحد (SQL Aggregation)
+    بدون أي لوبات N+1.
+    يقوم بحقن الرصيد المحسوب مباشرة في `_prefetched_balance` لكل حساب ليعمل تلقائياً
+    مع `account.current_balance` دون تشغيل أي استعلام إضافي.
+    """
+    from django.db.models import Sum
+    from django.db.models.functions import Coalesce
+    from apps.tenant.accounting.models import Account, JournalItem, JournalEntry
+
+    if account_qs is None and account_ids is None:
+        account_qs = Account.objects.filter(is_active=True)
+    elif account_qs is None and account_ids is not None:
+        account_qs = Account.objects.filter(id__in=account_ids)
+
+    accounts_list = list(account_qs)
+    if not accounts_list:
+        return {}
+
+    # Map each account to all its descendants + self
+    account_descendants_map = {}
+    all_needed_ids = set()
+
+    for acc in accounts_list:
+        desc_ids = list(acc.get_descendants(include_self=True).values_list('id', flat=True))
+        account_descendants_map[acc.id] = desc_ids
+        all_needed_ids.update(desc_ids)
+
+    # 1 single SQL query to sum debits and credits for all needed accounts
+    items_agg = JournalItem.objects.filter(
+        entry__status=JournalEntry.POSTED,
+        account_id__in=all_needed_ids
+    ).values('account_id').annotate(
+        total_debit=Coalesce(Sum('debit'), Decimal('0.00')),
+        total_credit=Coalesce(Sum('credit'), Decimal('0.00'))
+    )
+
+    raw_sums = {
+        row['account_id']: (row['total_debit'], row['total_credit'])
+        for row in items_agg
+    }
+
+    balances_map = {}
+    for acc in accounts_list:
+        desc_ids = account_descendants_map[acc.id]
+        total_d = sum((raw_sums[aid][0] for aid in desc_ids if aid in raw_sums), Decimal('0.00'))
+        total_c = sum((raw_sums[aid][1] for aid in desc_ids if aid in raw_sums), Decimal('0.00'))
+
+        if acc.normal_balance == 'DEBIT':
+            bal = (total_d - total_c).quantize(Decimal('0.01'))
+        else:
+            bal = (total_c - total_d).quantize(Decimal('0.01'))
+
+        acc._prefetched_balance = bal
+        balances_map[acc.id] = bal
+
+    return balances_map
+

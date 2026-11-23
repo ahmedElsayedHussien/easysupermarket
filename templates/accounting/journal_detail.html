@@ -3,7 +3,15 @@
 
 {% block content %}
 <div class="container-fluid">
-    <h2 class="text-neon-gold mb-4">{{ title }}</h2>
+    <div class="d-flex justify-between align-center mb-4 flex-wrap gap-2">
+        <h2 class="text-neon-gold m-0">{{ title }}</h2>
+        <div class="d-flex gap-2">
+            <a href="{% url 'accounting:journal_list' %}" class="btn" style="background:#ff7300; color:#fff; font-weight:bold; border-radius:8px;">⬅️ العودة لدفتر اليومية</a>
+            {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
+            <a href="{% url 'accounting:journal_create' %}" class="btn" style="background:rgba(0,229,255,0.15); color:#00e5ff; border:1px solid rgba(0,229,255,0.4); font-weight:bold; border-radius:8px;">➕ قيد جديد</a>
+            {% endif %}
+        </div>
+    </div>
     
     <div class="card p-4">
         <div class="d-flex justify-between mb-4">
@@ -51,7 +59,11 @@
         </table>
         
         <div class="mt-4">
+            {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
             <a href="{% url 'accounting:journal_list' %}" class="btn btn-ghost">العودة للقيود</a>
+            {% else %}
+            <a href="javascript:history.back()" class="btn btn-ghost">العودة للخلف</a>
+            {% endif %}
         </div>
     </div>
 </div>

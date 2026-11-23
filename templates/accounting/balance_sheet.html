@@ -13,6 +13,34 @@
         <div class="col-md-6 mb-4">
             <div class="card p-4 h-100">
                 <h3 class="text-neon-green mb-3">الأصول (Assets)</h3>
+                
+                <!-- الأصول المتداولة -->
+                <h5 class="text-white-50 mt-2 mb-2" style="font-size: 0.95rem; font-weight: 700;">الأصول المتداولة (Current Assets)</h5>
+                <table class="data-table mb-3">
+                    <thead>
+                        <tr>
+                            <th>رقم الحساب</th>
+                            <th>اسم الحساب</th>
+                            <th>المبلغ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for account in current_assets %}
+                        {% if not account.has_children and account.current_balance != 0 %}
+                        <tr>
+                            <td class="en">{{ account.code }}</td>
+                            <td>{{ account.name }}</td>
+                            <td class="en">{{ account.current_balance }}</td>
+                        </tr>
+                        {% endif %}
+                        {% empty %}
+                        <tr><td colspan="3" class="text-white-50 text-center py-2">لا توجد حركات</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                <!-- الأصول الثابتة -->
+                <h5 class="text-warning mt-3 mb-2" style="font-size: 0.95rem; font-weight: 700;">الأصول الثابتة والإهلاك (Fixed Assets)</h5>
                 <table class="data-table mb-4">
                     <thead>
                         <tr>
@@ -22,7 +50,26 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for account in asset_accounts %}
+                        {% for account in fixed_assets %}
+                        {% if not account.has_children and account.current_balance != 0 %}
+                        <tr>
+                            <td class="en">{{ account.code }}</td>
+                            <td>{{ account.name }}</td>
+                            <td class="en {% if account.code == '1220' %}text-danger{% endif %}">{{ account.current_balance }}</td>
+                        </tr>
+                        {% endif %}
+                        {% empty %}
+                        <tr><td colspan="3" class="text-white-50 text-center py-2">لا توجد حركات أصول ثابتة</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                {% if other_assets %}
+                <!-- أصول أخرى -->
+                <h5 class="text-white-50 mt-3 mb-2" style="font-size: 0.95rem; font-weight: 700;">أصول أخرى</h5>
+                <table class="data-table mb-4">
+                    <tbody>
+                        {% for account in other_assets %}
                         {% if not account.has_children and account.current_balance != 0 %}
                         <tr>
                             <td class="en">{{ account.code }}</td>
@@ -33,8 +80,10 @@
                         {% endfor %}
                     </tbody>
                 </table>
+                {% endif %}
+
                 <div class="d-flex justify-between align-center p-3 mt-auto" style="background-color: var(--color-surface-hover); border-radius: 8px;">
-                    <h4 class="mb-0">إجمالي الأصول</h4>
+                    <h4 class="mb-0">إجمالي الأصول (صافي)</h4>
                     <h4 class="en mb-0 text-neon-green">{{ total_assets }}</h4>
                 </div>
             </div>

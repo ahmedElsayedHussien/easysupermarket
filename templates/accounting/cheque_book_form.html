@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="max-width: 700px; margin: 0 auto; padding: 2rem;">
+    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3" style="border-color: rgba(255,255,255,0.1) !important;">
+        <h2 style="color: #fff; margin: 0; font-weight: 800;">
+            <i class="fas fa-book text-warning me-2"></i> {{ title }}
+        </h2>
+        <a href="{{ cancel_url }}" class="btn btn-outline-secondary" style="border-radius: 8px;">
+            <i class="fas fa-arrow-left"></i> إلغاء
+        </a>
+    </div>
+
+    <form method="post" class="needs-validation" novalidate>
+        {% csrf_token %}
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label class="form-label text-neon-blue fw-bold">{{ form.bank_account.label }} <span class="text-danger">*</span></label>
+                {{ form.bank_account }}
+                {% if form.bank_account.errors %}<div class="text-danger small mt-1">{{ form.bank_account.errors }}</div>{% endif %}
+            </div>
+
+            <div class="col-md-6">
+                <label class="form-label text-neon-blue fw-bold">{{ form.book_number.label }} <span class="text-danger">*</span></label>
+                {{ form.book_number }}
+                {% if form.book_number.errors %}<div class="text-danger small mt-1">{{ form.book_number.errors }}</div>{% endif %}
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label text-neon-blue fw-bold">{{ form.series_prefix.label }}</label>
+                {{ form.series_prefix }}
+                <small class="text-white-50">بادئة (مثلاً: CHK-)</small>
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label text-neon-blue fw-bold">{{ form.start_number.label }} <span class="text-danger">*</span></label>
+                {{ form.start_number }}
+                {% if form.start_number.errors %}<div class="text-danger small mt-1">{{ form.start_number.errors }}</div>{% endif %}
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label text-neon-blue fw-bold">{{ form.end_number.label }} <span class="text-danger">*</span></label>
+                {{ form.end_number }}
+                {% if form.end_number.errors %}<div class="text-danger small mt-1">{{ form.end_number.errors }}</div>{% endif %}
+            </div>
+
+            <div class="col-md-6">
+                <label class="form-label text-neon-blue fw-bold">{{ form.current_number.label }} <span class="text-danger">*</span></label>
+                {{ form.current_number }}
+                <small class="text-white-50">رقم الشيك الذي سيتم سحبه أولاً</small>
+                {% if form.current_number.errors %}<div class="text-danger small mt-1">{{ form.current_number.errors }}</div>{% endif %}
+            </div>
+
+            <div class="col-md-6 d-flex align-items-center pt-4">
+                <div class="form-check form-switch">
+                    {{ form.is_active }}
+                    <label class="form-check-label text-white fw-bold ms-2">{{ form.is_active.label }}</label>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <label class="form-label text-neon-blue fw-bold">{{ form.notes.label }}</label>
+                {{ form.notes }}
+            </div>
+        </div>
+
+        <div class="mt-4 pt-3 border-top d-flex justify-content-between align-items-center" style="border-color: rgba(255,255,255,0.1) !important;">
+            <a href="{{ cancel_url }}" class="btn btn-outline-secondary px-4">إلغاء</a>
+            <button type="submit" class="btn btn-lg" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); padding: 0.6rem 2.5rem;">
+                <i class="fas fa-save me-1"></i> حفظ دفتر الشيكات
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

@@ -19,11 +19,12 @@ from apps.tenant.core.decorators import custom_permission_required
 # ---------------------------------------------------------------------------
 @custom_permission_required('maintenance.view_maintenanceticket', redirect_url='core:main_screen')
 def ticket_list(request):
+    from django.core.paginator import Paginator
     status_filter = request.GET.get('status', '')
     q = request.GET.get('q', '').strip()
     branch = getattr(request, 'branch', None)
 
-    qs = MaintenanceTicket.objects.select_related('customer', 'technician', 'branch')
+    qs = MaintenanceTicket.objects.select_related('customer', 'technician', 'branch').order_by('-created_at')
     if branch:
         qs = qs.filter(branch=branch)
     if status_filter:
@@ -35,10 +36,18 @@ def ticket_list(request):
             __import__('django.db.models', fromlist=['Q']).Q(customer__name__icontains=q)
         )
 
+    paginator = Paginator(qs, 25)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+
     context = {
-        'tickets': qs,
+        'tickets': page_obj,
+        'page_obj': page_obj,
+        'is_paginated': page_obj.has_other_pages(),
+        'total_count': paginator.count,
         'status_choices': MaintenanceTicket.STATUS_CHOICES,
         'active_status': status_filter,
+        'search_query': q,
         'title': 'تذاكر الصيانة',
     }
     return render(request, 'maintenance/ticket_list.html', context)

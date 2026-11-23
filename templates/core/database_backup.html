@@ -1,0 +1,238 @@
+{% extends 'base.html' %}
+{% load static i18n %}
+
+{% block title %}إدارة النسخ الاحتياطي لقاعدة البيانات{% endblock %}
+
+{% block extra_css %}
+<style>
+.backup-card {
+    background: #0f1929;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    margin-bottom: 1.5rem;
+    position: relative;
+    overflow: hidden;
+}
+.backup-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #ff7300, #ff9100);
+}
+.db-badge-pg {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-weight: 700;
+}
+.db-badge-sqlite {
+    background: rgba(14, 165, 233, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(14, 165, 233, 0.4);
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-weight: 700;
+}
+.btn-orange-glow {
+    background: #ff7300 !important;
+    border-color: #ff7300 !important;
+    color: #ffffff !important;
+    font-weight: 700;
+    box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);
+    transition: all 0.2s ease;
+}
+.btn-orange-glow:hover {
+    background: #e66800 !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(255, 115, 0, 0.6);
+}
+.guide-box {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px dashed #334155;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-top: 1rem;
+    font-size: 0.9rem;
+    color: #94a3b8;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 1300px; padding-top: 1rem;">
+
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <h2 style="font-weight: 800; color: #f8fafc; margin: 0;">
+                💾 النسخ الاحتياطي لقاعدة البيانات (Database Backup)
+            </h2>
+            <p style="color: #94a3b8; margin: 0.25rem 0 0 0; font-size: 0.95rem;">
+                إنشاء وتنزيل وإدارة النسخ الاحتياطية لقاعدة البيانات لضمان أمان البيانات
+            </p>
+        </div>
+        <div>
+            <a href="{% url 'core:settings_dashboard' %}" class="btn btn-secondary">
+                <i class="fas fa-arrow-right"></i> العودة للإعدادات
+            </a>
+        </div>
+    </div>
+
+    <!-- Active Database Info Card -->
+    <div class="backup-card">
+        <div class="row align-items-center">
+            <div class="col-md-7 mb-3 mb-md-0">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <span style="font-size: 1.1rem; font-weight: 700; color: #f1f5f9;">قاعدة البيانات المتصلة حالياً:</span>
+                    {% if db_info.engine == 'postgresql' %}
+                        <span class="db-badge-pg">🐘 PostgreSQL (السيرفر الرئيسي)</span>
+                    {% else %}
+                        <span class="db-badge-sqlite">🗄️ SQLite (الملف المحلي)</span>
+                    {% endif %}
+                </div>
+                <div style="font-size: 0.92rem; color: #cbd5e1; line-height: 1.8;">
+                    {% if db_info.engine == 'postgresql' %}
+                        <div><strong>اسم القاعدة:</strong> <code>{{ db_info.name }}</code> | <strong>المستخدم:</strong> <code>{{ db_info.user }}</code></div>
+                        <div><strong>الخادم:</strong> <code>{{ db_info.host }}:{{ db_info.port }}</code></div>
+                        {% if pg_dump_path %}
+                            <div style="color: #10b981; font-size: 0.85rem;"><i class="fas fa-check-circle"></i> أداة <code>pg_dump</code> مكتشفة وجاهزة للعمل.</div>
+                        {% else %}
+                            <div style="color: #f59e0b; font-size: 0.85rem;"><i class="fas fa-exclamation-triangle"></i> تنبيه: لم يتم اكتشاف pg_dump في مسارات النظام التلقائية.</div>
+                        {% endif %}
+                    {% else %}
+                        <div><strong>ملف القاعدة:</strong> <code>{{ db_info.name }}</code></div>
+                        <div><strong>المسار:</strong> <code>{{ db_info.path }}</code></div>
+                        <div><strong>الحجم الحالي:</strong> <code>{{ db_info.size|filesizeformat }}</code></div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-5 text-md-end text-start">
+                <form action="{% url 'core:database_backup_create' %}" method="POST" class="d-inline-block">
+                    {% csrf_token %}
+                    <input type="hidden" name="download" value="1">
+                    <button type="submit" class="btn btn-orange-glow btn-lg px-4 py-2">
+                        <i class="fas fa-download"></i> أخذ نسخة احتياطية فورية وتنزيلها
+                    </button>
+                </form>
+                <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.5rem;">
+                    يتم أيضاً حفظ نسخة دائمة داخل مجلد <code>backups/</code>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup Files History Table -->
+    <div class="backup-card">
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <h4 style="color: #f8fafc; font-weight: 700; margin: 0;">
+                <i class="fas fa-history" style="color: #ff7300;"></i> سجل النسخ الاحتياطية المحفوظة ({{ backups|length }})
+            </h4>
+            <div style="font-size: 0.85rem; color: #94a3b8;">
+                <i class="fas fa-folder-open"></i> مسار المجلد: <code>{{ backup_dir }}</code>
+            </div>
+        </div>
+
+        {% if backups %}
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0" style="border: 1px solid #1e293b; border-radius: 8px;">
+                <thead style="background: #1e293b; color: #94a3b8; font-size: 0.85rem;">
+                    <tr>
+                        <th>#</th>
+                        <th>اسم الملف</th>
+                        <th>نوع القاعدة</th>
+                        <th>تاريخ الإنشاء</th>
+                        <th>الحجم</th>
+                        <th class="text-center">إجراءات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for b in backups %}
+                    <tr>
+                        <td style="color: #64748b;">{{ forloop.counter }}</td>
+                        <td>
+                            <strong style="color: #f8fafc; font-family: monospace;">{{ b.filename }}</strong>
+                        </td>
+                        <td>
+                            {% if b.engine == 'PostgreSQL' %}
+                                <span class="badge" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa;">🐘 PostgreSQL</span>
+                            {% else %}
+                                <span class="badge" style="background: rgba(14, 165, 233, 0.2); color: #38bdf8;">🗄️ SQLite</span>
+                            {% endif %}
+                        </td>
+                        <td style="color: #cbd5e1; font-size: 0.9rem;">
+                            {{ b.created_at_display }}
+                        </td>
+                        <td style="color: #38bdf8; font-weight: 600;">
+                            {{ b.size_display }}
+                        </td>
+                        <td class="text-center">
+                            <a href="{% url 'core:database_backup_download' b.filename %}" class="btn btn-sm btn-outline-info" title="تنزيل الملف للجهاز">
+                                <i class="fas fa-download"></i> تنزيل
+                            </a>
+                            <form action="{% url 'core:database_backup_restore_file' b.filename %}" method="POST" class="d-inline" onsubmit="return confirm('⚠️ تحذير أمان هام:\nهل أنت متأكد من استعادة هذه النسخة الاحتياطية؟\nسيتم استبدال البيانات الحالية بالكامل بالبيانات المحفوظة في هذا الملف!');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-warning" title="استعادة هذه النسخة">
+                                    <i class="fas fa-undo"></i> استعادة
+                                </button>
+                            </form>
+                            <form action="{% url 'core:database_backup_delete' b.filename %}" method="POST" class="d-inline" onsubmit="return confirm('هل أنت متأكد من حذف هذه النسخة الاحتياطية نهائياً؟');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger" title="حذف الملف">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-4" style="color: #64748b;">
+            <i class="fas fa-archive fa-3x mb-3" style="opacity: 0.4;"></i>
+            <p>لا توجد نسخ احتياطية محفوظة حالياً في مجلد <code>backups/</code>.</p>
+            <p style="font-size: 0.9rem;">اضغط على زر <strong>"أخذ نسخة احتياطية فورية"</strong> بالأعلى لإنشاء أول نسخة.</p>
+        </div>
+        {% endif %}
+
+        <!-- Automated Backup Instructions -->
+        <div class="guide-box">
+            <div style="font-weight: 700; color: #f1f5f9; margin-bottom: 0.4rem;">
+                <i class="fas fa-lightbulb" style="color: #f59e0b;"></i> نصائح وإرشادات النسخ الاحتياطي التلقائي:
+            </div>
+            <ul style="margin: 0; padding-inline-start: 1.2rem; line-height: 1.8;">
+                <li>يمكنك أخذ نسخة احتياطية فورية في أي وقت بنقرة واحدة من هذه الشاشة وسيتم تنزيلها مباشرة لجهازك.</li>
+                <li>يوجد في مجلد البرنامج ملف تنفيذي باسم <code>backup_database.bat</code> يمكنك تشغيله مباشرة من ويندوز أو إضافته إلى <strong>Windows Task Scheduler</strong> لأخذ نسخة احتياطية تلقائية يومياً في وقت محدد دون الحاجة لفتح المتصفح.</li>
+                <li>يُنصح دائماً بحفظ نسخة أسبوعية من ملفات النسخ الاحتياطي على قرص خارجي (فلاش ميموري) أو خدمة سحابية لحماية بيانات المنشأة من أي أعطال بالقرص الصلب.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Upload & Restore Card -->
+    <div class="backup-card">
+        <h4 style="color: #f8fafc; font-weight: 700; margin-bottom: 0.75rem;">
+            <i class="fas fa-upload" style="color: #ff7300;"></i> استعادة قاعدة البيانات من ملف خارجي (Upload & Restore)
+        </h4>
+        <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.25rem;">
+            إذا كان لديك ملف نسخة احتياطية على فلاش ميموري أو جهازك وتريد استعادته (ملفات <code>.sql</code> لقاعدة PostgreSQL أو <code>.db / .sqlite3</code> لقاعدة SQLite):
+        </p>
+
+        <form action="{% url 'core:database_backup_restore' %}" method="POST" enctype="multipart/form-data" class="row g-3 align-items-center" onsubmit="return confirm('⚠️ تنبيه أمان هام:\nاستعادة النسخة الاحتياطية ستقوم باستبدال كافة البيانات الحالية بالقاعدة المرفوعة.\nهل تود المتابعة؟');">
+            {% csrf_token %}
+            <div class="col-md-7">
+                <input type="file" name="backup_file" class="form-control" style="background: #1e293b; border-color: #334155; color: #f8fafc;" accept=".sql,.db,.sqlite3,.dump" required>
+            </div>
+            <div class="col-md-5">
+                <button type="submit" class="btn btn-orange-glow w-100 py-2">
+                    <i class="fas fa-undo-alt"></i> بدء استعادة قاعدة البيانات الآن
+                </button>
+            </div>
+        </form>
+    </div>
+
+</div>
+{% endblock %}

@@ -58,20 +58,47 @@
                 </div>
                 <div class="form-group">
                     <label class="form-label">طريقة الدفع</label>
-                    <select name="payment_type" id="paymentType" class="form-select" required onchange="toggleTreasury()">
-                        <option value="CASH" {% if posted_data.payment_type == "CASH" %}selected{% endif %}>كاش</option>
-                        <option value="CREDIT" {% if posted_data.payment_type == "CREDIT" %}selected{% endif %}>آجل</option>
-                        <option value="CARD" {% if posted_data.payment_type == "CARD" %}selected{% endif %}>بطاقة بنكية</option>
+                    <select name="payment_type" id="paymentType" class="form-select" required onchange="togglePaymentSource()">
+                        <option value="CASH" {% if posted_data.payment_type == "CASH" %}selected{% endif %}>💵 كاش (نقدي)</option>
+                        <option value="CREDIT" {% if posted_data.payment_type == "CREDIT" %}selected{% endif %}>⏳ آجل (على الحساب)</option>
+                        <option value="BANK_TRANSFER" {% if posted_data.payment_type == "BANK_TRANSFER" %}selected{% endif %}>⚡ إنستاباي / تحويل بنكي</option>
+                        <option value="EWALLET" {% if posted_data.payment_type == "EWALLET" %}selected{% endif %}>📱 محفظة إلكترونية (فودافون كاش / وغيرها)</option>
+                        <option value="CARD" {% if posted_data.payment_type == "CARD" %}selected{% endif %}>💳 فيزا / بطاقة بنكية</option>
                     </select>
                 </div>
                 
-                <div class="col-md-3 mb-3" id="treasuryContainer">
-                    <label class="form-label text-gray-300">الخزينة/البنك <span class="text-danger">*</span></label>
+                <div class="form-group" id="treasuryContainer" style="display: none;">
+                    <label class="form-label text-gray-300">الخزينة المسدد منها <span class="text-danger">*</span></label>
                     <select name="treasury_id" id="treasurySelect" class="form-select">
+                        <option value="">اختر الخزينة...</option>
                         {% for t in treasuries %}
                         <option value="{{ t.id }}" {% if posted_data.treasury_id == t.id|stringformat:"s" %}selected{% endif %}>{{ t.name }}</option>
                         {% empty %}
                         <option value="">لا يوجد خزائن مسجلة</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group" id="bankContainer" style="display: none;">
+                    <label class="form-label text-gray-300">الحساب البنكي المسدد منه <span class="text-danger">*</span></label>
+                    <select name="bank_account_id" id="bankAccountSelect" class="form-select">
+                        <option value="">اختر الحساب البنكي...</option>
+                        {% for b in bank_accounts %}
+                        <option value="{{ b.id }}" {% if posted_data.bank_account_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+                        {% empty %}
+                        <option value="">لا توجد حسابات بنكية مسجلة</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group" id="ewalletContainer" style="display: none;">
+                    <label class="form-label text-gray-300">المحفظة الإلكترونية المسدد منها <span class="text-danger">*</span></label>
+                    <select name="ewallet_id" id="ewalletSelect" class="form-select">
+                        <option value="">اختر المحفظة...</option>
+                        {% for w in ewallets %}
+                        <option value="{{ w.id }}" {% if posted_data.ewallet_id == w.id|stringformat:"s" %}selected{% endif %}>{{ w.name }}</option>
+                        {% empty %}
+                        <option value="">لا توجد محافظ إلكترونية مسجلة</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -94,33 +121,44 @@
                 <table class="data-table mb-4" style="min-width: 600px;">
                     <thead>
                         <tr>
-                            <th>الصنف</th>
-                            <th>الوحدة</th>
-                            <th>الكمية</th>
-                            <th>سعر الوحدة</th>
-                            <th>الإجمالي</th>
-                            <th></th>
+                            <th style="min-width: 250px;">الصنف</th>
+                            <th style="width: 140px;">الوحدة</th>
+                            <th style="width: 110px;">الكمية</th>
+                            <th style="width: 150px;">سعر الوحدة</th>
+                            <th style="width: 130px;">الإجمالي</th>
+                            <th style="width: 50px;"></th>
                         </tr>
                     </thead>
                     <tbody id="purchaseLines">
                         <tr>
                             <td>
-                                <select name="product_id[]" class="form-select product-select">
+                                <select name="product_id[]" class="form-select product-select" onchange="updateUoMs(this)">
                                     <option value="">اختر الصنف...</option>
                                     {% for p in products %}
-                                    <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
+                                    <option value="{{ p.id }}" data-last-price="{{ p.last_purchase_price|default:0 }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                                     {% endfor %}
                                 </select>
                                 <div class="serial-btn-container mt-2"></div>
                                 <div class="serial-inputs-container d-none"></div>
+                                <div class="max-stock-warning mt-2" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 5px 9px; font-size: 0.78rem; color: #f59e0b;">
+                                    ⚠️ <span class="max-stock-warning-text"></span>
+                                </div>
                             </td>
                             <td>
-                                <select name="uom_id[]" class="form-select uom-select">
-                                    <option value="">الوحدة الأساسية</option>
+                                <select name="uom_id[]" class="form-select uom-select" onfocus="ensureUoMsLoaded(this)" onchange="onUomChange(this)">
+                                    <option value="">اختر الصنف أولاً</option>
                                 </select>
                             </td>
                             <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
-                            <td><input type="number" name="price[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+                            <td>
+                                <input type="number" name="price[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()">
+                                <div class="last-price-info mt-1" style="display: none; align-items: center; gap: 4px; font-size: 0.76rem;">
+                                    <span class="text-muted" style="white-space: nowrap;">آخر شراء:</span>
+                                    <span class="last-price-badge" onclick="applyLastPrice(this)" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; padding: 1px 6px; border-radius: 4px; font-weight: 700; cursor: pointer; white-space: nowrap;" title="انقر لتطبيق هذا السعر">
+                                        <span class="last-price-num">0.00</span> ج.م
+                                    </span>
+                                </div>
+                            </td>
                             <td><input type="text" class="form-control line-total" readonly></td>
                             <td><button type="button" class="btn btn-sm btn-danger" onclick="this.closest('tr').remove(); calculateTotals()">X</button></td>
                         </tr>
@@ -170,7 +208,7 @@
 
             <div class="d-flex justify-end gap-2">
                 <a href="{% url 'invoicing:purchase_invoice_list' %}" class="btn btn-ghost">إلغاء</a>
-                <button type="submit" class="btn btn-primary">حفظ وترحيل</button>
+                <button type="submit" class="btn btn-orange" style="background-color: #ff7300; color: white; border: none; font-weight: bold; padding: 8px 24px; box-shadow: 0 0 12px rgba(255, 115, 0, 0.4);">حفظ وترحيل</button>
             </div>
         </form>
     </div>
@@ -199,6 +237,130 @@
 <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
 <script>
 const productUoms = {{ product_uoms_json|safe }};
+const productLastPrices = {{ product_last_prices_json|safe }};
+const productStockInfo = {{ product_stock_info_json|safe }};
+
+function checkMaxStockWarning(row) {
+    if (!row) return;
+    const warningEl = row.querySelector('.max-stock-warning');
+    const warningTextEl = row.querySelector('.max-stock-warning-text');
+    const qtyInput = row.querySelector('input[name="quantity[]"]');
+    const productSelect = row.querySelector('.product-select');
+    const uomSelect = row.querySelector('.uom-select');
+
+    if (!warningEl || !warningTextEl) return;
+
+    const productId = productSelect ? (productSelect.tomselect ? productSelect.tomselect.getValue() : productSelect.value) : null;
+    if (!productId || !(productId in productStockInfo)) {
+        warningEl.style.display = 'none';
+        if (qtyInput) {
+            qtyInput.style.borderColor = '';
+            qtyInput.style.boxShadow = '';
+        }
+        return;
+    }
+
+    const info = productStockInfo[productId];
+    const maxStock = parseFloat(info.max_stock) || 0;
+    const curStock = parseFloat(info.current_stock) || 0;
+
+    // Only warn if max stock is set and greater than 0
+    if (maxStock <= 0) {
+        warningEl.style.display = 'none';
+        if (qtyInput) {
+            qtyInput.style.borderColor = '';
+            qtyInput.style.boxShadow = '';
+        }
+        return;
+    }
+
+    const qty = parseFloat(qtyInput ? qtyInput.value : 0) || 0;
+    let factor = 1.0;
+    if (uomSelect && uomSelect.value && productUoms[productId]) {
+        const selUom = productUoms[productId].find(u => u.id == uomSelect.value);
+        if (selUom && selUom.factor) {
+            factor = parseFloat(selUom.factor) || 1.0;
+        }
+    }
+    const qtyInBase = qty * factor;
+    const expectedStock = curStock + qtyInBase;
+
+    if (expectedStock > maxStock && qty > 0) {
+        const excess = (expectedStock - maxStock).toFixed(2);
+        warningTextEl.innerHTML = `<strong>تنبيه:</strong> الكمية المدخلة ستتجاوز الحد الأقصى للمخزون! (الرصيد الحالي: <b>${curStock}</b> + الشراء: <b>${qtyInBase.toFixed(2)}</b> = <b>${expectedStock.toFixed(2)}</b> | الحد الأقصى: <b>${maxStock}</b> | الفائض المتوقع: <b>+${excess}</b>)`;
+        warningEl.style.display = 'block';
+        if (qtyInput) {
+            qtyInput.style.borderColor = '#f59e0b';
+            qtyInput.style.boxShadow = '0 0 6px rgba(245, 158, 11, 0.4)';
+        }
+    } else {
+        warningEl.style.display = 'none';
+        if (qtyInput) {
+            qtyInput.style.borderColor = '';
+            qtyInput.style.boxShadow = '';
+        }
+    }
+}
+
+function applyLastPrice(badgeElement) {
+    const row = badgeElement.closest('tr');
+    const lastPriceNum = row.querySelector('.last-price-num');
+    const priceInput = row.querySelector('input[name="price[]"]');
+    if (lastPriceNum && priceInput) {
+        priceInput.value = lastPriceNum.textContent.trim();
+        calculateTotals();
+    }
+}
+
+function updateLastPriceDisplay(row, productId, isUomChange = false) {
+    if (!row) return;
+    const lastPriceInfo = row.querySelector('.last-price-info');
+    const lastPriceNum = row.querySelector('.last-price-num');
+    const priceInput = row.querySelector('input[name="price[]"]');
+    const uomSelect = row.querySelector('.uom-select');
+
+    if (!lastPriceInfo || !lastPriceNum) return;
+
+    if (!productId || !(productId in productLastPrices)) {
+        lastPriceInfo.style.display = 'none';
+        return;
+    }
+
+    const baseLastPrice = parseFloat(productLastPrices[productId]) || 0;
+    let factor = 1.0;
+    if (uomSelect && uomSelect.value && productUoms[productId]) {
+        const selUom = productUoms[productId].find(u => u.id == uomSelect.value);
+        if (selUom && selUom.factor) {
+            factor = parseFloat(selUom.factor) || 1.0;
+        }
+    }
+
+    const effectivePrice = (baseLastPrice * factor);
+
+    if (effectivePrice > 0) {
+        lastPriceNum.textContent = effectivePrice.toFixed(2);
+        lastPriceInfo.style.display = 'flex';
+
+        // Auto-fill price if field is empty or 0
+        if (priceInput && (!priceInput.value || parseFloat(priceInput.value) === 0)) {
+            priceInput.value = effectivePrice.toFixed(2);
+            calculateTotals();
+        }
+    } else {
+        lastPriceNum.textContent = '0.00';
+        lastPriceInfo.style.display = 'flex';
+    }
+}
+
+function onUomChange(selectEl) {
+    const row = selectEl.closest('tr');
+    const productSelect = row.querySelector('.product-select');
+    const productId = productSelect ? (productSelect.tomselect ? productSelect.tomselect.getValue() : productSelect.value) : null;
+    if (productId) {
+        updateLastPriceDisplay(row, productId, true);
+    }
+    calculateTotals();
+}
 
 function initTomSelect(element) {
     if (element.tomselect) return;
@@ -206,20 +368,42 @@ function initTomSelect(element) {
         create: false,
         maxOptions: 1000,
         placeholder: "ابحث بالباركود أو اسم الصنف...",
+        render: {
+            option: function(data, escape) {
+                const pId = data.value;
+                const lastP = (pId && productLastPrices[pId]) ? parseFloat(productLastPrices[pId]) : 0;
+                const priceBadge = lastP > 0
+                    ? `<span style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; font-size: 0.74rem; padding: 2px 7px; border-radius: 4px; font-weight: 700; white-space: nowrap;">آخر شراء: ${lastP.toFixed(2)} ج.م</span>`
+                    : `<span style="color: #64748b; font-size: 0.72rem; white-space: nowrap;">(صنف جديد)</span>`;
+                return `<div style="display:flex; justify-content:space-between; align-items:center; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 10px;">
+                            <span style="font-weight: 600;">${escape(data.text)}</span>
+                            ${priceBadge}
+                        </div>`;
+            }
+        },
         onChange: function(value) {
-            updateUoMs(element);
+            updateUoMs(element, null, value);
+            const row = element.closest('tr');
+            if (row) {
+                updateLastPriceDisplay(row, value);
+            }
             calculateTotals();
-            checkSerialRequirement(element);
+            checkSerialRequirement(element, value);
         }
     });
 }
 
-// خريطة الباركود للأصناف
+// خريطة الباركود للأصناف (تشمل باركود الصنف والوحدات البديلة)
 const productBarcodeMap = {
     {% for p in products %}
     {% if p.barcode %}
-    "{{ p.barcode|escapejs }}": "{{ p.id }}",
+    "{{ p.barcode|escapejs }}": { productId: "{{ p.id }}", uomId: "" },
     {% endif %}
+    {% for puom in p.uoms.all %}
+    {% if puom.barcode %}
+    "{{ puom.barcode|escapejs }}": { productId: "{{ p.id }}", uomId: "{{ puom.id }}" },
+    {% endif %}
+    {% endfor %}
     {% endfor %}
 };
 
@@ -229,10 +413,38 @@ function handleBarcodeScan(event) {
         const barcode = event.target.value.trim();
         if (!barcode) return;
         
-        const productId = productBarcodeMap[barcode];
-        if (productId) {
-            // إضافة سطر جديد بالصنف
-            addLineWithData(productId, 1, '');
+        const match = productBarcodeMap[barcode];
+        if (match) {
+            const productId = typeof match === 'object' ? match.productId : match;
+            const uomId = typeof match === 'object' ? match.uomId : '';
+            
+            // تحقق إذا كان هناك سطر أول فارغ لم يتم اختيار صنف به لإعادة استخدامه
+            const rows = document.querySelectorAll('#purchaseLines tr');
+            let targetRow = null;
+            if (rows.length === 1) {
+                const firstSelect = rows[0].querySelector('select[name="product_id[]"]');
+                if (firstSelect && !firstSelect.value) {
+                    targetRow = rows[0];
+                }
+            }
+
+            if (targetRow) {
+                const selectEl = targetRow.querySelector('.product-select');
+                if (selectEl.tomselect) {
+                    selectEl.tomselect.setValue(productId, true);
+                } else {
+                    selectEl.value = productId;
+                }
+                updateUoMs(selectEl, uomId, productId);
+                const uomSelect = targetRow.querySelector('.uom-select');
+                if (uomSelect && uomId) uomSelect.value = uomId;
+                const qtyInput = targetRow.querySelector('input[name="quantity[]"]');
+                if (qtyInput) qtyInput.value = '1';
+                updateLastPriceDisplay(targetRow, productId);
+                checkSerialRequirement(selectEl, productId);
+            } else {
+                addLineWithData(productId, 1, '', uomId);
+            }
             
             // مسح الحقل للباركود التالي
             event.target.value = '';
@@ -252,46 +464,90 @@ function handleBarcodeScan(event) {
     }
 }
 
-function updateUoMs(productSelect, selectedUomId = null) {
-    const productId = productSelect.value;
-    const row = productSelect.closest('tr');
+function ensureUoMsLoaded(uomSelect) {
+    if (!uomSelect) return;
+    const row = uomSelect.closest('tr');
+    if (!row) return;
+    const productSelect = row.querySelector('.product-select');
+    if (!productSelect) return;
+    const currentProductId = productSelect.tomselect ? productSelect.tomselect.getValue() : productSelect.value;
+    if (currentProductId && (uomSelect.options.length <= 1 && (!uomSelect.value || uomSelect.options[0]?.text?.includes('اختر الصنف')))) {
+        updateUoMs(productSelect, uomSelect.value || null, currentProductId);
+    }
+}
+
+function updateUoMs(productSelect, selectedUomId = null, explicitProductId = null) {
+    if (!productSelect) return;
+    const row = productSelect.closest ? productSelect.closest('tr') : null;
+    if (!row) return;
     const uomSelect = row.querySelector('.uom-select');
     
     if (!uomSelect) return;
     
-    uomSelect.innerHTML = '<option value="">الوحدة الأساسية</option>';
-    if (productId && productUoms[productId]) {
+    let productId = explicitProductId;
+    if (!productId) {
+        if (productSelect.tomselect) {
+            productId = productSelect.tomselect.getValue();
+        }
+        if (!productId) {
+            productId = productSelect.value;
+        }
+    }
+    productId = productId ? String(productId).trim() : '';
+    
+    if (productId && productUoms && productUoms[productId] && productUoms[productId].length > 0) {
         uomSelect.innerHTML = '';
-        productUoms[productId].forEach(uom => {
+        productUoms[productId].forEach((uom, index) => {
             const option = document.createElement('option');
-            option.value = uom.id;
+            option.value = (uom.id !== undefined && uom.id !== null) ? uom.id : '';
             option.textContent = uom.name;
-            if (selectedUomId !== null && uom.id == selectedUomId) {
+            if (selectedUomId !== null && selectedUomId !== undefined && String(uom.id) === String(selectedUomId)) {
+                option.selected = true;
+            } else if ((selectedUomId === null || selectedUomId === undefined || selectedUomId === '') && index === 0) {
                 option.selected = true;
             }
             uomSelect.appendChild(option);
         });
+        onUomChange(uomSelect);
+    } else {
+        uomSelect.innerHTML = '<option value="">اختر الصنف أولاً</option>';
     }
 }
 
-function toggleTreasury() {
+function togglePaymentSource() {
     const paymentType = document.getElementById('paymentType').value;
     const treasuryContainer = document.getElementById('treasuryContainer');
     const treasurySelect = document.getElementById('treasurySelect');
-    
-    if (paymentType === 'CASH' || paymentType === 'CARD') {
-        treasuryContainer.style.display = 'block';
-        treasurySelect.required = true;
-    } else {
-        treasuryContainer.style.display = 'none';
-        treasurySelect.required = false;
-        treasurySelect.value = "";
+    const bankContainer = document.getElementById('bankContainer');
+    const bankAccountSelect = document.getElementById('bankAccountSelect');
+    const ewalletContainer = document.getElementById('ewalletContainer');
+    const ewalletSelect = document.getElementById('ewalletSelect');
+
+    // Reset visibility and required attributes
+    if (treasuryContainer) treasuryContainer.style.display = 'none';
+    if (treasurySelect) treasurySelect.required = false;
+
+    if (bankContainer) bankContainer.style.display = 'none';
+    if (bankAccountSelect) bankAccountSelect.required = false;
+
+    if (ewalletContainer) ewalletContainer.style.display = 'none';
+    if (ewalletSelect) ewalletSelect.required = false;
+
+    if (paymentType === 'CASH') {
+        if (treasuryContainer) treasuryContainer.style.display = 'block';
+        if (treasurySelect) treasurySelect.required = true;
+    } else if (paymentType === 'BANK_TRANSFER' || paymentType === 'CARD') {
+        if (bankContainer) bankContainer.style.display = 'block';
+        if (bankAccountSelect) bankAccountSelect.required = true;
+    } else if (paymentType === 'EWALLET') {
+        if (ewalletContainer) ewalletContainer.style.display = 'block';
+        if (ewalletSelect) ewalletSelect.required = true;
     }
 }
 
 // Call on load to set initial state
 document.addEventListener('DOMContentLoaded', function() {
-    toggleTreasury();
+    togglePaymentSource();
     
     // Initialize TomSelect on existing rows
     document.querySelectorAll('.product-select').forEach(function(el) {
@@ -306,7 +562,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (postedLines.length > 0) {
         tbody.innerHTML = ''; // clear the default blank line
         postedLines.forEach(line => {
-            addLineWithData(line.product_id, line.quantity, line.price);
+            addLineWithData(line.product_id, line.quantity, line.price, line.uom_id);
         });
         calculateTotals();
     }
@@ -318,22 +574,33 @@ function addLine() {
     const row = document.createElement('tr');
     row.innerHTML = `
         <td>
-            <select name="product_id[]" class="form-select product-select">
+            <select name="product_id[]" class="form-select product-select" onchange="updateUoMs(this)">
                 <option value="">اختر الصنف...</option>
                 {% for p in products %}
-                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
+                <option value="{{ p.id }}" data-last-price="{{ p.last_purchase_price|default:0 }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                 {% endfor %}
             </select>
             <div class="serial-btn-container mt-2"></div>
             <div class="serial-inputs-container d-none"></div>
+            <div class="max-stock-warning mt-2" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 5px 9px; font-size: 0.78rem; color: #f59e0b;">
+                ⚠️ <span class="max-stock-warning-text"></span>
+            </div>
         </td>
         <td>
-            <select name="uom_id[]" class="form-select uom-select">
-                <option value="">الوحدة الأساسية</option>
+            <select name="uom_id[]" class="form-select uom-select" onfocus="ensureUoMsLoaded(this)" onchange="onUomChange(this)">
+                <option value="">اختر الصنف أولاً</option>
             </select>
         </td>
         <td><input type="number" name="quantity[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
-        <td><input type="number" name="price[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+        <td>
+            <input type="number" name="price[]" class="form-control" step="0.01" onchange="calculateTotals()" onkeyup="calculateTotals()">
+            <div class="last-price-info mt-1" style="display: none; align-items: center; gap: 4px; font-size: 0.76rem;">
+                <span class="text-muted" style="white-space: nowrap;">آخر شراء:</span>
+                <span class="last-price-badge" onclick="applyLastPrice(this)" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; padding: 1px 6px; border-radius: 4px; font-weight: 700; cursor: pointer; white-space: nowrap;" title="انقر لتطبيق هذا السعر">
+                    <span class="last-price-num">0.00</span> ج.م
+                </span>
+            </div>
+        </td>
         <td><input type="text" class="form-control line-total" readonly></td>
         <td><button type="button" class="btn btn-sm btn-danger" onclick="this.closest('tr').remove(); calculateTotals()">X</button></td>
     `;
@@ -346,37 +613,49 @@ function addLineWithData(productId, qty, price, uomId = null) {
     const row = document.createElement('tr');
     row.innerHTML = `
         <td>
-            <select name="product_id[]" class="form-select product-select">
+            <select name="product_id[]" class="form-select product-select" onchange="updateUoMs(this)">
                 <option value="">اختر الصنف...</option>
                 {% for p in products %}
-                <option value="{{ p.id }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
+                <option value="{{ p.id }}" data-last-price="{{ p.last_purchase_price|default:0 }}" data-tax-rate="{{ p.tax_rate }}" data-wht-rate="{{ p.withholding_tax_rate }}" data-has-imei="{{ p.has_imei|yesno:'true,false' }}" data-has-serial="{{ p.has_serial|yesno:'true,false' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>
                 {% endfor %}
             </select>
             <div class="serial-btn-container mt-2"></div>
             <div class="serial-inputs-container d-none"></div>
+            <div class="max-stock-warning mt-2" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 5px 9px; font-size: 0.78rem; color: #f59e0b;">
+                ⚠️ <span class="max-stock-warning-text"></span>
+            </div>
         </td>
         <td>
-            <select name="uom_id[]" class="form-select uom-select">
-                <option value="">الوحدة الأساسية</option>
+            <select name="uom_id[]" class="form-select uom-select" onfocus="ensureUoMsLoaded(this)" onchange="onUomChange(this)">
+                <option value="">اختر الصنف أولاً</option>
             </select>
         </td>
         <td><input type="number" name="quantity[]" class="form-control" step="0.01" value="${qty}" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
-        <td><input type="number" name="price[]" class="form-control" step="0.01" value="${price}" onchange="calculateTotals()" onkeyup="calculateTotals()"></td>
+        <td>
+            <input type="number" name="price[]" class="form-control" step="0.01" value="${price}" onchange="calculateTotals()" onkeyup="calculateTotals()">
+            <div class="last-price-info mt-1" style="display: none; align-items: center; gap: 4px; font-size: 0.76rem;">
+                <span class="text-muted" style="white-space: nowrap;">آخر شراء:</span>
+                <span class="last-price-badge" onclick="applyLastPrice(this)" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; padding: 1px 6px; border-radius: 4px; font-weight: 700; cursor: pointer; white-space: nowrap;" title="انقر لتطبيق هذا السعر">
+                    <span class="last-price-num">0.00</span> ج.م
+                </span>
+            </div>
+        </td>
         <td><input type="text" class="form-control line-total" readonly></td>
         <td><button type="button" class="btn btn-sm btn-danger" onclick="this.closest('tr').remove(); calculateTotals()">X</button></td>
     `;
-    
-    if (productId) {
-        const selectElement = row.querySelector('select[name="product_id[]"]');
-        selectElement.value = productId;
-        updateUoMs(selectElement, uomId);
-    }
     
     tbody.appendChild(row);
     const selectEl = row.querySelector('.product-select');
     initTomSelect(selectEl);
     if (productId) {
-        selectEl.tomselect.setValue(productId);
+        if (selectEl.tomselect) {
+            selectEl.tomselect.setValue(productId, true);
+        } else {
+            selectEl.value = productId;
+        }
+        updateUoMs(selectEl, uomId, productId);
+        updateLastPriceDisplay(row, productId);
+        checkSerialRequirement(selectEl, productId);
     }
 }
 
@@ -394,6 +673,7 @@ function calculateTotals() {
 
     const rows = document.querySelectorAll('#purchaseLines tr');
     rows.forEach(row => {
+        checkMaxStockWarning(row);
         const qty = parseFloat(row.querySelector('input[name="quantity[]"]')?.value) || 0;
         const price = parseFloat(row.querySelector('input[name="price[]"]')?.value) || 0;
         const lineGross = qty * price;
@@ -406,8 +686,19 @@ function calculateTotals() {
         const vatInputStr = document.getElementById('vatPctInput')?.value;
         const whtInputStr = document.getElementById('whtPctInput')?.value;
 
-        let taxRate = parseFloat(vatInputStr) || 0;
-        let whtRate = parseFloat(whtInputStr) || 0;
+        let taxRate = 0;
+        if (vatInputStr !== '' && vatInputStr !== null && !isNaN(parseFloat(vatInputStr))) {
+            taxRate = parseFloat(vatInputStr);
+        } else {
+            taxRate = parseFloat(productOption?.dataset.taxRate) || 0;
+        }
+
+        let whtRate = 0;
+        if (whtInputStr !== '' && whtInputStr !== null && !isNaN(parseFloat(whtInputStr))) {
+            whtRate = parseFloat(whtInputStr);
+        } else if (subjectToWht) {
+            whtRate = parseFloat(productOption?.dataset.whtRate) || 0;
+        }
         
         const lineTax = lineNet * (taxRate / 100);
         const lineWht = lineNet * (whtRate / 100);
@@ -438,13 +729,25 @@ function calculateTotals() {
 // --- Serial & IMEI Logic ---
 let currentSerialRowIndex = -1;
 
-function checkSerialRequirement(selectElement) {
-    const row = selectElement.closest('tr');
-    const option = selectElement.options[selectElement.selectedIndex];
+function checkSerialRequirement(selectElement, explicitProductId = null) {
+    if (!selectElement) return;
+    const row = selectElement.closest ? selectElement.closest('tr') : null;
+    if (!row) return;
     const btnContainer = row.querySelector('.serial-btn-container');
     const inputsContainer = row.querySelector('.serial-inputs-container');
     
-    if (!option || !btnContainer) return;
+    if (!btnContainer) return;
+    
+    const pId = explicitProductId || (selectElement.tomselect ? selectElement.tomselect.getValue() : selectElement.value);
+    let option = null;
+    if (pId && selectElement.options) {
+        option = Array.from(selectElement.options).find(o => String(o.value) === String(pId));
+    }
+    if (!option && selectElement.options && selectElement.selectedIndex >= 0) {
+        option = selectElement.options[selectElement.selectedIndex];
+    }
+    
+    if (!option) return;
     
     const hasImei = option.dataset.hasImei === 'true';
     const hasSerial = option.dataset.hasSerial === 'true';
@@ -452,32 +755,40 @@ function checkSerialRequirement(selectElement) {
     if (hasImei || hasSerial) {
         btnContainer.innerHTML = `<button type="button" class="btn" style="background-color: #ff7300; color: white; border: none; border-radius: 4px; padding: 6px 12px; font-weight: bold; width: 100%; text-align: center; margin-top: 5px; box-shadow: 0 0 10px rgba(255, 115, 0, 0.3);" onclick="openSerialModal(this)">⌨️ إدخال السيريالات/IMEI</button>`;
         // Reset inputs if item changed
-        inputsContainer.innerHTML = '';
+        if (inputsContainer) inputsContainer.innerHTML = '';
     } else {
         btnContainer.innerHTML = '';
-        inputsContainer.innerHTML = '';
+        if (inputsContainer) inputsContainer.innerHTML = '';
     }
 }
 
 function openSerialModal(btn) {
     const row = btn.closest('tr');
+    if (!row) return;
     // Find row index
     const tbody = document.getElementById('purchaseLines');
     currentSerialRowIndex = Array.from(tbody.children).indexOf(row);
     
     const select = row.querySelector('.product-select');
-    const option = select.options[select.selectedIndex];
+    const pId = select ? (select.tomselect ? select.tomselect.getValue() : select.value) : null;
+    let option = null;
+    if (pId && select.options) {
+        option = Array.from(select.options).find(o => String(o.value) === String(pId));
+    }
+    if (!option && select && select.options && select.selectedIndex >= 0) {
+        option = select.options[select.selectedIndex];
+    }
     const qtyInput = row.querySelector('input[name="quantity[]"]');
-    const qty = parseInt(qtyInput.value) || 0;
+    const qty = parseInt(qtyInput ? qtyInput.value : 0) || 0;
     
     if (qty <= 0) {
         alert("يرجى إدخال الكمية أولاً لتحديد عدد السيريالات المطلوبة.");
-        qtyInput.focus();
+        if (qtyInput) qtyInput.focus();
         return;
     }
     
-    const hasImei = option.dataset.hasImei === 'true';
-    const hasSerial = option.dataset.hasSerial === 'true';
+    const hasImei = option ? option.dataset.hasImei === 'true' : false;
+    const hasSerial = option ? option.dataset.hasSerial === 'true' : false;
     
     const modalBody = document.getElementById('serialModalBody');
     let html = `<p>الرجاء إدخال بيانات الأجهزة للكمية المطلوبة (${qty} أجهزة)</p>`;

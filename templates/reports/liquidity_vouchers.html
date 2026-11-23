@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>🧾 {{ title }}</h1>
+        <p>حصر تفصيلي لحركة المقبوضات والمدفوعات النقدية والبنكية وصافي التدفق المالي</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">⬅️ العودة للتقارير</a>
+        <a href="{% url 'accounting:receipt_create' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📥 سند قبض</a>
+        <a href="{% url 'accounting:payment_create' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📤 سند صرف</a>
+        <button type="button" onclick="window.print()" class="btn btn-secondary">🖨️ طباعة</button>
+        <button type="button" onclick="exportTableToExcel('vouchers-table', 'سندات_المقبوضات_والمدفوعات')" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير Excel</button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 140px;">
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 140px;">
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 140px;">
+            <label class="form-label">نوع السند</label>
+            <select name="voucher_type" class="form-control">
+                <option value="">-- كافة السندات --</option>
+                <option value="RECEIPT" {% if selected_voucher_type == 'RECEIPT' %}selected{% endif %}>📥 سند قبض (وارد)</option>
+                <option value="PAYMENT" {% if selected_voucher_type == 'PAYMENT' %}selected{% endif %}>📤 سند صرف (منصرف)</option>
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 160px;">
+            <label class="form-label">طريقة الدفع</label>
+            <select name="payment_method" class="form-control">
+                <option value="">-- كافة الطرق --</option>
+                <option value="CASH" {% if selected_payment_method == 'CASH' %}selected{% endif %}>نقدي (كاش)</option>
+                <option value="CARD" {% if selected_payment_method == 'CARD' %}selected{% endif %}>بطاقة / فيزا</option>
+                <option value="BANK_TRANSFER" {% if selected_payment_method == 'BANK_TRANSFER' %}selected{% endif %}>تحويل بنكي / إنستاباي</option>
+                <option value="EWALLET" {% if selected_payment_method == 'EWALLET' %}selected{% endif %}>محفظة إلكترونية</option>
+                <option value="SPLIT" {% if selected_payment_method == 'SPLIT' %}selected{% endif %}>سداد مقسم / متنوع</option>
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 200px;">
+            <label class="form-label">الحساب (خزينة/بنك/محفظة)</label>
+            <select name="account" class="form-control">
+                <option value="">-- كافة الحسابات --</option>
+                <optgroup label="🏦 الخزن النقدية">
+                    {% for t in treasuries %}
+                    <option value="treasury_{{ t.id }}" {% if selected_account == 'treasury_'|add:t.id|stringformat:"s" %}selected{% endif %}>{{ t.name }}</option>
+                    {% endfor %}
+                </optgroup>
+                <optgroup label="🏛️ الحسابات البنكية">
+                    {% for b in bank_accounts %}
+                    <option value="bank_{{ b.id }}" {% if selected_account == 'bank_'|add:b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </optgroup>
+                <optgroup label="📱 المحافظ الإلكترونية">
+                    {% for w in ewallets %}
+                    <option value="wallet_{{ w.id }}" {% if selected_account == 'wallet_'|add:w.id|stringformat:"s" %}selected{% endif %}>{{ w.name }}</option>
+                    {% endfor %}
+                </optgroup>
+            </select>
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
+            <button type="submit" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">🔍 تصفية</button>
+            <a href="{% url 'core:report_cash_vouchers' %}" class="btn btn-secondary">إلغاء</a>
+        </div>
+    </form>
+</div>
+
+<!-- KPI Cards -->
+<div class="reports-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
+    <div class="stat-card" style="border-left: 4px solid var(--neon-green); background: linear-gradient(135deg, rgba(0, 230, 118, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(0, 230, 118, 0.15); color: var(--neon-green);">📥</div>
+        <div class="stat-details">
+            <h3 class="stat-title">إجمالي المقبوضات (الوارد)</h3>
+            <div class="stat-value" style="color: var(--neon-green); font-family: monospace;">{{ total_receipts|floatformat:"2" }}</div>
+        </div>
+    </div>
+
+    <div class="stat-card" style="border-left: 4px solid var(--neon-red); background: linear-gradient(135deg, rgba(255, 23, 68, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(255, 23, 68, 0.15); color: var(--neon-red);">📤</div>
+        <div class="stat-details">
+            <h3 class="stat-title">إجمالي المدفوعات (المنصرف)</h3>
+            <div class="stat-value" style="color: var(--neon-red); font-family: monospace;">{{ total_payments|floatformat:"2" }}</div>
+        </div>
+    </div>
+
+    <div class="stat-card" style="border-left: 4px solid var(--neon-gold); background: linear-gradient(135deg, rgba(255, 184, 0, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(255, 184, 0, 0.15); color: var(--neon-gold);">⚖️</div>
+        <div class="stat-details">
+            <h3 class="stat-title">صافي التدفق النقدي</h3>
+            <div class="stat-value" style="font-family: monospace; {% if net_flow < 0 %}color: var(--neon-red);{% else %}color: var(--neon-gold);{% endif %}">
+                {{ net_flow|floatformat:"2" }}
+            </div>
+        </div>
+    </div>
+
+    <div class="stat-card" style="border-left: 4px solid var(--neon-blue); background: linear-gradient(135deg, rgba(0, 176, 255, 0.08), rgba(0,0,0,0.2));">
+        <div class="stat-icon" style="background: rgba(0, 176, 255, 0.15); color: var(--neon-blue);">🔢</div>
+        <div class="stat-details">
+            <h3 class="stat-title">عدد السندات</h3>
+            <div class="stat-value" style="color: var(--neon-blue); font-family: monospace;">{{ vouchers|length }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Vouchers Table -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
+        <h3 style="margin: 0; color: var(--text-primary);">
+            📋 حركة السندات النقدية ({{ vouchers|length }} سند)
+        </h3>
+        <div class="search-box" style="width: 250px;">
+            <input type="text" id="searchInput" class="form-control" placeholder="بحث في السندات..." onkeyup="filterTable()">
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table" id="vouchers-table">
+            <thead>
+                <tr>
+                    <th>رقم السند</th>
+                    <th>التاريخ</th>
+                    <th>نوع السند</th>
+                    <th>الشريك / المستفيد</th>
+                    <th>المبلغ</th>
+                    <th>طريقة الدفع</th>
+                    <th>الحساب النقدي</th>
+                    <th>البيان</th>
+                    <th>الحالة</th>
+                    <th style="text-align: center;">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for v in vouchers %}
+                <tr>
+                    <td style="font-family: monospace; font-weight: bold;">
+                        <a href="{% url 'accounting:voucher_detail' v.id %}" style="color: var(--neon-blue); text-decoration: none;">
+                            {{ v.voucher_number }}
+                        </a>
+                    </td>
+                    <td style="color: var(--text-muted);">{{ v.date|date:"Y-m-d" }}</td>
+                    <td>
+                        {% if v.voucher_type == 'RECEIPT' %}
+                        <span class="badge" style="background: rgba(0, 230, 118, 0.15); color: var(--neon-green); padding: 0.25rem 0.6rem; border-radius: 4px; font-weight: bold;">
+                            📥 قبض
+                        </span>
+                        {% else %}
+                        <span class="badge" style="background: rgba(255, 23, 68, 0.15); color: var(--neon-red); padding: 0.25rem 0.6rem; border-radius: 4px; font-weight: bold;">
+                            📤 صرف
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td style="font-weight: 500; color: var(--text-primary);">
+                        {{ v.partner.name|default:"غير محدد" }}
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.05rem; font-weight: bold; {% if v.voucher_type == 'RECEIPT' %}color: var(--neon-green);{% else %}color: var(--neon-red);{% endif %}">
+                        {{ v.amount|floatformat:2 }}
+                    </td>
+                    <td style="color: var(--text-muted);">
+                        {{ v.get_payment_method_display }}
+                    </td>
+                    <td style="color: var(--text-primary);">
+                        {% if v.treasury %}
+                            🏦 {{ v.treasury.name }}
+                        {% elif v.bank_account %}
+                            🏛️ {{ v.bank_account.name }}
+                        {% elif v.ewallet %}
+                            📱 {{ v.ewallet.name }}
+                        {% elif v.transfer_bank_account %}
+                            🏛️ {{ v.transfer_bank_account.name }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td style="color: var(--text-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ v.description }}">
+                        {{ v.description|default:"-" }}
+                    </td>
+                    <td>
+                        {% if v.status == 'POSTED' %}
+                        <span class="badge" style="background: rgba(0, 230, 118, 0.1); color: var(--neon-green); padding: 0.2rem 0.5rem; border-radius: 4px;">مُرحل</span>
+                        {% elif v.status == 'DRAFT' %}
+                        <span class="badge" style="background: rgba(255, 184, 0, 0.1); color: var(--neon-gold); padding: 0.2rem 0.5rem; border-radius: 4px;">مسودة</span>
+                        {% else %}
+                        <span class="badge" style="background: rgba(255, 23, 68, 0.1); color: var(--neon-red); padding: 0.2rem 0.5rem; border-radius: 4px;">ملغي</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <a href="{% url 'accounting:voucher_detail' v.id %}" class="btn btn-sm btn-orange" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">
+                            عرض
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="10" class="text-center" style="padding: 2.5rem; color: var(--text-muted);">
+                        لا توجد سندات مطابقة لمعايير البحث
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .search-box { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 20px !important; }
+        .data-table th, .data-table td { border-color: #ddd !important; color: black !important; }
+        .stat-card { border: 1px solid #ddd !important; break-inside: avoid; }
+        .stat-icon { display: none !important; }
+        .stat-value { color: black !important; font-weight: bold !important; }
+    }
+</style>
+
+<script>
+function filterTable() {
+    let input = document.getElementById("searchInput");
+    let filter = input.value.toUpperCase();
+    let table = document.getElementById("vouchers-table");
+    let tr = table.getElementsByTagName("tr");
+
+    for (let i = 1; i < tr.length; i++) {
+        let textValue = tr[i].textContent || tr[i].innerText;
+        if (textValue.toUpperCase().indexOf(filter) > -1) {
+            tr[i].style.display = "";
+        } else {
+            tr[i].style.display = "none";
+        }
+    }
+}
+
+if (typeof window.exportTableToExcel !== 'function') {
+    window.exportTableToExcel = function(tableId, filename) {
+        let table = document.getElementById(tableId);
+        if (!table) return;
+        filename = (filename || 'سندات_المقبوضات_والمدفوعات') + '.xls';
+        let clone = table.cloneNode(true);
+        clone.querySelectorAll('th, td').forEach(c => {
+            c.querySelectorAll('button, a, input').forEach(el => el.remove());
+            c.textContent = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        });
+        let doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{direction:rtl;text-align:right;} th{background:#1F4E79;color:#fff;border:0.5pt solid #ddd;padding:8px;} td{border:0.5pt solid #ddd;padding:6px;}</style></head><body dir="rtl">' + clone.outerHTML + '</body></html>';
+        let blob = new Blob(['\uFEFF' + doc], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
+}
+</script>
+{% endblock %}

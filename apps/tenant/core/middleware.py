@@ -8,17 +8,17 @@ class BranchMiddleware:
         if not hasattr(request, 'user') or not request.user.is_authenticated:
             return Branch.objects.none()
             
-        if request.user.is_superuser:
+        from apps.tenant.core.decorators import is_admin_user
+        if is_admin_user(request.user):
             return Branch.objects.filter(is_active=True)
             
-        if hasattr(request, 'employee_profile'):
+        if hasattr(request.user, 'employee_profile') and request.user.employee_profile:
             employee = request.user.employee_profile
-            if employee.role == 'Admin':
-                return Branch.objects.filter(is_active=True)
-            elif employee.branch:
+            if employee.branch:
                 return Branch.objects.filter(id=employee.branch.id, is_active=True)
                 
         return Branch.objects.none()
+
 
     def __call__(self, request):
         if hasattr(request, 'tenant') and request.tenant.schema_name == 'public':

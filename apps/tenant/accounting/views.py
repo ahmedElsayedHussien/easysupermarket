@@ -4,12 +4,22 @@ from django.urls import reverse_lazy
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from apps.tenant.core.mixins import CustomPermissionRequiredMixin
-from apps.tenant.core.decorators import custom_permission_required
+from apps.tenant.core.decorators import custom_permission_required, is_admin_user
+
+import datetime
+from decimal import Decimal
 
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, View
-from .models import JournalEntry, Account, PaymentMethod, Treasury, BankAccount, EWallet, Expense, Voucher
+from .models import (
+    JournalEntry, JournalItem, Account, PaymentMethod, Treasury, BankAccount, EWallet, Expense, Voucher, InternalTransfer,
+    Cheque, ChequeBook, ChequeType, ChequeStatus, ChequeActionLog, FixedAsset, AssetDepreciationLog,
+    Loan, LoanInstallment
+)
 from .forms import (
-    TreasuryForm, BankAccountForm, EWalletForm, ExpenseForm, ExpenseItemFormSet, VoucherForm, AccountForm
+    TreasuryForm, BankAccountForm, EWalletForm, ExpenseForm, ExpenseItemFormSet, VoucherForm, AccountForm, InternalTransferForm,
+    ChequeBookForm, ReceivableChequeForm, PayableChequeForm, ChequeCollectForm, ChequeBounceForm,
+    ChequeClearPayableForm, ChequeCancelPayableForm, FixedAssetForm, FixedAssetDisposalForm, FixedAssetDepreciationRunForm,
+    LoanForm, LoanInstallmentPayForm
 )
 from django.db import transaction
 from django.core.exceptions import ValidationError
@@ -21,6 +31,13 @@ class JournalEntryListView(CustomPermissionRequiredMixin, ListView):
     template_name = 'accounting/journal_list.html'
     context_object_name = 'entries'
     paginate_by = 20
+
+    def dispatch(self, request, *args, **kwargs):
+        if not is_admin_user(request.user):
+            messages.error(request, 'عفواً، الدخول إلى قيود اليومية مقتصر على الأدمن والمديرين فقط.')
+            return redirect('core:main_screen')
+        return super().dispatch(request, *args, **kwargs)
+
     
     def get_queryset(self):
         queryset = JournalEntry.objects.all().order_by('-date', '-created_at')
@@ -58,6 +75,13 @@ class JournalEntryDetailView(CustomPermissionRequiredMixin, DetailView):
     model = JournalEntry
     template_name = 'accounting/journal_detail.html'
     context_object_name = 'entry'
+
+    def dispatch(self, request, *args, **kwargs):
+        if not is_admin_user(request.user):
+            messages.error(request, 'عفواً، الدخول إلى تفاصيل القيد المحاسبي مقتصر على الأدمن والمديرين فقط.')
+            return redirect('core:main_screen')
+        return super().dispatch(request, *args, **kwargs)
+
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -349,15 +373,15 @@ def chart_of_accounts(request):
 @custom_permission_required('accounting.add_account', redirect_url='core:main_screen')
 def setup_default_accounts(request):
     from django.contrib import messages
-    from django.core.management import call_command
     from django.shortcuts import redirect
+    from apps.tenant.core.management.commands.setup_chart_of_accounts import setup_chart_of_accounts_data
     
     if Account.objects.exists():
         messages.error(request, 'لا يمكن إنشاء شجرة الحسابات لأنها موجودة بالفعل!')
         return redirect('accounting:chart_of_accounts')
         
     try:
-        call_command('setup_chart_of_accounts', schema=request.tenant.schema_name)
+        setup_chart_of_accounts_data()
         messages.success(request, 'تم زراعة شجرة الحسابات الافتراضية بنجاح!')
     except Exception as e:
         messages.error(request, f'حدث خطأ أثناء الإنشاء: {str(e)}')
@@ -381,15 +405,19 @@ def income_statement(request):
     """
     from django.db.models import Sum
     from decimal import Decimal
+    from apps.tenant.services.journal_service import batch_get_account_balances
 
-    # ── تصفية الحسابات بالنوع (لا كودات ثابتة)
-    revenue_leaf_accounts = Account.objects.filter(
+    # ── تصفية الحسابات بالنوع واستبعاد الحسابات الرئيسية من قاعدة البيانات
+    revenue_leaf_accounts = list(Account.objects.filter(
         account_type=Account.REVENUE, is_active=True
-    ).exclude(children__isnull=False)
+    ).exclude(children__isnull=False))
 
-    expense_leaf_accounts = Account.objects.filter(
+    expense_leaf_accounts = list(Account.objects.filter(
         account_type=Account.EXPENSE, is_active=True
-    ).exclude(children__isnull=False)
+    ).exclude(children__isnull=False))
+
+    # احتساب كافة الأرصدة دفعة واحدة في استعلام تجميعي واحد بقاعدة البيانات (منع N+1)
+    batch_get_account_balances(account_qs=revenue_leaf_accounts + expense_leaf_accounts)
 
     # ── إيرادات المبيعات الأساسية (REVENUE وليس معاكساً)
     sales_accounts = [acc for acc in revenue_leaf_accounts if not acc.is_contra_revenue]
@@ -435,15 +463,19 @@ def income_statement(request):
 @custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def balance_sheet(request):
     """
-    الميزانية العمومية — ديناميكية تماماً.
-    أي حساب أصول/خصوم/حقوق ملكية يضاف لشجرة الحسابات يظهر هنا تلقائياً.
+    الميزانية العمومية — تجميع حسابات سريع عبر قاعدة البيانات مباشرة.
     """
-    # ── جلب الحسابات الطرفية (leaf) فقط لتجنب الازدواجية
-    asset_accounts     = [acc for acc in Account.objects.filter(account_type=Account.ASSET,      is_active=True) if not acc.has_children]
-    liability_accounts = [acc for acc in Account.objects.filter(account_type=Account.LIABILITY,  is_active=True) if not acc.has_children]
-    equity_accounts    = [acc for acc in Account.objects.filter(account_type=Account.EQUITY,     is_active=True) if not acc.has_children]
-    revenue_accounts   = [acc for acc in Account.objects.filter(account_type=Account.REVENUE,    is_active=True) if not acc.has_children]
-    expense_accounts   = [acc for acc in Account.objects.filter(account_type=Account.EXPENSE,    is_active=True) if not acc.has_children]
+    from apps.tenant.services.journal_service import batch_get_account_balances
+
+    # ── جلب الحسابات الطرفية (leaf) فقط في استعلام واحد واستبعاد الآباء بقاعدة البيانات
+    leaf_accounts = list(Account.objects.filter(is_active=True).exclude(children__isnull=False))
+    batch_get_account_balances(account_qs=leaf_accounts)
+
+    asset_accounts     = [acc for acc in leaf_accounts if acc.account_type == Account.ASSET]
+    liability_accounts = [acc for acc in leaf_accounts if acc.account_type == Account.LIABILITY]
+    equity_accounts    = [acc for acc in leaf_accounts if acc.account_type == Account.EQUITY]
+    revenue_accounts   = [acc for acc in leaf_accounts if acc.account_type == Account.REVENUE]
+    expense_accounts   = [acc for acc in leaf_accounts if acc.account_type == Account.EXPENSE]
 
     # ── تصنيف الأصول بالكود (11xx = متداولة، 12xx = ثابتة، غيرهم = أخرى)
     current_assets      = [acc for acc in asset_accounts if acc.code.startswith('11')]
@@ -514,7 +546,7 @@ class ExpenseListView(CustomPermissionRequiredMixin, ListView):
         if status:
             qs = qs.filter(status=status)
             
-        return qs
+        return qs.order_by('-date', '-created_at')
         
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -660,6 +692,11 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
     def get_voucher_type(self):
         return Voucher.RECEIPT if 'receipt' in self.request.path else Voucher.PAYMENT
 
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['user'] = self.request.user
+        return kwargs
+
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
         form.voucher_type = self.get_voucher_type()
@@ -675,8 +712,94 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
 
     def form_valid(self, form):
         form.instance.voucher_type = self.get_voucher_type()
-        messages.success(self.request, 'تم حفظ مسودة السند بنجاح.')
-        return super().form_valid(form)
+        from apps.tenant.invoicing.models import POSSession
+        from apps.tenant.core.models import SystemSetting
+        sys_setting = SystemSetting.get_settings()
+
+        open_session = POSSession.objects.filter(user=self.request.user, status=POSSession.OPEN).first()
+        if open_session:
+            form.instance.pos_session = open_session
+            if not form.instance.treasury and open_session.treasury and form.instance.payment_method == Voucher.CASH:
+                form.instance.treasury = open_session.treasury
+
+        if not form.instance.treasury and form.instance.payment_method == Voucher.CASH:
+            if sys_setting and sys_setting.default_pos_treasury:
+                form.instance.treasury = sys_setting.default_pos_treasury
+            elif Treasury.objects.count() == 1:
+                form.instance.treasury = Treasury.objects.first()
+
+        if not form.instance.bank_account and form.instance.payment_method == Voucher.CARD:
+            if sys_setting and sys_setting.default_pos_bank_account:
+                form.instance.bank_account = sys_setting.default_pos_bank_account
+            elif BankAccount.objects.count() == 1:
+                form.instance.bank_account = BankAccount.objects.first()
+
+        if form.instance.payment_method == Voucher.BANK_TRANSFER:
+            if not form.instance.bank_account and form.instance.transfer_bank_account:
+                form.instance.bank_account = form.instance.transfer_bank_account
+            elif not form.instance.transfer_bank_account and form.instance.bank_account:
+                form.instance.transfer_bank_account = form.instance.bank_account
+
+            if not form.instance.bank_account:
+                if sys_setting and sys_setting.default_pos_instapay_account:
+                    form.instance.bank_account = sys_setting.default_pos_instapay_account
+                    form.instance.transfer_bank_account = sys_setting.default_pos_instapay_account
+                elif sys_setting and sys_setting.default_pos_bank_account:
+                    form.instance.bank_account = sys_setting.default_pos_bank_account
+                    form.instance.transfer_bank_account = sys_setting.default_pos_bank_account
+                elif BankAccount.objects.count() == 1:
+                    first_bank = BankAccount.objects.first()
+                    form.instance.bank_account = first_bank
+                    form.instance.transfer_bank_account = first_bank
+
+        if not form.instance.ewallet and form.instance.payment_method == Voucher.EWALLET:
+            if sys_setting and sys_setting.default_pos_ewallet:
+                form.instance.ewallet = sys_setting.default_pos_ewallet
+            elif EWallet.objects.count() == 1:
+                form.instance.ewallet = EWallet.objects.first()
+
+        if form.instance.payment_method == Voucher.SPLIT:
+            if form.instance.paid_cash > 0 and not form.instance.treasury:
+                if open_session and open_session.treasury:
+                    form.instance.treasury = open_session.treasury
+                elif sys_setting and sys_setting.default_pos_treasury:
+                    form.instance.treasury = sys_setting.default_pos_treasury
+                elif Treasury.objects.count() == 1:
+                    form.instance.treasury = Treasury.objects.first()
+
+            if form.instance.paid_card > 0 and not form.instance.bank_account:
+                if sys_setting and sys_setting.default_pos_bank_account:
+                    form.instance.bank_account = sys_setting.default_pos_bank_account
+                elif BankAccount.objects.count() == 1:
+                    form.instance.bank_account = BankAccount.objects.first()
+
+            if form.instance.paid_ewallet > 0 and not form.instance.ewallet:
+                if sys_setting and sys_setting.default_pos_ewallet:
+                    form.instance.ewallet = sys_setting.default_pos_ewallet
+                elif EWallet.objects.count() == 1:
+                    form.instance.ewallet = EWallet.objects.first()
+
+            if form.instance.paid_bank > 0 and not form.instance.transfer_bank_account:
+                if sys_setting and sys_setting.default_pos_instapay_account:
+                    form.instance.transfer_bank_account = sys_setting.default_pos_instapay_account
+                elif sys_setting and sys_setting.default_pos_bank_account:
+                    form.instance.transfer_bank_account = sys_setting.default_pos_bank_account
+                elif BankAccount.objects.count() == 1:
+                    form.instance.transfer_bank_account = BankAccount.objects.first()
+
+        response = super().form_valid(form)
+
+        # Auto-confirm and post the voucher if valid so it immediately reflects in the shift
+        try:
+            if self.object.status == Voucher.DRAFT and self.object.payment_account:
+                self.object.confirm_voucher()
+                messages.success(self.request, f'تم حفظ وتأكيد وترحيل {self.object.get_voucher_type_display()} بنجاح.')
+            else:
+                messages.success(self.request, 'تم حفظ مسودة السند بنجاح.')
+        except Exception as e:
+            messages.warning(self.request, f'تم حفظ السند كمسودة ولكن تعذر الترحيل التلقائي: {str(e)}')
+
+        return response
 
     def get_success_url(self):
         return reverse_lazy('accounting:voucher_detail', kwargs={'pk': self.object.pk})
@@ -690,8 +813,18 @@ class VoucherDetailView(CustomPermissionRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        v_type = self.object.voucher_type
         context['title'] = f"تفاصيل {self.object.get_voucher_type_display()} {self.object.voucher_number}"
-        context['list_url'] = reverse_lazy('accounting:receipt_list') if self.object.voucher_type == Voucher.RECEIPT else reverse_lazy('accounting:payment_list')
+        if v_type == Voucher.RECEIPT:
+            context['list_url'] = reverse_lazy('accounting:receipt_list')
+            context['list_name'] = 'سندات القبض'
+            context['create_url'] = reverse_lazy('accounting:receipt_create')
+            context['create_name'] = 'إضافة سند قبض جديد'
+        else:
+            context['list_url'] = reverse_lazy('accounting:payment_list')
+            context['list_name'] = 'سندات الصرف'
+            context['create_url'] = reverse_lazy('accounting:payment_create')
+            context['create_name'] = 'إضافة سند صرف جديد'
         return context
 
 class VoucherConfirmView(CustomPermissionRequiredMixin, View):
@@ -701,10 +834,172 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
         voucher = get_object_or_404(Voucher, pk=pk)
         if voucher.status == Voucher.DRAFT:
             try:
+                from apps.tenant.core.models import SystemSetting
+                sys_setting = SystemSetting.get_settings()
+
+                # If cash voucher is missing a treasury, attempt auto-assign fallback
+                if voucher.payment_method == Voucher.CASH and not voucher.treasury:
+                    from apps.tenant.invoicing.models import POSSession
+                    open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+                    if open_session and open_session.treasury:
+                        voucher.treasury = open_session.treasury
+                        voucher.save(update_fields=['treasury'])
+                    elif sys_setting and sys_setting.default_pos_treasury:
+                        voucher.treasury = sys_setting.default_pos_treasury
+                        voucher.save(update_fields=['treasury'])
+                    elif Treasury.objects.count() == 1:
+                        voucher.treasury = Treasury.objects.first()
+                        voucher.save(update_fields=['treasury'])
+
+                if voucher.payment_method == Voucher.CARD and not voucher.bank_account:
+                    if sys_setting and sys_setting.default_pos_bank_account:
+                        voucher.bank_account = sys_setting.default_pos_bank_account
+                        voucher.save(update_fields=['bank_account'])
+                    elif BankAccount.objects.count() == 1:
+                        voucher.bank_account = BankAccount.objects.first()
+                        voucher.save(update_fields=['bank_account'])
+
+                if voucher.payment_method == Voucher.BANK_TRANSFER:
+                    if not voucher.bank_account and voucher.transfer_bank_account:
+                        voucher.bank_account = voucher.transfer_bank_account
+                        voucher.save(update_fields=['bank_account'])
+                    elif not voucher.transfer_bank_account and voucher.bank_account:
+                        voucher.transfer_bank_account = voucher.bank_account
+                        voucher.save(update_fields=['transfer_bank_account'])
+
+                    if not voucher.bank_account:
+                        if sys_setting and sys_setting.default_pos_instapay_account:
+                            voucher.bank_account = sys_setting.default_pos_instapay_account
+                            voucher.transfer_bank_account = sys_setting.default_pos_instapay_account
+                            voucher.save(update_fields=['bank_account', 'transfer_bank_account'])
+                        elif sys_setting and sys_setting.default_pos_bank_account:
+                            voucher.bank_account = sys_setting.default_pos_bank_account
+                            voucher.transfer_bank_account = sys_setting.default_pos_bank_account
+                            voucher.save(update_fields=['bank_account', 'transfer_bank_account'])
+                        elif BankAccount.objects.count() == 1:
+                            first_bank = BankAccount.objects.first()
+                            voucher.bank_account = first_bank
+                            voucher.transfer_bank_account = first_bank
+                            voucher.save(update_fields=['bank_account', 'transfer_bank_account'])
+
+                if voucher.payment_method == Voucher.EWALLET and not voucher.ewallet:
+                    if sys_setting and sys_setting.default_pos_ewallet:
+                        voucher.ewallet = sys_setting.default_pos_ewallet
+                        voucher.save(update_fields=['ewallet'])
+                    elif EWallet.objects.count() == 1:
+                        voucher.ewallet = EWallet.objects.first()
+                        voucher.save(update_fields=['ewallet'])
+
+                if voucher.payment_method == Voucher.SPLIT:
+                    updated_fields = []
+                    if voucher.paid_cash > 0 and not voucher.treasury:
+                        from apps.tenant.invoicing.models import POSSession
+                        open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+                        if open_session and open_session.treasury:
+                            voucher.treasury = open_session.treasury
+                            updated_fields.append('treasury')
+                        elif sys_setting and sys_setting.default_pos_treasury:
+                            voucher.treasury = sys_setting.default_pos_treasury
+                            updated_fields.append('treasury')
+                        elif Treasury.objects.count() == 1:
+                            voucher.treasury = Treasury.objects.first()
+                            updated_fields.append('treasury')
+
+                    if voucher.paid_card > 0 and not voucher.bank_account:
+                        if sys_setting and sys_setting.default_pos_bank_account:
+                            voucher.bank_account = sys_setting.default_pos_bank_account
+                            updated_fields.append('bank_account')
+                        elif BankAccount.objects.count() == 1:
+                            voucher.bank_account = BankAccount.objects.first()
+                            updated_fields.append('bank_account')
+
+                    if voucher.paid_ewallet > 0 and not voucher.ewallet:
+                        if sys_setting and sys_setting.default_pos_ewallet:
+                            voucher.ewallet = sys_setting.default_pos_ewallet
+                            updated_fields.append('ewallet')
+                        elif EWallet.objects.count() == 1:
+                            voucher.ewallet = EWallet.objects.first()
+                            updated_fields.append('ewallet')
+
+                    if voucher.paid_bank > 0 and not voucher.transfer_bank_account:
+                        if sys_setting and sys_setting.default_pos_instapay_account:
+                            voucher.transfer_bank_account = sys_setting.default_pos_instapay_account
+                            updated_fields.append('transfer_bank_account')
+                        elif sys_setting and sys_setting.default_pos_bank_account:
+                            voucher.transfer_bank_account = sys_setting.default_pos_bank_account
+                            updated_fields.append('transfer_bank_account')
+                        elif BankAccount.objects.count() == 1:
+                            voucher.transfer_bank_account = BankAccount.objects.first()
+                            updated_fields.append('transfer_bank_account')
+
+                    if updated_fields:
+                        voucher.save(update_fields=updated_fields)
+
+                if not voucher.payment_account:
+                    raise ValidationError("برجاء الضغط على 'تعديل السند' وتحديد خزينة أو وسيلة السداد أولاً.")
+
                 voucher.confirm_voucher()
                 messages.success(request, 'تم اعتماد السند وتوليد القيد بنجاح.')
             except Exception as e:
-                messages.error(request, f'حدث خطأ: {str(e)}')
+                messages.error(request, f'حدث خطأ أثناء اعتماد السند: {str(e)}')
+        return redirect('accounting:voucher_detail', pk=voucher.pk)
+
+class VoucherUpdateView(CustomPermissionRequiredMixin, UpdateView):
+    permission_required = 'accounting.change_voucher'
+    model = Voucher
+    form_class = VoucherForm
+    template_name = 'accounting/voucher_form.html'
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['user'] = self.request.user
+        return kwargs
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        form.voucher_type = self.object.voucher_type
+        return form
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"تعديل {self.object.get_voucher_type_display()} {self.object.voucher_number}"
+        context['cancel_url'] = reverse_lazy('accounting:voucher_detail', kwargs={'pk': self.object.pk})
+        context['voucher_type'] = self.object.voucher_type
+        return context
+
+    def form_valid(self, form):
+        was_posted = (self.object.status == Voucher.POSTED)
+        if was_posted and self.object.journal_entry:
+            self.object.journal_entry.delete()
+            self.object.journal_entry = None
+            self.object.status = Voucher.DRAFT
+
+        response = super().form_valid(form)
+
+        if was_posted:
+            try:
+                self.object.confirm_voucher()
+                messages.success(self.request, 'تم تعديل السند وإعادة ترحيل القيد المحاسبي المربوط بنجاح.')
+            except Exception as e:
+                messages.warning(self.request, f'تم حفظ التعديلات ولكن فشل ترحيل القيد تلقائياً: {str(e)}')
+        else:
+            messages.success(self.request, 'تم تعديل السند بنجاح.')
+
+        return response
+
+    def get_success_url(self):
+        return reverse_lazy('accounting:voucher_detail', kwargs={'pk': self.object.pk})
+
+class VoucherCancelView(CustomPermissionRequiredMixin, View):
+    permission_required = 'accounting.change_voucher'
+
+    def post(self, request, pk):
+        voucher = get_object_or_404(Voucher, pk=pk)
+        try:
+            voucher.cancel_voucher()
+            messages.success(request, 'تم إلغاء السند وحذف القيد المحاسبي المربوط به بنجاح.')
+        except Exception as e:
+            messages.error(request, f'حدث خطأ أثناء إلغاء السند: {str(e)}')
         return redirect('accounting:voucher_detail', pk=voucher.pk)
 
 
@@ -903,6 +1198,13 @@ class ManualJournalEntryCreateView(CustomPermissionRequiredMixin, CreateView):
     permission_required = 'accounting.add_journalentry'
     success_url = reverse_lazy('accounting:journal_list')
 
+    def dispatch(self, request, *args, **kwargs):
+        if not is_admin_user(request.user):
+            messages.error(request, 'عفواً، إنشاء القيود المحاسبية اليدوية مقتصر على الأدمن والمديرين فقط.')
+            return redirect('core:main_screen')
+        return super().dispatch(request, *args, **kwargs)
+
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         if self.request.POST:
@@ -935,3 +1237,1087 @@ class ManualJournalEntryCreateView(CustomPermissionRequiredMixin, CreateView):
             return super().form_valid(form)
         else:
             return self.form_invalid(form)
+
+
+# ===========================================================================
+# Internal Transfers (تحويلات الأموال بين الحسابات)
+# ===========================================================================
+
+class InternalTransferListView(CustomPermissionRequiredMixin, ListView):
+    permission_required = 'accounting.view_internaltransfer'
+    model = InternalTransfer
+    template_name = 'accounting/internal_transfer_list.html'
+    context_object_name = 'transfers'
+    paginate_by = 20
+
+    def get_queryset(self):
+        return InternalTransfer.objects.all().order_by('-date', '-created_at')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'تحويلات الأموال بين الحسابات'
+        return context
+
+
+class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
+    permission_required = 'accounting.add_internaltransfer'
+    model = InternalTransfer
+    form_class = InternalTransferForm
+    template_name = 'accounting/internal_transfer_form.html'
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['user'] = self.request.user
+        return kwargs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'إضافة تحويل مالي جديد'
+        context['cancel_url'] = reverse_lazy('accounting:transfer_list')
+
+        # Auto-heal and prepare live balance data for frontend display
+        from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
+        import json
+
+        for t in Treasury.objects.filter(account__isnull=True):
+            t.ensure_account()
+        for b in BankAccount.objects.filter(account__isnull=True):
+            b.ensure_account()
+        for w in EWallet.objects.filter(account__isnull=True):
+            w.ensure_account()
+
+        accounts_data = {
+            'TREASURY': {str(t.id): {'name': t.name, 'balance': float(t.current_balance)} for t in Treasury.objects.all()},
+            'BANK': {str(b.id): {'name': b.name, 'balance': float(b.current_balance)} for b in BankAccount.objects.all()},
+            'EWALLET': {str(w.id): {'name': w.name, 'balance': float(w.current_balance)} for w in EWallet.objects.all()},
+        }
+        context['accounts_data_json'] = json.dumps(accounts_data, ensure_ascii=False)
+        context['treasuries_list'] = Treasury.objects.all()
+        context['banks_list'] = BankAccount.objects.all()
+        context['ewallets_list'] = EWallet.objects.all()
+        return context
+
+    def form_valid(self, form):
+        form.instance.created_by = self.request.user
+        from apps.tenant.invoicing.models import POSSession
+        open_session = POSSession.objects.filter(user=self.request.user, status=POSSession.OPEN).first()
+        if open_session:
+            form.instance.pos_session = open_session
+
+        response = super().form_valid(form)
+        messages.success(self.request, 'تم حفظ مسودة التحويل بنجاح.')
+        return response
+
+    def get_success_url(self):
+        return reverse_lazy('accounting:transfer_detail', kwargs={'pk': self.object.pk})
+
+
+class InternalTransferDetailView(CustomPermissionRequiredMixin, DetailView):
+    permission_required = 'accounting.view_internaltransfer'
+    model = InternalTransfer
+    template_name = 'accounting/internal_transfer_detail.html'
+    context_object_name = 'transfer'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"تفاصيل التحويل المالي #{self.object.transfer_number}"
+        return context
+
+
+class InternalTransferConfirmView(CustomPermissionRequiredMixin, View):
+    permission_required = 'accounting.change_internaltransfer'
+
+    def post(self, request, pk):
+        transfer = get_object_or_404(InternalTransfer, pk=pk)
+        if transfer.status == InternalTransfer.DRAFT:
+            try:
+                transfer.confirm_transfer()
+                messages.success(request, 'تم اعتماد التحويل وتوليد القيد المحاسبي بنجاح.')
+            except Exception as e:
+                messages.error(request, f'حدث خطأ أثناء الاعتماد: {str(e)}')
+        return redirect('accounting:transfer_detail', pk=transfer.pk)
+
+
+class InternalTransferCancelView(CustomPermissionRequiredMixin, View):
+    permission_required = 'accounting.change_internaltransfer'
+
+    def post(self, request, pk):
+        transfer = get_object_or_404(InternalTransfer, pk=pk)
+        try:
+            transfer.cancel_transfer()
+            messages.success(request, 'تم إلغاء التحويل وحذف القيد المحاسبي المربوط بنجاح.')
+        except Exception as e:
+            messages.error(request, f'حدث خطأ أثناء الإلغاء: {str(e)}')
+        return redirect('accounting:transfer_detail', pk=transfer.pk)
+
+
+# ---------------------------------------------------------------------------
+# Cheque Management Views (أوراق القبض وأوراق الدفع)
+# ---------------------------------------------------------------------------
+
+class ChequeListView(CustomPermissionRequiredMixin, ListView):
+    permission_required = 'accounting.view_cheque'
+    model = Cheque
+    template_name = 'accounting/cheque_list.html'
+    context_object_name = 'cheques'
+    paginate_by = 25
+
+    def get_queryset(self):
+        qs = Cheque.objects.select_related('partner', 'bank_account', 'treasury', 'collecting_bank').order_by('-received_date', '-created_at')
+
+        # Filters
+        c_type = self.request.GET.get('type')
+        status = self.request.GET.get('status')
+        partner_id = self.request.GET.get('partner')
+        q = self.request.GET.get('q')
+        due_filter = self.request.GET.get('due')  # 'today', 'week', 'overdue'
+
+        if c_type in (ChequeType.RECEIVABLE, ChequeType.PAYABLE):
+            qs = qs.filter(cheque_type=c_type)
+
+        if status:
+            qs = qs.filter(status=status)
+
+        if partner_id:
+            qs = qs.filter(partner_id=partner_id)
+
+        if q:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(cheque_number__icontains=q) |
+                Q(partner__name__icontains=q) |
+                Q(payee_name__icontains=q) |
+                Q(drawer_bank_name__icontains=q) |
+                Q(notes__icontains=q)
+            )
+
+        import datetime
+        today = datetime.date.today()
+        if due_filter == 'today':
+            qs = qs.filter(due_date=today)
+        elif due_filter == 'week':
+            week_later = today + datetime.timedelta(days=7)
+            qs = qs.filter(due_date__gte=today, due_date__lte=week_later)
+        elif due_filter == 'overdue':
+            qs = qs.filter(
+                due_date__lt=today,
+                status__in=[ChequeStatus.IN_PORTFOLIO, ChequeStatus.UNDER_COLLECTION, ChequeStatus.ISSUED]
+            )
+
+        return qs
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from django.db.models import Sum, Count, Q
+        import datetime
+        today = datetime.date.today()
+        week_later = today + datetime.timedelta(days=7)
+
+        # Quick stats
+        all_chqs = Cheque.objects.all()
+
+        rec_under_coll = all_chqs.filter(cheque_type=ChequeType.RECEIVABLE, status__in=[ChequeStatus.UNDER_COLLECTION, ChequeStatus.IN_PORTFOLIO])
+        rec_collected = all_chqs.filter(cheque_type=ChequeType.RECEIVABLE, status=ChequeStatus.COLLECTED)
+        rec_bounced = all_chqs.filter(cheque_type=ChequeType.RECEIVABLE, status=ChequeStatus.BOUNCED)
+
+        pay_issued = all_chqs.filter(cheque_type=ChequeType.PAYABLE, status=ChequeStatus.ISSUED)
+        pay_cleared = all_chqs.filter(cheque_type=ChequeType.PAYABLE, status=ChequeStatus.CLEARED)
+        pay_cancelled = all_chqs.filter(cheque_type=ChequeType.PAYABLE, status=ChequeStatus.CANCELLED)
+
+        overdue_chqs = all_chqs.filter(
+            due_date__lt=today,
+            status__in=[ChequeStatus.UNDER_COLLECTION, ChequeStatus.IN_PORTFOLIO, ChequeStatus.ISSUED]
+        )
+        due_week_chqs = all_chqs.filter(
+            due_date__gte=today, due_date__lte=week_later,
+            status__in=[ChequeStatus.UNDER_COLLECTION, ChequeStatus.IN_PORTFOLIO, ChequeStatus.ISSUED]
+        )
+
+        context['stats'] = {
+            'under_collection_amount': rec_under_coll.aggregate(s=Sum('amount'))['s'] or Decimal('0.00'),
+            'under_collection_count': rec_under_coll.count(),
+            'collected_amount': rec_collected.aggregate(s=Sum('amount'))['s'] or Decimal('0.00'),
+            'collected_count': rec_collected.count(),
+            'bounced_count': rec_bounced.count(),
+            'bounced_amount': rec_bounced.aggregate(s=Sum('amount'))['s'] or Decimal('0.00'),
+            'payable_issued_amount': pay_issued.aggregate(s=Sum('amount'))['s'] or Decimal('0.00'),
+            'payable_issued_count': pay_issued.count(),
+            'payable_cleared_amount': pay_cleared.aggregate(s=Sum('amount'))['s'] or Decimal('0.00'),
+            'payable_cleared_count': pay_cleared.count(),
+            'payable_cancelled_count': pay_cancelled.count(),
+            'overdue_count': overdue_chqs.count(),
+            'overdue_amount': overdue_chqs.aggregate(s=Sum('amount'))['s'] or Decimal('0.00'),
+            'due_week_count': due_week_chqs.count(),
+            'due_week_amount': due_week_chqs.aggregate(s=Sum('amount'))['s'] or Decimal('0.00'),
+        }
+
+        # Filter presets
+        context['current_type'] = self.request.GET.get('type', '')
+        context['current_status'] = self.request.GET.get('status', '')
+        context['current_due'] = self.request.GET.get('due', '')
+        context['current_partner'] = self.request.GET.get('partner', '')
+        context['search_query'] = self.request.GET.get('q', '')
+        from apps.tenant.partners.models import Partner
+        context['partners'] = Partner.objects.filter(is_active=True).order_by('name')
+        context['title'] = 'إدارة الشيكات (أوراق القبض وأوراق الدفع)'
+        return context
+
+
+class ReceivableChequeCreateView(CustomPermissionRequiredMixin, CreateView):
+    permission_required = 'accounting.add_cheque'
+    model = Cheque
+    form_class = ReceivableChequeForm
+    template_name = 'accounting/cheque_form.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'استلام شيك قبض جديد (ورقة قبض)'
+        context['cheque_type'] = ChequeType.RECEIVABLE
+        context['cancel_url'] = reverse_lazy('accounting:cheque_list')
+        return context
+
+    def form_valid(self, form):
+        form.instance.cheque_type = ChequeType.RECEIVABLE
+        form.instance.created_by = self.request.user
+        cheque = form.save()
+        try:
+            cheque.action_receive(user=self.request.user)
+            messages.success(self.request, f"تم استلام ورقة القبض شيك #{cheque.cheque_number} بمبلغ {cheque.amount:,.2f} ج.م وإثبات القيد المحاسبي بنجاح.")
+        except Exception as e:
+            messages.error(self.request, f"تم حفظ الشيك ولكن تعذر إنشاء القيد المحاسبي: {str(e)}")
+        return redirect('accounting:cheque_detail', pk=cheque.pk)
+
+
+class PayableChequeCreateView(CustomPermissionRequiredMixin, CreateView):
+    permission_required = 'accounting.add_cheque'
+    model = Cheque
+    form_class = PayableChequeForm
+    template_name = 'accounting/cheque_form.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'تحرير شيك دفع جديد لمورد (ورقة دفع)'
+        context['cheque_type'] = ChequeType.PAYABLE
+        context['cancel_url'] = reverse_lazy('accounting:cheque_list')
+        return context
+
+    def form_valid(self, form):
+        form.instance.cheque_type = ChequeType.PAYABLE
+        form.instance.created_by = self.request.user
+        cheque = form.save()
+        try:
+            cheque.action_issue(user=self.request.user)
+            messages.success(self.request, f"تم تحرير ورقة الدفع شيك #{cheque.cheque_number} بمبلغ {cheque.amount:,.2f} ج.م للمورد {cheque.partner.name} وتوليد القيد بنجاح.")
+        except Exception as e:
+            messages.error(self.request, f"تم حفظ الشيك ولكن تعذر توليد القيد المحاسبي: {str(e)}")
+        return redirect('accounting:cheque_detail', pk=cheque.pk)
+
+
+class ChequeDetailView(CustomPermissionRequiredMixin, DetailView):
+    permission_required = 'accounting.view_cheque'
+    model = Cheque
+    template_name = 'accounting/cheque_detail.html'
+    context_object_name = 'cheque'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"تفاصيل {self.object.get_cheque_type_display()} #{self.object.cheque_number}"
+        context['collect_form'] = ChequeCollectForm()
+        context['bounce_form'] = ChequeBounceForm()
+        context['clear_payable_form'] = ChequeClearPayableForm()
+        context['cancel_payable_form'] = ChequeCancelPayableForm()
+        context['action_logs'] = self.object.action_logs.select_related('user').all()
+        return context
+
+
+class ChequeCollectActionView(CustomPermissionRequiredMixin, View):
+    permission_required = 'accounting.change_cheque'
+
+    def post(self, request, pk):
+        cheque = get_object_or_404(Cheque, pk=pk)
+        form = ChequeCollectForm(request.POST)
+        if form.is_valid():
+            dest_type = form.cleaned_data['destination_type']
+            destination = form.cleaned_data['bank_account'] if dest_type == 'BANK' else form.cleaned_data['treasury']
+            clearance_date = form.cleaned_data['clearance_date']
+            bank_fee = form.cleaned_data['bank_fee'] or Decimal('0.00')
+            try:
+                cheque.action_confirm_collection(
+                    destination=destination,
+                    clearance_date=clearance_date,
+                    bank_fee=bank_fee,
+                    user=request.user
+                )
+                dest_name = destination.name if destination else "الحساب المحدد"
+                messages.success(request, f"تم تحصيل الشيك #{cheque.cheque_number} وإيداعه بنجاح في {dest_name} وإقفال الحساب الوسيط.")
+            except Exception as e:
+                messages.error(request, f"تعذر تنفيذ التحصيل: {str(e)}")
+        else:
+            errors = " | ".join([f"{f}: {e[0]}" for f, e in form.errors.items()])
+            messages.error(request, f"بيانات التحصيل غير صالحة: {errors}")
+        return redirect('accounting:cheque_detail', pk=cheque.pk)
+
+
+class ChequeBounceActionView(CustomPermissionRequiredMixin, View):
+    permission_required = 'accounting.change_cheque'
+
+    def post(self, request, pk):
+        cheque = get_object_or_404(Cheque, pk=pk)
+        form = ChequeBounceForm(request.POST)
+        if form.is_valid():
+            reason = form.cleaned_data['bounce_reason']
+            date = form.cleaned_data['bounce_date']
+            try:
+                cheque.action_bounce(bounce_reason=reason, bounce_date=date, user=request.user)
+                messages.warning(request, f"تم إثبات ارتداد الشيك #{cheque.cheque_number} وإعادة فتح مديونية العميل {cheque.partner.name} بالقيد المحاسبي.")
+            except Exception as e:
+                messages.error(request, f"تعذر إثبات الارتداد: {str(e)}")
+        else:
+            messages.error(request, "برجاء كتابة سبب الارتداد وتاريخه بشكل صحيح.")
+        return redirect('accounting:cheque_detail', pk=cheque.pk)
+
+
+class ChequeClearPayableActionView(CustomPermissionRequiredMixin, View):
+    permission_required = 'accounting.change_cheque'
+
+    def post(self, request, pk):
+        cheque = get_object_or_404(Cheque, pk=pk)
+        form = ChequeClearPayableForm(request.POST)
+        if form.is_valid():
+            date = form.cleaned_data['clearance_date']
+            try:
+                cheque.action_clear_payable(clearance_date=date, user=request.user)
+                messages.success(request, f"تم إثبات صرف الشيك وخصمه من رصيد بنك {cheque.bank_account.name} وإقفال أوراق الدفع بالقيد المحاسبي.")
+            except Exception as e:
+                messages.error(request, f"تعذر إثبات صرف الشيك: {str(e)}")
+        else:
+            messages.error(request, "تاريخ الصرف غير صالح.")
+        return redirect('accounting:cheque_detail', pk=cheque.pk)
+
+
+class ChequeCancelPayableActionView(CustomPermissionRequiredMixin, View):
+    permission_required = 'accounting.change_cheque'
+
+    def post(self, request, pk):
+        cheque = get_object_or_404(Cheque, pk=pk)
+        form = ChequeCancelPayableForm(request.POST)
+        if form.is_valid():
+            reason = form.cleaned_data['cancel_reason']
+        else:
+            reason = request.POST.get('cancel_reason', 'إلغاء بناء على طلب الإدارة')
+        try:
+            cheque.action_cancel_payable(cancel_reason=reason, user=request.user)
+            messages.warning(request, f"تم إلغاء شيك الدفع وإعادة إثبات التزام المورد {cheque.partner.name} بالقيد المحاسبي.")
+        except Exception as e:
+            messages.error(request, f"تعذر إلغاء الشيك: {str(e)}")
+        return redirect('accounting:cheque_detail', pk=cheque.pk)
+
+
+class ChequeBookListView(CustomPermissionRequiredMixin, ListView):
+    permission_required = 'accounting.view_chequebook'
+    model = ChequeBook
+    queryset = ChequeBook.objects.all().order_by('-id')
+    template_name = 'accounting/cheque_book_list.html'
+    context_object_name = 'books'
+    paginate_by = 25
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'دفاتر الشيكات البنكية'
+        return context
+
+
+class ChequeBookCreateView(CustomPermissionRequiredMixin, CreateView):
+    permission_required = 'accounting.add_chequebook'
+    model = ChequeBook
+    form_class = ChequeBookForm
+    template_name = 'accounting/cheque_book_form.html'
+    success_url = reverse_lazy('accounting:cheque_book_list')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'إضافة دفتر شيكات بنكي جديد'
+        context['cancel_url'] = reverse_lazy('accounting:cheque_book_list')
+        return context
+
+    def form_valid(self, form):
+        messages.success(self.request, f"تمت إضافة دفتر الشيكات {form.instance.book_number} بنجاح.")
+        return super().form_valid(form)
+
+
+# ---------------------------------------------------------------------------
+# Fixed Assets Views (واجهات الأصول الثابتة والإهلاك)
+# ---------------------------------------------------------------------------
+
+class FixedAssetListView(CustomPermissionRequiredMixin, ListView):
+    """قائمة الأصول الثابتة مع بطاقات إحصائية وتصفية"""
+    permission_required = 'accounting.view_fixedasset'
+    model = FixedAsset
+    template_name = 'accounting/fixed_asset_list.html'
+    context_object_name = 'assets'
+    paginate_by = 25
+
+    def get_queryset(self):
+        qs = FixedAsset.objects.all().select_related('branch', 'asset_account', 'accumulated_depreciation_account')
+        q = self.request.GET.get('q')
+        cat = self.request.GET.get('category')
+        st = self.request.GET.get('status')
+        if q:
+            qs = qs.filter(Q(name__icontains=q) | Q(code__icontains=q) | Q(location__icontains=q))
+        if cat:
+            qs = qs.filter(category=cat)
+        if st:
+            qs = qs.filter(status=st)
+        return qs.order_by('-purchase_date', '-id')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from django.db.models import Sum, Count
+        from django.db.models.functions import Coalesce
+        from .models import FixedAssetDepreciationLog
+
+        active_assets = FixedAsset.objects.exclude(status=FixedAsset.AssetStatus.DISPOSED)
+        asset_agg = active_assets.aggregate(
+            total_cost=Coalesce(Sum('purchase_cost'), Decimal('0.00')),
+            active_count=Count('id', filter=Q(status=FixedAsset.AssetStatus.ACTIVE)),
+        )
+        total_acc_dep = FixedAssetDepreciationLog.objects.filter(
+            asset__in=active_assets
+        ).aggregate(dep=Coalesce(Sum('amount'), Decimal('0.00')))['dep']
+
+        total_cost = asset_agg['total_cost']
+        total_book_value = total_cost - total_acc_dep
+
+        context.update({
+            'title': 'إدارة الأصول الثابتة والإهلاك',
+            'categories': FixedAsset.AssetCategory.choices,
+            'statuses': FixedAsset.AssetStatus.choices,
+            'selected_category': self.request.GET.get('category', ''),
+            'selected_status': self.request.GET.get('status', ''),
+            'search_query': self.request.GET.get('q', ''),
+            'total_cost': total_cost,
+            'total_accumulated_depreciation': total_acc_dep,
+            'total_net_book_value': total_book_value,
+            'active_count': asset_agg['active_count'],
+            'total_count': FixedAsset.objects.count(),
+        })
+        return context
+
+
+class FixedAssetCreateView(CustomPermissionRequiredMixin, CreateView):
+    """إضافة أصل ثابت جديد مع توليد قيد الشراء التلقائي"""
+    permission_required = 'accounting.add_fixedasset'
+    model = FixedAsset
+    form_class = FixedAssetForm
+    template_name = 'accounting/fixed_asset_form.html'
+    success_url = reverse_lazy('accounting:fixed_asset_list')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'إضافة أصل ثابت جديد'
+        context['cancel_url'] = reverse_lazy('accounting:fixed_asset_list')
+        return context
+
+    def form_valid(self, form):
+        from apps.tenant.services.journal_service import _get_system_account
+        from django.utils import timezone
+
+        with transaction.atomic():
+            asset = form.save(commit=False)
+            pay_type = form.cleaned_data.get('payment_method_type')
+            treasury = form.cleaned_data.get('treasury')
+            bank_account = form.cleaned_data.get('bank_account')
+            supplier = form.cleaned_data.get('supplier')
+
+            asset.save()
+
+            # إثبات قيد الشراء في حال الشراء الجديد
+            if not asset.is_opening_balance and pay_type != 'OPENING':
+                ref = f"AST-PUR-{asset.purchase_date.year}-{asset.id:04d}"
+                if JournalEntry.objects.filter(reference=ref).exists():
+                    ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+
+                credit_acc = None
+                desc_suffix = ""
+                if pay_type == 'TREASURY' and treasury:
+                    credit_acc = treasury.ensure_account()
+                    desc_suffix = f"سداد نقدي من {treasury.name}"
+                elif pay_type == 'BANK' and bank_account:
+                    credit_acc = bank_account.ensure_account()
+                    desc_suffix = f"سداد بنكي من {bank_account.name}"
+                elif pay_type == 'SUPPLIER' and supplier:
+                    credit_acc = supplier.account or _get_system_account('2110')
+                    desc_suffix = f"شراء آجل من المورد {supplier.name}"
+
+                if credit_acc:
+                    entry = JournalEntry.objects.create(
+                        date=asset.purchase_date,
+                        reference=ref,
+                        description=f"إثبات شراء أصل ثابت {asset.code} - {asset.name} ({desc_suffix})",
+                        status=JournalEntry.POSTED
+                    )
+                    JournalItem.objects.create(
+                        entry=entry, account=asset.asset_account, debit=asset.purchase_cost, credit=Decimal('0.00'),
+                        description=f"تكلفة شراء أصل {asset.name}"
+                    )
+                    JournalItem.objects.create(
+                        entry=entry, account=credit_acc, debit=Decimal('0.00'), credit=asset.purchase_cost,
+                        description=f"سداد تكلفة أصل {asset.name}"
+                    )
+                    entry.post()
+                    asset.purchase_entry = entry
+                    asset.save(update_fields=['purchase_entry'])
+
+            messages.success(self.request, f"تمت إضافة الأصل {asset.name} ({asset.code}) بنجاح.")
+            return redirect('accounting:fixed_asset_detail', pk=asset.pk)
+
+
+class FixedAssetUpdateView(CustomPermissionRequiredMixin, UpdateView):
+    """تعديل بيانات الأصل"""
+    permission_required = 'accounting.change_fixedasset'
+    model = FixedAsset
+    form_class = FixedAssetForm
+    template_name = 'accounting/fixed_asset_form.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"تعديل بيانات الأصل: {self.object.name}"
+        context['cancel_url'] = reverse_lazy('accounting:fixed_asset_detail', kwargs={'pk': self.object.pk})
+        return context
+
+    def form_valid(self, form):
+        messages.success(self.request, f"تم تعديل بيانات الأصل {form.instance.name} بنجاح.")
+        return super().form_valid(form)
+
+    def get_success_url(self):
+        return reverse_lazy('accounting:fixed_asset_detail', kwargs={'pk': self.object.pk})
+
+
+class FixedAssetDetailView(CustomPermissionRequiredMixin, DetailView):
+    """عرض تفاصيل الأصل، مجمع إهلاكه، وسجل أقساطه"""
+    permission_required = 'accounting.view_fixedasset'
+    model = FixedAsset
+    template_name = 'accounting/fixed_asset_detail.html'
+    context_object_name = 'asset'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"الأصل: {self.object.name}"
+        context['disposal_form'] = FixedAssetDisposalForm()
+        context['logs'] = self.object.depreciation_logs.all().select_related('entry')
+        return context
+
+
+class FixedAssetDisposalView(CustomPermissionRequiredMixin, View):
+    """استبعاد أو بيع الأصل الثابت وتوليد قيد الإقفال والأرباح/الخسائر"""
+    permission_required = 'accounting.change_fixedasset'
+
+    def post(self, request, pk):
+        from apps.tenant.services.journal_service import _get_system_account
+        from django.utils import timezone
+
+        asset = get_object_or_404(FixedAsset, pk=pk)
+        if asset.status == FixedAsset.AssetStatus.DISPOSED:
+            messages.error(request, 'هذا الأصل تم استبعاده دفترياً بالفعل مسبقاً.')
+            return redirect('accounting:fixed_asset_detail', pk=asset.pk)
+
+        form = FixedAssetDisposalForm(request.POST)
+        if not form.is_valid():
+            for error_list in form.errors.values():
+                for error in error_list:
+                    messages.error(request, error)
+            return redirect('accounting:fixed_asset_detail', pk=asset.pk)
+
+        disposal_date = form.cleaned_data['disposal_date']
+        disposal_amount = form.cleaned_data['disposal_amount'] or Decimal('0.00')
+        dest_type = form.cleaned_data['destination_type']
+        treasury = form.cleaned_data.get('treasury')
+        bank_account = form.cleaned_data.get('bank_account')
+        notes = form.cleaned_data.get('disposal_notes') or ''
+
+        with transaction.atomic():
+            asset_acc = asset.asset_account
+            acc_dep_acc = asset.accumulated_depreciation_account
+
+            dest_acc = None
+            if dest_type == 'TREASURY' and treasury:
+                dest_acc = treasury.ensure_account()
+            elif dest_type == 'BANK' and bank_account:
+                dest_acc = bank_account.ensure_account()
+
+            cost = asset.purchase_cost
+            accum_dep = asset.total_accumulated_depreciation
+            net_book_val = max(cost - accum_dep, Decimal('0.00'))
+
+            # Net gain or loss
+            gain_or_loss = disposal_amount - net_book_val
+
+            ref = f"AST-DISP-{disposal_date.year}-{asset.id:04d}"
+            if JournalEntry.objects.filter(reference=ref).exists():
+                ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+
+            entry = JournalEntry.objects.create(
+                date=disposal_date,
+                reference=ref,
+                description=f"استبعاد / بيع أصل ثابت {asset.code} - {asset.name}. {notes}".strip(),
+                status=JournalEntry.POSTED
+            )
+
+            # دائن: حساب الأصل (إقفال كامل التكلفة التاريخية)
+            JournalItem.objects.create(
+                entry=entry, account=asset_acc, debit=Decimal('0.00'), credit=cost,
+                description=f"إقفال تكلفة الأصل {asset.name} عند الاستبعاد"
+            )
+
+            # مدين: مجمع الإهلاك (إقفال كامل المجمع المتراكم)
+            if accum_dep > Decimal('0.00'):
+                JournalItem.objects.create(
+                    entry=entry, account=acc_dep_acc, debit=accum_dep, credit=Decimal('0.00'),
+                    description=f"إقفال مجمع إهلاك الأصل {asset.name}"
+                )
+
+            # مدين: النقدية / البنك بالمبلغ المحصل
+            if disposal_amount > Decimal('0.00') and dest_acc:
+                JournalItem.objects.create(
+                    entry=entry, account=dest_acc, debit=disposal_amount, credit=Decimal('0.00'),
+                    description=f"متحصلات بيع الأصل {asset.name}"
+                )
+
+            # الفرق (أرباح أو خسائر بيع أصول ثابتة)
+            if gain_or_loss > Decimal('0.00'):
+                gain_acc = _get_system_account('4230')
+                JournalItem.objects.create(
+                    entry=entry, account=gain_acc, debit=Decimal('0.00'), credit=gain_or_loss,
+                    description=f"أرباح رأسمالية من بيع الأصل {asset.name}"
+                )
+            elif gain_or_loss < Decimal('0.00'):
+                loss_acc = _get_system_account('5370')
+                loss_amt = abs(gain_or_loss)
+                JournalItem.objects.create(
+                    entry=entry, account=loss_acc, debit=loss_amt, credit=Decimal('0.00'),
+                    description=f"خسائر رأسمالية من استبعاد الأصل {asset.name}"
+                )
+
+            entry.post()
+
+            asset.status = FixedAsset.AssetStatus.DISPOSED
+            asset.disposal_date = disposal_date
+            asset.disposal_amount = disposal_amount
+            asset.disposal_entry = entry
+            asset.disposal_notes = notes
+            asset.save()
+
+            messages.success(request, f"تم استبعاد / بيع الأصل {asset.name} بنجاح وترحيل القيد المحاسبي {ref}.")
+            return redirect('accounting:fixed_asset_detail', pk=asset.pk)
+
+
+class FixedAssetDepreciationRunView(CustomPermissionRequiredMixin, View):
+    """تشغيل الإهلاك الشهري بضغطة زر لجميع الأصول النشطة"""
+    permission_required = 'accounting.change_fixedasset'
+    template_name = 'accounting/fixed_asset_depreciation_run.html'
+
+    def get(self, request):
+        today = datetime.date.today()
+        year = int(request.GET.get('year', today.year))
+        month = int(request.GET.get('month', today.month))
+
+        form = FixedAssetDepreciationRunForm(initial={
+            'year': year,
+            'month': month,
+            'run_date': today,
+            'notes': f"إهلاك الأصول الثابتة عن شهر {month:02d} / {year}"
+        })
+
+        all_active_assets = FixedAsset.objects.filter(status=FixedAsset.AssetStatus.ACTIVE)
+        already_run_asset_ids = set(
+            AssetDepreciationLog.objects.filter(year=year, month=month).values_list('asset_id', flat=True)
+        )
+
+        preview_items = []
+        total_run_depreciation = Decimal('0.00')
+
+        for asset in all_active_assets:
+            is_already_run = asset.id in already_run_asset_ids
+            monthly_amount = asset.monthly_depreciation_amount
+            remaining = max(asset.depreciable_base - asset.total_accumulated_depreciation, Decimal('0.00'))
+            amount_to_depreciate = min(monthly_amount, remaining)
+
+            can_run = not is_already_run and amount_to_depreciate > Decimal('0.00') and asset.purchase_date <= today
+
+            if can_run:
+                total_run_depreciation += amount_to_depreciate
+
+            preview_items.append({
+                'asset': asset,
+                'monthly_amount': monthly_amount,
+                'amount_to_depreciate': amount_to_depreciate,
+                'is_already_run': is_already_run,
+                'can_run': can_run,
+                'book_value_after': max(asset.current_book_value - amount_to_depreciate, asset.salvage_value or Decimal('0.00')),
+            })
+
+        context = {
+            'title': f'تشغيل الإهلاك الشهري ({year}/{month:02d})',
+            'form': form,
+            'year': year,
+            'month': month,
+            'preview_items': preview_items,
+            'total_run_depreciation': total_run_depreciation,
+            'eligible_count': sum(1 for it in preview_items if it['can_run']),
+            'already_run_count': len(already_run_asset_ids),
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request):
+        from django.utils import timezone
+
+        form = FixedAssetDepreciationRunForm(request.POST)
+        if not form.is_valid():
+            error_details = []
+            for field_name, errors in form.errors.items():
+                label = form.fields[field_name].label if field_name in form.fields else field_name
+                for err in errors:
+                    error_details.append(f"{label}: {err}")
+            messages.error(request, 'تعذر احتساب الإهلاك بسبب: ' + ' | '.join(error_details))
+            year = request.POST.get('year', datetime.date.today().year)
+            month = request.POST.get('month', datetime.date.today().month)
+            return redirect(f"{reverse_lazy('accounting:fixed_asset_depreciation_run')}?year={year}&month={month}")
+
+        year = form.cleaned_data['year']
+        month = int(form.cleaned_data['month'])
+        run_date = form.cleaned_data['run_date']
+        notes = form.cleaned_data['notes'] or f"إهلاك الأصول الثابتة عن شهر {month:02d}/{year}"
+
+        all_active_assets = FixedAsset.objects.filter(status=FixedAsset.AssetStatus.ACTIVE)
+        already_run_asset_ids = set(
+            AssetDepreciationLog.objects.filter(year=year, month=month).values_list('asset_id', flat=True)
+        )
+
+        assets_to_depreciate = []
+        for asset in all_active_assets:
+            if asset.id in already_run_asset_ids:
+                continue
+            if asset.purchase_date > run_date:
+                continue
+            monthly_amount = asset.monthly_depreciation_amount
+            remaining = max(asset.depreciable_base - asset.total_accumulated_depreciation, Decimal('0.00'))
+            amount = min(monthly_amount, remaining)
+            if amount > Decimal('0.00'):
+                assets_to_depreciate.append((asset, amount))
+
+        if not assets_to_depreciate:
+            messages.warning(request, f"لا توجد أي أصول مستحقة للإهلاك عن شهر {month:02d}/{year}.")
+            return redirect(f"{reverse_lazy('accounting:fixed_asset_depreciation_run')}?year={year}&month={month}")
+
+        with transaction.atomic():
+            ref = f"AST-DEP-{year}-{month:02d}"
+            if JournalEntry.objects.filter(reference=ref).exists():
+                ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+
+            entry = JournalEntry.objects.create(
+                date=run_date,
+                reference=ref,
+                description=f"{notes} - لعدد {len(assets_to_depreciate)} أصل",
+                status=JournalEntry.POSTED
+            )
+
+            debit_by_account = {}
+            credit_by_account = {}
+
+            for asset, amt in assets_to_depreciate:
+                exp_acc = asset.depreciation_expense_account
+                acc_dep_acc = asset.accumulated_depreciation_account
+
+                debit_by_account[exp_acc] = debit_by_account.get(exp_acc, Decimal('0.00')) + amt
+                credit_by_account[acc_dep_acc] = credit_by_account.get(acc_dep_acc, Decimal('0.00')) + amt
+
+                new_book_val = max(asset.current_book_value - amt, asset.salvage_value or Decimal('0.00'))
+                AssetDepreciationLog.objects.create(
+                    asset=asset,
+                    year=year,
+                    month=month,
+                    date=run_date,
+                    amount=amt,
+                    book_value_after=new_book_val,
+                    entry=entry,
+                    notes=notes,
+                    created_by=request.user
+                )
+
+                if (asset.total_accumulated_depreciation + amt) >= asset.depreciable_base:
+                    asset.status = FixedAsset.AssetStatus.FULLY_DEPRECIATED
+                    asset.save()
+
+            for acc, total_debit in debit_by_account.items():
+                JournalItem.objects.create(
+                    entry=entry, account=acc, debit=total_debit, credit=Decimal('0.00'),
+                    description=f"إهلاك أصول شهر {month:02d}/{year}"
+                )
+            for acc, total_credit in credit_by_account.items():
+                JournalItem.objects.create(
+                    entry=entry, account=acc, debit=Decimal('0.00'), credit=total_credit,
+                    description=f"مجمع إهلاك أصول شهر {month:02d}/{year}"
+                )
+
+            entry.post()
+
+        messages.success(request, f"تم بنجاح احتساب وترحيل إهلاك {len(assets_to_depreciate)} أصل بالقيد {ref}.")
+        return redirect('accounting:fixed_asset_list')
+
+
+# ---------------------------------------------------------------------------
+# Loans & Financing Views (واجهات القروض والتسهيلات وسداد الأقساط)
+# ---------------------------------------------------------------------------
+
+class LoanListView(CustomPermissionRequiredMixin, ListView):
+    """قائمة القروض والتسهيلات مع بطاقات إحصائية وتصفية"""
+    permission_required = 'accounting.view_loan'
+    model = Loan
+    template_name = 'accounting/loan_list.html'
+    context_object_name = 'loans'
+    paginate_by = 25
+
+    def get_queryset(self):
+        qs = Loan.objects.all().select_related('branch', 'loan_account')
+        q = self.request.GET.get('q')
+        lt = self.request.GET.get('loan_type')
+        st = self.request.GET.get('status')
+        if q:
+            from django.db.models import Q
+            qs = qs.filter(Q(name__icontains=q) | Q(code__icontains=q) | Q(lender_name__icontains=q))
+        if lt:
+            qs = qs.filter(loan_type=lt)
+        if st:
+            qs = qs.filter(status=st)
+        return qs.order_by('-start_date', '-id')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from django.db.models import Sum, Count, Q
+        from django.db.models.functions import Coalesce
+        from .models import LoanInstallment
+
+        loans_agg = Loan.objects.aggregate(
+            total_principal=Coalesce(Sum('principal_amount'), Decimal('0.00')),
+            active_principal=Coalesce(Sum('principal_amount', filter=Q(status=Loan.LoanStatus.ACTIVE)), Decimal('0.00')),
+            active_count=Count('id', filter=Q(status=Loan.LoanStatus.ACTIVE)),
+        )
+        total_principal = loans_agg['total_principal']
+
+        # إجمالي المسدد وأصل الدين المتبقي في استعلام تجميعي واحد
+        paid_agg = LoanInstallment.objects.filter(is_paid=True).aggregate(
+            total_paid_principal=Coalesce(Sum('principal_amount'), Decimal('0.00')),
+            total_paid_interest=Coalesce(Sum('interest_amount'), Decimal('0.00')),
+            active_paid_principal=Coalesce(Sum('principal_amount', filter=Q(loan__status=Loan.LoanStatus.ACTIVE)), Decimal('0.00')),
+        )
+        total_paid = paid_agg['total_paid_principal'] + paid_agg['total_paid_interest']
+        total_remaining_principal = max(loans_agg['active_principal'] - paid_agg['active_paid_principal'], Decimal('0.00'))
+
+        # الأقساط المتأخرة
+        today = timezone.now().date()
+        total_overdue = LoanInstallment.objects.filter(
+            loan__status=Loan.LoanStatus.ACTIVE,
+            is_paid=False,
+            due_date__lt=today
+        ).count()
+
+        context.update({
+            'title': 'إدارة القروض والتسهيلات البنكية',
+            'loan_types': Loan.LoanType.choices,
+            'statuses': Loan.LoanStatus.choices,
+            'selected_type': self.request.GET.get('loan_type', ''),
+            'selected_status': self.request.GET.get('status', ''),
+            'search_query': self.request.GET.get('q', ''),
+            'total_principal': total_principal,
+            'total_remaining_principal': total_remaining_principal,
+            'total_paid': total_paid,
+            'active_count': loans_agg['active_count'],
+            'total_overdue': total_overdue,
+        })
+        return context
+
+
+class LoanCreateView(CustomPermissionRequiredMixin, CreateView):
+    """تسجيل قرض جديد مع قيد الاستلام وتوليد جدول الأقساط تلقائياً"""
+    permission_required = 'accounting.add_loan'
+    model = Loan
+    form_class = LoanForm
+    template_name = 'accounting/loan_form.html'
+    success_url = reverse_lazy('accounting:loan_list')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = 'تسجيل قرض / تمويل بنكي جديد'
+        context['cancel_url'] = reverse_lazy('accounting:loan_list')
+        return context
+
+    def form_valid(self, form):
+        from apps.tenant.services.journal_service import _get_system_account
+        from django.utils import timezone
+
+        with transaction.atomic():
+            loan = form.save(commit=False)
+            dest = form.cleaned_data.get('disbursement_destination')
+            bank_acc = form.cleaned_data.get('bank_account')
+            treasury = form.cleaned_data.get('treasury')
+            bank_fee = form.cleaned_data.get('bank_fee') or Decimal('0.00')
+
+            loan.save()
+
+            # توليد قيد استلام وصرف مبلغ القرض في البنك أو الخزينة
+            if dest != 'OPENING':
+                ref = f"LOAN-REC-{loan.start_date.year}-{loan.id:04d}"
+                if JournalEntry.objects.filter(reference=ref).exists():
+                    ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+
+                receiving_acc = None
+                dest_name = ""
+                if dest == 'BANK' and bank_acc:
+                    receiving_acc = bank_acc.ensure_account()
+                    dest_name = f"حساب {bank_acc.name}"
+                elif dest == 'TREASURY' and treasury:
+                    receiving_acc = treasury.ensure_account()
+                    dest_name = f"خزينة {treasury.name}"
+
+                if receiving_acc:
+                    net_received = loan.principal_amount - bank_fee
+                    entry = JournalEntry.objects.create(
+                        date=loan.start_date,
+                        reference=ref,
+                        description=f"استلام أصل مبلغ القرض {loan.code} - {loan.name} من {loan.lender_name} في {dest_name}",
+                        status=JournalEntry.POSTED
+                    )
+
+                    JournalItem.objects.create(
+                        entry=entry, account=receiving_acc, debit=net_received, credit=Decimal('0.00'),
+                        description=f"صافي استلام القرض {loan.name}"
+                    )
+
+                    if bank_fee > Decimal('0.00'):
+                        fee_acc = _get_system_account('5300')
+                        JournalItem.objects.create(
+                            entry=entry, account=fee_acc, debit=bank_fee, credit=Decimal('0.00'),
+                            description=f"مصاريف إدارية بنكية لقرض {loan.name}"
+                        )
+
+                    JournalItem.objects.create(
+                        entry=entry, account=loan.loan_account, debit=Decimal('0.00'), credit=loan.principal_amount,
+                        description=f"إثبات التزام قرض {loan.name} لصالح {loan.lender_name}"
+                    )
+
+                    entry.post()
+                    loan.disbursement_entry = entry
+                    loan.save(update_fields=['disbursement_entry'])
+
+            # توليد جدول الأقساط كاملاً
+            loan.generate_installments_schedule()
+
+        messages.success(self.request, f"تم بنجاح تسجيل القرض {loan.name} وتوليد جدول {loan.installments_count} قسط.")
+        return redirect('accounting:loan_detail', pk=loan.pk)
+
+
+class LoanDetailView(CustomPermissionRequiredMixin, DetailView):
+    """عرض تفاصيل القرض وجدول الأقساط الكامل وسداد الأقساط"""
+    permission_required = 'accounting.view_loan'
+    model = Loan
+    template_name = 'accounting/loan_detail.html'
+    context_object_name = 'loan'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"تفاصيل القرض: {self.object.name}"
+        context['installments'] = self.object.installments.all().order_by('installment_number')
+        context['pay_form'] = LoanInstallmentPayForm()
+        return context
+
+
+class LoanInstallmentPayView(CustomPermissionRequiredMixin, View):
+    """سداد قسط القرض الفردي وتوليد قيد السداد المركب تلقائياً"""
+    permission_required = 'accounting.change_loan'
+
+    def post(self, request, pk):
+        installment = get_object_or_404(LoanInstallment, pk=pk)
+        loan = installment.loan
+
+        if installment.is_paid:
+            messages.warning(request, f"القسط #{installment.installment_number} مسدد بالفعل مسبقاً.")
+            return redirect('accounting:loan_detail', pk=loan.pk)
+
+        form = LoanInstallmentPayForm(request.POST)
+        if not form.is_valid():
+            for error_list in form.errors.values():
+                for error in error_list:
+                    messages.error(request, error)
+            return redirect('accounting:loan_detail', pk=loan.pk)
+
+        pay_date = form.cleaned_data['payment_date']
+        dest = form.cleaned_data['payment_destination']
+        bank_acc = form.cleaned_data.get('bank_account')
+        treasury = form.cleaned_data.get('treasury')
+        notes = form.cleaned_data.get('payment_notes') or ''
+
+        from django.utils import timezone
+
+        with transaction.atomic():
+            payment_account = None
+            dest_name = ""
+            if dest == 'BANK' and bank_acc:
+                payment_account = bank_acc.ensure_account()
+                dest_name = f"بنك {bank_acc.name}"
+                installment.paid_bank = bank_acc
+            elif dest == 'TREASURY' and treasury:
+                payment_account = treasury.ensure_account()
+                dest_name = f"خزينة {treasury.name}"
+                installment.paid_treasury = treasury
+
+            ref = f"LOAN-PAY-{pay_date.year}-{loan.id:04d}-{installment.installment_number:02d}"
+            if JournalEntry.objects.filter(reference=ref).exists():
+                ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+
+            entry = JournalEntry.objects.create(
+                date=pay_date,
+                reference=ref,
+                description=f"سداد قسط #{installment.installment_number} لقرض {loan.code} - {loan.name} من {dest_name}. {notes}".strip(),
+                status=JournalEntry.POSTED
+            )
+
+            # 1. مدين: حساب التزام القرض (بأصل القسط - يخفض مديونية القرض)
+            JournalItem.objects.create(
+                entry=entry, account=loan.loan_account, debit=installment.principal_amount, credit=Decimal('0.00'),
+                description=f"أصل قسط #{installment.installment_number} لقرض {loan.name}"
+            )
+
+            # 2. مدين: حساب مصروف الفوائد (بفائدة القسط - يظهر في قائمة الدخل)
+            if installment.interest_amount > Decimal('0.00'):
+                JournalItem.objects.create(
+                    entry=entry, account=loan.interest_expense_account, debit=installment.interest_amount, credit=Decimal('0.00'),
+                    description=f"فائدة قسط #{installment.installment_number} لقرض {loan.name}"
+                )
+
+            # 3. دائن: حساب البنك أو الخزينة (بإجمالي القسط المسدد)
+            JournalItem.objects.create(
+                entry=entry, account=payment_account, debit=Decimal('0.00'), credit=installment.total_amount,
+                description=f"سداد قسط #{installment.installment_number} لقرض {loan.name}"
+            )
+
+            entry.post()
+
+            installment.is_paid = True
+            installment.payment_date = pay_date
+            installment.payment_entry = entry
+            installment.payment_notes = notes
+            installment.save()
+
+            all_paid = not loan.installments.filter(is_paid=False).exists()
+            if all_paid:
+                loan.status = Loan.LoanStatus.FULLY_PAID
+                loan.save(update_fields=['status'])
+                messages.success(request, f"تهانينا! تم سداد القسط #{installment.installment_number} واكتمل سداد القرض {loan.name} بالكامل.")
+            else:
+                messages.success(request, f"تم بنجاح سداد القسط #{installment.installment_number} بقيمة {installment.total_amount} ج.م بالقيد {ref}.")
+
+        return redirect('accounting:loan_detail', pk=loan.pk)
+
+
+
+

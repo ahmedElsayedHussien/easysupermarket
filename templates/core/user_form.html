@@ -10,6 +10,22 @@
 
 <form method="post" class="form-container">
     {% csrf_token %}
+
+    {% if form.errors %}
+    <div class="alert alert-danger" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+        <div style="font-weight: bold; margin-bottom: 0.5rem; font-size: 0.95rem;">⚠️ يرجى تصحيح الأخطاء التالية لحفظ المستخدم:</div>
+        <ul style="margin: 0 1.5rem 0 0; padding: 0;">
+            {% for field in form %}
+                {% for error in field.errors %}
+                    <li><strong>{{ field.label }}:</strong> {{ error }}</li>
+                {% endfor %}
+            {% endfor %}
+            {% for error in form.non_field_errors %}
+                <li>{{ error }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
     
     <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem; align-items: start;">
         
@@ -21,7 +37,7 @@
                 </div>
                 <div style="padding: 1.25rem;">
                     {% for field in form %}
-                        {% if field.name == 'username' or field.name == 'first_name' or field.name == 'last_name' or field.name == 'email' or field.name == 'branch' or field.name == 'role' or field.name == 'is_active' %}
+                        {% if field.name == 'username' or field.name == 'first_name' or field.name == 'last_name' or field.name == 'email' or field.name == 'password1' or field.name == 'password2' or field.name == 'new_password' or field.name == 'confirm_password' or field.name == 'branch' or field.name == 'role' or field.name == 'is_active' %}
                         <div class="form-group" style="margin-bottom: 1rem;">
                             <label class="form-label">{{ field.label }}</label>
                             {{ field }}
@@ -108,7 +124,7 @@
 
     <!-- Actions -->
     <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
-        <button type="submit" class="btn btn-primary" style="padding-left: 2rem; padding-right: 2rem;">💾 حفظ البيانات</button>
+        <button type="submit" class="btn btn-orange" style="background-color: #ff7300; border-color: #ff7300; color: #fff; box-shadow: 0 0 12px rgba(255, 115, 0, 0.4); padding-left: 2rem; padding-right: 2rem; font-weight: 700; cursor: pointer;">💾 حفظ البيانات</button>
         <a href="{{ cancel_url }}" class="btn btn-secondary">❌ إلغاء</a>
     </div>
 </form>

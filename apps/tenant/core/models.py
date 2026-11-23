@@ -30,7 +30,7 @@ class Employee(models.Model):
     base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name=_('الراتب الأساسي (اختياري)'))
 
     def is_admin(self):
-        return self.role == Role.ADMIN or self.user.is_superuser
+        return self.role == Role.ADMIN or self.user.is_superuser or self.user.is_staff
 
     def is_manager(self):
         return self.role == Role.MANAGER or self.is_admin()
@@ -43,6 +43,19 @@ class Employee(models.Model):
 
     def is_inventory(self):
         return self.role == Role.INVENTORY or self.is_admin()
+
+    def save(self, *args, **kwargs):
+        if self.role == Role.ADMIN and self.user_id:
+            try:
+                from django.contrib.auth.models import Permission
+                if not self.user.is_superuser or not self.user.is_staff:
+                    self.user.is_superuser = True
+                    self.user.is_staff = True
+                    self.user.save(update_fields=['is_superuser', 'is_staff'])
+                    self.user.user_permissions.set(Permission.objects.all())
+            except Exception:
+                pass
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.user.username} - {self.get_role_display()}"
@@ -81,9 +94,21 @@ class SystemSetting(models.Model):
     allow_negative_stock = models.BooleanField(default=False, verbose_name=_('السماح بالبيع بالسالب'))
     auto_print_receipt = models.BooleanField(default=True, verbose_name=_('الطباعة التلقائية للإيصال'))
     allow_pos_price_modification = models.BooleanField(default=False, verbose_name=_('تعديل الأسعار في نقطة البيع'))
+    show_pos_cost = models.BooleanField(
+        default=True,
+        verbose_name=_('إظهار سعر التكلفة وآخر شراء في نقطة البيع'),
+        help_text=_('عند التفعيل يظهر عمود آخر شراء وتكلفة الوحدة في شاشة نقطة البيع والسلة. أوقفه لإخفاء التكلفة عن الكاشير والعملاء.')
+    )
     pos_price_margin_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0.0, verbose_name=_('هامش التعديل المسموح للسعر (%)'))
     apply_vat_by_default = models.BooleanField(default=True, verbose_name=_('تطبيق الضريبة الافتراضي'))
     large_amount_requires_customer = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text=_('0 تعني غير مفعل'), verbose_name=_('إلزام اختيار عميل للمبالغ الأكبر من'))
+    
+    # POS Payment Accounts Defaults & Security
+    default_pos_treasury = models.ForeignKey('accounting.Treasury', on_delete=models.SET_NULL, null=True, blank=True, related_name='default_for_pos', verbose_name=_('الخزينة الافتراضية لنقطة البيع'))
+    default_pos_bank_account = models.ForeignKey('accounting.BankAccount', on_delete=models.SET_NULL, null=True, blank=True, related_name='default_for_pos', verbose_name=_('حساب ماكينة الفيزا الافتراضي لنقطة البيع'))
+    default_pos_instapay_account = models.ForeignKey('accounting.BankAccount', on_delete=models.SET_NULL, null=True, blank=True, related_name='default_instapay_for_pos', verbose_name=_('حساب إنستاباي الافتراضي لنقطة البيع'))
+    default_pos_ewallet = models.ForeignKey('accounting.EWallet', on_delete=models.SET_NULL, null=True, blank=True, related_name='default_for_pos', verbose_name=_('المحفظة الإلكترونية الافتراضية لنقطة البيع'))
+    lock_pos_payment_accounts = models.BooleanField(default=False, verbose_name=_('قفل حسابات الدفع في نقطة البيع (منع التغيير بواسطة الكاشير)'))
     
     # Inventory Settings
     enable_expiry_tracking = models.BooleanField(default=False, verbose_name=_('تتبع تاريخ الصلاحية'))
@@ -97,6 +122,74 @@ class SystemSetting(models.Model):
     tax_number = models.CharField(max_length=100, blank=True, verbose_name=_('الرقم الضريبي'))
     commercial_register = models.CharField(max_length=100, blank=True, verbose_name=_('السجل التجاري'))
     receipt_footer = models.TextField(blank=True, verbose_name=_('رسالة أسفل الإيصال'))
+    
+    # Sidebar Navigation Visibility Settings
+    # Quick Navigation
+    show_nav_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة التحكم الرئيسية'))
+    show_nav_pos = models.BooleanField(default=True, verbose_name=_('نقطة البيع'))
+
+    # Sales
+    show_nav_quotations = models.BooleanField(default=True, verbose_name=_('عروض الأسعار'))
+    show_nav_sales_invoices = models.BooleanField(default=True, verbose_name=_('فواتير المبيعات'))
+    show_nav_pricelists = models.BooleanField(default=True, verbose_name=_('قوائم الأسعار'))
+
+    # Purchases
+    show_nav_purchase_invoices = models.BooleanField(default=True, verbose_name=_('فواتير المشتريات'))
+    show_nav_create_purchase = models.BooleanField(default=True, verbose_name=_('إنشاء فاتورة مشتريات'))
+
+    # Inventory
+    show_nav_inventory_fifo = models.BooleanField(default=True, verbose_name=_('تتبع المخزون FIFO'))
+    show_nav_stocktake = models.BooleanField(default=True, verbose_name=_('الجرد الفعلي والتسوية'))
+    show_nav_adjustments = models.BooleanField(default=True, verbose_name=_('تسويات المخزون'))
+    show_nav_products = models.BooleanField(default=True, verbose_name=_('الأصناف'))
+    show_nav_uom = models.BooleanField(default=True, verbose_name=_('وحدات القياس'))
+
+    # Rentals
+    show_nav_rentals_equipment = models.BooleanField(default=True, verbose_name=_('المعدات (إيجارات)'))
+    show_nav_rentals_contracts = models.BooleanField(default=True, verbose_name=_('عقود الإيجار'))
+    show_nav_rentals_reports = models.BooleanField(default=True, verbose_name=_('تقارير الإيجارات'))
+
+    # Maintenance
+    show_nav_maintenance_tickets = models.BooleanField(default=True, verbose_name=_('تذاكر الصيانة'))
+
+    # Commissions
+    show_nav_commission_rules = models.BooleanField(default=True, verbose_name=_('قواعد العمولات'))
+    show_nav_commission_report = models.BooleanField(default=True, verbose_name=_('تقرير العمولات'))
+
+    # HR
+    show_nav_hr_attendance = models.BooleanField(default=True, verbose_name=_('الحضور والانصراف'))
+    show_nav_hr_payroll = models.BooleanField(default=True, verbose_name=_('مسير الرواتب'))
+
+    # Partners
+    show_nav_suppliers = models.BooleanField(default=True, verbose_name=_('الموردون'))
+    show_nav_customers = models.BooleanField(default=True, verbose_name=_('العملاء'))
+    show_nav_sectors = models.BooleanField(default=True, verbose_name=_('قطاعات العملاء'))
+    show_nav_partners_report = models.BooleanField(default=True, verbose_name=_('تقرير وحسابات الشركاء'))
+
+    # Accounting
+    show_nav_expenses = models.BooleanField(default=True, verbose_name=_('المصروفات'))
+    show_nav_receipts = models.BooleanField(default=True, verbose_name=_('سندات القبض'))
+    show_nav_payments = models.BooleanField(default=True, verbose_name=_('سندات الصرف'))
+    show_nav_transfers = models.BooleanField(default=True, verbose_name=_('تحويل الأموال'))
+    show_nav_cheques = models.BooleanField(default=True, verbose_name=_('إدارة الشيكات'))
+    show_nav_fixed_assets = models.BooleanField(default=True, verbose_name=_('الأصول الثابتة'))
+    show_nav_loans = models.BooleanField(default=True, verbose_name=_('القروض والتمويل'))
+    show_nav_journals = models.BooleanField(default=True, verbose_name=_('قيود اليومية'))
+    show_nav_chart_of_accounts = models.BooleanField(default=True, verbose_name=_('دليل الحسابات'))
+    show_nav_treasuries = models.BooleanField(default=True, verbose_name=_('الخزائن'))
+    show_nav_banks = models.BooleanField(default=True, verbose_name=_('حسابات البنوك'))
+    show_nav_ewallets = models.BooleanField(default=True, verbose_name=_('المحافظ الإلكترونية'))
+
+    # Administration
+    show_nav_admin_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المدير'))
+    show_nav_branches = models.BooleanField(default=True, verbose_name=_('الفروع والكيانات'))
+    show_nav_users = models.BooleanField(default=True, verbose_name=_('المستخدمين'))
+    show_nav_reports = models.BooleanField(default=True, verbose_name=_('التقارير الشاملة'))
+
+    # Tax & E-Invoicing
+    show_nav_einvoice_approval = models.BooleanField(default=True, verbose_name=_('إرسال للتوقيع'))
+    show_nav_einvoice_history = models.BooleanField(default=True, verbose_name=_('سجل الفواتير المرسلة'))
+    show_nav_tax_settings = models.BooleanField(default=True, verbose_name=_('إعدادات الضرائب'))
     
     class Meta:
         verbose_name = _('إعدادات النظام')

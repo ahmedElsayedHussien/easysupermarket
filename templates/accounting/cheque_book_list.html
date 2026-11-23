@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <div class="top-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+        <div>
+            <h2 style="margin: 0; color: #fff; font-weight: 800;">
+                <i class="fas fa-book text-warning" style="margin-left: 0.5rem;"></i> {{ title }}
+            </h2>
+            <small class="text-white-50">تتبع دفاتر الشيكات المسلمة من البنوك وأرقام التسلسل</small>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+            <a href="{% url 'accounting:cheque_list' %}" class="btn btn-outline-secondary" style="border-radius: 8px;">
+                <i class="fas fa-arrow-left"></i> رجوع للشيكات
+            </a>
+            <a href="{% url 'accounting:cheque_book_create' %}" class="btn" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 12px rgba(255,115,0,0.3);">
+                <i class="fas fa-plus"></i> إضافة دفتر شيكات جديد
+            </a>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>رقم / اسم الدفتر</th>
+                    <th>حساب البنك</th>
+                    <th>البادئة</th>
+                    <th>تسلسل الشيكات</th>
+                    <th>الرقم التالي المتاح</th>
+                    <th>الحالة</th>
+                    <th>ملاحظات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for book in books %}
+                <tr>
+                    <td><strong style="color: #00e5ff;">{{ book.book_number }}</strong></td>
+                    <td><strong style="color: #fff;">{{ book.bank_account.name }}</strong></td>
+                    <td class="text-white-50">{{ book.series_prefix|default:'-' }}</td>
+                    <td>
+                        <span class="badge bg-secondary" style="font-size: 0.85rem;">
+                            {{ book.start_number }} ⬅️ {{ book.end_number }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if book.current_number <= book.end_number %}
+                            <strong style="color: #ff7300;">{{ book.get_next_number }}</strong>
+                        {% else %}
+                            <span class="badge bg-danger">منتهي الصلاحية / نفذ</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if book.is_active %}
+                            <span class="badge bg-success">نشط</span>
+                        {% else %}
+                            <span class="badge bg-secondary">غير نشط</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-white-50">{{ book.notes|default:'-' }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 3rem; color: rgba(255,255,255,0.5);">
+                        <i class="fas fa-book fa-3x mb-3 d-block text-muted"></i>
+                        لم يتم تسجيل أي دفاتر شيكات بنكية حتى الآن.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ترقيم الصفحات Pagination -->
+    {% if is_paginated %}
+    <div class="d-flex justify-content-between align-items-center mt-4 flex-wrap gap-2">
+        <div class="text-white-50 small">
+            عرض صفحة <strong class="text-white">{{ page_obj.number }}</strong> من إجمالي <strong class="text-white">{{ page_obj.paginator.num_pages }}</strong> صفحات (إجمالي {{ page_obj.paginator.count }} دفتر)
+        </div>
+        <nav aria-label="Page navigation">
+            <ul class="pagination pagination-sm mb-0">
+                {% if page_obj.has_previous %}
+                    <li class="page-item">
+                        <a class="page-link bg-dark text-white border-secondary" href="?page=1">
+                            <i class="fas fa-angle-double-right"></i> الأولى
+                        </a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link bg-dark text-white border-secondary" href="?page={{ page_obj.previous_page_number }}">
+                            السابق
+                        </a>
+                    </li>
+                {% endif %}
+                <li class="page-item active">
+                    <span class="page-link" style="background-color: #ff7300; border-color: #ff7300; font-weight: 700;">{{ page_obj.number }}</span>
+                </li>
+                {% if page_obj.has_next %}
+                    <li class="page-item">
+                        <a class="page-link bg-dark text-white border-secondary" href="?page={{ page_obj.next_page_number }}">
+                            التالي
+                        </a>
+                    </li>
+                    <li class="page-item">
+                        <a class="page-link bg-dark text-white border-secondary" href="?page={{ page_obj.paginator.num_pages }}">
+                            الأخيرة <i class="fas fa-angle-double-left"></i>
+                        </a>
+                    </li>
+                {% endif %}
+            </ul>
+        </nav>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,137 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="content-header d-flex justify-content-between align-items-center mb-4" style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="content-title">
+            <h1 style="color: var(--neon-cyan); margin: 0; font-size: 1.6rem; font-weight: 800;">🏢 {{ title }}</h1>
+            <p style="color: var(--text-muted); margin: 0.25rem 0 0 0; font-size: 0.9rem;">تصنيف العملاء حسب القطاع السوقي (جملة، تجزئة، شركات، مطاعم) وتطبيق قوائم الأسعار آلياً</p>
+        </div>
+        <div class="content-actions" style="display: flex; gap: 0.75rem;">
+            <a href="{% url 'pricing:pricelist_list' %}" class="btn btn-secondary" style="border: 1px solid var(--border-default);">🏷️ قوائم الأسعار</a>
+            <a href="{% url 'pricing:sector_create' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); font-weight: bold; padding: 0.5rem 1.25rem;">
+                ➕ إضافة قطاع جديد
+            </a>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    {% if messages %}
+    <div class="mb-4">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} p-3 rounded" style="background: rgba(0, 229, 255, 0.1); border-right: 4px solid var(--neon-cyan); color: #fff;">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Search & Filter Card -->
+    <div class="card p-3 mb-4" style="background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px;">
+        <form method="GET" class="d-flex align-items-center" style="display: flex; gap: 1rem; align-items: center;" id="searchForm">
+            <div style="flex-grow: 1;">
+                <input type="text" name="q" id="searchInput" class="form-control" placeholder="🔍 ابحث باسم القطاع أو الكود..." value="{{ search_query|default:'' }}" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">
+            </div>
+            <button type="submit" class="btn btn-orange" style="font-weight: 600; padding: 0.5rem 1.5rem;">بحث</button>
+            {% if search_query %}
+            <a href="{% url 'pricing:sector_list' %}" class="btn btn-ghost" style="color: var(--text-muted);">إلغاء البحث</a>
+            {% endif %}
+        </form>
+    </div>
+
+    <!-- Sectors Table -->
+    {% if sectors %}
+    <div class="card p-0" style="background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; overflow: hidden;">
+        <div class="table-responsive">
+            <table class="data-table w-100" style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid var(--border-default);">
+                        <th style="padding: 1rem; text-align: right;">اسم القطاع</th>
+                        <th style="padding: 1rem; text-align: right;">الكود</th>
+                        <th style="padding: 1rem; text-align: right;">الوصف</th>
+                        <th style="padding: 1rem; text-align: center;">عدد العملاء</th>
+                        <th style="padding: 1rem; text-align: center;">الحالة</th>
+                        <th style="padding: 1rem; text-align: center;">قوائم الأسعار المربوطة</th>
+                        <th style="padding: 1rem; text-align: center;">الإجراءات</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sector in sectors %}
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05); transition: background 0.2s;">
+                        <td style="padding: 1rem; font-weight: 700; color: #fff;">
+                            <span style="color: var(--neon-cyan); margin-left: 0.35rem;">🏢</span>
+                            {{ sector.name }}
+                        </td>
+                        <td style="padding: 1rem; font-family: monospace; color: var(--text-muted);">
+                            {{ sector.code|default:"-" }}
+                        </td>
+                        <td style="padding: 1rem; color: var(--text-muted); max-width: 280px;">
+                            {{ sector.description|default:"-"|truncatechars:50 }}
+                        </td>
+                        <td style="padding: 1rem; text-align: center;">
+                            <span class="badge" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; font-weight: 700; padding: 0.35rem 0.75rem; border-radius: 6px;">
+                                👥 {{ sector.partners_count }} عميل
+                            </span>
+                        </td>
+                        <td style="padding: 1rem; text-align: center;">
+                            {% if sector.is_active %}
+                            <span class="badge" style="background: rgba(43, 255, 107, 0.15); color: var(--neon-green); padding: 0.35rem 0.65rem; border-radius: 6px;">نشط</span>
+                            {% else %}
+                            <span class="badge" style="background: rgba(255, 43, 43, 0.15); color: var(--neon-red); padding: 0.35rem 0.65rem; border-radius: 6px;">معطل</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 1rem; text-align: center;">
+                            <a href="{% url 'pricing:pricelist_list' %}?type=SECTOR&q={{ sector.name }}" class="btn btn-sm btn-ghost" style="color: #00e5ff; font-size: 0.85rem;" title="عرض قوائم أسعار هذا القطاع">
+                                🏷️ عرض القوائم
+                            </a>
+                        </td>
+                        <td style="padding: 1rem; text-align: center; white-space: nowrap;">
+                            <a href="{% url 'pricing:sector_edit' sector.id %}" class="btn btn-sm btn-ghost" style="color: var(--neon-cyan); margin-left: 0.4rem;" title="تعديل">
+                                ✏️ تعديل
+                            </a>
+                            <form method="POST" action="{% url 'pricing:sector_delete' sector.id %}" style="display: inline-block;" onsubmit="return confirm('هل أنت متأكد من رغبتك في حذف هذا القطاع؟');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-ghost text-danger" style="color: var(--neon-red); border: none; background: transparent; cursor: pointer;">
+                                    🗑️ حذف
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if is_paginated %}
+        <div class="p-3 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; border-top: 1px solid var(--border-default);">
+            <span style="color: var(--text-muted); font-size: 0.85rem;">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+            <div style="display: flex; gap: 0.5rem;">
+                {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}&q={{ search_query }}" class="btn btn-sm btn-secondary">السابق</a>
+                {% endif %}
+                {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}&q={{ search_query }}" class="btn btn-sm btn-secondary">التالي</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="card p-5 text-center" style="background: var(--bg-secondary); border: 1px dashed var(--border-default); border-radius: 12px; margin-top: 1rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">🏢</div>
+        <h3 style="color: #fff; margin-bottom: 0.5rem;">لا توجد قطاعات عملاء مسجلة</h3>
+        <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto 1.5rem auto;">
+            قم بإنشاء قطاعات العملاء (مثل: جملة، سوبرماركت، مطاعم) لتتمكن من ربط العملاء بها وتطبيق قوائم أسعار خاصة بكل قطاع تلقائياً.
+        </p>
+        <div>
+            <a href="{% url 'pricing:sector_create' %}" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); font-weight: bold; padding: 0.6rem 2rem;">
+                ➕ إضافة أول قطاع عملاء
+            </a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

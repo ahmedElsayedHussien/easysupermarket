@@ -9,21 +9,42 @@
     </div>
     <div class="content-actions">
         <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
-        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
-        <button onclick="exportTableToExcel('treasury-table', 'كشف_حساب_خزينة')" class="btn btn-success">📊 تصدير Excel</button>
+        <button type="button" onclick="window.print()" class="btn btn-secondary">🖨️ طباعة</button>
+        <button type="button" onclick="exportTableToExcel('treasury-table', 'كشف_حساب_خزينة')" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير Excel</button>
     </div>
 </div>
 
 <!-- Filters -->
 <div class="card" style="margin-bottom: 1.5rem;">
     <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
-        <div class="form-group" style="flex: 1; min-width: 250px;">
-            <label class="form-label">اختر الخزينة / البنك</label>
-            <select name="treasury" class="form-control" required>
-                <option value="">-- تفضل بالاختيار --</option>
-                {% for t in treasuries %}
-                <option value="{{ t.id }}" {% if selected_treasury and selected_treasury.id == t.id %}selected{% endif %}>{{ t.name }} - {{ t.branch.name }}</option>
-                {% endfor %}
+        <div class="form-group" style="flex: 1; min-width: 280px;">
+            <label class="form-label" style="font-weight: 600;">اختر الحساب (خزينة / بنك / محفظة)</label>
+            <select name="account" class="form-control" required style="font-family: inherit;">
+                <option value="">-- اختر الحساب لعرض كشف الحركة --</option>
+                
+                <optgroup label="🏦 الخزن النقدية">
+                    {% for t in treasuries %}
+                    <option value="treasury_{{ t.id }}" {% if selected_account_val == 'treasury_'|add:t.id|stringformat:"s" or selected_obj.id == t.id and selected_account_type == 'خزينة نقدية' %}selected{% endif %}>
+                        خزينة: {{ t.name }} ({{ t.branch.name|default:"الفرع الرئيسي" }}) - الرصيد: {{ t.current_balance|floatformat:2 }}
+                    </option>
+                    {% endfor %}
+                </optgroup>
+                
+                <optgroup label="🏛️ الحسابات البنكية">
+                    {% for b in bank_accounts %}
+                    <option value="bank_{{ b.id }}" {% if selected_account_val == 'bank_'|add:b.id|stringformat:"s" or selected_obj.id == b.id and selected_account_type == 'حساب بنكي' %}selected{% endif %}>
+                        بنك: {{ b.name }} - الرصيد: {{ b.current_balance|floatformat:2 }}
+                    </option>
+                    {% endfor %}
+                </optgroup>
+                
+                <optgroup label="📱 المحافظ الإلكترونية">
+                    {% for w in ewallets %}
+                    <option value="wallet_{{ w.id }}" {% if selected_account_val == 'wallet_'|add:w.id|stringformat:"s" or selected_obj.id == w.id and selected_account_type == 'محفظة إلكترونية' %}selected{% endif %}>
+                        محفظة: {{ w.name }} - الرصيد: {{ w.current_balance|floatformat:2 }}
+                    </option>
+                    {% endfor %}
+                </optgroup>
             </select>
         </div>
         <div class="form-group" style="flex: 1; min-width: 150px;">
@@ -35,12 +56,12 @@
             <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
         </div>
         <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
-            <button type="submit" class="btn btn-primary">تحديث التقرير</button>
+            <button type="submit" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">🔄 عرض الحركة</button>
         </div>
     </form>
 </div>
 
-{% if selected_treasury %}
+{% if selected_obj %}
 <!-- Summary Cards -->
 <div class="reports-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.5rem;">
     <div class="stat-card" style="border-left: 4px solid var(--neon-blue);">
@@ -76,7 +97,7 @@
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 0.5rem;">
         <h3 style="margin: 0; color: var(--text-primary);">
-            📝 تفاصيل حركة حساب: {{ selected_treasury.name }}
+            📝 تفاصيل حركة: {{ selected_obj.name }} ({{ selected_account_type }})
         </h3>
         <div class="search-box" style="width: 250px;">
             <input type="text" id="searchInput" class="form-control" placeholder="بحث في البيان والقيد..." onkeyup="filterTable()">
@@ -122,7 +143,7 @@
 </div>
 {% else %}
 <div class="card" style="text-align: center; padding: 4rem 2rem;">
-    <h2 style="color: var(--text-muted); margin-bottom: 1rem;">يرجى اختيار الخزينة أو البنك من الفلتر أعلاه لعرض كشف الحساب</h2>
+    <h2 style="color: var(--text-muted); margin-bottom: 1rem;">يرجى اختيار الخزينة أو البنك أو المحفظة من الفلتر أعلاه لعرض كشف الحساب</h2>
     <div style="font-size: 4rem; opacity: 0.2;">💰</div>
 </div>
 {% endif %}
@@ -157,25 +178,27 @@ function filterTable() {
     }
 }
 
-function exportTableToExcel(tableID, filename = '') {
-    let downloadLink;
-    let dataType = 'application/vnd.ms-excel';
-    let tableSelect = document.getElementById(tableID);
-    let tableHTML = tableSelect.outerHTML.replace(/ /g, '%20');
-    
-    filename = filename ? filename + '.xls' : 'excel_data.xls';
-    
-    downloadLink = document.createElement("a");
-    document.body.appendChild(downloadLink);
-    
-    if (navigator.msSaveOrOpenBlob) {
-        let blob = new Blob(['\ufeff', tableHTML], { type: dataType });
-        navigator.msSaveOrOpenBlob(blob, filename);
-    } else {
-        downloadLink.href = 'data:' + dataType + ', ' + tableHTML;
-        downloadLink.download = filename;
-        downloadLink.click();
-    }
+if (typeof window.exportTableToExcel !== 'function') {
+    window.exportTableToExcel = function(tableId, filename) {
+        let table = document.getElementById(tableId);
+        if (!table) return;
+        filename = (filename || 'كشف_حساب_خزينة') + '.xls';
+        let clone = table.cloneNode(true);
+        clone.querySelectorAll('th, td').forEach(c => {
+            c.querySelectorAll('button, a, input').forEach(el => el.remove());
+            c.textContent = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        });
+        let doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{direction:rtl;text-align:right;} th{background:#1F4E79;color:#fff;border:0.5pt solid #ddd;padding:8px;} td{border:0.5pt solid #ddd;padding:6px;}</style></head><body dir="rtl">' + clone.outerHTML + '</body></html>';
+        let blob = new Blob(['\uFEFF' + doc], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
 }
 </script>
 {% endblock %}

@@ -23,11 +23,14 @@ def render_right_panel(context):
     if app_name == 'invoicing' and request.resolver_match.url_name == 'pos':
         return ''
         
-    # Hide panel for Cashier users
+    # Hide panel for Cashier users (unless they are admin)
     if hasattr(request, 'user') and request.user.is_authenticated:
-        if hasattr(request.user, 'employee_profile'):
-            if request.user.employee_profile.role == 'Cashier':
-                return ''
+        from apps.tenant.core.decorators import is_admin_user
+        if not is_admin_user(request.user):
+            if hasattr(request.user, 'employee_profile'):
+                if request.user.employee_profile.role in ['CASHIER', 'Cashier']:
+                    return ''
+
     
     new_context = {
         'request': request,

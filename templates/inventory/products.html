@@ -13,6 +13,12 @@
             <a href="{% url 'inventory:uom_create' %}" class="btn btn-neon-purple" style="opacity: 0.8;">+ إضافة وحدة</a>
             <a href="{% url 'inventory:category_create' %}" class="btn btn-neon-purple" style="opacity: 0.8;">+ إضافة قسم</a>
             <a href="{% url 'inventory:product_create' %}" class="btn btn-neon-cyan">+ إضافة منتج</a>
+            <a href="{% url 'inventory:opening_stock_list' %}" class="btn btn-primary" style="display: inline-flex; align-items: center; gap: 7px; text-decoration: none; padding: 0.5rem 1.1rem; border-radius: 8px; box-shadow: 0 0 15px rgba(0, 229, 255, 0.35);">
+                <i class="fas fa-boxes"></i> أرصدة أول المدة
+            </a>
+            <a href="{% url 'inventory:product_bulk_import' %}" class="btn btn-ghost" style="border: 1px solid rgba(0, 229, 255, 0.4); color: #00e5ff; padding: 0.5rem 1.1rem; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center; gap: 7px;">
+                <i class="fas fa-file-excel"></i> استيراد من إكسيل
+            </a>
         </div>
     </div>
 
@@ -35,7 +41,7 @@
                 <td>{{ product.name }}</td>
                 <td>{{ product.category.name|default:"-" }}</td>
                 <td>{{ product.sale_price|floatformat:2 }} ج.م</td>
-                <td>{{ product.get_stock|floatformat:0 }}</td>
+                <td>{{ product.pos_stock|default:product.get_stock|floatformat:0 }}</td>
                 <td>
                     {% if product.is_active %}
                     <span class="badge badge-success">نعم</span>
@@ -43,9 +49,12 @@
                     <span class="badge badge-danger">لا</span>
                     {% endif %}
                 </td>
-                <td class="table-actions">
+                <td class="table-actions" style="white-space: nowrap;">
                     <button type="button" class="btn btn-sm btn-ghost" onclick="openPrintModal('{{ product.name|escapejs }}', '{{ product.barcode }}', '{{ product.sale_price|floatformat:2 }}')" title="طباعة الباركود">
                         <i class="fas fa-print" style="color: #0ea5e9;"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-action" onclick="openOpeningStockModal('{{ product.id }}', '{{ product.name|escapejs }}', '{{ product.barcode|default:''|escapejs }}')" title="تعديل رصيد أول المدة والقيد المحاسبي" style="font-size: 0.75rem; padding: 0.25rem 0.55rem; border-radius: 5px;">
+                        <i class="fas fa-boxes" style="color: #00e5ff;"></i> رصيد أول المدة
                     </button>
                     <a href="{% url 'inventory:product_update' product.id %}" class="btn btn-sm btn-ghost">تعديل</a>
                 </td>
@@ -57,6 +66,31 @@
             {% endfor %}
         </tbody>
     </table>
+
+    <!-- Pagination & Summary Footer -->
+    {% if is_paginated %}
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="color: var(--text-muted); font-size: 0.9rem;">
+            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ total_count }}</b> منتج
+        </div>
+
+        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
+            {% endif %}
+
+            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <!-- Print Barcode Modal -->
@@ -121,47 +155,44 @@
     function executePrint() {
         const name = document.getElementById('printProductName').innerText;
         const barcode = document.getElementById('printBarcodeValue').value;
-        const price = document.getElementById('printPriceValue').value;
         const quantity = parseInt(document.getElementById('printQuantity').value) || 1;
-        const size = document.getElementById('printSize').value; // '38x25' or '50x25'
-        
+        const size = document.getElementById('printSize').value;
+
         const sizeParts = size.split('x');
-        const widthMm = sizeParts[0];
-        const heightMm = sizeParts[1];
+        const widthMm = parseInt(sizeParts[0]);
+        const heightMm = parseInt(sizeParts[1]);
 
-        // Generate barcode SVG string using a temporary canvas/svg
-        let svgNode = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        let bcWidth = 2;
-        let bcHeight = 50;
-        let fontSizePx = '11px';
-        let priceFontSizePx = '12px';
+        // Adjust barcode dimensions and font sizes based on label size
+        let bcWidth, bcHeight, nameFontPx, storeFontPx, bcFontSize;
 
-        if (widthMm == '38') {
-            bcWidth = 1.3;
-            bcHeight = 30;
-            fontSizePx = '9px';
-            priceFontSizePx = '10px';
-        } else if (widthMm == '75') {
-            bcWidth = 2.5;
-            bcHeight = 70;
-            fontSizePx = '14px';
-            priceFontSizePx = '16px';
-        } else if (widthMm == '100') {
-            bcWidth = 3;
-            bcHeight = parseInt(heightMm) > 50 ? 100 : 60;
-            fontSizePx = '18px';
-            priceFontSizePx = '20px';
+        if (widthMm <= 38) {
+            bcWidth = 1.2; bcHeight = 22; nameFontPx = 8; storeFontPx = 6; bcFontSize = 8;
+        } else if (widthMm <= 50) {
+            bcWidth = 1.5; bcHeight = 30; nameFontPx = 9; storeFontPx = 7; bcFontSize = 9;
+        } else if (widthMm <= 75) {
+            bcWidth = 2.2; bcHeight = 48; nameFontPx = 12; storeFontPx = 9; bcFontSize = 11;
+        } else {
+            bcWidth = 2.8; bcHeight = heightMm > 50 ? 80 : 55;
+            nameFontPx = 15; storeFontPx = 11; bcFontSize = 13;
         }
 
+        // Generate barcode SVG
+        let svgNode = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         JsBarcode(svgNode, barcode, {
             format: "CODE128",
             width: bcWidth,
             height: bcHeight,
             displayValue: true,
-            fontSize: parseInt(fontSizePx) + 2,
-            margin: 0
+            fontSize: bcFontSize,
+            margin: 1,
+            background: "#ffffff",
+            lineColor: "#000000",
+            textAlign: "center",
+            textPosition: "bottom",
         });
         const svgHtml = svgNode.outerHTML;
+
+        const storeName = "{{ store_name|escapejs }}";
 
         let html = `
         <!DOCTYPE html>
@@ -170,94 +201,419 @@
             <meta charset="UTF-8">
             <title>طباعة باركود</title>
             <style>
+                * { box-sizing: border-box; margin: 0; padding: 0; }
                 @page {
                     size: ${widthMm}mm ${heightMm}mm;
                     margin: 0;
                 }
                 body {
-                    margin: 0;
-                    padding: 0;
-                    font-family: Arial, sans-serif;
+                    font-family: 'Arial', sans-serif;
                     background: #fff;
                     color: #000;
                 }
-                .label-container {
+                .label {
                     width: ${widthMm}mm;
                     height: ${heightMm}mm;
-                    box-sizing: border-box;
                     display: flex;
                     flex-direction: column;
                     align-items: center;
                     justify-content: center;
-                    padding: 2mm;
+                    padding: 1.5mm 2mm;
+                    border: 0.3mm solid #ccc;
                     overflow: hidden;
                     page-break-after: always;
+                    gap: 1mm;
                 }
-                .label-container:last-child {
-                    page-break-after: auto;
+                .label:last-child { page-break-after: auto; }
+
+                .store-name {
+                    font-size: ${storeFontPx}px;
+                    font-weight: 600;
+                    color: #444;
+                    text-align: center;
+                    letter-spacing: 0.5px;
+                    text-transform: uppercase;
+                    border-bottom: 0.2mm solid #ddd;
+                    width: 100%;
+                    padding-bottom: 1mm;
                 }
                 .product-name {
-                    font-size: ${fontSizePx};
-                    font-weight: bold;
+                    font-size: ${nameFontPx}px;
+                    font-weight: 900;
                     text-align: center;
-                    max-width: 100%;
-                    white-space: nowrap;
+                    color: #111;
+                    width: 100%;
+                    white-space: normal;
+                    word-wrap: break-word;
+                    word-break: break-word;
+                    line-height: 1.15;
+                    max-height: ${nameFontPx * 2.5}px;
                     overflow: hidden;
-                    text-overflow: ellipsis;
-                    margin-bottom: 3px;
+                    display: -webkit-box;
+                    -webkit-line-clamp: 2;
+                    -webkit-box-orient: vertical;
                 }
-                .product-price {
-                    font-size: ${priceFontSizePx};
-                    font-weight: bold;
-                    text-align: center;
-                    margin-bottom: 3px;
+                .barcode-wrap {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 100%;
+                    max-height: ${heightMm * 0.55}mm;
+                    overflow: hidden;
                 }
-                .barcode-svg {
+                .barcode-wrap svg {
                     max-width: 100%;
                     height: auto;
+                    display: block;
                 }
             </style>
         </head>
-        <body>
-        `;
+        <body>`;
 
         for (let i = 0; i < quantity; i++) {
             html += `
-            <div class="label-container">
+            <div class="label">
+                <div class="store-name">${storeName}</div>
                 <div class="product-name">${name}</div>
-                <div class="product-price">${price} ج.م</div>
-                <div class="barcode-svg">${svgHtml}</div>
-            </div>
-            `;
+                <div class="barcode-wrap">${svgHtml}</div>
+            </div>`;
         }
 
-        html += `
-        </body>
-        </html>
-        `;
+        html += `</body></html>`;
 
-        const printWindow = window.open('', '_blank');
+        const printWindow = window.open('', '_blank', 'width=600,height=400');
         printWindow.document.write(html);
         printWindow.document.close();
-        
-        // Wait for fonts to load before printing
+
         setTimeout(() => {
             printWindow.focus();
             printWindow.print();
-            // Automatically close after print dialog
             setTimeout(() => {
                 printWindow.close();
                 closePrintModal();
-            }, 500);
-        }, 250);
+            }, 800);
+        }, 300);
     }
 
     // Close modal on outside click
     window.onclick = function(event) {
         const modal = document.getElementById('printBarcodeModal');
+        const opModal = document.getElementById('openingStockModal');
         if (event.target == modal) {
             closePrintModal();
         }
+        if (event.target == opModal) {
+            closeOpeningStockModal();
+        }
+    }
+
+    // ==========================================
+    // Opening Stock Modal & API Logic
+    // ==========================================
+    let currentOpeningData = {
+        origQty: 0,
+        origCost: 0,
+        consumedQty: 0
+    };
+
+    function openOpeningStockModal(productId, productName, barcode) {
+        document.getElementById('opModalProductName').textContent = productName;
+        document.getElementById('opModalBarcode').textContent = barcode ? `(${barcode})` : '';
+        document.getElementById('opModalProductId').value = productId;
+        document.getElementById('opModalAlert').style.display = 'none';
+        document.getElementById('opModalLoading').style.display = 'block';
+        document.getElementById('opModalBody').style.display = 'none';
+        document.getElementById('openingStockModal').style.display = 'block';
+
+        fetch(`/inventory/api/products/${productId}/opening-stock/`, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('opModalLoading').style.display = 'none';
+            if (data.status === 'success') {
+                document.getElementById('opModalBody').style.display = 'block';
+
+                // Populate warehouses
+                const whSelect = document.getElementById('opModalWarehouse');
+                whSelect.innerHTML = '';
+                data.warehouses.forEach(wh => {
+                    const opt = document.createElement('option');
+                    opt.value = wh.id;
+                    opt.textContent = wh.name;
+                    if (wh.id === data.selected_warehouse_id) opt.selected = true;
+                    whSelect.appendChild(opt);
+                });
+
+                // Set state
+                currentOpeningData.origQty = data.quantity || 0;
+                currentOpeningData.origCost = data.unit_cost || 0;
+                currentOpeningData.consumedQty = data.consumed_quantity || 0;
+
+                const defaultCost = (data.unit_cost && data.unit_cost > 0) 
+                    ? data.unit_cost 
+                    : (data.last_purchase_price || data.default_cost || 0);
+
+                document.getElementById('opCurrentQty').textContent = parseFloat(data.quantity || 0).toFixed(2);
+                document.getElementById('opConsumedQty').textContent = parseFloat(data.consumed_quantity || 0).toFixed(2);
+                document.getElementById('opRemainingQty').textContent = parseFloat(data.remaining_quantity || 0).toFixed(2);
+                document.getElementById('opCurrentStock').textContent = parseFloat(data.current_stock || 0).toFixed(2);
+                document.getElementById('opJournalRef').textContent = data.journal_entry_ref || '-';
+
+                const inputQty = document.getElementById('opNewQuantity');
+                const inputCost = document.getElementById('opNewCost');
+                inputQty.value = parseFloat(data.quantity || 0).toFixed(2);
+                inputCost.value = parseFloat(defaultCost || 0).toFixed(2);
+                inputQty.min = parseFloat(data.consumed_quantity || 0).toFixed(2);
+
+                calculateModalDiff();
+            } else {
+                showModalAlert(data.message || 'حدث خطأ أثناء تحميل بيانات الرصيد.', 'danger');
+            }
+        })
+        .catch(err => {
+            document.getElementById('opModalLoading').style.display = 'none';
+            showModalAlert('تعذر الاتصال بالسيرفر.', 'danger');
+        });
+    }
+
+    function onWarehouseChange() {
+        const productId = document.getElementById('opModalProductId').value;
+        const warehouseId = document.getElementById('opModalWarehouse').value;
+        fetch(`/inventory/api/products/${productId}/opening-stock/?warehouse_id=${warehouseId}`, {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                currentOpeningData.origQty = parseFloat(data.quantity || 0);
+                currentOpeningData.origCost = parseFloat(data.unit_cost || 0);
+                currentOpeningData.consumedQty = parseFloat(data.consumed_quantity || 0);
+
+                const defaultCost = (data.unit_cost && parseFloat(data.unit_cost) > 0) 
+                    ? data.unit_cost 
+                    : (data.last_purchase_price || data.default_cost || 0);
+
+                document.getElementById('opCurrentQty').textContent = parseFloat(data.quantity || 0).toFixed(2);
+                document.getElementById('opConsumedQty').textContent = parseFloat(data.consumed_quantity || 0).toFixed(2);
+                document.getElementById('opRemainingQty').textContent = parseFloat(data.remaining_quantity || 0).toFixed(2);
+                document.getElementById('opCurrentStock').textContent = parseFloat(data.current_stock || 0).toFixed(2);
+                document.getElementById('opJournalRef').textContent = data.journal_entry_ref || '-';
+
+                const inputQty = document.getElementById('opNewQuantity');
+                const inputCost = document.getElementById('opNewCost');
+                inputQty.value = parseFloat(data.quantity || 0).toFixed(2);
+                inputCost.value = parseFloat(defaultCost || 0).toFixed(2);
+                inputQty.min = parseFloat(data.consumed_quantity || 0).toFixed(2);
+
+                calculateModalDiff();
+            }
+        });
+    }
+
+    function calculateModalDiff() {
+        const inputQty = document.getElementById('opNewQuantity');
+        const inputCost = document.getElementById('opNewCost');
+        const newQty = parseFloat(inputQty.value) || 0;
+        const newCost = parseFloat(inputCost.value) || 0;
+
+        const deltaQty = newQty - currentOpeningData.origQty;
+        const oldTotal = currentOpeningData.origQty * currentOpeningData.origCost;
+        const newTotal = newQty * newCost;
+        const deltaVal = newTotal - oldTotal;
+
+        const diffQtyEl = document.getElementById('opDiffQty');
+        const diffValEl = document.getElementById('opDiffVal');
+
+        if (deltaQty > 0) {
+            diffQtyEl.textContent = `+${deltaQty.toFixed(2)} وحدة`;
+            diffQtyEl.style.color = '#10b981';
+        } else if (deltaQty < 0) {
+            diffQtyEl.textContent = `${deltaQty.toFixed(2)} وحدة`;
+            diffQtyEl.style.color = '#ef4444';
+        } else {
+            diffQtyEl.textContent = '0 (بدون تغيير)';
+            diffQtyEl.style.color = '#cbd5e1';
+        }
+
+        if (deltaVal > 0) {
+            diffValEl.textContent = `+${deltaVal.toFixed(2)} ج.م (زيادة مخزون ورأس مال)`;
+            diffValEl.style.color = '#10b981';
+        } else if (deltaVal < 0) {
+            diffValEl.textContent = `${deltaVal.toFixed(2)} ج.م (تخفيض مخزون ورأس مال)`;
+            diffValEl.style.color = '#ef4444';
+        } else {
+            diffValEl.textContent = '0.00 ج.م';
+            diffValEl.style.color = '#cbd5e1';
+        }
+    }
+
+    function saveOpeningStock() {
+        const productId = document.getElementById('opModalProductId').value;
+        const warehouseId = document.getElementById('opModalWarehouse').value;
+        const qty = document.getElementById('opNewQuantity').value;
+        const cost = document.getElementById('opNewCost').value;
+        const reason = document.getElementById('opReason').value;
+        const saveBtn = document.getElementById('btnSaveOpeningStock');
+
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> جاري الحفظ والترحيل...';
+
+        const formData = new FormData();
+        formData.append('warehouse_id', warehouseId);
+        formData.append('quantity', qty);
+        formData.append('unit_cost', cost);
+        formData.append('reason', reason);
+
+        // Get CSRF Token
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]') ? 
+            document.querySelector('[name=csrfmiddlewaretoken]').value : 
+            (document.querySelector('meta[name="csrf-token"]') ? document.querySelector('meta[name="csrf-token"]').content : '');
+
+        fetch(`/inventory/api/products/${productId}/opening-stock/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '💾 حفظ وتحديث القيد المحاسبي';
+            if (data.status === 'success') {
+                showModalAlert(data.message, 'success');
+                setTimeout(() => {
+                    closeOpeningStockModal();
+                    location.reload();
+                }, 1200);
+            } else {
+                showModalAlert(data.message || 'حدث خطأ أثناء الحفظ.', 'danger');
+            }
+        })
+        .catch(err => {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '💾 حفظ وتحديث القيد المحاسبي';
+            showModalAlert('حدث خطأ في الاتصال بالخادم.', 'danger');
+        });
+    }
+
+    function showModalAlert(msg, type) {
+        const alertEl = document.getElementById('opModalAlert');
+        alertEl.className = `alert alert-${type}`;
+        alertEl.textContent = msg;
+        alertEl.style.display = 'block';
+    }
+
+    function closeOpeningStockModal() {
+        document.getElementById('openingStockModal').style.display = 'none';
     }
 </script>
+
+<!-- Opening Stock Modal -->
+<div id="openingStockModal" class="modal" style="display: none; position: fixed; z-index: 1050; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.7); backdrop-filter: blur(4px);">
+    <div class="modal-content glass-panel" style="background-color: #0f172a; margin: 5% auto; padding: 25px; border-radius: 12px; width: 550px; max-width: 95%; color: #fff; border: 1px solid rgba(0, 229, 255, 0.4); box-shadow: 0 10px 40px rgba(0,0,0,0.6);">
+        <div class="d-flex justify-content-between align-items-center mb-3 pb-2" style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+            <h4 class="m-0 text-neon-cyan" style="font-weight: 800; font-size: 1.2rem;">
+                📦 تعديل رصيد أول المدة والقيد المحاسبي
+            </h4>
+            <span onclick="closeOpeningStockModal()" style="cursor: pointer; font-size: 1.6rem; color: #94a3b8; line-height: 1;">&times;</span>
+        </div>
+
+        <div id="opModalAlert" style="display: none; padding: 10px 15px; border-radius: 6px; font-weight: bold; margin-bottom: 15px;"></div>
+
+        <div id="opModalLoading" class="text-center py-4" style="color: #38bdf8;">
+            <i class="fas fa-spinner fa-spin fa-2x mb-2"></i>
+            <div>جاري تحميل بيانات رصيد الصنف...</div>
+        </div>
+
+        <div id="opModalBody" style="display: none;">
+            <input type="hidden" id="opModalProductId">
+
+            <!-- Product Header -->
+            <div class="p-2 mb-3 rounded" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);">
+                <div style="font-weight: 800; font-size: 1.05rem;" id="opModalProductName"></div>
+                <small style="color: #38bdf8;" id="opModalBarcode"></small>
+            </div>
+
+            <!-- Warehouse select -->
+            <div class="form-group mb-3">
+                <label style="font-size: 0.85rem; color: #cbd5e1; font-weight: 700; margin-bottom: 4px;">🏢 المستودع:</label>
+                <select id="opModalWarehouse" class="form-select bg-dark-glass text-white" onchange="onWarehouseChange()" style="border: 1px solid rgba(255,255,255,0.2);"></select>
+            </div>
+
+            <!-- Stats grid -->
+            <div class="row g-2 mb-3" style="font-size: 0.8rem;">
+                <div class="col-6 col-sm-3">
+                    <div style="background: rgba(255,255,255,0.03); padding: 6px 8px; border-radius: 6px; text-align: center; border: 1px solid rgba(255,255,255,0.06);">
+                        <div style="color: #94a3b8; font-size: 0.72rem;">الافتتاحي الحالي</div>
+                        <div style="font-weight: 800; font-size: 1rem; color: #00e5ff;" id="opCurrentQty">0</div>
+                    </div>
+                </div>
+                <div class="col-6 col-sm-3">
+                    <div style="background: rgba(255,255,255,0.03); padding: 6px 8px; border-radius: 6px; text-align: center; border: 1px solid rgba(255,255,255,0.06);">
+                        <div style="color: #94a3b8; font-size: 0.72rem;">المباع / المستهلك</div>
+                        <div style="font-weight: 800; font-size: 1rem; color: #ef4444;" id="opConsumedQty">0</div>
+                    </div>
+                </div>
+                <div class="col-6 col-sm-3">
+                    <div style="background: rgba(255,255,255,0.03); padding: 6px 8px; border-radius: 6px; text-align: center; border: 1px solid rgba(255,255,255,0.06);">
+                        <div style="color: #94a3b8; font-size: 0.72rem;">المتبقي افتتاحياً</div>
+                        <div style="font-weight: 800; font-size: 1rem; color: #10b981;" id="opRemainingQty">0</div>
+                    </div>
+                </div>
+                <div class="col-6 col-sm-3">
+                    <div style="background: rgba(255,255,255,0.03); padding: 6px 8px; border-radius: 6px; text-align: center; border: 1px solid rgba(255,255,255,0.06);">
+                        <div style="color: #94a3b8; font-size: 0.72rem;">رصيد المخزن الحالي</div>
+                        <div style="font-weight: 800; font-size: 1rem; color: #38bdf8;" id="opCurrentStock">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Current linked journal entry ref -->
+            <div class="d-flex justify-content-between align-items-center mb-3 px-2 py-1 rounded" style="background: rgba(14, 165, 233, 0.08); font-size: 0.8rem;">
+                <span style="color: #94a3b8;">القيد المحاسبي المرتبط:</span>
+                <code style="color: #38bdf8; font-weight: bold;" id="opJournalRef">-</code>
+            </div>
+
+            <!-- Input fields -->
+            <div class="row g-2 mb-3">
+                <div class="col-6">
+                    <label style="font-size: 0.85rem; color: #00e5ff; font-weight: 800;">الكمية الافتتاحية الجديدة *</label>
+                    <input type="number" step="any" id="opNewQuantity" class="form-control" oninput="calculateModalDiff()" style="font-size: 1.1rem; font-weight: bold; background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(0,229,255,0.4);">
+                </div>
+                <div class="col-6">
+                    <label style="font-size: 0.85rem; color: #38bdf8; font-weight: 800;">سعر التكلفة للوحدة (مستدعى)</label>
+                    <input type="number" step="0.01" id="opNewCost" class="form-control" oninput="calculateModalDiff()" style="font-size: 1.1rem; font-weight: bold; background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(14,165,233,0.5);">
+                </div>
+            </div>
+
+            <div class="form-group mb-3">
+                <label style="font-size: 0.82rem; color: #cbd5e1;">ملاحظات التعديل (اختياري):</label>
+                <input type="text" id="opReason" class="form-control" placeholder="سبب تعديل الرصيد الافتتاحي..." style="font-size: 0.85rem; background: rgba(0,0,0,0.3); color: #fff;">
+            </div>
+
+            <!-- Live Calculation Preview -->
+            <div class="p-2 mb-3 rounded" style="background: rgba(0, 229, 255, 0.08); border: 1px dashed rgba(0, 229, 255, 0.35); font-size: 0.82rem;">
+                <div class="d-flex justify-content-between mb-1">
+                    <span>الفارق في الكمية:</span>
+                    <strong id="opDiffQty" style="font-weight: 800;">0</strong>
+                </div>
+                <div class="d-flex justify-content-between">
+                    <span>الفارق المالي (القيد المحاسبي):</span>
+                    <strong id="opDiffVal" style="font-weight: 800;">0.00 ج.م</strong>
+                </div>
+            </div>
+
+            <!-- Modal Actions -->
+            <div class="d-flex justify-content-end gap-2 pt-2" style="border-top: 1px solid rgba(255,255,255,0.1);">
+                <button type="button" class="btn btn-ghost btn-sm" onclick="closeOpeningStockModal()">إلغاء</button>
+                <button type="button" id="btnSaveOpeningStock" class="btn btn-primary btn-sm px-3" onclick="saveOpeningStock()" style="font-weight: 800; box-shadow: 0 0 15px rgba(0,229,255,0.4);">
+                    <i class="fas fa-save me-1"></i> حفظ وتحديث القيد المحاسبي
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

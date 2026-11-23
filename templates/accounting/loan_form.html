@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem; max-width: 950px; margin: 0 auto;">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <h2 style="margin: 0; color: #fff; font-weight: 800;">
+                <i class="fas fa-landmark text-warning" style="margin-left: 0.5rem;"></i> {{ title }}
+            </h2>
+            <small class="text-white-50">أدخل بيانات القرض وسيتم إنشاء قيد الاستلام وتوليد جدول الأقساط آلياً</small>
+        </div>
+        <a href="{{ cancel_url }}" class="btn btn-outline-secondary" style="border-radius: 8px;">
+            <i class="fas fa-arrow-right"></i> عودة للقروض
+        </a>
+    </div>
+
+    <form method="post" id="loanForm">
+        {% csrf_token %}
+
+        {% if form.errors %}
+        <div class="alert alert-danger mb-4" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5;">
+            <strong class="d-block mb-1"><i class="fas fa-exclamation-triangle"></i> برجاء مراجعة الأخطاء التالية:</strong>
+            <ul class="mb-0">
+                {% for field, errors in form.errors.items %}
+                    {% for error in errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- 1. بيانات جهة التمويل ونوع القرض -->
+        <div class="card p-4 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+            <h5 class="mb-3" style="color: #00e5ff; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                <i class="fas fa-university"></i> 1. بيانات القرض وجهة التمويل
+            </h5>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">اسم / بيان القرض <span class="text-danger">*</span></label>
+                    {{ form.name }}
+                    <small class="text-white-50">مثال: قرض تمويل التوسعات وتجهيز الفرع الثاني</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">نوع التمويل <span class="text-danger">*</span></label>
+                    {{ form.loan_type }}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">جهة التمويل / اسم البنك أو المقرض <span class="text-danger">*</span></label>
+                    {{ form.lender_name }}
+                    <small class="text-white-50">مثال: البنك الأهلي المصري، بنك مصر، تمويل شخصي من شريك</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">رقم العقد / المعاملة</label>
+                    {{ form.contract_number }}
+                    <small class="text-white-50">اختياري - رقم عقد التسهيل أو التمويل</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">الفرع المرتبط</label>
+                    {{ form.branch }}
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. المبالغ وجدولة الأقساط -->
+        <div class="card p-4 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+            <h5 class="mb-3" style="color: #10b981; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                <i class="fas fa-calculator"></i> 2. مبالغ التمويل وجدولة الأقساط
+            </h5>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label text-white-50">أصل مبلغ القرض المستلم <span class="text-danger">*</span></label>
+                    {{ form.principal_amount }}
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label text-white-50">إجمالي الفوائد / أرباح التمويل</label>
+                    {{ form.total_interest_amount }}
+                    <small class="text-white-50">اكتب 0 في حال القرض الحسن أو التمويل بدون فوائد</small>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label text-white-50">عدد الأقساط الشهرية <span class="text-danger">*</span></label>
+                    {{ form.installments_count }}
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">تاريخ بدء / استلام القرض <span class="text-danger">*</span></label>
+                    {{ form.start_date }}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">تاريخ استحقاق أول قسط <span class="text-danger">*</span></label>
+                    {{ form.first_due_date }}
+                </div>
+
+                <!-- حاسبة المعاينة السريعة -->
+                <div class="col-12 mt-3">
+                    <div class="p-3 rounded-3 d-flex justify-content-between align-items-center flex-wrap gap-3" style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25);">
+                        <div>
+                            <span class="text-white-50 small d-block">إجمالي التزام القرض المحسوب (أصل + فوائد):</span>
+                            <h4 class="mb-0 fw-bold" style="color: #10b981;" id="calc_total_amount">0.00 ج.م</h4>
+                        </div>
+                        <div>
+                            <span class="text-white-50 small d-block">القسط الشهري التقديري:</span>
+                            <h4 class="mb-0 fw-bold" style="color: #00e5ff;" id="calc_monthly_installment">0.00 ج.م</h4>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. استلام وصرف مبلغ القرض والحسابات -->
+        <div class="card p-4 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+            <h5 class="mb-3" style="color: #ffb800; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                <i class="fas fa-receipt"></i> 3. استلام أصل القرض وربط الحسابات
+            </h5>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">طريقة استلام أصل مبلغ القرض <span class="text-danger">*</span></label>
+                    {{ form.disbursement_destination }}
+                </div>
+                <div class="col-md-6" id="div_loan_bank">
+                    <label class="form-label text-white-50">الحساب البنكي المودع به القرض</label>
+                    {{ form.bank_account }}
+                </div>
+                <div class="col-md-6" id="div_loan_treasury" style="display: none;">
+                    <label class="form-label text-white-50">الخزينة المودع بها القرض</label>
+                    {{ form.treasury }}
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label text-white-50">{{ form.bank_fee.label }}</label>
+                    {{ form.bank_fee }}
+                    <small class="text-white-50">تخصم من صافي المستلم وتُحمل على المصاريف البنكية</small>
+                </div>
+
+                <div class="col-12 mt-3 pt-2" style="border-top: 1px dashed rgba(255,255,255,0.1);">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label text-white-50">حساب التزام القرض (خصوم 2210)</label>
+                            {{ form.loan_account }}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-white-50">حساب مصروف الفوائد (مصروفات 5500)</label>
+                            {{ form.interest_expense_account }}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-12 mt-3">
+                    <label class="form-label text-white-50">ملاحظات وشروط إضافية</label>
+                    {{ form.notes }}
+                </div>
+            </div>
+        </div>
+
+        <!-- زر الحفظ البرتقالي -->
+        <div class="d-flex justify-content-end gap-2 mt-4">
+            <a href="{{ cancel_url }}" class="btn btn-outline-secondary px-4" style="border-radius: 8px;">إلغاء</a>
+            <button type="submit" class="btn btn-orange px-5" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); font-size: 1.05rem;">
+                <i class="fas fa-save"></i> حفظ القرض وتوليد الأقساط
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const pInput = document.getElementById('{{ form.principal_amount.id_for_label }}');
+    const intInput = document.getElementById('{{ form.total_interest_amount.id_for_label }}');
+    const cntInput = document.getElementById('{{ form.installments_count.id_for_label }}');
+    const calcTotal = document.getElementById('calc_total_amount');
+    const calcMonthly = document.getElementById('calc_monthly_installment');
+
+    function updateCalculations() {
+        const p = parseFloat(pInput?.value || 0) || 0;
+        const i = parseFloat(intInput?.value || 0) || 0;
+        const cnt = parseInt(cntInput?.value || 0) || 1;
+
+        const total = p + i;
+        const monthly = cnt > 0 ? (total / cnt) : 0;
+
+        if (calcTotal) calcTotal.textContent = total.toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+        if (calcMonthly) calcMonthly.textContent = monthly.toLocaleString('ar-EG', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ج.م';
+    }
+
+    if (pInput) pInput.addEventListener('input', updateCalculations);
+    if (intInput) intInput.addEventListener('input', updateCalculations);
+    if (cntInput) cntInput.addEventListener('input', updateCalculations);
+    updateCalculations();
+
+    // Toggle destination fields
+    const destSelect = document.getElementById('id_disb_destination');
+    const divBank = document.getElementById('div_loan_bank');
+    const divTreasury = document.getElementById('div_loan_treasury');
+
+    function toggleDest() {
+        if (!destSelect) return;
+        const v = destSelect.value;
+        if (divBank) divBank.style.display = (v === 'BANK') ? 'block' : 'none';
+        if (divTreasury) divTreasury.style.display = (v === 'TREASURY') ? 'block' : 'none';
+    }
+
+    if (destSelect) {
+        destSelect.addEventListener('change', toggleDest);
+        toggleDest();
+    }
+});
+</script>
+{% endblock %}

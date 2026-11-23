@@ -3,9 +3,17 @@
 
 {% block content %}
 <div class="container-fluid">
-    <h2 class="text-neon-blue mb-4">{{ title }}</h2>
+    <div class="content-header" style="margin-bottom: 1.5rem;">
+        <div class="content-title">
+            <h1 style="color: var(--neon-cyan);">👤 {{ title }}</h1>
+            <p>إدارة بيانات الشريك (العميل / المورد) وتحديد الرصيد الافتتاحي</p>
+        </div>
+        <div class="content-actions">
+            <a href="javascript:history.back()" class="btn btn-secondary">⬅️ رجوع</a>
+        </div>
+    </div>
     
-    <div class="card p-4" style="max-width: 600px; margin: auto;">
+    <div class="card p-4" style="max-width: 680px; margin: auto; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-secondary);">
         <form method="POST">
             {% csrf_token %}
             {% if messages %}
@@ -18,51 +26,137 @@
             </div>
             {% endif %}
 
-            <!-- Form fields would be dynamically generated or hardcoded based on Partner model -->
+            <!-- Partner Type Selection -->
             <div class="form-group mb-3">
-                <label class="form-label">الاسم</label>
-                <input type="text" name="name" class="form-control" value="{{ partner.name }}" required>
-            </div>
-            
-            <div class="form-group mb-3">
-                <label class="form-label">رقم الهاتف الأساسي</label>
-                <input type="text" name="phone" class="form-control" value="{{ partner.phone }}">
-            </div>
-
-            <div class="form-group mb-3">
-                <label class="form-label">رقم الهاتف الإضافي (الموبايل)</label>
-                <input type="text" name="mobile" class="form-control" value="{{ partner.mobile }}">
-            </div>
-
-            <div class="form-group mb-3">
-                <label class="form-label">البريد الإلكتروني</label>
-                <input type="email" name="email" class="form-control" value="{{ partner.email }}">
-            </div>
-
-            <div class="form-group mb-3">
-                <label class="form-label">الرقم القومي (اختياري)</label>
-                <input type="text" name="national_id" class="form-control" value="{{ partner.national_id }}">
-            </div>
-
-            <div class="form-group mb-3">
-                <label class="form-label">الرقم الضريبي</label>
-                <input type="text" name="tax_id" class="form-control" value="{{ partner.tax_id }}">
-            </div>
-            
-            <div class="form-group mb-3">
-                <label class="form-label">نوع الشريك</label>
-                <select name="partner_type" class="form-select">
-                    <option value="CUSTOMER" {% if partner.partner_type == 'CUSTOMER' %}selected{% endif %}>عميل</option>
+                <label class="form-label" style="font-weight: 700; color: #fff;">نوع الشريك <span class="text-danger">*</span></label>
+                <select name="partner_type" id="partnerTypeSelect" class="form-select form-control" style="font-weight: bold; border-color: rgba(255, 115, 0, 0.5);">
+                    <option value="CUSTOMER" {% if partner.partner_type == 'CUSTOMER' or not partner %}selected{% endif %}>عميل</option>
                     <option value="SUPPLIER" {% if partner.partner_type == 'SUPPLIER' %}selected{% endif %}>مورد</option>
-                    <option value="BOTH" {% if partner.partner_type == 'BOTH' %}selected{% endif %}>الاثنين</option>
+                    <option value="BOTH" {% if partner.partner_type == 'BOTH' %}selected{% endif %}>عميل ومورد معاً</option>
                 </select>
             </div>
+
+            <!-- Customer Sector (Optional) -->
+            <div class="form-group mb-3" id="sectorFieldContainer" style="background: rgba(0, 229, 255, 0.05); padding: 0.85rem; border-radius: 8px; border: 1px dashed rgba(0, 229, 255, 0.3);">
+                <label class="form-label" style="font-weight: 600; color: #00e5ff; display: flex; align-items: center; justify-content: space-between;">
+                    <span>🏢 قطاع العميل (اختياري)</span>
+                    <span class="badge" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; font-weight: normal; font-size: 0.75rem;">لقوائم الأسعار</span>
+                </label>
+                <select name="sector" id="sectorSelect" class="form-select form-control">
+                    <option value="">-- بدون قطاع (يخضع لتسعير الصنف الافتراضي) --</option>
+                    {% for s in sectors %}
+                        <option value="{{ s.id }}" {% if partner.sector_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+                <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.35rem;">
+                    💡 في حال ربط العميل بقطاع، سيخضع تلقائياً لقائمة أسعار ذلك القطاع (مثل جملة، فنادق، تجزئة) عند البيع ما لم تكن له قائمة أسعار مخصصة.
+                </div>
+            </div>
+
+            <!-- Basic Info -->
+            <div class="form-group mb-3">
+                <label class="form-label" style="font-weight: 600;">الاسم <span class="text-danger">*</span></label>
+                <input type="text" name="name" class="form-control" value="{{ partner.name|default:'' }}" placeholder="اسم العميل أو اسم شركة المورد" required>
+            </div>
             
-            <div class="d-flex justify-between mt-4">
-                <a href="javascript:history.back()" class="btn btn-ghost">إلغاء</a>
-                <button type="submit" class="btn btn-neon-blue">حفظ</button>
+            <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">رقم الهاتف الأساسي</label>
+                    <input type="text" name="phone" class="form-control" value="{{ partner.phone|default:'' }}" placeholder="01xxxxxxxxx">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">رقم الهاتف الإضافي (الموبايل)</label>
+                    <input type="text" name="mobile" class="form-control" value="{{ partner.mobile|default:'' }}" placeholder="رقم بديل">
+                </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                    <label class="form-label">الرقم القومي (اختياري)</label>
+                    <input type="text" name="national_id" class="form-control" value="{{ partner.national_id|default:'' }}" placeholder="14 رقم">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">الرقم الضريبي (اختياري)</label>
+                    <input type="text" name="tax_id" class="form-control" value="{{ partner.tax_id|default:'' }}" placeholder="للشركات والموردين">
+                </div>
+            </div>
+
+            <div class="form-group mb-4">
+                <label class="form-label">البريد الإلكتروني</label>
+                <input type="email" name="email" class="form-control" value="{{ partner.email|default:'' }}" placeholder="example@domain.com">
+            </div>
+
+            <!-- Opening Balance Section -->
+            <div class="card p-3 mb-4" style="background: rgba(255, 115, 0, 0.06); border: 1px solid rgba(255, 115, 0, 0.35); border-radius: 10px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; border-bottom: 1px solid rgba(255, 115, 0, 0.2); padding-bottom: 0.5rem;">
+                    <h4 style="color: var(--neon-orange); margin: 0; font-size: 1.05rem; font-weight: 800; display: flex; align-items: center; gap: 0.5rem;">
+                        <span>💰</span> الرصيد الافتتاحي (رصيد أول مدة)
+                    </h4>
+                    <span class="badge" style="background: rgba(255, 115, 0, 0.2); color: var(--neon-orange); font-size: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 4px;">حسابات سابقة</span>
+                </div>
+                
+                <div class="row g-3">
+                    <div class="col-md-5">
+                        <label class="form-label" style="font-weight: 600;">المبلغ الافتتاحي (ج.م)</label>
+                        <input type="number" step="0.01" min="0" name="opening_balance" id="openingBalanceInput" class="form-control" value="{{ partner.opening_balance|default:'0.00' }}" style="font-family: monospace; font-weight: bold; font-size: 1.05rem;" placeholder="0.00">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" style="font-weight: 600;">طبيعة الرصيد</label>
+                        <select name="opening_balance_type" id="openingTypeSelect" class="form-select form-control" style="font-weight: 600;">
+                            <option value="DEBIT" {% if partner.opening_balance_type == 'DEBIT' or not partner %}selected{% endif %}>مدين (عليه مديونية لنا)</option>
+                            <option value="CREDIT" {% if partner.opening_balance_type == 'CREDIT' %}selected{% endif %}>دائن (له مستحقات علينا)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label" style="font-weight: 600;">تاريخ الرصيد</label>
+                        <input type="date" name="opening_balance_date" class="form-control" value="{{ partner.opening_balance_date|date:'Y-m-d'|default:today_date }}">
+                    </div>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.6rem; line-height: 1.4;" id="openingHelpText">
+                    💡 <strong>توضيح:</strong> بالنسبة للعميل يكون الرصيد عادةً <strong>مدين (عليه)</strong> إذا كان عليه ديون سابقة، وللمورد يكون <strong>دائن (له)</strong> إذا كانت له مستحقات سابقة. يُدرج هذا الرصيد كسطر أول في كشوف الحسابات والتقارير.
+                </div>
+            </div>
+            
+            <div class="d-flex justify-content-between align-items-center mt-4" style="display: flex; justify-content: space-between; align-items: center;">
+                <a href="javascript:history.back()" class="btn btn-ghost" style="color: var(--text-muted);">إلغاء</a>
+                <button type="submit" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); padding: 0.6rem 2rem; font-size: 1rem; font-weight: bold;">💾 حفظ البيانات</button>
             </div>
         </form>
     </div>
 </div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const partnerType = document.getElementById("partnerTypeSelect");
+        const openingType = document.getElementById("openingTypeSelect");
+        const sectorContainer = document.getElementById("sectorFieldContainer");
+        const sectorSelect = document.getElementById("sectorSelect");
+        const isEdit = {% if partner.id %}true{% else %}false{% endif %};
+
+        function updateSectorVisibility() {
+            if (!partnerType || !sectorContainer) return;
+            const val = partnerType.value;
+            if (val === "CUSTOMER" || val === "BOTH") {
+                sectorContainer.style.display = "block";
+            } else {
+                sectorContainer.style.display = "none";
+                if (sectorSelect) sectorSelect.value = "";
+            }
+        }
+
+        if (partnerType) {
+            updateSectorVisibility();
+            partnerType.addEventListener("change", function() {
+                updateSectorVisibility();
+                if (!isEdit && openingType) {
+                    if (this.value === "CUSTOMER") {
+                        openingType.value = "DEBIT";
+                    } else if (this.value === "SUPPLIER") {
+                        openingType.value = "CREDIT";
+                    }
+                }
+            });
+        }
+    });
+</script>
 {% endblock %}

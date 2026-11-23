@@ -1,108 +1,187 @@
-{% load static i18n %}
+{% load static i18n l10n %}
 <!DOCTYPE html>
 <html lang="{{ LANGUAGE_CODE }}" dir="{{ LANGUAGE_BIDI|yesno:'rtl,ltr' }}">
 <head>
     <meta charset="UTF-8">
-    <title>{% trans 'نقطة البيع' %} - {% trans 'إيزي ستور' %}</title>
-    {% load i18n static %}
+    <title>{% trans 'نقطة البيع' %} - {{ settings.company_name|default:'مسار' }}</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
+    <link rel="shortcut icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
+    <link rel="apple-touch-icon" href="{% static 'img/logo.png' %}">
     <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
-    <link rel="stylesheet" href="{% static 'css/pos.css' %}">
+    <link rel="stylesheet" href="{% static 'css/pos.css' %}?v={% now 'U' %}">
 </head>
 <body class="pos-page">
-    <!-- POS Navbar -->
+    <!-- Tier 1: POS Main Navbar (Brand, Primary Actions, Branch/Warehouse, Cashier, Clock) -->
     <nav class="pos-navbar">
-        <div class="pos-nav-left" style="display:flex; align-items:center; gap:10px;">
-            <span>☰ EASYSTORE - HYBRID SALES POINT</span>
+        <div class="pos-nav-left">
+            <div class="pos-brand">
+                <img src="{% static 'img/logo.png' %}" alt="مسار" class="pos-brand-logo">
+                <span class="pos-brand-name">مسار</span>
+            </div>
             {% if request.user.is_superuser or request.user.is_staff %}
-            <a href="/" style="background:#ff8c42; color:#fff; padding:4px 12px; border-radius:6px; font-size:0.75rem; font-weight:700; text-decoration:none; display:flex; align-items:center; gap:4px;" title="{% trans 'الصفحة الرئيسية' %}">🏠 {% trans 'لوحة التحكم' %}</a>
+            <a href="/" class="pos-top-btn pos-top-btn-home" title="{% trans 'الصفحة الرئيسية' %}">🏠 <span class="nav-btn-text">{% trans 'الرئيسية' %}</span></a>
             {% endif %}
+            <a href="{% url 'invoicing:sales_invoice_list' %}" target="_blank" class="pos-top-btn pos-top-btn-orange" title="{% trans 'عرض وتصفح فواتير نقطة البيع والمبيعات' %}">📄 <span class="nav-btn-text">{% trans 'الفواتير' %}</span></a>
+            <a href="{% url 'accounting:receipt_create' %}" target="_blank" class="pos-top-btn pos-top-btn-green" title="{% trans 'إضافة سند قبض نقدي للوردية الحالية' %}">📥 <span class="nav-btn-text">{% trans 'سند قبض' %}</span></a>
+            <a href="{% url 'accounting:payment_create' %}" target="_blank" class="pos-top-btn pos-top-btn-amber" title="{% trans 'إضافة سند صرف / مصروفات للوردية الحالية' %}">📤 <span class="nav-btn-text">{% trans 'سند صرف' %}</span></a>
+            <button type="button" onclick="POS.reprintLast()" class="pos-top-btn pos-top-btn-cyan" title="إعادة طباعة (F3)">🖨️ F3</button>
+            <span class="pos-nav-divider"></span>
+            <button type="button" onclick="POS.clearCart()" class="pos-top-btn pos-top-btn-danger" title="إلغاء الفاتورة الحالية">🗑️ إلغاء</button>
         </div>
-        <div class="pos-nav-center"></div>
-        <div class="pos-nav-right" style="display:flex; align-items:center; gap:10px;">
-            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;" title="{% trans 'تطبيق ضريبة القيمة المضافة (14%)' %}">
+
+        <div class="pos-nav-right">
+            <div class="pos-branch-pill" title="{% trans 'الفرع الحالي' %}">
+                <span class="pos-field-label">🏢 {% trans 'الفرع' %}:</span>
+                <select id="posBranchSelect" class="pos-pill-select" onchange="window.location.href='?branch_id=' + this.value">
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if current_branch.id == branch.id %}selected{% endif %}>{{ branch.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="pos-warehouse-pill {% if not current_warehouse %}is-empty{% endif %}" title="{% trans 'المستودع النشط' %}">
+                <span class="pos-field-label">🏭 {% trans 'المستودع' %}:</span>
+                <select id="posWarehouseSelect" class="pos-pill-select" onchange="window.location.href='?branch_id={{ current_branch.id }}&warehouse_id=' + this.value">
+                    {% for warehouse in warehouses %}
+                    <option value="{{ warehouse.id }}" {% if current_warehouse.id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>
+                    {% empty %}
+                    <option value="">{% trans 'لا يوجد مستودع' %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <span class="pos-cashier-badge">👤 {{ request.user.get_full_name|default:request.user.username }}</span>
+            <a href="{% url 'invoicing:pos_close_shift' %}" class="pos-close-shift-btn">🔒 {% trans 'إغلاق الوردية' %}</a>
+            <span id="posDateTime"></span>
+            <span class="connected-dot">CONNECTED</span>
+        </div>
+    </nav>
+
+    <!-- Tier 2: POS Operational Sub-Bar (Customer Search/Select, Labeled Payment Accounts, Taxes) -->
+    <div class="pos-subbar">
+        <div class="pos-subbar-group">
+            <div class="pos-field-pill pos-customer-pill" title="{% trans 'اختيار أو بحث العميل' %}">
+                <span class="pos-field-label">👤 {% trans 'العميل' %}:</span>
+                <input type="text" id="posCustomerSearch" class="pos-customer-filter" placeholder="{% trans 'بحث عميل...' %}" autocomplete="off">
+                <select id="posCustomer" class="pos-subbar-select">
+                    <option value="">{% trans 'عميل نقدي' %}</option>
+                    {% for customer in customers %}
+                    <option value="{{ customer.id }}" data-wht-subject="{{ customer.subject_to_withholding_tax|yesno:'true,false' }}">{{ customer.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <span id="posSameCustomerBadge" class="pos-same-customer-badge" title="{% trans 'آخر فاتورة بيع مسجلة كانت لنفس العميل' %}">
+                ⚠️ <span id="posSameCustomerText">{% trans 'آخر فاتورة لنفس العميل' %}</span>
+            </span>
+        </div>
+
+        <span class="pos-nav-divider"></span>
+
+        <div class="pos-subbar-group">
+            <div class="pos-field-pill" title="{% trans 'الخزينة' %}">
+                <span class="pos-field-label">🏦 {% trans 'الخزينة' %}:</span>
+                <select id="posTreasury" class="pos-subbar-select" {% if settings.lock_pos_payment_accounts %}disabled{% endif %}>
+                    {% for t in treasuries %}
+                    <option value="{{ t.id }}" {% if settings.default_pos_treasury_id == t.id %}selected{% endif %}>{{ t.name }}</option>
+                    {% empty %}
+                    <option value="">{% trans 'لا يوجد خزينة' %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="pos-field-pill" title="{% trans 'ماكينة الفيزا' %}">
+                <span class="pos-field-label">💳 {% trans 'الفيزا' %}:</span>
+                <select id="posVisaBank" class="pos-subbar-select" {% if settings.lock_pos_payment_accounts %}disabled{% endif %}>
+                    <option value="">{% trans 'اختر ماكينة الفيزا' %}</option>
+                    {% for b in bank_accounts %}
+                    <option value="{{ b.id }}" {% if settings.default_pos_bank_account_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="pos-field-pill" title="{% trans 'حساب إنستا / تحويل بنكي' %}">
+                <span class="pos-field-label">⚡ {% trans 'إنستا' %}:</span>
+                <select id="posInstaBank" class="pos-subbar-select" {% if settings.lock_pos_payment_accounts %}disabled{% endif %}>
+                    <option value="">{% trans 'اختر حساب إنستا' %}</option>
+                    {% for b in bank_accounts %}
+                    <option value="{{ b.id }}" {% if settings.default_pos_instapay_account_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="pos-field-pill" title="{% trans 'المحفظة الإلكترونية' %}">
+                <span class="pos-field-label">📱 {% trans 'المحفظة' %}:</span>
+                <select id="posEwallet" class="pos-subbar-select" {% if settings.lock_pos_payment_accounts %}disabled{% endif %}>
+                    <option value="">{% trans 'اختر المحفظة' %}</option>
+                    {% for ew in ewallets %}
+                    <option value="{{ ew.id }}" {% if settings.default_pos_ewallet_id == ew.id %}selected{% endif %}>{{ ew.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <span class="pos-nav-divider"></span>
+
+        <div class="pos-subbar-group">
+            <label class="pos-tax-pill" title="{% trans 'تطبيق ضريبة القيمة المضافة (14%)' %}">
                 <input type="checkbox" id="posApplyTax" onchange="POS.updateCartDisplay()">
                 <span>{% trans 'ضريبة' %}</span>
             </label>
-            <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;" title="{% trans 'تطبيق ضريبة الخصم والإضافة' %}">
+            <label class="pos-tax-pill" title="{% trans 'تطبيق ضريبة الخصم والإضافة' %}">
                 <input type="checkbox" id="posApplyWht" onchange="POS.updateCartDisplay()">
                 <span>{% trans 'ض.خصم' %}</span>
             </label>
-            <select id="posTreasury" class="form-select" style="width:120px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);" title="{% trans 'الخزينة' %}">
-                {% for t in treasuries %}
-                <option value="{{ t.id }}">{{ t.name }}</option>
-                {% empty %}
-                <option value="">{% trans 'لا يوجد خزينة' %}</option>
-                {% endfor %}
-            </select>
-            <select id="posBank" class="form-select" style="width:120px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);" title="{% trans 'البنك' %}">
-                <option value="">{% trans 'اختر البنك' %}</option>
-                {% for b in bank_accounts %}
-                <option value="{{ b.id }}">{{ b.name }}</option>
-                {% endfor %}
-            </select>
-            <select id="posEwallet" class="form-select" style="width:120px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);" title="{% trans 'المحفظة' %}">
-                <option value="">{% trans 'اختر المحفظة' %}</option>
-                {% for ew in ewallets %}
-                <option value="{{ ew.id }}">{{ ew.name }}</option>
-                {% endfor %}
-            </select>
-            <select id="posCustomer" class="form-select select2" style="width:150px; background-color: var(--surface); color: var(--text); border: 1px solid var(--border);">
-                <option value="">{% trans 'عميل نقدي' %}</option>
-                {% for customer in customers %}
-                <option value="{{ customer.id }}" data-wht-subject="{{ customer.subject_to_withholding_tax|yesno:'true,false' }}">{{ customer.name }}</option>
-                {% endfor %}
-            </select>
-            <a href="{% url 'invoicing:pos_close_shift' %}" style="background-color: transparent; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; padding: 4px 8px; cursor: pointer; text-decoration: none;">🔒 {% trans 'إغلاق الوردية' %}</a>
-            <span>👤 {{ request.user.get_full_name|default:request.user.username }}</span>
-            <select id="posBranchSelect" class="form-select" style="width:120px; background-color: #ffffff; color: #000000; font-weight: bold; border: 1px solid #ff8c42; padding: 4px; font-size: 0.85rem; border-radius: 4px; cursor: pointer;" onchange="window.location.href='?branch_id=' + this.value">
-                {% for branch in branches %}
-                <option value="{{ branch.id }}" {% if current_branch.id == branch.id %}selected{% endif %}>{{ branch.name }}</option>
-                {% endfor %}
-            </select>
-            <select id="posWarehouseSelect" class="form-select" style="width:160px; background-color: #ffffff; color: #000000; font-weight: bold; border: 1px solid #ff8c42; padding: 4px; font-size: 0.85rem; border-radius: 4px; cursor: pointer;" onchange="window.location.href='?branch_id={{ current_branch.id }}&warehouse_id=' + this.value">
-                {% for warehouse in warehouses %}
-                <option value="{{ warehouse.id }}" {% if current_warehouse.id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>
-                {% empty %}
-                <option value="">{% trans 'لا يوجد مستودع' %}</option>
-                {% endfor %}
-            </select>
-            <span id="posDateTime"></span>
-            <span class="connected-dot">● CONNECTED</span>
         </div>
-    </nav>
-    
+    </div>
+
+    {% if not current_warehouse %}
+    <div class="pos-warning-banner" style="justify-content:space-between; flex-wrap:wrap;">
+        <span>⚠️ {% trans 'لا يوجد مستودع نشط مرتبط بـ' %} ({{ current_branch.name|default:'الفرع الحالي' }}) — {% trans 'تم عرض الأرصدة صفراً، ولا يمكن إتمام البيع قبل اختيار فرع به مستودع أو إنشاء مستودع.' %}</span>
+        <span style="display:inline-flex; align-items:center; gap:8px;">
+            {% if fallback_warehouse_branch %}
+            <a href="?branch_id={{ fallback_warehouse_branch.id }}" style="background:#ff7300; color:#fff; padding:3px 10px; border-radius:5px; text-decoration:none; font-weight:700; font-size:0.75rem; box-shadow:0 2px 8px rgba(255,115,0,0.4);">🔄 {% trans 'التبديل إلى' %} {{ fallback_warehouse_branch.name }}</a>
+            {% endif %}
+            {% if is_admin %}
+            <a href="{% url 'inventory:warehouse_create' %}" target="_blank" style="background:rgba(56,189,248,0.16); border:1px solid #38bdf8; color:#7dd3fc; padding:3px 10px; border-radius:5px; text-decoration:none; font-weight:700; font-size:0.75rem;">➕ {% trans 'إنشاء مستودع لهذا الفرع' %}</a>
+            {% endif %}
+        </span>
+    </div>
+    {% endif %}
+
     <div class="pos-layout">
-        <!-- LEFT PANEL (products + search) -->
+        <!-- LEFT PANEL (products + search + shift bar) -->
         <div class="pos-left">
             <!-- Search Bar -->
-            <div class="pos-search-bar" style="display:flex; gap:10px; padding:10px; background:var(--bg-card); border-bottom:1px solid var(--border-default);">
-                <div class="barcode-input-wrapper" style="display:flex; gap:5px; align-items:center;">
-                    <input type="text" id="barcodeInput" placeholder="{% trans 'إدخال الباركود' %}" autofocus style="flex:1;">
-                    <button type="button" id="startScannerBtn" onclick="startCameraScanner()" class="btn btn-outline-cyan" style="padding:0.4rem 0.6rem; border-radius:4px;" title="مسح بالكاميرا">📷</button>
+            <div class="pos-search-bar">
+                <div class="barcode-input-wrapper">
+                    <input type="text" id="barcodeInput" class="pos-barcode-input" placeholder="{% trans 'إدخال الباركود...' %}" autofocus>
+                    <button type="button" id="startScannerBtn" onclick="startCameraScanner()" class="pos-camera-btn" title="مسح بالكاميرا">📷</button>
                 </div>
                 <div class="search-input-wrapper">
                     <span class="search-icon">🔍</span>
-                    <input type="text" id="productSearch" placeholder="{% trans 'بحث باسم المنتج' %}">
+                    <input type="text" id="productSearch" class="pos-product-search-input" placeholder="{% trans 'بحث باسم المنتج أو الباركود...' %}" autocomplete="off">
+                    <button type="button" id="clearSearchBtn" class="pos-clear-search-btn" onclick="POS.clearProductSearch()" title="مسح البحث">✕</button>
                 </div>
             </div>
 
             <!-- Product Info Strip: updates on product selection / UOM change -->
-            <div style="display:flex; gap:8px; padding:8px 10px; background:var(--bg-tertiary); border-bottom:1px solid var(--border-default); font-size:0.8rem; flex-wrap:wrap; align-items:center;">
-                <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); border:1px solid var(--border-default); border-radius:6px; padding:4px 10px;">
-                    <span style="color:var(--text-muted);">💵 {% trans 'سعر البيع' %}:</span>
-                    <span id="displayPrice" style="font-weight:700; color:var(--neon-blue);">-</span>
+            <div class="pos-info-strip">
+                <div class="pos-info-chip">
+                    <span class="pos-info-chip-label">💵 {% trans 'سعر البيع' %}:</span>
+                    <span id="displayPrice" style="font-weight:800; color:#38bdf8;">-</span>
                 </div>
-                <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); border:1px solid rgba(245,158,11,0.5); border-radius:6px; padding:4px 10px;">
-                    <span style="color:var(--text-muted);">💰 {% trans 'التكلفة/وحدة' %}:</span>
-                    <span id="displayCost" style="font-weight:700; color:#f59e0b;">-</span>
+                {% if settings.show_pos_cost %}
+                <div class="pos-info-chip is-cost">
+                    <span class="pos-info-chip-label">💰 {% trans 'التكلفة/وحدة' %}:</span>
+                    <span id="displayCost" style="font-weight:800; color:#fbbf24;">-</span>
                 </div>
-                <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); border:1px solid var(--border-default); border-radius:6px; padding:4px 10px;">
-                    <span style="color:var(--text-muted);">🔢 {% trans 'الكمية' %}:</span>
-                    <span id="displayQty" style="font-weight:700; color:var(--neon-green);">-</span>
+                {% endif %}
+                <div class="pos-info-chip">
+                    <span class="pos-info-chip-label">🔢 {% trans 'الكمية' %}:</span>
+                    <span id="displayQty" style="font-weight:800; color:#34d399;">-</span>
                 </div>
-                <div style="display:flex; align-items:center; gap:6px; background:var(--bg-card); border:1px solid var(--border-default); border-radius:6px; padding:4px 10px;">
-                    <span style="color:var(--text-muted);">📦 {% trans 'المخزون' %}:</span>
-                    <span id="displayStock" style="font-weight:700; color:var(--neon-cyan);">-</span>
+                <div class="pos-info-chip">
+                    <span class="pos-info-chip-label">📦 {% trans 'المخزون' %}:</span>
+                    <span id="displayStock" style="font-weight:800; color:#22d3ee;">-</span>
                 </div>
             </div>
 
@@ -111,149 +190,228 @@
                 <table class="pos-products-table">
                     <thead>
                         <tr>
-                            <th>{% trans 'الصنف' %}</th>
-                            <th>{% trans 'اسم الصنف' %}</th>
-                            <th>{% trans 'رقم الصنف' %}</th>
-                            <th>{% trans 'الكمية' %}</th>
-                            <th>{% trans 'المخزون المتاح' %}</th>
-                            <th>{% trans 'السعر' %}</th>
-                            <th>{% trans 'الخصم' %}</th>
-                            <th>{% trans 'المتاحة' %}</th>
-                            <th>{% trans 'وحدة' %}</th>
+                            <th class="th-product">{% trans 'الصنف / الباركود' %}</th>
+                            {% if settings.show_pos_cost %}
+                            <th class="th-cost" style="width:110px;">{% trans 'آخر شراء' %}</th>
+                            {% endif %}
+                            <th style="width:110px;">{% trans 'آخر بيع' %}</th>
+                            <th style="width:115px;">{% trans 'سعر البيع' %}</th>
+                            <th style="width:80px;">{% trans 'المخزون' %}</th>
+                            <th style="width:75px;">{% trans 'الوحدة' %}</th>
+                            <th style="width:100px;">{% trans 'الكمية' %}</th>
                         </tr>
                     </thead>
                     <tbody id="productsTableBody">
                         {% for product in products %}
-                        <tr class="product-row" 
+                        <tr class="product-row"
                             data-product-id="{{ product.id }}"
-                            data-product-name="{{ product.name }}"
+                            data-product-name="{{ product.name|escape }}"
                             data-product-type="{{ product.product_type }}"
                             data-is-open-price="{{ product.is_open_price|yesno:'true,false' }}"
-                            data-product-barcode="{{ product.barcode }}"
+                            data-product-barcode="{{ product.barcode|default:'' }}"
                             data-sale-price="{{ product.sale_price|stringformat:'f' }}"
+                            data-original-sale-price="{{ product.sale_price|stringformat:'f' }}"
+                            data-last-purchase="{{ product.pos_last_purchase|stringformat:'f' }}"
+                            data-last-sale="{{ product.pos_last_sale|stringformat:'f' }}"
                             data-available-stock="{{ product.pos_stock|stringformat:'f' }}"
+                            data-allow-negative-stock="{{ product.allow_negative_stock|yesno:'true,false' }}"
                             data-tax-rate="{{ product.tax_rate|stringformat:'f' }}"
                             data-wht-rate="{{ product.withholding_tax_rate|default:0|stringformat:'f' }}"
                             data-uoms='[{"id":"base", "name":"{{ product.pos_unit_name|escapejs }}", "factor": 1.0}{% for puom in product.uoms.all %}{% if not puom.is_base %}, {"id":{{ puom.id }}, "name":"{{ puom.uom.name|escapejs }}", "factor": {{ puom.conversion_factor|stringformat:"f" }}}{% endif %}{% endfor %}]'
                             data-avg-cost="{{ product.pos_avg_cost|stringformat:'f' }}">
-                            <td>
-                                <div class="product-thumb-placeholder">{% if product.product_type == 'SERVICE' %}🛠️{% else %}📦{% endif %}</div>
+                            <td class="td-product">
+                                <div style="display:inline-flex; align-items:center; gap:10px;">
+                                    <div class="product-thumb-placeholder">{% if product.product_type == 'SERVICE' %}🛠️{% else %}📦{% endif %}</div>
+                                    <div>
+                                        <div class="product-name">{{ product.name }}</div>
+                                        {% if product.barcode %}<span class="product-barcode-tag en">{{ product.barcode }}</span>{% endif %}
+                                    </div>
+                                </div>
                             </td>
-                            <td>{{ product.name }}</td>
-                            <td class="en">{{ product.barcode }}</td>
+                            {% if settings.show_pos_cost %}
+                            <td class="en cost-col">{% localize off %}{{ product.pos_last_purchase|floatformat:2 }}{% endlocalize %} ج.م</td>
+                            {% endif %}
+                            <td class="en last-sale-col">{% localize off %}{{ product.pos_last_sale|floatformat:2 }}{% endlocalize %} ج.م</td>
+                            <td class="en price-col">{% localize off %}{{ product.sale_price|floatformat:2 }}{% endlocalize %} ج.م</td>
+                            <td class="stock-cell"{% if product.pos_stock < 0 %} style="color:#f87171; font-weight:bold;"{% endif %}>
+                                {% if product.product_type == 'SERVICE' %}
+                                    <span style="background:#334155; color:#e2e8f0; padding:2px 7px; border-radius:4px; font-size:0.75rem;">خدمة</span>
+                                {% else %}
+                                    {% localize off %}{{ product.pos_stock|floatformat:"-2" }}{% endlocalize %}
+                                {% endif %}
+                            </td>
+                            <td>{{ product.pos_unit_name }}</td>
                             <td>
-                                <div class="qty-control">
+                                <div class="qty-control" style="justify-content:center;">
                                     <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, {{ product.id }}, -1)">−</button>
                                     <span class="qty-value">1</span>
                                     <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, {{ product.id }}, 1)">+</button>
                                 </div>
                             </td>
-                            <td class="stock-cell">
-                                {% if product.product_type == 'SERVICE' %}
-                                    <span class="badge bg-secondary">خدمة</span>
-                                {% else %}
-                                    {{ product.pos_stock|floatformat:"-2" }}
-                                {% endif %}
-                            </td>
-                            <td class="en price-col">{{ product.sale_price|floatformat:2 }} EGP</td>
-                            <td>-</td>
-                            <td class="en">{{ product.sale_price|floatformat:2 }} EGP</td>
-                            <td>{{ product.pos_unit_name }}</td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="9" style="text-align:center;padding:2rem;">{% trans 'لا توجد منتجات' %}</td></tr>
+                        <tr><td colspan="{% if settings.show_pos_cost %}7{% else %}6{% endif %}" style="text-align:center; padding:2rem; color:#94a3b8;">{% trans 'لا توجد منتجات' %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
+
+            <!-- Cashier Shift Live Dashboard & Recent Invoices -->
+            <div class="pos-shift-bar">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <span style="font-weight:800; font-size:0.84rem; color:#ff7300;">📊 وردية الكاشير (#{{ shift_stats.shift_id|default:pos_session.id }})</span>
+                        <span style="font-size:0.75rem; color:#cbd5e1;">بدأت: {% if shift_stats.shift_start %}{{ shift_stats.shift_start }}{% elif pos_session.start_time %}{{ pos_session.start_time|date:"H:i" }}{% endif %}</span>
+                        <span style="font-size:0.74rem; color:#cbd5e1; background:#1e293b; padding:1px 7px; border-radius:4px; border:1px solid #334155;">الخزينة: {{ shift_stats.treasury_name|default:pos_session.treasury.name }}</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <button type="button" onclick="POS.refreshShiftStats()" style="background:#1e293b; border:1px solid #ff7300; color:#ff9f43; border-radius:5px; padding:2px 9px; font-size:0.74rem; cursor:pointer; font-weight:700;" title="تحديث لحظي">🔄 تحديث</button>
+                        <button type="button" onclick="POS.toggleShiftBar()" id="toggleShiftBarBtn" style="background:transparent; border:none; color:#94a3b8; cursor:pointer; font-size:0.85rem; padding:0 4px;" title="طي / فتح">▼</button>
+                    </div>
+                </div>
+
+                <div id="shiftBarContent" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                    <!-- KPI Cards (4 summary tiles) -->
+                    <div style="display:flex; gap:8px; flex:1; min-width:320px;">
+                        <!-- 1. Total Sales -->
+                        <div style="flex:1; background:#131c31; border:1px solid rgba(16,185,129,0.4); border-radius:6px; padding:4px 8px; text-align:center;">
+                            <div style="font-size:0.68rem; color:#94a3b8; font-weight:700;">💰 إجمالي المبيعات</div>
+                            <div id="statTotalSales" style="font-size:0.94rem; font-weight:800; color:#34d399; font-family:'Inter',monospace;">{% localize off %}{{ shift_stats.total_sales|default:0|floatformat:2 }}{% endlocalize %} ج.م</div>
+                        </div>
+                        <!-- 2. Invoice Count -->
+                        <div style="flex:1; background:#131c31; border:1px solid rgba(56,189,248,0.4); border-radius:6px; padding:4px 8px; text-align:center;">
+                            <div style="font-size:0.68rem; color:#94a3b8; font-weight:700;">🧾 الفواتير</div>
+                            <div id="statInvoiceCount" style="font-size:0.94rem; font-weight:800; color:#38bdf8; font-family:'Inter',monospace;">{{ shift_stats.invoices_count|default:0 }}</div>
+                        </div>
+                        <!-- 3. Cash in Drawer -->
+                        <div style="flex:1; background:#131c31; border:1px solid rgba(251,191,36,0.4); border-radius:6px; padding:4px 8px; text-align:center;" title="العهدة الافتتاحية + المبيعات النقدية + المقبوضات - المصروفات">
+                            <div style="font-size:0.68rem; color:#94a3b8; font-weight:700;">💵 نقدية الدرج</div>
+                            <div id="statCashInDrawer" style="font-size:0.94rem; font-weight:800; color:#fbbf24; font-family:'Inter',monospace;">{% localize off %}{{ shift_stats.cash_in_drawer|default:0|floatformat:2 }}{% endlocalize %} ج.م</div>
+                        </div>
+                        <!-- 4. Card / Electronic -->
+                        <div style="flex:1; background:#131c31; border:1px solid rgba(192,132,252,0.4); border-radius:6px; padding:4px 8px; text-align:center;">
+                            <div style="font-size:0.68rem; color:#94a3b8; font-weight:700;">💳 فيزا / شبكة</div>
+                            <div id="statCardSales" style="font-size:0.94rem; font-weight:800; color:#c084fc; font-family:'Inter',monospace;">{% localize off %}{{ shift_stats.card_sales|default:0|floatformat:2 }}{% endlocalize %} ج.م</div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Shift Invoices (Mini Feed) -->
+                    <div style="flex:1.2; min-width:280px; display:flex; align-items:center; gap:6px; overflow:hidden;">
+                        <span style="font-size:0.72rem; color:#94a3b8; font-weight:700; white-space:nowrap;">🕒 آخر الفواتير:</span>
+                        <div id="recentInvoicesFeed" class="pos-shift-recent-feed">
+                            {% for inv in shift_stats.recent_invoices %}
+                            <div class="recent-inv-chip" style="background:#1e293b; border:1px solid #334155; border-radius:6px; padding:3px 8px; display:flex; align-items:center; gap:6px; white-space:nowrap; font-size:0.74rem; flex-shrink:0;">
+                                <span style="font-weight:700; color:#f1f5f9;">{{ inv.number }}</span>
+                                <span style="color:#34d399; font-weight:700;">{% localize off %}{{ inv.total|floatformat:2 }}{% endlocalize %}</span>
+                                <span style="color:#94a3b8; font-size:0.68rem;">({{ inv.payment_type }})</span>
+                                <button type="button" onclick="POS.printReceipt({{ inv.id }})" style="background:transparent; border:none; color:#22d3ee; cursor:pointer; padding:0 2px;" title="إعادة طباعة">🖨️</button>
+                            </div>
+                            {% empty %}
+                            <span id="noRecentInvoicesMsg" style="font-size:0.72rem; color:#64748b;">لا توجد فواتير بعد في هذه الوردية</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-        
+
         <!-- RIGHT PANEL (cart) -->
         <div class="pos-right">
             <div id="posTabs" class="pos-tabs"></div>
             <div class="cart-header">
                 <span>{% trans 'الفاتورة الحالية' %}: #<span id="txNumber">001</span></span>
-                <span id="cartDate"></span>
+                <span id="cartDate" style="font-size:0.78rem; color:#94a3b8;"></span>
             </div>
-            
-            <div class="cart-columns-header" style="display:grid; grid-template-columns: 2fr 1fr 1.5fr 1fr 1fr; gap: 5px; padding: 10px; background: var(--surface); border-bottom: 1px solid var(--border);">
+
+            <div class="cart-columns-header">
                 <span>{% trans 'الصنف' %}</span>
-                <span>{% trans 'الكمية' %}</span>
-                <span>{% trans 'السعر / الضريبة' %}</span>
-                <span>{% trans 'الوحدة' %}</span>
+                <span style="text-align:center;">{% trans 'الكمية' %}</span>
+                <span style="text-align:center;">{% trans 'السعر / ض' %}</span>
+                <span style="text-align:center;">{% trans 'الوحدة' %}</span>
                 <span style="text-align:left;">{% trans 'الإجمالي' %}</span>
             </div>
-            
+
             <div class="cart-items" id="cartItems">
                 <!-- Cart items rendered by POS.js -->
                 <div class="cart-empty-msg">{% trans 'أضف منتجات للسلة' %}</div>
             </div>
-            
+
             <div class="cart-totals">
                 <div class="total-row">
                     <span>{% trans 'الإجمالي الفرعي' %}:</span>
                     <span id="cartSubtotal">0.00</span>
                 </div>
-                <div class="total-row discount-row" style="display:flex; justify-content:space-between; align-items:center;">
-                    <span>{% trans 'الخصم الكلي (%)' %}:</span>
-                    <input type="number" id="globalDiscountPct" value="0" min="0" max="100" step="0.01" style="width:60px; text-align:center; margin:0 5px;" onchange="POS.updateCartDisplay()" onkeyup="POS.updateCartDisplay()">
+                <div class="total-row discount-row" style="gap:4px; flex-wrap:wrap;">
+                    <span style="font-weight:600;">{% trans 'الخصم' %}:</span>
+                    <div style="display:flex; align-items:center; gap:5px;">
+                        <div class="pos-discount-box" title="{% trans 'خصم بمبلغ نقدي (ج.م)' %}">
+                            <input type="number" id="globalDiscountVal" value="0" min="0" step="any"
+                                   style="width:56px;"
+                                   placeholder="0" oninput="POS.onDiscountValChange()" onchange="POS.onDiscountValChange()">
+                            <span style="font-size:0.72rem; color:#ff7300; font-weight:800;">{% trans 'ج.م' %}</span>
+                        </div>
+                        <div class="pos-discount-box" title="{% trans 'خصم بنسبة مئوية (%)' %}">
+                            <input type="number" id="globalDiscountPct" value="0" min="0" max="100" step="any"
+                                   style="width:44px;"
+                                   placeholder="0" oninput="POS.onDiscountPctChange()" onchange="POS.onDiscountPctChange()">
+                            <span style="font-size:0.72rem; color:#ff7300; font-weight:800;">%</span>
+                        </div>
+                    </div>
                     <span id="cartDiscount">(0.00)</span>
                 </div>
                 <div class="total-row">
                     <span>{% trans 'الضريبة (VAT)' %}:</span>
                     <span id="cartTax">0.00</span>
                 </div>
-                <div class="total-row wht-row" style="color: var(--danger);">
+                <div class="total-row wht-row">
                     <span>{% trans 'الخصم والإضافة (WHT)' %}:</span>
                     <span id="cartWht">(0.00)</span>
+                </div>
+                <div class="total-row notes-row" style="margin-top: 6px; margin-bottom: 4px;">
+                    <input type="text" id="posInvoiceNotes" class="pos-notes-input" placeholder="📝 بيان / ملاحظات الفاتورة...">
                 </div>
                 <div class="total-row total-final">
                     <span>{% trans 'الصافي المطلوب' %}:</span>
                     <span id="cartTotal">0.00 {% trans 'ج.م' %}</span>
                 </div>
             </div>
-            
-            <!-- Payment Quick Actions -->
+
+            <!-- Consecutive Customer Warning Notice -->
+            <div id="posSameCustomerNotice" style="display:none; margin: 4px 10px; padding: 6px 10px; background: rgba(245, 158, 11, 0.15); border: 1px dashed #f59e0b; border-radius: 6px; color: #fbbf24; font-size: 0.78rem; text-align: center; font-weight: 600;">
+                ⚠️ <span id="posSameCustomerNoticeText">{% trans 'تنبيه: آخر فاتورة بيع مسجلة كانت لنفس العميل' %}</span>
+            </div>
+
+            <!-- Payment Quick Actions (Ergonomic 6-Col Grid: Cash Hero + Card/InstaPay/E-Wallet + Split/Credit) -->
             <div class="payment-quick-btns">
-                <button type="button" class="pay-quick-btn" onclick="POS.processCashPayment()">
-                    <div>💵 {% trans 'كاش' %}</div>
-                    <small style="font-size:0.65rem; font-weight:normal;">(Ctrl+Enter)</small>
+                <button type="button" class="pay-quick-btn pay-cash" onclick="POS.processCashPayment()">
+                    <span>💵 {% trans 'كاش' %}</span>
+                    <small style="font-size:0.72rem; opacity:0.9; font-weight:600;">(Ctrl+Enter)</small>
                 </button>
-                <button class="pay-quick-btn pay-card" onclick="POS.processCardPayment()">
+                <button type="button" class="pay-quick-btn pay-card" onclick="POS.processCardPayment()">
                     <div>💳 {% trans 'بطاقة' %}</div>
-                    <small style="font-size:0.65rem; font-weight:normal;">(F12)</small>
+                    <small style="font-size:0.65rem; opacity:0.85; font-weight:500;">(F12)</small>
                 </button>
-                <button class="pay-quick-btn pay-credit" onclick="POS.processCreditPayment()">
-                    <div>⏳ {% trans 'آجل' %}</div>
-                    <small style="font-size:0.65rem; font-weight:normal;">(F10)</small>
+                <button type="button" class="pay-quick-btn pay-bank" onclick="POS.processBankPayment()" title="سداد إنستاباي / تحويل بنكي لحظي">
+                    <div>⚡ {% trans 'إنستا' %}</div>
+                    <small style="font-size:0.65rem; opacity:0.85; font-weight:500;">(F7)</small>
                 </button>
-                <button class="pay-quick-btn pay-ewallet" onclick="POS.processEWalletPayment()" style="background:#f3e8ff; border-color:#9333ea; color:#9333ea;">
+                <button type="button" class="pay-quick-btn pay-ewallet" onclick="POS.processEWalletPayment()">
                     <div>📱 {% trans 'محفظة' %}</div>
-                    <small style="font-size:0.65rem; font-weight:normal;">(F8)</small>
+                    <small style="font-size:0.65rem; opacity:0.85; font-weight:500;">(F8)</small>
                 </button>
-                <button class="pay-quick-btn pay-bank" onclick="POS.processBankPayment()" style="background:#ccfbf1; border-color:#14b8a6; color:#14b8a6;">
-                    <div>🏦 {% trans 'بنك' %}</div>
-                    <small style="font-size:0.65rem; font-weight:normal;">(F9)</small>
+                <button type="button" class="pay-quick-btn pay-split" onclick="POS.processSplitPayment()">
+                    <span>🔀 {% trans 'سداد مقسم' %}</span>
+                    <small style="font-size:0.68rem; opacity:0.85; font-weight:500;">(F9)</small>
+                </button>
+                <button type="button" class="pay-quick-btn pay-credit" onclick="POS.processCreditPayment()">
+                    <span>⏳ {% trans 'آجل' %}</span>
+                    <small style="font-size:0.68rem; opacity:0.85; font-weight:500;">(F10)</small>
                 </button>
             </div>
-            
+
         </div>
     </div>
-    
-    <!-- Bottom Action Bar -->
-    <div class="pos-action-bar">
-        <div class="pos-actions-left">
-            <button type="button" class="action-btn action-reprint" onclick="POS.reprintLast()">🖨 إعادة طباعة الأخير<br><small>(F3)</small></button>
-            <button type="button" class="action-btn action-cancel" onclick="POS.clearCart()">🗑️ {% trans 'إلغاء الفاتورة' %}</button>
-        </div>
-        <div class="pos-actions-right">
-            <button class="action-btn action-cash-pay" onclick="POS.processCashPayment()">💵 CASH PAYMENT<br><small>(F11)</small></button>
-            <button class="action-btn action-card-pay" onclick="POS.processCardPayment()">💳 CARD PAYMENT<br><small>(F12)</small></button>
-            <button class="action-btn" style="background:#8b5cf6;color:#fff;font-weight:700;" onclick="POS.processSplitPayment()">🔀 SPLIT PAYMENT<br><small>(F9)</small></button>
-            <button class="action-btn" style="background:var(--accent);color:#fff;" onclick="POS.processCreditPayment()">💳 CREDIT PAYMENT<br><small>(F10)</small></button>
-        </div>
-    </div>
-    
+
     <!-- Cash Payment Modal -->
     <div class="modal" id="cashModal" style="display:none">
         <div class="modal-content">
@@ -280,86 +438,136 @@
     <!-- Split Payment Modal -->
     <div class="modal" id="splitModal" style="display:none">
         <div class="modal-content" style="max-width: 520px; text-align: right;">
-            <h3 style="margin-top:0; color:#8b5cf6; display:flex; align-items:center; gap:8px;">🔀 {% trans 'الدفع المتعدد / المركّب' %}</h3>
-            
-            <div class="modal-amount" style="background:var(--bg-tertiary); padding:10px 15px; border-radius:8px; margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;">
-                <label style="font-weight:600;">{% trans 'إجمالي الفاتورة المطلوب:' %}</label>
-                <div class="amount-display" id="splitModalTotal" style="font-size:1.3rem; font-weight:800; color:var(--neon-blue);">0.00 ج.م</div>
+            <h3 style="margin-top:0; color:#c4b5fd; display:flex; align-items:center; gap:8px;">🔀 {% trans 'الدفع المتعدد / المركّب' %}</h3>
+
+            <div class="modal-amount" style="background:#0b1220; border:1px solid #243247; padding:10px 15px; border-radius:8px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center;">
+                <label style="font-weight:700; color:#cbd5e1; font-size:0.95rem; margin:0;">{% trans 'إجمالي الفاتورة المطلوب:' %}</label>
+                <div class="amount-display" id="splitModalTotal" style="font-size:1.3rem; font-weight:800; color:#38bdf8; border:none; padding:0; background:transparent;">0.00 ج.م</div>
             </div>
 
             <div style="display:flex; flex-direction:column; gap:10px;">
                 <!-- Cash Input -->
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
-                    <span style="font-weight:600; flex:1;">💵 {% trans 'كاش (نقدي)' %}:</span>
-                    <input type="number" id="splitCashInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:#131c31; padding:8px 12px; border-radius:6px; border:1px solid #243247;">
+                    <span style="font-weight:700; flex:1; color:#ffffff; font-size:0.92rem;">💵 {% trans 'كاش (نقدي)' %}:</span>
+                    <input type="number" id="splitCashInput" class="form-control" style="width:120px; text-align:center; font-weight:700; color:#ffffff; background:#0b1220; border:1px solid #334155;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
                     <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('cash')">تعبئة المتبقي</button>
                 </div>
 
                 <!-- Card Input -->
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
-                    <span style="font-weight:600; flex:1;">💳 {% trans 'بطاقة (شبكة / الفيزا)' %}:</span>
-                    <input type="number" id="splitCardInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:#131c31; padding:8px 12px; border-radius:6px; border:1px solid #243247;">
+                    <span style="font-weight:700; flex:1; color:#ffffff; font-size:0.92rem;">💳 {% trans 'بطاقة (شبكة / الفيزا)' %}:</span>
+                    <input type="number" id="splitCardInput" class="form-control" style="width:120px; text-align:center; font-weight:700; color:#ffffff; background:#0b1220; border:1px solid #334155;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
                     <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('card')">تعبئة المتبقي</button>
                 </div>
 
-                <!-- E-Wallet / InstaPay Input -->
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
-                    <span style="font-weight:600; flex:1;">📱 {% trans 'محفظة إلكترونية' %}:</span>
-                    <input type="number" id="splitEwalletInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                <!-- E-Wallet Input -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:#131c31; padding:8px 12px; border-radius:6px; border:1px solid #243247;">
+                    <span style="font-weight:700; flex:1; color:#ffffff; font-size:0.92rem;">📱 {% trans 'محفظة إلكترونية' %}:</span>
+                    <input type="number" id="splitEwalletInput" class="form-control" style="width:120px; text-align:center; font-weight:700; color:#ffffff; background:#0b1220; border:1px solid #334155;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
                     <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('ewallet')">تعبئة المتبقي</button>
                 </div>
 
-                <!-- Bank Transfer Input -->
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
-                    <span style="font-weight:600; flex:1;">🏛️ {% trans 'تحويل بنكي' %}:</span>
-                    <input type="number" id="splitBankInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                <!-- Bank Transfer / InstaPay Input -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:#131c31; padding:8px 12px; border-radius:6px; border:1px solid #243247;">
+                    <span style="font-weight:700; flex:1; color:#ffffff; font-size:0.92rem;">⚡ {% trans 'إنستاباي / بنك' %}:</span>
+                    <input type="number" id="splitBankInput" class="form-control" style="width:120px; text-align:center; font-weight:700; color:#ffffff; background:#0b1220; border:1px solid #334155;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
                     <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('bank')">تعبئة المتبقي</button>
                 </div>
 
                 <!-- Credit Input -->
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-secondary); padding:8px 12px; border-radius:6px; border:1px solid var(--border-default);">
-                    <span style="font-weight:600; flex:1;">📋 {% trans 'آجل / حساب العميل' %}:</span>
-                    <input type="number" id="splitCreditInput" class="form-control" style="width:120px; text-align:center; font-weight:700;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; background:#131c31; padding:8px 12px; border-radius:6px; border:1px solid #243247;">
+                    <span style="font-weight:700; flex:1; color:#ffffff; font-size:0.92rem;">📋 {% trans 'آجل / حساب العميل' %}:</span>
+                    <input type="number" id="splitCreditInput" class="form-control" style="width:120px; text-align:center; font-weight:700; color:#ffffff; background:#0b1220; border:1px solid #334155;" value="0" min="0" step="0.01" oninput="POS.updateSplitCalculations()">
                     <button type="button" class="btn btn-sm btn-orange" onclick="POS.fillSplitRemaining('credit')">تعبئة المتبقي</button>
                 </div>
             </div>
 
             <!-- Remaining indicator -->
-            <div style="margin-top:15px; padding:10px; border-radius:6px; background:rgba(255,255,255,0.03); display:flex; justify-content:space-between; align-items:center; border:1px solid var(--border-default);">
-                <span style="font-weight:600;">{% trans 'المتبقي للسداد:' %}</span>
-                <span id="splitRemainingAmount" style="font-size:1.2rem; font-weight:800; color:var(--neon-gold);">0.00 ج.م</span>
+            <div style="margin-top:14px; padding:10px 12px; border-radius:8px; background:#0b1220; display:flex; justify-content:space-between; align-items:center; border:1px solid #243247;">
+                <span style="font-weight:700; color:#cbd5e1; font-size:0.95rem;">{% trans 'المتبقي للسداد:' %}</span>
+                <span id="splitRemainingAmount" style="font-size:1.2rem; font-weight:800; color:#fbbf24;">0.00 ج.م</span>
             </div>
 
-            <div class="modal-actions" style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end;">
-                <button type="button" onclick="POS.confirmSplitPayment()" class="btn-confirm" style="background:#8b5cf6;">✅ {% trans 'تأكيد الاعتماد' %}</button>
+            <div class="modal-actions" style="margin-top:18px; display:flex; gap:10px; justify-content:flex-end;">
+                <button type="button" onclick="POS.confirmSplitPayment()" class="btn-confirm">✅ {% trans 'تأكيد الاعتماد' %}</button>
                 <button type="button" onclick="document.getElementById('splitModal').style.display='none'" class="btn-cancel-modal">{% trans 'إلغاء' %}</button>
             </div>
         </div>
     </div>
-    
+
     <!-- Receipt Modal -->
     <div class="modal" id="receiptModal" style="display:none">
         <div class="modal-content receipt-modal">
             <h3>✓ {% trans 'تمت العملية بنجاح' %}</h3>
             <div id="receiptContent"></div>
+
+            <!-- Paper Size Picker (Saved to localStorage) -->
+            <div class="pos-receipt-paper-picker">
+                <div class="pos-receipt-paper-picker-head">
+                    <span>📄 مقاس ورق الطباعة:</span>
+                    <span class="pos-receipt-paper-picker-note">(يُحفظ كافتراضي تلقائياً)</span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;" id="posReceiptSizeButtons">
+                    <button type="button" class="btn-paper-size active" data-size="80mm" onclick="POS.setReceiptPaperSize('80mm')">80 مم حراري</button>
+                    <button type="button" class="btn-paper-size" data-size="58mm" onclick="POS.setReceiptPaperSize('58mm')">58 مم حراري</button>
+                    <button type="button" class="btn-paper-size" data-size="a5" onclick="POS.setReceiptPaperSize('a5')">A5 نصف ورقة</button>
+                    <button type="button" class="btn-paper-size" data-size="a4" onclick="POS.setReceiptPaperSize('a4')">A4 فاتورة كاملة</button>
+                </div>
+            </div>
+
             <div class="modal-actions">
                 <button type="button" onclick="if(POS.lastInvoiceId) POS.printReceipt(POS.lastInvoiceId); else window.print();" class="btn-print">🖨 {% trans 'طباعة الإيصال' %}</button>
                 <button type="button" onclick="document.getElementById('receiptModal').style.display='none';" class="btn-new-sale">🛒 {% trans 'بيع جديد' %}</button>
             </div>
         </div>
     </div>
-    
+
     <!-- Camera Scanner Modal -->
     <div class="modal" id="scannerModal" style="display:none; z-index: 3000;">
         <div class="modal-content" style="max-width: 500px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                <h3 style="margin:0;">📷 مسح الباركود بالكاميرا</h3>
+                <h3 style="margin:0; border:none; padding:0;">📷 مسح الباركود بالكاميرا</h3>
                 <button type="button" onclick="stopCameraScanner()" class="btn-cancel-modal" style="padding: 5px 10px; margin:0;">✕</button>
             </div>
-            <div id="qr-reader" style="width:100%; border:1px solid rgba(255,255,255,0.1); border-radius:8px; overflow:hidden;"></div>
+            <div id="qr-reader" style="width:100%; border:1px solid #334155; border-radius:8px; overflow:hidden; background:#0b1220;"></div>
         </div>
     </div>
-    
+
+    <!-- Product Last Prices Modal (Long-Press Popup) -->
+    <div class="modal" id="lastPricesModal" style="display:none; z-index: 3500; align-items: center; justify-content: center; background: rgba(0,0,0,0.78); backdrop-filter: blur(4px);">
+        <div class="modal-content" style="width: 95%; max-width: 750px; padding: 1.5rem; text-align: right; border: 2px solid #0ea5e9; box-shadow: 0 15px 40px rgba(0, 229, 255, 0.3); border-radius: 12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #243247; padding-bottom:12px;">
+                <h3 style="margin:0; color:#38bdf8; font-size:1.3rem; font-weight: 800; display:flex; align-items:center; gap:10px; border:none; padding:0;">
+                    🏷️ <span>سجل آخر أسعار بيع الصنف</span>
+                </h3>
+                <button type="button" onclick="document.getElementById('lastPricesModal').style.display='none'" class="btn-cancel-modal" style="padding:6px 14px; margin:0; font-size: 1.05rem; border-radius: 6px;">✕</button>
+            </div>
+
+            <div style="background:#131c31; padding:14px 18px; border-radius:10px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; border:1px solid #243247; flex-wrap: wrap; gap: 10px;">
+                <div>
+                    <div style="font-weight:700; color:#ffffff; font-size:1.15rem;" id="lpModalProductName">اسم الصنف</div>
+                    <div style="font-size:0.9rem; color:#cbd5e1; margin-top:2px;" id="lpModalProductBarcode">الباركود</div>
+                </div>
+                <div style="text-align:left;">
+                    <div style="font-size:0.85rem; color:#94a3b8;">العميل المختار:</div>
+                    <div style="font-weight:700; color:#fbbf24; font-size:1.1rem; margin-top:2px;" id="lpModalCustomerName">عميل نقدي</div>
+                </div>
+            </div>
+
+            <!-- Table of last 5 sales -->
+            <div id="lpModalBody" style="max-height: 360px; overflow-y: auto; margin-bottom: 15px;">
+                <div style="text-align:center; padding:2rem; color:#e2e8f0; font-size:1.05rem;">جاري التحميل...</div>
+            </div>
+
+            <div class="modal-actions" style="margin-top:15px; display:flex; justify-content:space-between; align-items:center; gap: 10px; flex-wrap: wrap;">
+                <a id="lpModalMovementBtn" href="#" target="_blank" style="background:#ff7300; color:#fff; padding:8px 18px; border-radius:8px; font-size:0.95rem; font-weight:700; text-decoration:none; display:inline-flex; align-items:center; gap:8px; box-shadow: 0 4px 14px rgba(255, 115, 0, 0.45); transition: all 0.2s;" title="عرض كارت حركة الصنف وتفاصيل أسعار الشراء والبيع والترصيد">
+                    📊 حركة الصنف
+                </a>
+                <button type="button" onclick="document.getElementById('lastPricesModal').style.display='none'" class="btn-cancel-modal" style="padding:8px 24px; font-size: 0.95rem; font-weight: 700; border-radius: 8px;">إغلاق</button>
+            </div>
+        </div>
+    </div>
+
     {% csrf_token %}
     <script src="{% static 'js/pos.js' %}?v={% now 'U' %}"></script>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
@@ -369,19 +577,26 @@
         POS.currentBranchId = {{ current_branch.id|default:'null' }};
         POS.currentShiftId = {{ pos_session.id|default:'null' }};
         POS.allowPriceEdit = {% if settings.allow_pos_price_modification %}true{% else %}false{% endif %};
-        POS.priceMarginPercent = {{ settings.pos_price_margin_percent|default:0 }};
-        
+        POS.priceMarginPercent = {% localize off %}{{ settings.pos_price_margin_percent|default:0 }}{% endlocalize %};
+        POS.allowNegativeStock = {% if settings.allow_negative_stock %}true{% else %}false{% endif %};
+        POS.showCost = {% if settings.show_pos_cost %}true{% else %}false{% endif %};
+        {% if last_sale_info %}
+        POS.lastSaleCustomerId = "{{ last_sale_info.customer_id }}";
+        POS.lastSaleCustomerName = "{{ last_sale_info.customer_name|escapejs }}";
+        POS.lastSaleInvoiceNumber = "{{ last_sale_info.invoice_number|escapejs }}";
+        {% endif %}
+
         // --- Camera Barcode Scanner Logic ---
         let html5QrcodeScanner = null;
 
         function startCameraScanner() {
             document.getElementById('scannerModal').style.display = 'flex';
-            
+
             if (!html5QrcodeScanner) {
                 html5QrcodeScanner = new Html5QrcodeScanner(
                     "qr-reader", { fps: 10, qrbox: {width: 250, height: 150} });
             }
-            
+
             html5QrcodeScanner.render(onScanSuccess, onScanFailure);
         }
 
@@ -399,7 +614,7 @@
         function onScanSuccess(decodedText, decodedResult) {
             // Stop scanner once we get a code
             stopCameraScanner();
-            
+
             // Add barcode to input and trigger search
             const barcodeInput = document.getElementById('barcodeInput');
             if (barcodeInput) {
@@ -413,7 +628,6 @@
 
         function onScanFailure(error) {
             // handle scan failure, usually better to ignore and keep scanning
-            // console.warn(`Code scan error = ${error}`);
         }
     </script>
 </body>

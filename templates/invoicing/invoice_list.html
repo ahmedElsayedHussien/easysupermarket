@@ -2,26 +2,130 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="glass-container" style="padding: 2rem;">
-    <div class="top-header">
-        <h2 style="margin: 0; color: #fff;"><i class="fas fa-file-invoice text-gold" style="margin-left: 0.5rem;"></i> {{ title }}</h2>
+<div class="glass-container" style="padding: 1.5rem 2rem;">
+    <!-- Top Header -->
+    <div class="top-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+        <h2 style="margin: 0; color: #fff; font-size: 1.6rem;">
+            <i class="fas fa-file-invoice text-gold" style="margin-left: 0.5rem;"></i> {{ title }}
+        </h2>
         <div style="display: flex; gap: 1rem; align-items: center;">
-            <form method="GET" style="display: flex; gap: 0.5rem; margin: 0;">
-                <input type="text" name="q" value="{{ search_query }}" placeholder="بحث باسم الشريك..." class="form-control" style="background: rgba(15, 23, 42, 0.6); color: white; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 0.5rem 1rem;">
-                <button type="submit" class="btn-ghost" style="padding: 0.5rem 1rem;"><i class="fas fa-search"></i> بحث</button>
-            </form>
             {% if list_type == 'purchases' %}
-            <a href="{% url 'invoicing:purchase_invoice' %}" class="btn-orange">
-                <i class="fas fa-cart-arrow-down"></i> فاتورة مشتريات
+            <a href="{% url 'invoicing:purchase_invoice' %}" class="btn-orange" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; padding: 0.6rem 1.4rem; border-radius: 8px; font-weight: bold; text-decoration: none; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); display: inline-flex; align-items: center; gap: 8px;">
+                <i class="fas fa-cart-arrow-down"></i> فاتورة مشتريات جديدة
             </a>
             {% elif list_type == 'sales' %}
-            <a href="{% url 'invoicing:pos' %}" class="btn-orange">
-                <i class="fas fa-cash-register"></i> فاتورة مبيعات (نقطة البيع)
+            <a href="{% url 'invoicing:pos' %}" class="btn-orange" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; padding: 0.6rem 1.4rem; border-radius: 8px; font-weight: bold; text-decoration: none; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); display: inline-flex; align-items: center; gap: 8px;">
+                <i class="fas fa-cash-register"></i> نقطة البيع (POS)
             </a>
             {% endif %}
         </div>
     </div>
 
+    <!-- Advanced Filter Bar -->
+    <form method="GET" style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; padding: 1.2rem; margin-bottom: 1.5rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.8rem; align-items: end;">
+            <!-- Keyword search -->
+            <div style="grid-column: span 2; min-width: 260px;">
+                <label style="display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600;">البحث السريع:</label>
+                <div style="position: relative;">
+                    <input type="text" name="q" value="{{ search_query }}" placeholder="رقم الفاتورة، اسم الشريك، أو البيان..." class="form-control"
+                        style="width: 100%; background: #0f172a; color: white; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.5rem 0.8rem 0.5rem 2.2rem; font-family: 'Tajawal', sans-serif;">
+                    <i class="fas fa-search" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #64748b;"></i>
+                </div>
+            </div>
+
+            <!-- Invoice Type Filter -->
+            <div>
+                <label style="display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600;">نوع الفاتورة:</label>
+                <select name="type_filter" style="width: 100%; background: #0f172a; color: white; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.5rem 0.8rem; font-family: 'Tajawal', sans-serif;">
+                    <option value="">كافة الأنواع</option>
+                    {% if list_type == 'sales' %}
+                    <option value="SALE" {% if selected_type_filter == 'SALE' %}selected{% endif %}>مبيعات فقط</option>
+                    <option value="RETURN_SALE" {% if selected_type_filter == 'RETURN_SALE' %}selected{% endif %}>مرتجع مبيعات فقط</option>
+                    {% else %}
+                    <option value="PURCHASE" {% if selected_type_filter == 'PURCHASE' %}selected{% endif %}>مشتريات فقط</option>
+                    <option value="RETURN_PURCHASE" {% if selected_type_filter == 'RETURN_PURCHASE' %}selected{% endif %}>مرتجع مشتريات فقط</option>
+                    {% endif %}
+                </select>
+            </div>
+
+            <!-- Payment Method Filter -->
+            <div>
+                <label style="display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600;">طريقة السداد:</label>
+                <select name="payment_type" style="width: 100%; background: #0f172a; color: white; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.5rem 0.8rem; font-family: 'Tajawal', sans-serif;">
+                    <option value="">كافة طرق السداد</option>
+                    <option value="CASH" {% if selected_payment_type == 'CASH' %}selected{% endif %}>💵 نقدي (كاش)</option>
+                    <option value="CARD" {% if selected_payment_type == 'CARD' %}selected{% endif %}>💳 بطاقة (فيزا)</option>
+                    <option value="EWALLET" {% if selected_payment_type == 'EWALLET' %}selected{% endif %}>📱 محفظة إلكترونية</option>
+                    <option value="BANK_TRANSFER" {% if selected_payment_type == 'BANK_TRANSFER' %}selected{% endif %}>🏦 تحويل بنكي</option>
+                    <option value="SPLIT" {% if selected_payment_type == 'SPLIT' %}selected{% endif %}>🔀 سداد مقسم</option>
+                    <option value="CREDIT" {% if selected_payment_type == 'CREDIT' %}selected{% endif %}>📋 آجل</option>
+                </select>
+            </div>
+
+            <!-- Status Filter -->
+            <div>
+                <label style="display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600;">حالة الفاتورة:</label>
+                <select name="status_filter" style="width: 100%; background: #0f172a; color: white; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.5rem 0.8rem; font-family: 'Tajawal', sans-serif;">
+                    <option value="">كافة الحالات</option>
+                    <option value="POSTED" {% if selected_status_filter == 'POSTED' %}selected{% endif %}>مرحّلة</option>
+                    <option value="RETURNED" {% if selected_status_filter == 'RETURNED' %}selected{% endif %}>مرتجعة (بالكامل أو جزئياً)</option>
+                    <option value="DRAFT" {% if selected_status_filter == 'DRAFT' %}selected{% endif %}>مسودة</option>
+                    <option value="CANCELLED" {% if selected_status_filter == 'CANCELLED' %}selected{% endif %}>ملغاة</option>
+                </select>
+            </div>
+
+            <!-- Start Date -->
+            <div>
+                <label style="display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600;">من تاريخ:</label>
+                <input type="date" name="start_date" value="{{ selected_start_date }}"
+                    style="width: 100%; background: #0f172a; color: white; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.5rem 0.8rem; font-family: 'Tajawal', sans-serif;">
+            </div>
+
+            <!-- End Date -->
+            <div>
+                <label style="display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600;">إلى تاريخ:</label>
+                <input type="date" name="end_date" value="{{ selected_end_date }}"
+                    style="width: 100%; background: #0f172a; color: white; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.5rem 0.8rem; font-family: 'Tajawal', sans-serif;">
+            </div>
+
+            <!-- Branch Filter (if multiple) -->
+            {% if branches|length > 1 %}
+            <div>
+                <label style="display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600;">الفرع:</label>
+                <select name="branch_id" style="width: 100%; background: #0f172a; color: white; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.5rem 0.8rem; font-family: 'Tajawal', sans-serif;">
+                    <option value="">كافة الفروع</option>
+                    {% for b in branches %}
+                    <option value="{{ b.id }}" {% if selected_branch_id == b.id|stringformat:'s' %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+
+            <!-- Per Page -->
+            <div>
+                <label style="display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; font-weight: 600;">عدد السجلات:</label>
+                <select name="per_page" style="width: 100%; background: #0f172a; color: white; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; padding: 0.5rem 0.8rem; font-family: 'Tajawal', sans-serif;">
+                    <option value="10" {% if per_page == 10 %}selected{% endif %}>10 لكل صفحة</option>
+                    <option value="20" {% if per_page == 20 %}selected{% endif %}>20 لكل صفحة</option>
+                    <option value="50" {% if per_page == 50 %}selected{% endif %}>50 لكل صفحة</option>
+                    <option value="100" {% if per_page == 100 %}selected{% endif %}>100 لكل صفحة</option>
+                </select>
+            </div>
+
+            <!-- Actions Buttons -->
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button type="submit" class="btn-orange" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; border: none; padding: 0.55rem 1.2rem; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(255, 115, 0, 0.35); display: inline-flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-filter"></i> تطبيق الفلتر
+                </button>
+                <a href="{% if list_type == 'sales' %}{% url 'invoicing:sales_invoice_list' %}{% else %}{% url 'invoicing:purchase_invoice_list' %}{% endif %}" class="btn-ghost" style="padding: 0.55rem 1rem; border-radius: 8px; text-decoration: none; color: #94a3b8; border: 1px solid rgba(255, 255, 255, 0.15); display: inline-flex; align-items: center; gap: 6px;">
+                    <i class="fas fa-undo"></i> تفريغ
+                </a>
+            </div>
+        </div>
+    </form>
+
+    <!-- Table Container -->
     <div class="data-table-container">
         <table class="data-table">
             <thead>
@@ -30,6 +134,8 @@
                     <th style="text-align: center;">النوع</th>
                     <th>التاريخ</th>
                     <th>الشريك</th>
+                    <th style="text-align: center;">طريقة السداد</th>
+                    <th>البيان / ملاحظات</th>
                     <th>الفرع</th>
                     <th>الإجمالي</th>
                     <th style="text-align: center;">الحالة</th>
@@ -39,35 +145,92 @@
             <tbody>
                 {% for invoice in invoices %}
                 <tr>
-                    <td class="en" style="color: #00e5ff; font-weight: bold;">{{ invoice.invoice_number }}</td>
+                    <td class="en" style="color: #00e5ff; font-weight: bold;">
+                        <a href="{% url 'invoicing:invoice_detail' invoice.id %}" style="color: #00e5ff; text-decoration: none;">
+                            {{ invoice.invoice_number }}
+                        </a>
+                    </td>
                     <td style="text-align: center;">
                         {% if invoice.invoice_type == 'SALE' %}
                         <span class="badge-status badge-success">مبيعات</span>
+                        {% elif invoice.invoice_type == 'RETURN_SALE' %}
+                        <span class="badge-status badge-info" style="background: rgba(6, 182, 212, 0.15); color: #06b6d4; border: 1px solid rgba(6, 182, 212, 0.3);">مرتجع مبيعات</span>
                         {% elif invoice.invoice_type == 'PURCHASE' %}
                         <span class="badge-status badge-danger">مشتريات</span>
+                        {% elif invoice.invoice_type == 'RETURN_PURCHASE' %}
+                        <span class="badge-status badge-info" style="background: rgba(6, 182, 212, 0.15); color: #06b6d4; border: 1px solid rgba(6, 182, 212, 0.3);">مرتجع مشتريات</span>
                         {% else %}
                         <span class="badge-status badge-info">{{ invoice.get_invoice_type_display }}</span>
                         {% endif %}
                     </td>
                     <td class="en">{{ invoice.date|date:"Y-m-d" }}</td>
-                    <td>{{ invoice.partner.name }}</td>
-                    <td>{{ invoice.branch.name }}</td>
-                    <td class="en" style="color: #fbbf24; font-weight: bold;">{{ invoice.total_amount|floatformat:2 }} ج.م</td>
+                    <td><b>{{ invoice.partner.name }}</b></td>
+                    
+                    <!-- طريقة السداد (Payment Method) -->
                     <td style="text-align: center;">
+                        {% if invoice.payment_type == 'CASH' %}
+                        <span style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;">
+                            💵 كاش
+                        </span>
+                        {% elif invoice.payment_type == 'CARD' %}
+                        <span style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;">
+                            💳 فيزا
+                        </span>
+                        {% elif invoice.payment_type == 'EWALLET' %}
+                        <span style="background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;">
+                            📱 محفظة
+                        </span>
+                        {% elif invoice.payment_type == 'BANK_TRANSFER' %}
+                        <span style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.3); padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;">
+                            🏦 تحويل
+                        </span>
+                        {% elif invoice.payment_type == 'SPLIT' %}
+                        <span style="background: rgba(255, 115, 0, 0.15); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.3); padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;">
+                            🔀 مقسم
+                        </span>
+                        {% elif invoice.payment_type == 'CREDIT' %}
+                        <span style="background: rgba(234, 179, 8, 0.15); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;">
+                            📋 آجل
+                        </span>
+                        {% else %}
+                        <span style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.3); padding: 3px 8px; border-radius: 6px; font-size: 0.8rem;">
+                            {{ invoice.get_payment_type_display|default:invoice.payment_type }}
+                        </span>
+                        {% endif %}
+                    </td>
+
+                    <td style="color: #cbd5e1; font-size: 0.85rem;">{{ invoice.notes|default:"-"|truncatechars:35 }}</td>
+                    <td>{{ invoice.branch.name }}</td>
+                    <td class="en" style="color: #fbbf24; font-weight: bold; white-space: nowrap;">{{ invoice.total_amount|floatformat:2 }} ج.م</td>
+                    
+                    <!-- الحالة (Status) -->
+                    <td style="text-align: center; white-space: nowrap;">
                         {% if invoice.status == 'POSTED' %}
-                        <span class="badge-status badge-success">مرحلة</span>
+                            {% if invoice.is_fully_returned %}
+                            <span class="badge-status badge-danger" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: bold;">
+                                <i class="fas fa-undo-alt"></i> مرتجعة بالكامل
+                            </span>
+                            {% elif invoice.is_partially_returned %}
+                            <span class="badge-status badge-warning" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: bold;">
+                                <i class="fas fa-undo-alt"></i> مرتجعة جزئياً
+                            </span>
+                            {% else %}
+                            <span class="badge-status badge-success">مرحلة</span>
+                            {% endif %}
                         {% elif invoice.status == 'DRAFT' %}
                         <span class="badge-status badge-warning">مسودة</span>
                         {% else %}
                         <span class="badge-status badge-danger">ملغاة</span>
                         {% endif %}
                     </td>
-                    <td style="text-align: center;">
+
+                    <!-- إجراءات -->
+                    <td style="text-align: center; white-space: nowrap;">
                         <a href="{% url 'invoicing:invoice_detail' invoice.id %}" class="btn-action" title="عرض التفاصيل">
                             <i class="fas fa-eye"></i> عرض
                         </a>
                         {% if invoice.status == 'DRAFT' %}
-                        <button class="btn-orange" style="padding: 0.4rem 0.8rem; font-size: var(--font-size-xs);" onclick="confirmInvoice({{ invoice.id }})">
+                        <button class="btn-orange" style="padding: 0.4rem 0.8rem; font-size: var(--font-size-xs); background: linear-gradient(135deg, #ff7300, #ff9500); border: none; border-radius: 6px; color: white; cursor: pointer;" onclick="confirmInvoice({{ invoice.id }})">
                             <i class="fas fa-check"></i> ترحيل
                         </button>
                         {% endif %}
@@ -75,9 +238,9 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="7" style="text-align: center; padding: 2rem; color: #94a3b8;">
-                        <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
-                        لا توجد فواتير
+                    <td colspan="10" style="text-align: center; padding: 3rem 1rem; color: #94a3b8;">
+                        <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.4;"></i>
+                        <span style="font-size: 1.1rem; font-weight: 600;">لا توجد فواتير مطابقة لمعايير البحث المحددة</span>
                     </td>
                 </tr>
                 {% endfor %}
@@ -85,24 +248,30 @@
         </table>
     </div>
 
-    <!-- Pagination -->
-    {% if page_obj.has_other_pages %}
-    <div class="pagination" style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
-        {% if page_obj.has_previous %}
-        <a href="?page=1{% if search_query %}&q={{ search_query }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem;">&laquo; الأولى</a>
-        <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem;">السابق</a>
-        {% endif %}
+    <!-- Pagination & Summary Footer -->
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="color: #94a3b8; font-size: 0.9rem;">
+            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ total_count }}</b> فاتورة
+        </div>
 
-        <span class="btn-ghost" style="padding: 0.4rem 0.8rem; background: rgba(255, 115, 0, 0.2); border-color: var(--neon-orange); color: white;">
-            صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
-        </span>
+        {% if page_obj.has_other_pages %}
+        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1{% if query_string %}&{{ query_string }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if query_string %}&{{ query_string }}{% endif %}" class="btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
+            {% endif %}
 
-        {% if page_obj.has_next %}
-        <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem;">التالي</a>
-        <a href="?page={{ page_obj.paginator.num_pages }}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem;">الأخيرة &raquo;</a>
+            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if query_string %}&{{ query_string }}{% endif %}" class="btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if query_string %}&{{ query_string }}{% endif %}" class="btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
+            {% endif %}
+        </div>
         {% endif %}
     </div>
-    {% endif %}
 </div>
 
 <script>

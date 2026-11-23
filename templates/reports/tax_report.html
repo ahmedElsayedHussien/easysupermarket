@@ -10,6 +10,7 @@
     </div>
     <div class="header-actions">
         <button type="button" class="btn btn-outline" onclick="window.print()">🖨️ طباعة</button>
+        <button type="button" class="btn btn-orange" onclick="exportTableToExcel('vat-table', 'تقرير_الضرائب')" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير Excel</button>
         <a href="{% url 'core:reports_index' %}" class="btn btn-outline">⬅️ عودة للتقارير</a>
     </div>
 </div>
@@ -39,7 +40,7 @@
         </h3>
         
         <div class="table-container" style="overflow-x: auto; max-width: 100%;">
-        <table class="data-table" style="margin-bottom: 1rem; min-width: 600px;">
+        <table class="data-table" id="vat-table" style="margin-bottom: 1rem; min-width: 600px;">
             <tbody>
                 <tr style="background-color: rgba(0,255,255,0.05);">
                     <td colspan="2" style="font-weight: bold; color: var(--neon-cyan);">الضريبة المحصلة (المخرجات / المبيعات)</td>

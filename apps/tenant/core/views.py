@@ -1,10 +1,11 @@
 """
 Core views: Main dashboard, Admin analytics dashboard, Branch management.
 """
+import os
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from django.db.models import Sum, Count, Q
+from django.db.models import Sum, Count, Q, F, Min, Case, When, DecimalField
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -15,11 +16,36 @@ from django.views.generic import UpdateView, ListView, CreateView, View
 from django.contrib.auth.models import User
 from .models import SystemSetting
 from .forms import SystemSettingForm, EmployeeUserCreationForm, EmployeeUserUpdateForm
-from .decorators import custom_permission_required
+from .decorators import custom_permission_required, is_admin_user
+
 
 class AdminRequiredMixin(UserPassesTestMixin):
+    """
+    Mixin that ensures the user is an administrator or has specific model permissions.
+    Supports superusers, staff, and employees with ADMIN role.
+    """
     def test_func(self):
-        return hasattr(self.request.user, 'employee_profile') and self.request.user.employee_profile.is_admin()
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return False
+        if is_admin_user(user):
+            return True
+        # Check specific branch/user/setting permissions if applicable
+        view_name = self.__class__.__name__
+        if 'Branch' in view_name:
+            if 'Create' in view_name and user.has_perm('core.add_branch'):
+                return True
+            if 'Update' in view_name and user.has_perm('core.change_branch'):
+                return True
+            if 'List' in view_name and (user.has_perm('core.view_branch') or user.has_perm('core.add_branch')):
+                return True
+        return False
+
+    def handle_no_permission(self):
+        if self.request.user.is_authenticated:
+            messages.error(self.request, 'عفواً، هذه الصفحة مخصصة لمديري النظام فقط أو لمن يمتلكون الصلاحية اللازمة.')
+            return redirect('core:main_screen')
+        return super().handle_no_permission()
 
 class SystemSettingUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
     model = SystemSetting
@@ -43,69 +69,80 @@ class SystemSettingUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView
 def main_screen(request):
     """
     Main command hub / cashier dashboard.
-    Shows today's KPIs, low-stock alerts, and expiry warnings.
+    Shows today's KPIs, quick access tiles, and system summary.
+    Optimized with zero in-memory loops and direct database-level aggregation.
     """
-    from apps.tenant.core.models import Branch
     from apps.tenant.invoicing.models import Invoice
     from apps.tenant.inventory.models import InventoryBatch, Product
+    from django.db.models import Subquery, OuterRef, F, Case, When, Count
+    from django.db.models.functions import Coalesce
 
     today = timezone.now().date()
-    branches = Branch.objects.filter(is_active=True)
-
-    # --- Today's total sales ---
-    today_sales = Invoice.objects.filter(
-        invoice_type='SALE',
-        status='POSTED',
-        date=today
-    ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
-    
     yesterday = today - timedelta(days=1)
-    yesterday_sales = Invoice.objects.filter(
-        invoice_type='SALE',
-        status='POSTED',
-        date=yesterday
-    ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
-    
-    if yesterday_sales > 0:
-        today_sales_change = round(((today_sales - yesterday_sales) / yesterday_sales) * 100, 1)
-    else:
-        today_sales_change = 100 if today_sales > 0 else 0
 
-    # --- Today's sale count ---
-    today_invoices = Invoice.objects.filter(
-        invoice_type='SALE',
-        status='POSTED',
-        date=today
-    ).count()
-    
-    # --- Total Products ---
-    total_products = Product.objects.filter(is_active=True).count()
+    # Determine if user is admin/superuser to load quick stats
+    is_admin_user = (
+        request.user.is_superuser or 
+        (hasattr(request.user, 'employee_profile') and getattr(request.user.employee_profile, 'role', '') == 'Admin')
+    )
 
-    # --- Low stock alerts ---
-    stock_alerts = []
+    today_sales = Decimal('0')
+    today_sales_change = 0
+    today_invoices = 0
+    total_products = 0
     low_stock_count = 0
-    for product in Product.objects.filter(is_active=True).select_related('category'):
-        stock = product.get_stock()
-        if stock <= product.min_stock_level and product.min_stock_level > 0:
-            low_stock_count += 1
-            if len(stock_alerts) < 5:
-                stock_alerts.append({
-                    'product': product,
-                    'stock': stock,
-                    'min_stock': product.min_stock_level,
-                })
 
-    # --- Expiry alerts (items expiring in next 7 days) ---
-    expiry_alerts = InventoryBatch.objects.filter(
-        quantity_remaining__gt=0,
-        expiry_date__isnull=False,
-        expiry_date__lte=today + timedelta(days=7)
-    ).select_related('product', 'warehouse').order_by('expiry_date')[:10]
+    if is_admin_user:
+        # Today's gross sales, returns, and invoice count in one single database aggregation
+        today_stats = Invoice.objects.filter(
+            status='POSTED',
+            date=today,
+            invoice_type__in=['SALE', 'RETURN_SALE']
+        ).aggregate(
+            sales=Sum(Case(When(invoice_type='SALE', then='total_amount'), default=Decimal('0'))),
+            returns=Sum(Case(When(invoice_type='RETURN_SALE', then='total_amount'), default=Decimal('0'))),
+            invoices_count=Count(Case(When(invoice_type='SALE', then='id')))
+        )
+        today_gross = today_stats['sales'] or Decimal('0')
+        today_returns = today_stats['returns'] or Decimal('0')
+        today_sales = today_gross - today_returns
+        today_invoices = today_stats['invoices_count'] or 0
 
-    # --- Recent invoices ---
-    recent_invoices = Invoice.objects.filter(
-        status='POSTED'
-    ).select_related('partner', 'branch').order_by('-created_at')[:5]
+        # Yesterday's net sales in one query
+        yesterday_stats = Invoice.objects.filter(
+            status='POSTED',
+            date=yesterday,
+            invoice_type__in=['SALE', 'RETURN_SALE']
+        ).aggregate(
+            sales=Sum(Case(When(invoice_type='SALE', then='total_amount'), default=Decimal('0'))),
+            returns=Sum(Case(When(invoice_type='RETURN_SALE', then='total_amount'), default=Decimal('0')))
+        )
+        yesterday_sales = (yesterday_stats['sales'] or Decimal('0')) - (yesterday_stats['returns'] or Decimal('0'))
+
+        if yesterday_sales > 0:
+            today_sales_change = round(((today_sales - yesterday_sales) / yesterday_sales) * 100, 1)
+        else:
+            today_sales_change = 100 if today_sales > 0 else 0
+
+        # Total active products
+        total_products = Product.objects.filter(is_active=True).count()
+
+        # Database-level calculation for low stock count (zero in-memory loops)
+        batch_stock_subquery = InventoryBatch.objects.filter(
+            product=OuterRef('pk'),
+            quantity_remaining__gt=0
+        ).values('product').annotate(
+            total=Sum('quantity_remaining')
+        ).values('total')
+
+        low_stock_count = Product.objects.filter(
+            is_active=True,
+            min_stock_level__gt=0
+        ).annotate(
+            current_stock=Coalesce(Subquery(batch_stock_subquery), Decimal('0'))
+        ).filter(
+            current_stock__lte=F('min_stock_level')
+        ).count()
 
     context = {
         'user_role': 'Manager',
@@ -116,9 +153,6 @@ def main_screen(request):
         'today_invoices': today_invoices,
         'total_products': total_products,
         'low_stock_count': low_stock_count,
-        'stock_alerts': stock_alerts,
-        'expiry_alerts': expiry_alerts,
-        'recent_invoices': recent_invoices,
     }
     return render(request, 'dashboard/main.html', context)
 
@@ -142,29 +176,38 @@ def admin_dashboard(request):
     profit_data = []
     labels = []
     
+    from django.db.models import Case, When, DecimalField
     for i in range(6, -1, -1):
         day = today - timedelta(days=i)
         
-        # Day Sales
-        day_sales = Invoice.objects.filter(
+        # Day Sales (Net: SALE - RETURN_SALE)
+        sale_sum = Invoice.objects.filter(
             invoice_type='SALE',
             status='POSTED',
             date=day
         ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+        return_sum = Invoice.objects.filter(
+            invoice_type='RETURN_SALE',
+            status='POSTED',
+            date=day
+        ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+        day_sales = sale_sum - return_sum
         sales_data.append(float(day_sales))
         labels.append(day.strftime('%d %b'))
 
-        # Day Profit (Sales - COGS)
+        # Day Profit (Net Revenue - Net COGS)
         day_lines = InvoiceLine.objects.filter(
-            invoice__invoice_type='SALE',
+            invoice__invoice_type__in=['SALE', 'RETURN_SALE'],
             invoice__status='POSTED',
             invoice__date=day
         ).aggregate(
-            revenue=Sum('subtotal'),
-            cogs=Sum('cogs_amount')
+            gross_rev=Sum(Case(When(invoice__invoice_type='SALE', then='subtotal'), default=0, output_field=DecimalField())),
+            ret_rev=Sum(Case(When(invoice__invoice_type='RETURN_SALE', then='subtotal'), default=0, output_field=DecimalField())),
+            gross_cogs=Sum(Case(When(invoice__invoice_type='SALE', then='cogs_amount'), default=0, output_field=DecimalField())),
+            ret_cogs=Sum(Case(When(invoice__invoice_type='RETURN_SALE', then='cogs_amount'), default=0, output_field=DecimalField())),
         )
-        day_rev = day_lines['revenue'] or Decimal('0')
-        day_cogs = day_lines['cogs'] or Decimal('0')
+        day_rev = (day_lines['gross_rev'] or Decimal('0')) - (day_lines['ret_rev'] or Decimal('0'))
+        day_cogs = (day_lines['gross_cogs'] or Decimal('0')) - (day_lines['ret_cogs'] or Decimal('0'))
         day_profit = day_rev - day_cogs
         
         day_profit_margin = 0
@@ -172,16 +215,18 @@ def admin_dashboard(request):
             day_profit_margin = float(day_profit / day_rev * 100)
         profit_data.append(round(day_profit_margin, 1))
 
-    # Calculate overall avg profit margin
+    # Calculate overall avg profit margin (Net Revenue - Net COGS)
     all_time_lines = InvoiceLine.objects.filter(
-        invoice__invoice_type='SALE',
+        invoice__invoice_type__in=['SALE', 'RETURN_SALE'],
         invoice__status='POSTED'
     ).aggregate(
-        revenue=Sum('subtotal'),
-        cogs=Sum('cogs_amount')
+        gross_rev=Sum(Case(When(invoice__invoice_type='SALE', then='subtotal'), default=0, output_field=DecimalField())),
+        ret_rev=Sum(Case(When(invoice__invoice_type='RETURN_SALE', then='subtotal'), default=0, output_field=DecimalField())),
+        gross_cogs=Sum(Case(When(invoice__invoice_type='SALE', then='cogs_amount'), default=0, output_field=DecimalField())),
+        ret_cogs=Sum(Case(When(invoice__invoice_type='RETURN_SALE', then='cogs_amount'), default=0, output_field=DecimalField())),
     )
-    all_time_rev = all_time_lines['revenue'] or Decimal('0')
-    all_time_cogs = all_time_lines['cogs'] or Decimal('0')
+    all_time_rev = (all_time_lines['gross_rev'] or Decimal('0')) - (all_time_lines['ret_rev'] or Decimal('0'))
+    all_time_cogs = (all_time_lines['gross_cogs'] or Decimal('0')) - (all_time_lines['ret_cogs'] or Decimal('0'))
     avg_profit_margin = 0
     if all_time_rev > 0:
         avg_profit_margin = round(float((all_time_rev - all_time_cogs) / all_time_rev * 100), 1)
@@ -211,17 +256,36 @@ def admin_dashboard(request):
             'sales_pct': round(float(pct), 1)
         })
 
-    # --- Low stock alerts (aggregated across batches) ---
-    stock_alerts = []
-    for product in Product.objects.filter(is_active=True).select_related('category'):
-        stock = product.get_stock()
-        if stock <= product.min_stock_level and product.min_stock_level > 0:
-            stock_alerts.append({
-                'product': product,
-                'stock': stock,
-                'min_stock': product.min_stock_level,
-            })
-    stock_alerts = sorted(stock_alerts, key=lambda x: (x['stock'] - x['min_stock']))[:10]
+    # --- Low stock alerts (database-level aggregation, zero in-memory loop) ---
+    from django.db.models import Subquery, OuterRef
+    from django.db.models.functions import Coalesce
+
+    batch_stock_subquery = InventoryBatch.objects.filter(
+        product=OuterRef('pk'),
+        quantity_remaining__gt=0
+    ).values('product').annotate(
+        total=Sum('quantity_remaining')
+    ).values('total')
+
+    stock_alerts_qs = Product.objects.filter(
+        is_active=True,
+        min_stock_level__gt=0
+    ).annotate(
+        current_stock=Coalesce(Subquery(batch_stock_subquery), Decimal('0'))
+    ).filter(
+        current_stock__lte=F('min_stock_level')
+    ).select_related('category').order_by(
+        F('current_stock') - F('min_stock_level')
+    )[:10]
+
+    stock_alerts = [
+        {
+            'product': p,
+            'stock': p.current_stock,
+            'min_stock': p.min_stock_level,
+        }
+        for p in stock_alerts_qs
+    ]
 
     # --- Summary KPIs ---
     total_revenue_month = Invoice.objects.filter(
@@ -262,39 +326,39 @@ def admin_dashboard(request):
             'branch': branch_obj
         })
 
-    # --- FIFO Stock Valuation ---
-    fifo_valuation = []
-    batches = InventoryBatch.objects.filter(quantity_remaining__gt=0).select_related('product', 'product__category')
-    fifo_dict = {}
-    for b in batches:
-        pid = b.product.id
-        if pid not in fifo_dict:
-            fifo_dict[pid] = {
-                'product': b.product,
-                'total_quantity': Decimal('0'),
-                'total_value': Decimal('0'),
-                'oldest_date': b.created_at.date()
-            }
-        fifo_dict[pid]['total_quantity'] += b.quantity_remaining
-        fifo_dict[pid]['total_value'] += (b.quantity_remaining * b.unit_cost)
-        if b.created_at.date() < fifo_dict[pid]['oldest_date']:
-            fifo_dict[pid]['oldest_date'] = b.created_at.date()
+    # --- FIFO Stock Valuation (Ultra-fast SQL aggregation for top 5) ---
+    top_valued = list(
+        InventoryBatch.objects.filter(quantity_remaining__gt=0).values('product_id').annotate(
+            total_quantity=Sum('quantity_remaining'),
+            total_value=Sum(F('quantity_remaining') * F('unit_cost')),
+            oldest_date=Min('created_at')
+        ).order_by('-total_value')[:5]
+    )
+    top_pids = [item['product_id'] for item in top_valued]
+    prods_by_id = {p.id: p for p in Product.objects.filter(id__in=top_pids).select_related('category')}
 
-    for pid, data in fifo_dict.items():
-        if data['total_quantity'] > 0:
-            data['fifo_cost'] = data['total_value'] / data['total_quantity']
-            days_in_stock = (today - data['oldest_date']).days
-            data['days_in_stock'] = days_in_stock
-            
-            if days_in_stock <= 30: aging_class = 'ok'
-            elif days_in_stock <= 90: aging_class = 'moderate'
-            elif days_in_stock <= 180: aging_class = 'warning'
-            else: aging_class = 'critical'
-            data['aging_class'] = aging_class
-            
-            fifo_valuation.append(data)
-            
-    fifo_valuation = sorted(fifo_valuation, key=lambda x: x['total_value'], reverse=True)[:5]
+    fifo_valuation = []
+    for item in top_valued:
+        p = prods_by_id.get(item['product_id'])
+        if not p:
+            continue
+        tot_qty = item['total_quantity'] or Decimal('0')
+        tot_val = item['total_value'] or Decimal('0')
+        fifo_cost = (tot_val / tot_qty) if tot_qty > 0 else Decimal('0')
+        oldest = item['oldest_date'].date() if item['oldest_date'] else today
+        days_in_stock = (today - oldest).days
+        if days_in_stock <= 30: aging_class = 'ok'
+        elif days_in_stock <= 90: aging_class = 'moderate'
+        elif days_in_stock <= 180: aging_class = 'warning'
+        else: aging_class = 'critical'
+        fifo_valuation.append({
+            'product': p,
+            'total_quantity': tot_qty,
+            'fifo_cost': fifo_cost,
+            'total_value': tot_val,
+            'days_in_stock': days_in_stock,
+            'aging_class': aging_class,
+        })
 
     # --- Recent Invoices ---
     recent_invoices = Invoice.objects.filter(
@@ -374,7 +438,7 @@ def branch_list(request):
 # User Management Views
 # ==========================================
 
-class UserListView(AdminRequiredMixin, ListView):
+class UserListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
     model = User
     template_name = 'core/user_list.html'
     context_object_name = 'users'
@@ -384,7 +448,7 @@ class UserListView(AdminRequiredMixin, ListView):
         context['title'] = 'المستخدمون والصلاحيات'
         return context
 
-class UserCreateView(AdminRequiredMixin, CreateView):
+class UserCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
     model = User
     form_class = EmployeeUserCreationForm
     template_name = 'core/user_form.html'
@@ -400,7 +464,7 @@ class UserCreateView(AdminRequiredMixin, CreateView):
         from collections import defaultdict
         
         excluded_models = ['logentry', 'contenttype', 'session', 'group', 'permission', 'employee']
-        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners', 'maintenance', 'einvoicing', 'hr', 'rentals'])\
+        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners', 'maintenance', 'einvoicing', 'hr', 'rentals', 'pricing'])\
                                   .exclude(content_type__model__in=excluded_models)\
                                   .select_related('content_type')
         
@@ -410,6 +474,7 @@ class UserCreateView(AdminRequiredMixin, CreateView):
             'inventory': 'المخزون والأصناف',
             'invoicing': 'المبيعات والمشتريات',
             'partners': 'العملاء والموردين',
+            'pricing': 'قوائم الأسعار والقطاعات',
             'maintenance': 'المعدات وتذاكر الصيانة',
             'einvoicing': 'الفاتورة والضرائب الإلكترونية',
             'hr': 'الموارد البشرية والرواتب',
@@ -430,11 +495,27 @@ class UserCreateView(AdminRequiredMixin, CreateView):
         context['grouped_permissions'] = dict(grouped)
         return context
 
-class UserUpdateView(AdminRequiredMixin, UpdateView):
+    def form_valid(self, form):
+        messages.success(self.request, f'تم إنشاء المستخدم "{form.instance.username}" بنجاح.')
+        return super().form_valid(form)
+
+    def form_invalid(self, form):
+        messages.error(self.request, 'تعذر الحفظ، يرجى مراجعة الأخطاء الموضحة بالاستمارة.')
+        return super().form_invalid(form)
+
+class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
     model = User
     form_class = EmployeeUserUpdateForm
     template_name = 'core/user_form.html'
     success_url = reverse_lazy('core:user_list')
+
+    def form_valid(self, form):
+        messages.success(self.request, f'تم تعديل بيانات المستخدم "{form.instance.username}" بنجاح.')
+        return super().form_valid(form)
+
+    def form_invalid(self, form):
+        messages.error(self.request, 'تعذر الحفظ، يرجى مراجعة الأخطاء الموضحة بالاستمارة.')
+        return super().form_invalid(form)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -445,7 +526,7 @@ class UserUpdateView(AdminRequiredMixin, UpdateView):
         from collections import defaultdict
         
         excluded_models = ['logentry', 'contenttype', 'session', 'group', 'permission', 'employee']
-        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners', 'maintenance', 'einvoicing', 'hr', 'rentals'])\
+        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners', 'maintenance', 'einvoicing', 'hr', 'rentals', 'pricing'])\
                                   .exclude(content_type__model__in=excluded_models)\
                                   .select_related('content_type')
         
@@ -455,6 +536,7 @@ class UserUpdateView(AdminRequiredMixin, UpdateView):
             'inventory': 'المخزون والأصناف',
             'invoicing': 'المبيعات والمشتريات',
             'partners': 'العملاء والموردين',
+            'pricing': 'قوائم الأسعار والقطاعات',
             'maintenance': 'المعدات وتذاكر الصيانة',
             'einvoicing': 'الفاتورة والضرائب الإلكترونية',
             'hr': 'الموارد البشرية والرواتب',
@@ -492,6 +574,10 @@ def settings_dashboard(request):
     System settings dashboard.
     Shows links to Branch, Warehouse, Category, Product, Customers, Suppliers, Chart of Accounts, Users.
     """
+    if not is_admin_user(request.user):
+        messages.error(request, 'عفواً، الدخول لإعدادات النظام مقتصر على الأدمن والمديرين فقط.')
+        return redirect('core:main_screen')
+
     from apps.tenant.core.models import Branch
     branches = Branch.objects.filter(is_active=True)
     
@@ -502,12 +588,13 @@ def settings_dashboard(request):
     return render(request, 'core/settings_dashboard.html', context)
 
 
+
 from django.views.generic import ListView, CreateView, UpdateView
 from django.urls import reverse_lazy
 from apps.tenant.core.models import Branch
 from django.contrib.auth.mixins import LoginRequiredMixin
 
-class BranchListView(AdminRequiredMixin, LoginRequiredMixin, ListView):
+class BranchListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
     model = Branch
     template_name = 'core/generic_list.html'
     context_object_name = 'objects'
@@ -520,7 +607,7 @@ class BranchListView(AdminRequiredMixin, LoginRequiredMixin, ListView):
         context['delete_url_name'] = 'core:branch_delete'
         return context
 
-class BranchCreateView(AdminRequiredMixin, LoginRequiredMixin, CreateView):
+class BranchCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
     model = Branch
     fields = ['name', 'code', 'address', 'phone', 'is_active']
     template_name = 'core/generic_form.html'
@@ -532,7 +619,11 @@ class BranchCreateView(AdminRequiredMixin, LoginRequiredMixin, CreateView):
         context['cancel_url'] = reverse_lazy('core:branch_list')
         return context
 
-class BranchUpdateView(AdminRequiredMixin, LoginRequiredMixin, UpdateView):
+    def form_valid(self, form):
+        messages.success(self.request, f'تم إنشاء الفرع "{form.instance.name}" بنجاح.')
+        return super().form_valid(form)
+
+class BranchUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
     model = Branch
     fields = ['name', 'code', 'address', 'phone', 'is_active']
     template_name = 'core/generic_form.html'
@@ -544,8 +635,12 @@ class BranchUpdateView(AdminRequiredMixin, LoginRequiredMixin, UpdateView):
         context['cancel_url'] = reverse_lazy('core:branch_list')
         return context
 
+    def form_valid(self, form):
+        messages.success(self.request, f'تم تعديل بيانات الفرع "{form.instance.name}" بنجاح.')
+        return super().form_valid(form)
+
 @login_required
-@custom_permission_required('core.delete_branch', redirect_url='core:main_screen')
+@custom_permission_required('core.delete_branch', redirect_url='core:branch_list')
 def branch_delete(request, pk):
     from apps.tenant.core.models import Branch
     from django.db.models import ProtectedError
@@ -563,5 +658,155 @@ def branch_delete(request, pk):
         except Exception as e:
             messages.error(request, f'حدث خطأ أثناء الحذف: {str(e)}')
     return redirect('core:branch_list')
+
+
+from django.http import JsonResponse
+
+@login_required
+def branch_status_api(request):
+    """API returning branch counts (active and total) for dashboard."""
+    from apps.tenant.core.models import Branch
+    total = Branch.objects.count()
+    active = Branch.objects.filter(is_active=True).count()
+    return JsonResponse({'active': active, 'total': total})
+
+
+@login_required
+def warehouses_by_branch_api(request):
+    """API returning warehouses for a specific branch."""
+    from apps.tenant.inventory.models import Warehouse
+    branch_id = request.GET.get('branch_id')
+    warehouses = Warehouse.objects.filter(is_active=True)
+    if branch_id:
+        warehouses = warehouses.filter(branch_id=branch_id)
+    data = [{'id': w.id, 'name': w.name} for w in warehouses]
+    return JsonResponse({'warehouses': data})
+
+
+# =============================================================================
+# DATABASE BACKUP & RESTORE VIEWS
+# =============================================================================
+from django.http import FileResponse, Http404
+from . import backup_service
+
+@login_required
+def database_backup_view(request):
+    """لوحة إدارة والنسخ الاحتياطي لقاعدة البيانات"""
+    if not is_admin_user(request.user):
+        messages.error(request, 'عفواً، الوصول لصفحة النسخ الاحتياطي مقتصر على مديري النظام فقط.')
+        return redirect('core:main_screen')
+
+    db_info = backup_service.get_current_db_info()
+    backups = backup_service.list_backups()
+    pg_dump_path = backup_service.find_pg_tool('pg_dump')
+
+    context = {
+        'title': 'النسخ الاحتياطي لقاعدة البيانات',
+        'db_info': db_info,
+        'backups': backups,
+        'pg_dump_path': pg_dump_path,
+        'backup_dir': backup_service.BACKUP_DIR,
+    }
+    return render(request, 'core/database_backup.html', context)
+
+
+@login_required
+def database_backup_create(request):
+    """أخذ نسخة احتياطية فورية وحفظها في مجلد backups"""
+    if not is_admin_user(request.user):
+        messages.error(request, 'غير مصرح لك بهذا الإجراء.')
+        return redirect('core:main_screen')
+
+    if request.method == 'POST':
+        success, msg_or_filename, filepath = backup_service.create_backup()
+        if success:
+            messages.success(request, f'✅ تم أخذ النسخة الاحتياطية بنجاح: {msg_or_filename}')
+            # If user clicked "create and download"
+            if request.POST.get('download') == '1' and filepath and os.path.exists(filepath):
+                return FileResponse(open(filepath, 'rb'), as_attachment=True, filename=msg_or_filename)
+        else:
+            messages.error(request, f'❌ فشل أخذ النسخة الاحتياطية: {msg_or_filename}')
+
+    return redirect('core:database_backup')
+
+
+@login_required
+def database_backup_download(request, filename):
+    """تحميل ملف نسخة احتياطية محدد"""
+    if not is_admin_user(request.user):
+        messages.error(request, 'غير مصرح لك بتحميل النسخ الاحتياطية.')
+        return redirect('core:main_screen')
+
+    safe_name = os.path.basename(filename)
+    filepath = os.path.join(backup_service.BACKUP_DIR, safe_name)
+
+    if not os.path.exists(filepath) or not os.path.isfile(filepath):
+        raise Http404('ملف النسخة الاحتياطية غير موجود.')
+
+    return FileResponse(open(filepath, 'rb'), as_attachment=True, filename=safe_name)
+
+
+@login_required
+def database_backup_delete(request, filename):
+    """حذف ملف نسخة احتياطية محدد"""
+    if not is_admin_user(request.user):
+        messages.error(request, 'غير مصرح لك بحذف النسخ الاحتياطية.')
+        return redirect('core:main_screen')
+
+    if request.method == 'POST':
+        safe_name = os.path.basename(filename)
+        filepath = os.path.join(backup_service.BACKUP_DIR, safe_name)
+        if os.path.exists(filepath) and os.path.isfile(filepath):
+            try:
+                os.remove(filepath)
+                messages.success(request, f'🗑️ تم حذف ملف النسخة الاحتياطية: {safe_name}')
+            except Exception as e:
+                messages.error(request, f'تعذر حذف الملف: {str(e)}')
+        else:
+            messages.warning(request, 'الملف المطلوب حذفه غير موجود.')
+
+    return redirect('core:database_backup')
+
+
+@login_required
+def database_backup_restore(request, filename=None):
+    """استعادة قاعدة البيانات من ملف محفوظ أو ملف مرفوع"""
+    if not is_admin_user(request.user):
+        messages.error(request, 'غير مصرح لك باستعادة قاعدة البيانات.')
+        return redirect('core:main_screen')
+
+    if request.method == 'POST':
+        # 1. Check if user uploaded a file
+        uploaded_file = request.FILES.get('backup_file')
+        if uploaded_file:
+            safe_name = f"uploaded_{uploaded_file.name}"
+            target_path = os.path.join(backup_service.BACKUP_DIR, safe_name)
+            with open(target_path, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+
+            ok, msg = backup_service.restore_backup(target_path)
+            if ok:
+                messages.success(request, f'✅ {msg}')
+            else:
+                messages.error(request, f'❌ {msg}')
+            return redirect('core:database_backup')
+
+        # 2. Check if restoring an existing filename from backups directory
+        if filename:
+            safe_name = os.path.basename(filename)
+            target_path = os.path.join(backup_service.BACKUP_DIR, safe_name)
+            ok, msg = backup_service.restore_backup(target_path)
+            if ok:
+                messages.success(request, f'✅ {msg}')
+            else:
+                messages.error(request, f'❌ {msg}')
+            return redirect('core:database_backup')
+
+    messages.warning(request, 'يرجى اختيار ملف لاستعادة قاعدة البيانات منه.')
+    return redirect('core:database_backup')
+
+
+
 
 

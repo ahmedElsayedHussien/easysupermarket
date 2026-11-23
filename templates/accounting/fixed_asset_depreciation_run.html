@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <!-- الهيدر -->
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <h2 style="margin: 0; color: #fff; font-weight: 800;">
+                <i class="fas fa-bolt text-warning" style="margin-left: 0.5rem;"></i> {{ title }}
+            </h2>
+            <small class="text-white-50">احتساب وترحيل أقساط الإهلاك الشهري لجميع الأصول النشطة وتوليد قيد اليومية آلياً</small>
+        </div>
+        <a href="{% url 'accounting:fixed_asset_list' %}" class="btn btn-outline-secondary" style="border-radius: 8px;">
+            <i class="fas fa-arrow-right"></i> عودة لسجل الأصول
+        </a>
+    </div>
+
+    <!-- شريط اختيار الفترة الزمنية -->
+    <div class="card p-3 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+        <form method="get" class="row g-3 align-items-center">
+            <div class="col-md-4">
+                <label class="form-label text-white-50 small mb-1">السنة المالية</label>
+                <input type="number" name="year" value="{{ year }}" class="form-control bg-dark text-white border-secondary">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label text-white-50 small mb-1">الشهر المستهدف</label>
+                <select name="month" class="form-select bg-dark text-white border-secondary">
+                    <option value="1" {% if month == 1 %}selected{% endif %}>شهر 01 (يناير)</option>
+                    <option value="2" {% if month == 2 %}selected{% endif %}>شهر 02 (فبراير)</option>
+                    <option value="3" {% if month == 3 %}selected{% endif %}>شهر 03 (مارس)</option>
+                    <option value="4" {% if month == 4 %}selected{% endif %}>شهر 04 (أبريل)</option>
+                    <option value="5" {% if month == 5 %}selected{% endif %}>شهر 05 (مايو)</option>
+                    <option value="6" {% if month == 6 %}selected{% endif %}>شهر 06 (يونيو)</option>
+                    <option value="7" {% if month == 7 %}selected{% endif %}>شهر 07 (يوليو)</option>
+                    <option value="8" {% if month == 8 %}selected{% endif %}>شهر 08 (أغسطس)</option>
+                    <option value="9" {% if month == 9 %}selected{% endif %}>شهر 09 (سبتمبر)</option>
+                    <option value="10" {% if month == 10 %}selected{% endif %}>شهر 10 (أكتوبر)</option>
+                    <option value="11" {% if month == 11 %}selected{% endif %}>شهر 11 (نوفمبر)</option>
+                    <option value="12" {% if month == 12 %}selected{% endif %}>شهر 12 (ديسمبر)</option>
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-orange w-100" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); padding: 0.55rem 1rem;">
+                    <i class="fas fa-sync-alt me-1"></i> تحديث معاينة الشهر
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- كروت ملخص الإهلاك للشهر المختار -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 115, 0, 0.3);">
+                <span class="text-white-50 small d-block mb-1">إجمالي قسط الإهلاك المستحق لهذا الشهر</span>
+                <h3 class="mb-0 fw-bold" style="color: #ff9500;">{{ total_run_depreciation|floatformat:2 }} <small style="font-size:0.8rem;">ج.م</small></h3>
+                <small class="text-white-50">سيُرحل إلى حـ/ مصروف الإهلاك (5220)</small>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(16, 185, 129, 0.3);">
+                <span class="text-white-50 small d-block mb-1">الأصول المستحقة للتشغيل الآن</span>
+                <h3 class="mb-0 fw-bold" style="color: #10b981;">{{ eligible_count }} <small style="font-size:0.8rem;">أصل</small></h3>
+                <small class="text-white-50">جاهزة لإنشاء قيد الإهلاك</small>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(0, 229, 255, 0.3);">
+                <span class="text-white-50 small d-block mb-1">أصول تم ترحيل إهلاكها مسبقاً لهذا الشهر</span>
+                <h3 class="mb-0 fw-bold" style="color: #00e5ff;">{{ already_run_count }} <small style="font-size:0.8rem;">أصل</small></h3>
+                <small class="text-white-50">مرحلة بالقيد مسبقاً (لن تتكرر)</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- جدول معاينة الأصول وأقساطها -->
+    <div class="card mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden;">
+        <div class="card-header p-3 d-flex justify-content-between align-items-center" style="background: rgba(30, 41, 59, 0.8); border-bottom: 2px solid #ff7300;">
+            <h5 class="mb-0 fw-bold text-white">
+                <i class="fas fa-list-check text-warning"></i> معاينة جدول إهلاك الأصول عن شهر {{ month|stringformat:"02d" }} / {{ year }}
+            </h5>
+            <span class="badge" style="background: rgba(255,255,255,0.1); color: #cbd5e1;">
+                إجمالي الأصول المفحوصة: {{ preview_items|length }}
+            </span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="color: #e2e8f0; min-width: 1000px; white-space: nowrap;">
+                <thead style="background: rgba(15, 23, 42, 0.8); color: #94a3b8; font-size: 0.85rem;">
+                    <tr>
+                        <th style="padding: 1rem;">كود الأصل</th>
+                        <th>اسم الأصل</th>
+                        <th>تكلفة الشراء</th>
+                        <th>مجمع الإهلاك السابق</th>
+                        <th>قسط إهلاك الشهر المستحق</th>
+                        <th>صافي القيمة الدفترية بعدها</th>
+                        <th style="text-align: center;">حالة الحركة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in preview_items %}
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05); {% if item.is_already_run %}opacity: 0.6;{% endif %}">
+                        <td style="padding: 0.85rem 1rem;">
+                            <strong style="color: #ff9500;">{{ item.asset.code }}</strong>
+                        </td>
+                        <td>
+                            <strong class="text-white">{{ item.asset.name }}</strong>
+                            <div class="text-white-50 small">{{ item.asset.get_category_display }}</div>
+                        </td>
+                        <td class="text-white-50">{{ item.asset.purchase_cost|floatformat:2 }} ج.م</td>
+                        <td style="color: #ef4444;">{{ item.asset.total_accumulated_depreciation|floatformat:2 }} ج.م</td>
+                        <td style="color: #10b981; font-weight: 700; font-size: 1.05rem;">
+                            {{ item.amount_to_depreciate|floatformat:2 }} ج.م
+                        </td>
+                        <td style="color: #00e5ff; font-weight: 600;">
+                            {{ item.book_value_after|floatformat:2 }} ج.م
+                        </td>
+                        <td style="text-align: center;">
+                            {% if item.is_already_run %}
+                                <span class="badge bg-secondary text-light px-2 py-1">مرحّل مسبقاً</span>
+                            {% elif item.can_run %}
+                                <span class="badge bg-success-subtle text-success border border-success px-2 py-1">مستحق للترحيل</span>
+                            {% else %}
+                                <span class="badge bg-warning-subtle text-warning border border-warning px-2 py-1">مستهلك بالكامل</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center py-5 text-white-50">
+                            لا توجد أصول نشطة في النظام.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- نموذج اعتماد وترحيل القيد المحاسبي المجمع -->
+    {% if eligible_count > 0 %}
+    <div class="card p-4" style="background: rgba(15, 23, 42, 0.85); border: 2px solid #ff7300; border-radius: 14px; box-shadow: 0 10px 30px rgba(255,115,0,0.2);">
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="year" value="{{ year }}">
+            <input type="hidden" name="month" value="{{ month }}">
+
+            <div class="row g-3 align-items-center">
+                <div class="col-md-4">
+                    <label class="form-label text-white-50 small mb-1">{{ form.run_date.label }}</label>
+                    {{ form.run_date }}
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label text-white-50 small mb-1">{{ form.notes.label }}</label>
+                    {{ form.notes }}
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-orange w-100 py-2" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 800; border-radius: 8px; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.5); font-size: 1.05rem;">
+                        <i class="fas fa-check-double"></i> ترحيل إهلاك الشهر الآن ({{ total_run_depreciation|floatformat:2 }} ج.م)
+                    </button>
+                </div>
+            </div>
+            <small class="text-white-50 mt-2 d-block">
+                * عند الضغط، سيقوم النظام بإنشاء قيد اليومية الآلي المجمع فوراً: من حـ/ مصروف الإهلاك (5220) إلى حـ/ مجمع الإهلاك (1220).
+            </small>
+        </form>
+    </div>
+    {% else %}
+    <div class="alert alert-info text-center" style="background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.3); color: #67e8f9; border-radius: 12px; padding: 1.5rem;">
+        <i class="fas fa-check-circle" style="font-size: 1.5rem; margin-bottom: 0.5rem; display: block;"></i>
+        <strong>جميع الأصول مستوفية للإهلاك عن شهر {{ month|stringformat:"02d" }} / {{ year }}.</strong>
+        <p class="mb-0 small text-white-50 mt-1">لا توجد أقساط متبقية أو مستحقة للترحيل في هذه الفترة.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}تأكيد حذف عرض السعر{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem; max-width: 600px; margin: 3rem auto; text-align: center;">
+    <div style="font-size: 3rem; color: #ef4444; margin-bottom: 1rem;">
+        <i class="fas fa-exclamation-triangle"></i>
+    </div>
+    <h2 style="color: #fff; margin-bottom: 1rem;">تأكيد حذف عرض السعر</h2>
+    <p style="color: #cbd5e1; font-size: 1.1rem; margin-bottom: 2rem;">
+        هل أنت تأكد من رغبتك في حذف عرض السعر رقم <strong class="en" style="color: #ff7300;">{{ quotation.quotation_number }}</strong> لـ <strong>{{ quotation.partner.name }}</strong>؟
+        <br><span style="font-size: 0.9rem; color: #94a3b8;">هذا الإجراء لا يمكن التراجع عنه.</span>
+    </p>
+
+    <form method="POST" style="display: flex; gap: 1rem; justify-content: center;">
+        {% csrf_token %}
+        <a href="{% url 'invoicing:quotation_detail' quotation.id %}" class="btn-ghost" style="padding: 0.75rem 1.5rem; border-radius: 8px; color: #fff; text-decoration: none; border: 1px solid rgba(255,255,255,0.1);">
+            إلغاء
+        </a>
+        <button type="submit" style="background-color: #ef4444; color: #fff; border: none; padding: 0.75rem 2rem; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);">
+            <i class="fas fa-trash"></i> نعم، تأكيد الحذف
+        </button>
+    </form>
+</div>
+{% endblock %}

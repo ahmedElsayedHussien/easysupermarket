@@ -33,8 +33,8 @@
             <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
         </div>
         <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
-            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
-            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <button type="submit" class="btn btn-orange">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-orange" style="background-color: #ff7300; color: white; border: none; font-weight: bold; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">📊 تصدير إكسيل</button>
             <a href="{% url 'core:report_customer_balances' %}" class="btn btn-orange">إعادة ضبط</a>
         </div>
     </form>
@@ -114,7 +114,16 @@
                 <tr>
                     <td>{{ txn.date|date:"Y-m-d" }}</td>
                     <td style="font-weight: bold;">{{ txn.type }}</td>
-                    <td style="font-family: monospace; color: var(--text-muted);">{{ txn.reference }}</td>
+                    <td style="font-family: monospace;">
+                        {% if txn.invoice_id %}
+                            <a href="{% url 'invoicing:invoice_detail' txn.invoice_id %}" style="color: #00e5ff; text-decoration: none; font-weight: bold; display: inline-flex; align-items: center; gap: 4px;" title="عرض تفاصيل الفاتورة">
+                                <span>📄</span>
+                                <span style="text-decoration: underline;">{{ txn.reference }}</span>
+                            </a>
+                        {% else %}
+                            <span style="color: var(--text-muted);">{{ txn.reference }}</span>
+                        {% endif %}
+                    </td>
                     <td style="text-align: left; color: var(--neon-red); font-weight: bold;">
                         {% if txn.debit > 0 %}{{ txn.debit|floatformat:"-2" }}{% else %}-{% endif %}
                     </td>

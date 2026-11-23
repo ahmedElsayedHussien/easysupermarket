@@ -2,15 +2,26 @@ from django.contrib.auth.mixins import PermissionRequiredMixin
 from django.contrib import messages
 from django.shortcuts import redirect
 from django.core.exceptions import ImproperlyConfigured
+from apps.tenant.core.decorators import is_admin_user
 
 class CustomPermissionRequiredMixin(PermissionRequiredMixin):
     """
     A custom mixin that checks for permissions and shows a friendly error message
     using Django's messaging framework before redirecting the user.
+    Admins are always granted full access.
     """
     permission_denied_message = 'عفواً، لا تملك الصلاحية اللازمة للقيام بهذا الإجراء.'
+
+    def has_permission(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return False
+        if is_admin_user(user):
+            return True
+        return super().has_permission()
     
     def handle_no_permission(self):
+
         if self.request.user.is_authenticated:
             # User is logged in but doesn't have permission
             missing_perms = self.get_permission_required()

@@ -5,9 +5,9 @@
 <div class="glass-container" style="padding: 2rem;">
     <div class="top-header">
         <h2 style="margin: 0; color: #fff;"><i class="fas fa-code-branch text-gold" style="margin-left: 0.5rem;"></i> فروع الشركة</h2>
-        <button class="btn-orange">
+        <a href="{% url 'core:branch_create' %}" class="btn-orange" style="text-decoration: none;">
             <i class="fas fa-plus"></i> إضافة فرع
-        </button>
+        </a>
     </div>
 
     <div class="module-grid module-grid-3">
@@ -24,8 +24,9 @@
                 {% else %}
                 <span class="badge-status badge-danger">غير نشط</span>
                 {% endif %}
-                <button class="btn-action"><i class="fas fa-cog"></i> إدارة الفرع</button>
+                <a href="{% url 'core:branch_update' branch.id %}" class="btn-action" style="text-decoration: none;"><i class="fas fa-cog"></i> إدارة الفرع</a>
             </div>
+
         </div>
         {% empty %}
         <div style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: #94a3b8;">

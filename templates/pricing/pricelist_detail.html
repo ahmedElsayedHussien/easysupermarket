@@ -1,0 +1,271 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Header -->
+    <div class="content-header d-flex justify-content-between align-items-center mb-4" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <div class="content-title">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <h1 style="color: var(--neon-cyan); margin: 0; font-size: 1.6rem; font-weight: 800;">🏷️ {{ pricelist.name }}</h1>
+                {% if pricelist.list_type == 'CUSTOMER' %}
+                <span class="badge" style="background: rgba(255, 115, 0, 0.15); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.4); font-weight: bold;">⭐ عميل خاص: {{ pricelist.partner.name }}</span>
+                {% elif pricelist.list_type == 'SECTOR' %}
+                <span class="badge" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4); font-weight: bold;">🏢 قطاع: {{ pricelist.sector.name }}</span>
+                {% else %}
+                <span class="badge" style="background: rgba(148, 163, 184, 0.15); color: #94a3b8; font-weight: bold;">🌐 قائمة عامة</span>
+                {% endif %}
+
+                {% if pricelist.is_active %}
+                <span class="badge" style="background: rgba(43, 255, 107, 0.15); color: var(--neon-green);">نشطة</span>
+                {% else %}
+                <span class="badge" style="background: rgba(255, 43, 43, 0.15); color: var(--neon-red);">معطلة</span>
+                {% endif %}
+            </div>
+            <p style="color: var(--text-muted); margin: 0.25rem 0 0 0; font-size: 0.85rem;">
+                {% if pricelist.start_date or pricelist.end_date %}
+                فترة السريان: من {{ pricelist.start_date|date:"Y-m-d"|default:"غير محدد" }} إلى {{ pricelist.end_date|date:"Y-m-d"|default:"غير محدد" }}
+                {% else %}
+                سارية دائماً بدون قيود زمنية
+                {% endif %}
+                {% if pricelist.notes %} | {{ pricelist.notes }}{% endif %}
+            </p>
+        </div>
+        <div class="content-actions" style="display: flex; gap: 0.5rem;">
+            <a href="{% url 'pricing:pricelist_edit' pricelist.id %}" class="btn btn-secondary">⚙️ تعديل بيانات القائمة</a>
+            <a href="{% url 'pricing:pricelist_list' %}" class="btn btn-ghost" style="color: var(--text-muted);">⬅️ العودة للقوائم</a>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    {% if messages %}
+    <div class="mb-4">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} p-3 rounded" style="background: rgba(0, 229, 255, 0.1); border-right: 4px solid var(--neon-cyan); color: #fff;">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="row g-4" style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
+        <!-- Left Column: Add Item Form -->
+        <div style="flex: 1; min-width: 340px; max-width: 420px;">
+            <div class="card p-4" style="background: var(--bg-secondary); border: 1px solid rgba(255, 115, 0, 0.3); border-radius: 12px; position: sticky; top: 1rem;">
+                <h3 style="color: #ff7300; font-size: 1.15rem; font-weight: 800; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <span>➕</span> إضافة / تحديث تسعير صنف
+                </h3>
+
+                <form method="POST" action="{% url 'pricing:pricelist_item_add' pricelist.id %}">
+                    {% csrf_token %}
+
+                    <div class="form-group mb-3">
+                        <label class="form-label" style="font-weight: 700; color: #fff;">اختر الصنف <span class="text-danger">*</span></label>
+                        <select name="product" id="productSelect" class="form-select form-control" required style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">
+                            <option value="">-- ابحث أو اختر الصنف --</option>
+                            {% for p in products %}
+                            <option value="{{ p.id }}" data-price="{{ p.sale_price }}" data-barcode="{{ p.barcode|default:'' }}">
+                                {{ p.name }} (الأساسي: {{ p.sale_price|floatformat:"2" }} ج.م)
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div id="productInfoBox" style="display: none; margin-top: 0.5rem; font-size: 0.8rem; color: var(--neon-cyan); background: rgba(0, 229, 255, 0.08); padding: 0.4rem 0.6rem; border-radius: 6px;">
+                            السعر الأساسي الحالي بالبطاقة: <strong id="basePriceDisplay">0.00</strong> ج.م
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label class="form-label" style="font-weight: 600; color: #fff;">وحدة القياس (اختياري)</label>
+                        <select name="uom" class="form-select form-control" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">
+                            <option value="">-- الوحدة الأساسية للصنف --</option>
+                            {% for u in uoms %}
+                            <option value="{{ u.id }}">{{ u.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label class="form-label" style="font-weight: 700; color: #fff;">طريقة التسعير في القائمة <span class="text-danger">*</span></label>
+                        <select name="pricing_method" id="pricingMethodSelect" class="form-select form-control" style="background: var(--bg-primary); border-color: rgba(255, 115, 0, 0.5); color: #fff; font-weight: bold;">
+                            <option value="FIXED">سعر بيع محدد وثابت (ج.م)</option>
+                            <option value="DISCOUNT">نسبة خصم مئوية (%) من سعر الصنف</option>
+                        </select>
+                    </div>
+
+                    <!-- Fixed Price Field -->
+                    <div class="form-group mb-3" id="fixedPriceGroup">
+                        <label class="form-label" style="font-weight: 700; color: #fff;">السعر المخصص الجديد (ج.م) <span class="text-danger">*</span></label>
+                        <input type="number" step="0.0001" min="0" name="custom_price" id="customPriceInput" class="form-control" placeholder="0.00" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff; font-weight: bold; font-family: monospace; font-size: 1.1rem;">
+                    </div>
+
+                    <!-- Discount Percentage Field -->
+                    <div class="form-group mb-3" id="discountPctGroup" style="display: none;">
+                        <label class="form-label" style="font-weight: 700; color: #fff;">نسبة الخصم المئوية (%) <span class="text-danger">*</span></label>
+                        <input type="number" step="0.01" min="0" max="100" name="discount_percentage" id="discountPctInput" class="form-control" placeholder="مثال: 10 أو 15.5%" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff; font-weight: bold; font-family: monospace; font-size: 1.1rem;">
+                    </div>
+
+                    <div class="form-group mb-4">
+                        <label class="form-label" style="font-weight: 600; color: #fff;">أقل كمية لتطبيق السعر</label>
+                        <input type="number" step="0.001" min="1" name="min_quantity" value="1.000" class="form-control" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff; font-family: monospace;">
+                        <small style="color: var(--text-muted);">اتركها 1 لتطبيق السعر على أي كمية، أو حدد كمية مثل 5 أو 10 لتسعير الجملة بالكميات.</small>
+                    </div>
+
+                    <button type="submit" class="btn btn-orange w-100" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); font-weight: bold; padding: 0.75rem; font-size: 1rem; width: 100%;">
+                        💾 حفظ تسعير الصنف
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Right Column: Current Price List Items Table -->
+        <div style="flex: 2; min-width: 480px;">
+            <div class="card p-0" style="background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; overflow: hidden;">
+                <div class="p-3 d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-default); background: rgba(255, 255, 255, 0.02);">
+                    <div style="font-weight: 700; color: #fff; font-size: 1.1rem;">
+                        📋 الأصناف المسجلة في القائمة (<span style="color: #ff7300;">{{ items_count }}</span> صنف)
+                    </div>
+                    <div style="width: 240px;">
+                        <input type="text" id="tableFilterInput" class="form-control form-control-sm" placeholder="🔍 فلترة سريعة بالاسم..." style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">
+                    </div>
+                </div>
+
+                {% if items %}
+                <div class="table-responsive">
+                    <table class="data-table w-100" id="itemsTable" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid var(--border-default);">
+                                <th style="padding: 0.85rem; text-align: right;">الصنف</th>
+                                <th style="padding: 0.85rem; text-align: right;">الوحدة</th>
+                                <th style="padding: 0.85rem; text-align: right;">السعر بالبطاقة</th>
+                                <th style="padding: 0.85rem; text-align: right;">طريقة التسعير</th>
+                                <th style="padding: 0.85rem; text-align: right;">السعر في القائمة</th>
+                                <th style="padding: 0.85rem; text-align: center;">أقل كمية</th>
+                                <th style="padding: 0.85rem; text-align: center;">حذف</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in items %}
+                            <tr class="item-row" style="border-bottom: 1px solid rgba(255, 255, 255, 0.05); transition: background 0.2s;">
+                                <td style="padding: 0.85rem; font-weight: 700; color: #fff;" class="product-name">
+                                    {{ item.product.name }}
+                                    {% if item.product.barcode %}
+                                    <div style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">{{ item.product.barcode }}</div>
+                                    {% endif %}
+                                </td>
+                                <td style="padding: 0.85rem; color: var(--text-muted);">
+                                    {{ item.uom.name|default:item.product.get_unit_display }}
+                                </td>
+                                <td style="padding: 0.85rem; font-family: monospace; color: var(--text-muted);">
+                                    {{ item.product.sale_price|floatformat:"2" }} ج.م
+                                </td>
+                                <td style="padding: 0.85rem;">
+                                    {% if item.pricing_method == 'FIXED' %}
+                                    <span class="badge" style="background: rgba(255, 115, 0, 0.15); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.3);">
+                                        سعر ثابت
+                                    </span>
+                                    {% else %}
+                                    <span class="badge" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.3);">
+                                        خصم {{ item.discount_percentage }}%
+                                    </span>
+                                    {% endif %}
+                                </td>
+                                <td style="padding: 0.85rem; font-weight: 800; font-family: monospace; color: var(--neon-green); font-size: 1.05rem;">
+                                    {% if item.pricing_method == 'FIXED' %}
+                                    {{ item.custom_price|floatformat:"2" }} ج.م
+                                    {% else %}
+                                    {{ item.calculate_price|default:"" }}
+                                    <span style="font-size: 0.85rem; color: #00e5ff;">(خصم {{ item.discount_percentage }}%)</span>
+                                    {% endif %}
+                                </td>
+                                <td style="padding: 0.85rem; text-align: center; font-family: monospace; color: #fff;">
+                                    {{ item.min_quantity|floatformat:"0" }}
+                                </td>
+                                <td style="padding: 0.85rem; text-align: center;">
+                                    <form method="POST" action="{% url 'pricing:pricelist_item_delete' pricelist.id item.id %}" onsubmit="return confirm('حذف هذا الصنف من قائمة الأسعار؟');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-ghost text-danger" style="color: var(--neon-red); border: none; background: transparent; cursor: pointer;">
+                                            🗑️
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="p-5 text-center" style="color: var(--text-muted);">
+                    <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📦</div>
+                    <h4 style="color: #fff; margin-bottom: 0.5rem;">لا توجد أصناف في هذه القائمة بعد</h4>
+                    <p style="font-size: 0.9rem;">استخدم النموذج على اليمين للبدء في تسعير الأصناف وإضافتها إلى القائمة.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const productSelect = document.getElementById("productSelect");
+        const productInfoBox = document.getElementById("productInfoBox");
+        const basePriceDisplay = document.getElementById("basePriceDisplay");
+        const customPriceInput = document.getElementById("customPriceInput");
+        const methodSelect = document.getElementById("pricingMethodSelect");
+        const fixedGroup = document.getElementById("fixedPriceGroup");
+        const discountGroup = document.getElementById("discountPctGroup");
+        const filterInput = document.getElementById("tableFilterInput");
+
+        // Toggle pricing method inputs
+        function updateMethod() {
+            if (!methodSelect) return;
+            if (methodSelect.value === "FIXED") {
+                fixedGroup.style.display = "block";
+                discountGroup.style.display = "none";
+            } else {
+                fixedGroup.style.display = "none";
+                discountGroup.style.display = "block";
+            }
+        }
+        if (methodSelect) {
+            methodSelect.addEventListener("change", updateMethod);
+            updateMethod();
+        }
+
+        // On product selection -> show current price & pre-populate
+        if (productSelect) {
+            productSelect.addEventListener("change", function() {
+                const opt = this.options[this.selectedIndex];
+                const price = opt.getAttribute("data-price");
+                if (price) {
+                    productInfoBox.style.display = "block";
+                    basePriceDisplay.textContent = parseFloat(price).toFixed(2);
+                    if (!customPriceInput.value) {
+                        customPriceInput.value = parseFloat(price).toFixed(2);
+                    }
+                } else {
+                    productInfoBox.style.display = "none";
+                }
+            });
+        }
+
+        // Table quick filter
+        if (filterInput) {
+            filterInput.addEventListener("input", function() {
+                const term = this.value.toLowerCase().trim();
+                const rows = document.querySelectorAll(".item-row");
+                rows.forEach(row => {
+                    const text = row.querySelector(".product-name").textContent.toLowerCase();
+                    if (text.includes(term)) {
+                        row.style.display = "";
+                    } else {
+                        row.style.display = "none";
+                    }
+                });
+            });
+        }
+    });
+</script>
+{% endblock %}

@@ -8,6 +8,8 @@ from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from django.contrib import messages
 from django.utils import timezone
+from django.db.models import Sum
+from django.db.models.functions import Coalesce
 from .models import Attendance, Payroll
 from apps.tenant.core.models import Employee
 from .services import post_payroll
@@ -113,10 +115,17 @@ from apps.tenant.core.decorators import custom_permission_required
 
 @custom_permission_required('hr.view_payroll', redirect_url='core:main_screen')
 def payroll_list(request):
-    payrolls = Payroll.objects.all().order_by('-year', '-month')
+    from django.core.paginator import Paginator
+    payrolls = Payroll.objects.select_related('employee__user', 'employee__branch', 'journal_entry').order_by('-year', '-month')
+    paginator = Paginator(payrolls, 25)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
     context = {
         'title': 'إدارة مسيرات الرواتب',
-        'payrolls': payrolls,
+        'payrolls': page_obj,
+        'page_obj': page_obj,
+        'is_paginated': page_obj.has_other_pages(),
+        'total_count': paginator.count,
     }
     return render(request, 'hr/payroll_list.html', context)
 
@@ -133,9 +142,12 @@ def payroll_process(request):
             continue
             
         attendances = Attendance.objects.filter(employee=emp, date__year=year, date__month=month)
-        
-        total_delay = sum(a.delay_hours for a in attendances)
-        total_overtime = sum(a.overtime_hours for a in attendances)
+        att_agg = attendances.aggregate(
+            total_delay=Coalesce(Sum('delay_hours'), Decimal('0.00')),
+            total_overtime=Coalesce(Sum('overtime_hours'), Decimal('0.00'))
+        )
+        total_delay = att_agg['total_delay']
+        total_overtime = att_agg['total_overtime']
         
         deductions = total_delay * emp.deduction_per_hour
         overtime_pay = total_overtime * emp.overtime_per_hour

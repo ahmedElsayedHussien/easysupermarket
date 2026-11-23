@@ -1,0 +1,249 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.import-container {
+    max-width: 950px;
+    margin: 1.5rem auto;
+}
+.import-card {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 2rem;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
+}
+.template-box {
+    background: rgba(255, 115, 0, 0.08);
+    border: 1.5px dashed #ff7300;
+    border-radius: 14px;
+    padding: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+.template-info h4 {
+    color: #ff7300;
+    margin-bottom: 0.35rem;
+    font-size: 1.15rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.template-info p {
+    color: #cbd5e1;
+    font-size: 0.9rem;
+    margin: 0;
+}
+.btn-download-template {
+    background: #ff7300;
+    color: #fff !important;
+    font-weight: 700;
+    border-radius: 8px;
+    padding: 0.75rem 1.4rem;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    box-shadow: 0 4px 15px rgba(255, 115, 0, 0.35);
+    transition: all 0.3s ease;
+    border: none;
+}
+.btn-download-template:hover {
+    background: #e06500;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(255, 115, 0, 0.5);
+    color: #fff;
+}
+.features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+.feature-badge {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 1rem;
+    font-size: 0.88rem;
+    color: #94a3b8;
+}
+.feature-badge strong {
+    color: #00e5ff;
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.95rem;
+}
+.upload-dropzone {
+    border: 2px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    margin-bottom: 1.5rem;
+}
+.upload-dropzone:hover, .upload-dropzone.dragover {
+    border-color: #ff7300;
+    background: rgba(255, 115, 0, 0.05);
+}
+.upload-icon {
+    font-size: 2.5rem;
+    color: #ff7300;
+    margin-bottom: 0.75rem;
+}
+.file-name-preview {
+    color: #00e5ff;
+    font-weight: 700;
+    margin-top: 0.5rem;
+    display: none;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid import-container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="text-neon-cyan mb-1"><i class="fas fa-file-excel" style="color: #22c55e;"></i> {{ title }}</h2>
+            <p class="text-muted mb-0">رفع وإضافة مئات أو آلاف المنتجات دفعة واحدة بكل سهولة وتوافق تام مع النظام</p>
+        </div>
+        <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost">
+            <i class="fas fa-arrow-right"></i> العودة للمنتجات
+        </a>
+    </div>
+
+    <!-- بطاقة تنزيل القالب المتوافق -->
+    <div class="template-box">
+        <div class="template-info">
+            <h4><i class="fas fa-magic"></i> القالب الرسمي المتوافق مع البرنامج</h4>
+            <p>قم بتنزيل شيت إكسيل منسق ومجهز مسبقاً بالأعمدة الصحيحة والأمثلة الإيضاحية لتعبئته ثم رفعه مباشرة.</p>
+        </div>
+        <div>
+            <a href="{% url 'inventory:product_template_download' %}" class="btn-download-template">
+                <i class="fas fa-file-download"></i> تنزيل شيت الإكسيل الفارغ (قالب الإدخال)
+            </a>
+        </div>
+    </div>
+
+    <!-- تنبيهات مميزات الاستيراد -->
+    <div class="features-grid">
+        <div class="feature-badge">
+            <strong><i class="fas fa-check-circle" style="color: #22c55e;"></i> الباركود اختياري تماماً</strong>
+            يمكنك ترك خانة الباركود فارغة للمنتجات التي لا تحتوي على باركود (مثل الخضار، المخبوزات، الوجبات، الأصناف اليدوية) ولن يمانع النظام ذلك أبداً.
+        </div>
+        <div class="feature-badge">
+            <strong><i class="fas fa-layer-group" style="color: #00e5ff;"></i> الأقسام والوحدات التلقائية</strong>
+            إذا كتبت اسم قسم جديد في الشيت سيتم إنشاؤه تلقائياً. ووحدة القياس تدعم (قطعة، كيلو، كرتونة، لتر، إلخ) والافتراضي "قطعة".
+        </div>
+        <div class="feature-badge">
+            <strong><i class="fas fa-boxes" style="color: #ff7300;"></i> الأرصدة الافتتاحية والـ FIFO</strong>
+            إذا أدخلت كمية وتكلفة لكل صنف واخترت المستودع، يتم ترصيد البضاعة تلقائياً بالمخزن وإنشاء قيد محاسبي افتتاحي متوازن.
+        </div>
+        <div class="feature-badge">
+            <strong><i class="fas fa-shield-alt" style="color: #ec4899;"></i> حماية تصفير الأرصدة السالبة</strong>
+            أي كمية أو رصيد بالسالب في ملف الإكسيل يتم تصفيره تلقائياً (0) لحماية دورة الـ FIFO ومنع ظهور أرصدة سالبة في المخازن.
+        </div>
+    </div>
+
+    <!-- نموذج الرفع -->
+    <div class="import-card">
+        <form method="POST" enctype="multipart/form-data" id="importForm">
+            {% csrf_token %}
+
+            <div class="upload-dropzone" onclick="document.getElementById('excelFileInput').click();" id="dropZone">
+                <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                <h5 class="text-white mb-2">اضغط هنا لاختيار ملف الإكسيل أو اسحبه وأفلته هنا</h5>
+                <p class="text-muted small mb-0">يدعم صيغ .xlsx أو .xls (بحد أقصى 20 ميجابايت)</p>
+                <div class="file-name-preview" id="fileNamePreview"></div>
+                <input type="file" name="excel_file" id="excelFileInput" accept=".xlsx, .xls" required style="display: none;">
+            </div>
+
+            <div class="row g-3 mb-4">
+                <div class="col-md-6">
+                    <label class="form-label text-white fw-bold">المستودع المستهدف للكميات الافتتاحية:</label>
+                    <select name="warehouse" class="form-select bg-dark-glass text-white border-secondary">
+                        <option value="">-- اختياري (حدد المستودع في حال وجود كميات بالشيت) --</option>
+                        {% for wh in warehouses %}
+                        <option value="{{ wh.id }}" {% if forloop.first %}selected{% endif %}>{{ wh.name }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted d-block mt-1">إذا تركته فارغاً سيتم إنشاء المنتجات فقط بدون رصيد مخزني.</small>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label text-white fw-bold"><i class="fas fa-shield-alt text-warning me-1"></i> إذا وُجد الصنف مسجلاً مسبقاً (بالباركود أو بالاسم):</label>
+                    <select name="duplicate_action" class="form-select bg-dark-glass text-white border-secondary">
+                        <option value="update" selected>تحديث بيانات الصنف وسعر البيع وإضافة الرصيد (منع التكرار)</option>
+                        <option value="skip">تخطي الصنف المكرر تماماً والإبقاء على البيانات الحالية</option>
+                    </select>
+                    <small class="text-muted d-block mt-1">يتعرف النظام بذكاء على الأصناف المتطابقة سواء بالباركود أو بالاسم لمنع تكرار أي صنف نهائياً.</small>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center pt-3 border-top border-secondary">
+                <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost px-4">إلغاء</a>
+                <button type="submit" class="btn-orange" id="submitBtn" style="background: #ff7300; border-color: #ff7300; color: #fff; font-weight: bold; padding: 0.75rem 2.5rem; border-radius: 8px; box-shadow: 0 0 15px rgba(255, 115, 0, 0.4); font-size: 1.05rem;">
+                    <i class="fas fa-upload me-2"></i> بدء رفع ومعالجة المنتجات
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+const fileInput = document.getElementById('excelFileInput');
+const fileNamePreview = document.getElementById('fileNamePreview');
+const dropZone = document.getElementById('dropZone');
+const form = document.getElementById('importForm');
+const submitBtn = document.getElementById('submitBtn');
+
+fileInput.addEventListener('change', function(e) {
+    if (this.files && this.files[0]) {
+        const file = this.files[0];
+        fileNamePreview.innerHTML = '<i class="fas fa-file-excel text-success me-1"></i> الملف المحدد: ' + file.name;
+        fileNamePreview.style.display = 'block';
+    }
+});
+
+// Drag and drop events
+['dragenter', 'dragover'].forEach(eventName => {
+    dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    }, false);
+});
+
+['dragleave', 'drop'].forEach(eventName => {
+    dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+    }, false);
+});
+
+dropZone.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+    if (files && files.length > 0) {
+        fileInput.files = files;
+        fileNamePreview.innerHTML = '<i class="fas fa-file-excel text-success me-1"></i> الملف المحدد: ' + files[0].name;
+        fileNamePreview.style.display = 'block';
+    }
+});
+
+form.addEventListener('submit', function() {
+    if (fileInput.files.length > 0) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i> جاري استيراد ومعالجة الشيت... يرجى الانتظار';
+        submitBtn.style.opacity = '0.8';
+    }
+});
+</script>
+{% endblock %}

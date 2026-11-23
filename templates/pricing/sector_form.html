@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="content-header d-flex justify-content-between align-items-center mb-4" style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="content-title">
+            <h1 style="color: var(--neon-cyan); margin: 0; font-size: 1.5rem; font-weight: 800;">🏢 {{ title }}</h1>
+            <p style="color: var(--text-muted); margin: 0.25rem 0 0 0; font-size: 0.85rem;">إدارة بيانات قطاع العملاء وتحديد حالة التفعيل</p>
+        </div>
+        <div class="content-actions">
+            <a href="{% url 'pricing:sector_list' %}" class="btn btn-secondary">⬅️ العودة للقائمة</a>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    {% if messages %}
+    <div class="mb-4" style="max-width: 650px; margin: 0 auto;">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} p-3 rounded" style="background: rgba(255, 43, 43, 0.15); border-right: 4px solid var(--neon-red); color: #fff;">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="card p-4" style="max-width: 650px; margin: 0 auto; background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px;">
+        <form method="POST">
+            {% csrf_token %}
+
+            <div class="form-group mb-3">
+                <label class="form-label" style="font-weight: 700; color: #fff;">اسم القطاع <span class="text-danger">*</span></label>
+                <input type="text" name="name" class="form-control" value="{{ sector.name|default:'' }}" placeholder="مثال: قطاع الجملة، فنادق ومطاعم HORECA، شركات" required style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">
+            </div>
+
+            <div class="form-group mb-3">
+                <label class="form-label" style="font-weight: 600; color: #fff;">كود القطاع (اختياري)</label>
+                <input type="text" name="code" class="form-control" value="{{ sector.code|default:'' }}" placeholder="مثال: SEC-WHOLESALE" style="background: var(--bg-primary); border-color: var(--border-default); color: #fff; font-family: monospace;">
+                <small style="color: var(--text-muted);">كود مميز لتمييز القطاع في الأنظمة المحاسبية والربط الآلي.</small>
+            </div>
+
+            <div class="form-group mb-3">
+                <label class="form-label" style="font-weight: 600; color: #fff;">الوصف</label>
+                <textarea name="description" rows="3" class="form-control" placeholder="وصف موجز لطبيعة عملاء هذا القطاع وشروط التعامل معهم..." style="background: var(--bg-primary); border-color: var(--border-default); color: #fff;">{{ sector.description|default:'' }}</textarea>
+            </div>
+
+            <div class="form-check mb-4" style="display: flex; align-items: center; gap: 0.5rem; background: rgba(255, 255, 255, 0.02); padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border-default);">
+                <input type="checkbox" name="is_active" id="isActiveCheck" class="form-check-input" {% if sector.is_active or not sector %}checked{% endif %}>
+                <label for="isActiveCheck" class="form-check-label" style="font-weight: 600; color: #fff; cursor: pointer; margin: 0;">
+                    تفعيل هذا القطاع (يظهر في خيارات العملاء وتُطبق قوائم أسعاره)
+                </label>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-default); padding-top: 1.25rem;">
+                <a href="{% url 'pricing:sector_list' %}" class="btn btn-ghost" style="color: var(--text-muted);">إلغاء</a>
+                <button type="submit" class="btn btn-orange" style="box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); font-weight: bold; padding: 0.6rem 2.25rem; font-size: 1rem;">
+                    💾 حفظ بيانات القطاع
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -11,14 +11,22 @@
 
     <!-- كارت إرشادي توضيحي ثابت للمستخدم -->
     <div class="voucher-guide-banner bg-dark-glass border border-warning p-3 mb-4 rounded-3 text-light" style="border-width: 1.5px !important; box-shadow: 0 0 10px rgba(255, 193, 7, 0.15);">
-        <div class="d-flex align-items-start">
-            <i class="fas fa-lightbulb text-warning fs-4 me-3 mt-1"></i>
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
+            <div class="d-flex align-items-start">
+                <i class="fas fa-lightbulb text-warning fs-4 me-3 mt-1"></i>
+                <div>
+                    <strong class="d-block mb-1 text-warning fs-6"><i class="fas fa-info-circle"></i> كيف تعمل سندات القبض والصرف؟</strong>
+                    <small class="d-block text-white-50">
+                        • <strong>سند القبض:</strong> مخصص للتحصيل المالي من <strong>العميل أو المورد</strong> وتحديد خزينة/وسيلة التحصيل.<br>
+                        • <strong>سند الصرف:</strong> مخصص للسداد المالي إلى <strong>مورد أو عميل</strong>، أو سداد <strong>مصروف مباشر</strong> (كهرباء، إيجار، إلخ).<br>
+                        • <strong>التحويل بين الخزن والبنوك:</strong> للتحويلات الداخلية المستقلة، يُرجى استخدام شاشة <strong>التحويلات المالية المباشرة</strong>.
+                    </small>
+                </div>
+            </div>
             <div>
-                <strong class="d-block mb-1 text-warning fs-6"><i class="fas fa-info-circle"></i> كيف تعمل سندات القبض والصرف؟</strong>
-                <small class="d-block text-white-50">
-                    • <strong>للتعامل مع عميل أو مورد:</strong> اختر <strong>الشريك</strong> (عميل/مورد)، وسيقوم النظام تلقائياً بتحديد وتوجيه المبلغ لحسابه المحاسبي.<br>
-                    • <strong>للتحويلات الداخلية (بين الخزائن، البنوك، أو المحافظ):</strong> اترك الشريك فارغاً، واختر الجهة المراد التحويل منها وإليها في <strong>الحساب المقابل</strong>.
-                </small>
+                <a href="{% url 'accounting:transfer_create' %}" class="btn btn-sm" style="background-color: #ff7300; border-color: #ff7300; color: white; font-weight: 600; box-shadow: 0 2px 8px rgba(255, 115, 0, 0.3);">
+                    <i class="fas fa-exchange-alt me-1"></i> التحويل المالي المباشر
+                </a>
             </div>
         </div>
     </div>
@@ -36,38 +44,162 @@
                 {{ form.amount }}
                 <div class="text-danger small">{{ form.amount.errors }}</div>
             </div>
-            <div class="col-md-6 mb-3">
+            {% if voucher_type == 'PAYMENT' %}
+            <div class="col-md-6 mb-3" id="partner-field-container">
                 <label class="form-label text-neon-blue">{{ form.partner.label }} (عميل / مورد)</label>
                 {{ form.partner }}
-                <small class="text-muted d-block mt-1"><i class="fas fa-user text-info"></i> اختر الشريك في حالة التحصيل من عميل أو السداد لمورد.</small>
+                <small class="text-muted d-block mt-1" id="partner-help-text"><i class="fas fa-user text-info"></i> اختر الشريك في حالة السداد لمورد أو عميل.</small>
+                <div id="partner-locked-msg" class="alert alert-warning py-1 px-2 mt-1 mb-0 small" style="display:none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.3); color: #fbbf24;"><i class="fas fa-lock me-1"></i> معطّل: تم اختيار حساب مصروف مباشر.</div>
                 <div class="text-danger small">{{ form.partner.errors }}</div>
             </div>
-            <div class="col-md-6 mb-3">
-                <label class="form-label text-neon-blue">{{ form.account.label }} (الخزينة/البنك/المحفظة)</label>
-                {{ form.account }}
-                <small class="text-muted d-block mt-1"><i class="fas fa-exchange-alt text-warning"></i> تُستخدم للتحويل الداخلي فقط عند عدم اختيار شريك.</small>
-                <div class="text-danger small">{{ form.account.errors }}</div>
+            <div class="col-md-6 mb-3" id="expense-field-container">
+                <label class="form-label text-neon-blue"><i class="fas fa-receipt text-warning me-1"></i> {{ form.expense_account.label }}</label>
+                {{ form.expense_account }}
+                <small class="text-muted d-block mt-1" id="expense-help-text"><i class="fas fa-tag text-warning"></i> أو اختر حساب المصروف مباشرة (كهرباء، إيجار، إلخ).</small>
+                <div id="expense-locked-msg" class="alert alert-warning py-1 px-2 mt-1 mb-0 small" style="display:none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.3); color: #fbbf24;"><i class="fas fa-lock me-1"></i> معطّل: تم اختيار شريك.</div>
+                <div class="text-danger small">{{ form.expense_account.errors }}</div>
             </div>
-            <div class="col-md-4 mb-3">
-                <label class="form-label text-neon-blue">{{ form.payment_method.label }}</label>
+            {% else %}
+            <div class="col-12 mb-3" id="partner-field-container">
+                <label class="form-label text-neon-blue">{{ form.partner.label }} (عميل / مورد) <span class="text-danger">*</span></label>
+                {{ form.partner }}
+                <small class="text-muted d-block mt-1" id="partner-help-text"><i class="fas fa-user text-info"></i> اختر الشريك (العميل أو المورد) المستهدف بالتحصيل في سند القبض.</small>
+                <div class="text-danger small">{{ form.partner.errors }}</div>
+            </div>
+            {% endif %}
+
+            {{ form.account }}
+            <div class="col-md-6 mb-3" id="payment-method-container">
+                <label class="form-label text-neon-blue"><i class="fas fa-money-bill-wave me-1"></i> {{ form.payment_method.label }} <span class="text-danger">*</span></label>
                 {{ form.payment_method }}
+                <small class="text-muted d-block mt-1"><i class="fas fa-info-circle text-info"></i> اختر طريقة الدفع لتحديد الحساب المالي المرتبط بها تلقائياً.</small>
                 <div class="text-danger small">{{ form.payment_method.errors }}</div>
             </div>
-            <div class="col-md-4 mb-3" id="treasury-field">
-                <label class="form-label text-neon-blue">{{ form.treasury.label }}</label>
+
+            <!-- حقول الحسابات والخزن والبنوك المرتبطة بطريقة الدفع -->
+            <div class="col-md-6 mb-3" id="treasury-field">
+                <label class="form-label text-neon-blue"><i class="fas fa-cash-register me-1"></i> {{ form.treasury.label }} <span class="text-danger">*</span></label>
                 {{ form.treasury }}
+                <small class="text-muted d-block mt-1"><i class="fas fa-info-circle text-info"></i> الخزينة المستهدفة للقبض / الصرف نقداً.</small>
                 <div class="text-danger small">{{ form.treasury.errors }}</div>
             </div>
-            <div class="col-md-4 mb-3" id="bank-field" style="display: none;">
-                <label class="form-label text-neon-blue">{{ form.bank_account.label }}</label>
+            <div class="col-md-6 mb-3" id="bank-field" style="display: none;">
+                <label class="form-label text-neon-blue"><i class="fas fa-credit-card me-1"></i> {{ form.bank_account.label }} <span class="text-danger">*</span></label>
                 {{ form.bank_account }}
+                <small class="text-muted d-block mt-1" id="bank-help-text"><i class="fas fa-info-circle text-info"></i> ماكينة الفيزا / الحساب البنكي المرتبط.</small>
                 <div class="text-danger small">{{ form.bank_account.errors }}</div>
             </div>
-            <div class="col-md-4 mb-3" id="ewallet-field" style="display: none;">
-                <label class="form-label text-neon-blue">{{ form.ewallet.label }}</label>
+            <div class="col-md-6 mb-3" id="ewallet-field" style="display: none;">
+                <label class="form-label text-neon-blue"><i class="fas fa-mobile-alt me-1"></i> {{ form.ewallet.label }} <span class="text-danger">*</span></label>
                 {{ form.ewallet }}
+                <small class="text-muted d-block mt-1"><i class="fas fa-info-circle text-info"></i> المحفظة الإلكترونية المستهدفة (فودافون كاش، أورنج، وي، إلخ).</small>
                 <div class="text-danger small">{{ form.ewallet.errors }}</div>
             </div>
+            <div class="col-md-6 mb-3" id="transfer-bank-field" style="display: none;">
+                <label class="form-label text-neon-blue"><i class="fas fa-bolt me-1"></i> {{ form.transfer_bank_account.label }} <span class="text-danger">*</span></label>
+                {{ form.transfer_bank_account }}
+                <small class="text-muted d-block mt-1"><i class="fas fa-info-circle text-info"></i> حساب إنستاباي أو الحساب البنكي المستهدف للتحويل.</small>
+                <div class="text-danger small">{{ form.transfer_bank_account.errors }}</div>
+            </div>
+
+            <script>
+                // تنفيذ فوري لضبط الحساب المرتبط فور تحميل عناصر النموذج بدون وميض
+                (function() {
+                    var pm = document.getElementById('id_payment_method');
+                    if (pm) {
+                        var val = pm.value;
+                        var t = document.getElementById('treasury-field');
+                        var b = document.getElementById('bank-field');
+                        var w = document.getElementById('ewallet-field');
+                        var tr = document.getElementById('transfer-bank-field');
+                        var sp = document.getElementById('split-amounts-container');
+                        var mc = document.getElementById('payment-method-container');
+                        if (val === 'SPLIT') {
+                            if (mc) mc.className = 'col-12 mb-3';
+                            if (sp) sp.style.display = 'block';
+                            if (t) { t.className = 'col-md-3 col-sm-6 mb-3'; t.style.display = 'block'; }
+                            if (b) { b.className = 'col-md-3 col-sm-6 mb-3'; b.style.display = 'block'; }
+                            if (w) { w.className = 'col-md-3 col-sm-6 mb-3'; w.style.display = 'block'; }
+                            if (tr) { tr.className = 'col-md-3 col-sm-6 mb-3'; tr.style.display = 'block'; }
+                        } else {
+                            if (mc) mc.className = 'col-md-6 mb-3';
+                            if (t) { t.className = 'col-md-6 mb-3'; t.style.display = (val === 'CASH' ? 'block' : 'none'); }
+                            if (b) { b.className = 'col-md-6 mb-3'; b.style.display = (val === 'CARD' ? 'block' : 'none'); }
+                            if (w) { w.className = 'col-md-6 mb-3'; w.style.display = (val === 'EWALLET' ? 'block' : 'none'); }
+                            if (tr) { tr.className = 'col-md-6 mb-3'; tr.style.display = (val === 'BANK_TRANSFER' ? 'block' : 'none'); }
+                        }
+                    }
+                })();
+            </script>
+
+            <!-- حاوية تفاصيل السداد المقسم / المتنوع (نفس نقطة البيع) -->
+            <div class="col-12 mb-3" id="split-amounts-container" style="display: none;">
+                <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.85); border: 1.5px solid rgba(139, 92, 246, 0.4); box-shadow: 0 0 15px rgba(139, 92, 246, 0.15);">
+                    <div class="d-flex justify-content-between align-items-center mb-3 border-bottom pb-2" style="border-color: rgba(255,255,255,0.1) !important;">
+                        <h5 class="mb-0" style="color: #c084fc;">
+                            <i class="fas fa-random text-warning me-2"></i> تفاصيل السداد المقسم / المتنوع
+                        </h5>
+                        <small class="text-white-50">توزيع مبلغ السند عبر طرق الدفع المختلفة (مثل نقطة البيع تماماً)</small>
+                    </div>
+
+                    <div class="row g-3">
+                        <!-- كاش -->
+                        <div class="col-md-3 col-sm-6">
+                            <div class="p-2 rounded-3 h-100" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255,255,255,0.08);">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label text-white mb-0 fw-bold small">💵 كاش (نقدي):</label>
+                                    <button type="button" class="btn btn-sm" style="background-color: #ff7300; border-color: #ff7300; color: white; font-weight: 600; padding: 2px 8px; font-size: 0.75rem; box-shadow: 0 2px 8px rgba(255,115,0,0.3);" onclick="fillSplitRemaining('cash')">تعبئة المتبقي</button>
+                                </div>
+                                {{ form.paid_cash }}
+                                <div class="text-danger small">{{ form.paid_cash.errors }}</div>
+                            </div>
+                        </div>
+
+                        <!-- بطاقة / فيزا -->
+                        <div class="col-md-3 col-sm-6">
+                            <div class="p-2 rounded-3 h-100" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255,255,255,0.08);">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label text-white mb-0 fw-bold small">💳 بطاقة / فيزا:</label>
+                                    <button type="button" class="btn btn-sm" style="background-color: #ff7300; border-color: #ff7300; color: white; font-weight: 600; padding: 2px 8px; font-size: 0.75rem; box-shadow: 0 2px 8px rgba(255,115,0,0.3);" onclick="fillSplitRemaining('card')">تعبئة المتبقي</button>
+                                </div>
+                                {{ form.paid_card }}
+                                <div class="text-danger small">{{ form.paid_card.errors }}</div>
+                            </div>
+                        </div>
+
+                        <!-- محفظة إلكترونية -->
+                        <div class="col-md-3 col-sm-6">
+                            <div class="p-2 rounded-3 h-100" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255,255,255,0.08);">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label text-white mb-0 fw-bold small">📱 محفظة إلكترونية:</label>
+                                    <button type="button" class="btn btn-sm" style="background-color: #ff7300; border-color: #ff7300; color: white; font-weight: 600; padding: 2px 8px; font-size: 0.75rem; box-shadow: 0 2px 8px rgba(255,115,0,0.3);" onclick="fillSplitRemaining('ewallet')">تعبئة المتبقي</button>
+                                </div>
+                                {{ form.paid_ewallet }}
+                                <div class="text-danger small">{{ form.paid_ewallet.errors }}</div>
+                            </div>
+                        </div>
+
+                        <!-- إنستاباي / تحويل بنكي -->
+                        <div class="col-md-3 col-sm-6">
+                            <div class="p-2 rounded-3 h-100" style="background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255,255,255,0.08);">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <label class="form-label text-white mb-0 fw-bold small">⚡ إنستاباي / بنك:</label>
+                                    <button type="button" class="btn btn-sm" style="background-color: #ff7300; border-color: #ff7300; color: white; font-weight: 600; padding: 2px 8px; font-size: 0.75rem; box-shadow: 0 2px 8px rgba(255,115,0,0.3);" onclick="fillSplitRemaining('bank')">تعبئة المتبقي</button>
+                                </div>
+                                {{ form.paid_bank }}
+                                <div class="text-danger small">{{ form.paid_bank.errors }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- عداد المتبقي تماماً مثل نقطة البيع -->
+                    <div class="d-flex justify-content-between align-items-center mt-3 p-2 rounded-3" style="background: rgba(15, 23, 42, 0.95); border: 1px solid rgba(255, 255, 255, 0.15);">
+                        <span class="fw-bold text-white small"><i class="fas fa-calculator text-warning me-1"></i> المتبقي للتوزيع من إجمالي السند:</span>
+                        <span id="split-remaining-display" class="fw-bold fs-6" style="color: #ffd700;">0.00 ج.م</span>
+                    </div>
+                </div>
+            </div>
+
             <div class="col-12 mb-3">
                 <label class="form-label text-neon-blue">{{ form.description.label }}</label>
                 {{ form.description }}
@@ -107,80 +239,297 @@
 .ts-control > input {
     color: #fff !important;
 }
+.ts-control.disabled, .ts-wrapper.disabled .ts-control {
+    background-color: rgba(15, 23, 42, 0.3) !important;
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+    border-color: rgba(255, 255, 255, 0.05) !important;
+}
+.ts-wrapper.plugin-clear_button .clear-button {
+    color: #ff7300 !important;
+    opacity: 0.8;
+}
+.ts-wrapper.plugin-clear_button .clear-button:hover {
+    opacity: 1;
+}
+.dropdown-input-wrap {
+    padding: 8px 10px !important;
+    background: rgba(15, 23, 42, 0.98) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+.dropdown-input-wrap .dropdown-input {
+    background-color: rgba(30, 41, 59, 0.95) !important;
+    border: 1px solid rgba(255, 115, 0, 0.5) !important;
+    color: #fff !important;
+    border-radius: 6px !important;
+    padding: 8px 12px !important;
+    width: 100% !important;
+    font-size: 0.88rem !important;
+    outline: none !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+.dropdown-input-wrap .dropdown-input:focus {
+    border-color: #ff7300 !important;
+    box-shadow: 0 0 10px rgba(255, 115, 0, 0.5) !important;
+}
+.dropdown-input-wrap .dropdown-input::placeholder {
+    color: #94a3b8 !important;
+}
 </style>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const paymentMethodSelect = document.getElementById('id_payment_method');
+    const paymentMethodContainer = document.getElementById('payment-method-container');
     const treasuryField = document.getElementById('treasury-field');
     const bankField = document.getElementById('bank-field');
     const ewalletField = document.getElementById('ewallet-field');
+    const transferBankField = document.getElementById('transfer-bank-field');
+    const splitAmountsContainer = document.getElementById('split-amounts-container');
 
     const partnerSelect = document.getElementById('id_partner');
-    const accountSelect = document.getElementById('id_account');
+    const expenseSelect = document.getElementById('id_expense_account');
 
-    let partnerTs, accountTs;
+    let partnerTs = null, expenseTs = null;
 
-    if (partnerSelect) {
-        partnerTs = new TomSelect(partnerSelect, {
-            create: false,
-            sortField: { field: "text", direction: "asc" }
-        });
+    const tsCommonConfig = {
+        create: false,
+        plugins: ['dropdown_input', 'clear_button'],
+        sortField: { field: "text", direction: "asc" },
+        searchField: ['text']
+    };
+
+    if (partnerSelect && partnerSelect.tagName === 'SELECT') {
+        try {
+            partnerTs = new TomSelect(partnerSelect, tsCommonConfig);
+            partnerTs.on('dropdown_open', function() {
+                if (partnerTs.control_input) {
+                    partnerTs.control_input.placeholder = '🔍 اكتب اسم الشريك أو رقم الهاتف للبحث...';
+                    partnerTs.control_input.focus();
+                }
+            });
+        } catch (e) {
+            console.error('Error initializing TomSelect on partner:', e);
+        }
     }
 
-    if (accountSelect) {
-        accountTs = new TomSelect(accountSelect, {
-            create: false,
-            sortField: { field: "text", direction: "asc" }
-        });
+    if (expenseSelect && expenseSelect.tagName === 'SELECT') {
+        try {
+            expenseTs = new TomSelect(expenseSelect, tsCommonConfig);
+            expenseTs.on('dropdown_open', function() {
+                if (expenseTs.control_input) {
+                    expenseTs.control_input.placeholder = '🔍 اكتب اسم المصروف أو الكود للبحث...';
+                    expenseTs.control_input.focus();
+                }
+            });
+        } catch (e) {
+            console.error('Error initializing TomSelect on expense:', e);
+        }
     }
 
-    function togglePaymentFields() {
+    // دوال السداد المقسم / المتنوع
+    window.updateSplitCalculations = function() {
+        const totalAmount = parseFloat(document.getElementById('id_amount')?.value) || 0;
+        const cash = parseFloat(document.getElementById('id_paid_cash')?.value) || 0;
+        const card = parseFloat(document.getElementById('id_paid_card')?.value) || 0;
+        const ewallet = parseFloat(document.getElementById('id_paid_ewallet')?.value) || 0;
+        const bank = parseFloat(document.getElementById('id_paid_bank')?.value) || 0;
+
+        const totalPaid = cash + card + ewallet + bank;
+        const remaining = totalAmount - totalPaid;
+
+        const remEl = document.getElementById('split-remaining-display');
+        if (remEl) {
+            if (Math.abs(remaining) < 0.01) {
+                remEl.style.color = '#10b981';
+                remEl.innerHTML = `0.00 ج.م <i class="fas fa-check-circle ms-1"></i>`;
+            } else if (remaining > 0) {
+                remEl.style.color = '#f59e0b';
+                remEl.textContent = `${remaining.toFixed(2)} ج.م`;
+            } else {
+                remEl.style.color = '#ef4444';
+                remEl.innerHTML = `${remaining.toFixed(2)} ج.م <small class="text-danger">(تجاوز الإجمالي!)</small>`;
+            }
+        }
+    };
+
+    window.fillSplitRemaining = function(targetType) {
+        const totalAmount = parseFloat(document.getElementById('id_amount')?.value) || 0;
+        const inputs = {
+            cash: document.getElementById('id_paid_cash'),
+            card: document.getElementById('id_paid_card'),
+            ewallet: document.getElementById('id_paid_ewallet'),
+            bank: document.getElementById('id_paid_bank')
+        };
+
+        let otherTotal = 0;
+        Object.keys(inputs).forEach(key => {
+            if (key !== targetType && inputs[key]) {
+                otherTotal += parseFloat(inputs[key].value) || 0;
+            }
+        });
+
+        const remaining = Math.max(0, totalAmount - otherTotal);
+        if (inputs[targetType]) {
+            inputs[targetType].value = remaining.toFixed(2);
+        }
+        window.updateSplitCalculations();
+    };
+
+    ['id_amount', 'id_paid_cash', 'id_paid_card', 'id_paid_ewallet', 'id_paid_bank'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', window.updateSplitCalculations);
+    });
+
+    window.togglePaymentFields = function() {
         if (!paymentMethodSelect) return;
         const val = paymentMethodSelect.value;
-        if(treasuryField) treasuryField.style.display = 'none';
-        if(bankField) bankField.style.display = 'none';
-        if(ewalletField) ewalletField.style.display = 'none';
 
-        if (val === 'CASH' && treasuryField) {
-            treasuryField.style.display = 'block';
-        } else if (val === 'BANK_TRANSFER' && bankField) {
-            bankField.style.display = 'block';
-        } else if (val === 'EWALLET' && ewalletField) {
-            ewalletField.style.display = 'block';
+        // Reset visibility
+        if (treasuryField) treasuryField.style.display = 'none';
+        if (bankField) bankField.style.display = 'none';
+        if (ewalletField) ewalletField.style.display = 'none';
+        if (transferBankField) transferBankField.style.display = 'none';
+        if (splitAmountsContainer) splitAmountsContainer.style.display = 'none';
+
+        // Manage required attribute dynamically
+        const treasurySelect = treasuryField ? treasuryField.querySelector('select') : null;
+        const bankSelect = bankField ? bankField.querySelector('select') : null;
+        const ewalletSelect = ewalletField ? ewalletField.querySelector('select') : null;
+        const transferBankSelect = transferBankField ? transferBankField.querySelector('select') : null;
+
+        [treasurySelect, bankSelect, ewalletSelect, transferBankSelect].forEach(s => {
+            if (s) s.required = false;
+        });
+
+        if (val === 'SPLIT') {
+            if (paymentMethodContainer) paymentMethodContainer.className = 'col-12 mb-3';
+            if (splitAmountsContainer) splitAmountsContainer.style.display = 'block';
+
+            [treasuryField, bankField, ewalletField, transferBankField].forEach(f => {
+                if (f) {
+                    f.className = 'col-md-3 col-sm-6 mb-3';
+                    f.style.display = 'block';
+                }
+            });
+
+            if (treasuryField) {
+                const label = treasuryField.querySelector('label');
+                if (label) label.innerHTML = '<i class="fas fa-cash-register me-1"></i> خزينة الكاش <span class="text-danger">*</span>';
+            }
+            if (bankField) {
+                const label = bankField.querySelector('label');
+                const help = document.getElementById('bank-help-text');
+                if (label) label.innerHTML = '<i class="fas fa-credit-card me-1"></i> ماكينة الفيزا';
+                if (help) help.innerHTML = '<i class="fas fa-info-circle text-info"></i> ماكينة الفيزا لجزء البطاقة.';
+            }
+            if (ewalletField) {
+                const label = ewalletField.querySelector('label');
+                if (label) label.innerHTML = '<i class="fas fa-mobile-alt me-1"></i> المحفظة الإلكترونية';
+            }
+            if (transferBankField) {
+                const label = transferBankField.querySelector('label');
+                if (label) label.innerHTML = '<i class="fas fa-bolt me-1"></i> حساب إنستاباي / التحويل';
+            }
+
+            // Defaults if all zero
+            const cashVal = parseFloat(document.getElementById('id_paid_cash')?.value) || 0;
+            const cardVal = parseFloat(document.getElementById('id_paid_card')?.value) || 0;
+            const ewVal = parseFloat(document.getElementById('id_paid_ewallet')?.value) || 0;
+            const bankVal = parseFloat(document.getElementById('id_paid_bank')?.value) || 0;
+            if (cashVal === 0 && cardVal === 0 && ewVal === 0 && bankVal === 0) {
+                const totalAmount = parseFloat(document.getElementById('id_amount')?.value) || 0;
+                const cashInput = document.getElementById('id_paid_cash');
+                if (cashInput && totalAmount > 0) cashInput.value = totalAmount.toFixed(2);
+            }
+            window.updateSplitCalculations();
+
+        } else {
+            if (paymentMethodContainer) paymentMethodContainer.className = 'col-md-6 mb-3';
+            [treasuryField, bankField, ewalletField, transferBankField].forEach(f => {
+                if (f) f.className = 'col-md-6 mb-3';
+            });
+
+            if (val === 'CASH' && treasuryField) {
+                treasuryField.style.display = 'block';
+                if (treasurySelect) treasurySelect.required = true;
+                const label = treasuryField.querySelector('label');
+                if (label) label.innerHTML = '<i class="fas fa-cash-register me-1"></i> خزينة السداد / التحصيل <span class="text-danger">*</span>';
+            } else if (val === 'CARD' && bankField) {
+                bankField.style.display = 'block';
+                if (bankSelect) bankSelect.required = true;
+                const label = bankField.querySelector('label');
+                const help = document.getElementById('bank-help-text');
+                if (label) label.innerHTML = '<i class="fas fa-credit-card me-1"></i> ماكينة الفيزا / الحساب البنكي <span class="text-danger">*</span>';
+                if (help) help.innerHTML = '<i class="fas fa-info-circle text-info"></i> اختر ماكينة الفيزا أو الحساب البنكي المرتبط.';
+            } else if (val === 'BANK_TRANSFER' && transferBankField) {
+                transferBankField.style.display = 'block';
+                if (transferBankSelect) transferBankSelect.required = true;
+                const label = transferBankField.querySelector('label');
+                if (label) label.innerHTML = '<i class="fas fa-bolt me-1"></i> حساب إنستاباي / التحويل البنكي <span class="text-danger">*</span>';
+            } else if (val === 'EWALLET' && ewalletField) {
+                ewalletField.style.display = 'block';
+                if (ewalletSelect) ewalletSelect.required = true;
+                const label = ewalletField.querySelector('label');
+                if (label) label.innerHTML = '<i class="fas fa-mobile-alt me-1"></i> المحفظة الإلكترونية <span class="text-danger">*</span>';
+            }
+        }
+    };
+
+    function updateMutualExclusion(trigger) {
+        if (!expenseSelect) return; // في سندات القبض لا يوجد حساب مصروف
+
+        const partnerVal = partnerTs ? partnerTs.getValue() : (partnerSelect ? partnerSelect.value : '');
+        const expenseVal = expenseTs ? expenseTs.getValue() : (expenseSelect ? expenseSelect.value : '');
+
+        const partnerLocked = document.getElementById('partner-locked-msg');
+        const expenseLocked = document.getElementById('expense-locked-msg');
+
+        // Case 1: Partner has a value -> Lock expense
+        if (partnerVal) {
+            if (expenseTs) {
+                if (trigger === 'partner') expenseTs.clear(true);
+                expenseTs.disable();
+            }
+            if (expenseLocked) expenseLocked.style.display = 'block';
+            if (partnerLocked) partnerLocked.style.display = 'none';
+        }
+        // Case 2: Expense account has a value -> Lock partner
+        else if (expenseVal) {
+            if (partnerTs) {
+                if (trigger === 'expense') partnerTs.clear(true);
+                partnerTs.disable();
+            }
+            if (partnerLocked) partnerLocked.style.display = 'block';
+            if (expenseLocked) expenseLocked.style.display = 'none';
+        }
+        // Case 3: None selected -> enable both
+        else {
+            if (partnerTs) partnerTs.enable();
+            if (expenseTs) expenseTs.enable();
+            if (partnerLocked) partnerLocked.style.display = 'none';
+            if (expenseLocked) expenseLocked.style.display = 'none';
         }
     }
 
-    function toggleAccountField() {
-        if (!partnerSelect || !accountSelect) return;
-        if (partnerSelect.value) {
-            if (accountTs) {
-                accountTs.clear();
-                accountTs.disable();
-            } else {
-                accountSelect.disabled = true;
-                accountSelect.value = '';
-            }
-            accountSelect.closest('.mb-3').style.opacity = '0.5';
-        } else {
-            if (accountTs) {
-                accountTs.enable();
-            } else {
-                accountSelect.disabled = false;
-            }
-            accountSelect.closest('.mb-3').style.opacity = '1';
-        }
+    if (partnerTs) {
+        partnerTs.on('change', function() { updateMutualExclusion('partner'); });
+    } else if (partnerSelect) {
+        partnerSelect.addEventListener('change', function() { updateMutualExclusion('partner'); });
+    }
+
+    if (expenseTs) {
+        expenseTs.on('change', function() { updateMutualExclusion('expense'); });
+    } else if (expenseSelect) {
+        expenseSelect.addEventListener('change', function() { updateMutualExclusion('expense'); });
     }
 
     if (paymentMethodSelect) {
-        paymentMethodSelect.addEventListener('change', togglePaymentFields);
-        togglePaymentFields();
+        paymentMethodSelect.addEventListener('change', window.togglePaymentFields);
+        paymentMethodSelect.addEventListener('input', window.togglePaymentFields);
     }
-    
-    if (partnerSelect) {
-        partnerSelect.addEventListener('change', toggleAccountField);
-        toggleAccountField();
-    }
+    window.togglePaymentFields();
+    updateMutualExclusion('init');
 });
 </script>
 {% endblock %}

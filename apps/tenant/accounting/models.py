@@ -70,6 +70,11 @@ class Account(MPTTModel):
         verbose_name='إيراد معاكس (مرتجعات/خصومات)',
         help_text='خصصه لحسابات مرتجعات المبيعات والخصومات حتى تُخصم من صافي المبيعات'
     )
+    allow_direct_payment = models.BooleanField(
+        default=True,
+        verbose_name='يظهر في سندات الصرف المباشرة',
+        help_text='حدد هذا الخيار إذا كان الحساب يمثل مصروفاً قابلاً للصرف المباشر بالسندات (مثل الإيجار، المرافق، الأجور)'
+    )
     description = models.TextField(blank=True, verbose_name='وصف')
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -100,7 +105,11 @@ class Account(MPTTModel):
         Calculates the running balance for this account from all POSTED entries.
         For parent accounts, it aggregates the balances of all its descendants as well.
         Returns a signed Decimal: positive means normal-side balance.
+        Uses _prefetched_balance when available to eliminate N+1 queries.
         """
+        if hasattr(self, '_prefetched_balance'):
+            return self._prefetched_balance
+
         items = JournalItem.objects.filter(
             account__in=self.get_descendants(include_self=True),
             entry__status=JournalEntry.POSTED
@@ -328,6 +337,44 @@ class Treasury(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def current_balance(self):
+        if self.account:
+            return self.account.current_balance
+        return Decimal('0.00')
+
+    def ensure_account(self):
+        """Ensures this Treasury is linked to a valid ledger account, auto-creating it if missing."""
+        if self.account_id and self.account and getattr(self.account, 'code', None) not in ['1100', '1110', '1120']:
+            return self.account
+        from apps.tenant.services.journal_service import _get_system_account
+        try:
+            parent_code = '1120' if 'بنك' in self.name else '1110'
+            parent_acc = _get_system_account(parent_code)
+            if parent_acc:
+                acc, _ = Account.objects.get_or_create(
+                    code=f"{parent_acc.code}-{self.id}",
+                    defaults={
+                        'name': self.name,
+                        'account_type': parent_acc.account_type,
+                        'parent': parent_acc,
+                        'allow_reconcile': True
+                    }
+                )
+                if self.account_id != acc.id:
+                    self.account = acc
+                    Treasury.objects.filter(id=self.id).update(account=acc)
+                return acc
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error ensuring treasury account: {e}")
+        return self.account
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if not self.account_id:
+            self.ensure_account()
+
 
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -344,6 +391,43 @@ class BankAccount(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def current_balance(self):
+        if self.account:
+            return self.account.current_balance
+        return Decimal('0.00')
+
+    def ensure_account(self):
+        """Ensures this BankAccount is linked to a valid ledger account, auto-creating it if missing."""
+        if self.account_id and self.account and getattr(self.account, 'code', None) not in ['1100', '1120']:
+            return self.account
+        from apps.tenant.services.journal_service import _get_system_account
+        try:
+            parent_acc = _get_system_account('1120')
+            if parent_acc:
+                acc, _ = Account.objects.get_or_create(
+                    code=f"{parent_acc.code}-{self.id}",
+                    defaults={
+                        'name': self.name,
+                        'account_type': parent_acc.account_type,
+                        'parent': parent_acc,
+                        'allow_reconcile': True
+                    }
+                )
+                if self.account_id != acc.id:
+                    self.account = acc
+                    BankAccount.objects.filter(id=self.id).update(account=acc)
+                return acc
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error ensuring bank account: {e}")
+        return self.account
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if not self.account_id:
+            self.ensure_account()
+
 class EWallet(models.Model):
     name = models.CharField(max_length=100, verbose_name='اسم المحفظة')
     opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
@@ -356,6 +440,44 @@ class EWallet(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def current_balance(self):
+        if self.account:
+            return self.account.current_balance
+        return Decimal('0.00')
+
+    def ensure_account(self):
+        """Ensures this EWallet is linked to a valid ledger account, auto-creating it if missing."""
+        if self.account_id and self.account and getattr(self.account, 'code', None) not in ['1100', '1160']:
+            return self.account
+        from apps.tenant.services.journal_service import _get_system_account
+        try:
+            parent_acc = _get_system_account('1160')
+            if parent_acc:
+                acc, _ = Account.objects.get_or_create(
+                    code=f"{parent_acc.code}-{self.id}",
+                    defaults={
+                        'name': self.name,
+                        'account_type': parent_acc.account_type,
+                        'parent': parent_acc,
+                        'allow_reconcile': True
+                    }
+                )
+                if self.account_id != acc.id:
+                    self.account = acc
+                    EWallet.objects.filter(id=self.id).update(account=acc)
+                return acc
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error ensuring ewallet account: {e}")
+        return self.account
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if not self.account_id:
+            self.ensure_account()
+
+
 @receiver(post_save, sender=Treasury)
 def create_treasury_account(sender, instance, created, **kwargs):
     updated = False
@@ -367,11 +489,14 @@ def create_treasury_account(sender, instance, created, **kwargs):
             parent_code = '1120' if 'بنك' in instance.name else '1110'
             parent_acc = _get_system_account(parent_code)
             
-            acc = Account.objects.create(
+            acc, _ = Account.objects.get_or_create(
                 code=f"{parent_acc.code}-{instance.id}",
-                name=f"{instance.name}",
-                account_type=parent_acc.account_type,
-                parent=parent_acc
+                defaults={
+                    'name': instance.name,
+                    'account_type': parent_acc.account_type,
+                    'parent': parent_acc,
+                    'allow_reconcile': True
+                }
             )
             instance.account = acc
             updated = True
@@ -380,22 +505,26 @@ def create_treasury_account(sender, instance, created, **kwargs):
             logging.getLogger(__name__).error(f"Error creating treasury account: {str(e)}")
             pass
             
-    if updated:
-        instance.save(update_fields=['account'])
+    if updated and instance.account:
+        Treasury.objects.filter(id=instance.id).update(account=instance.account)
 
     if created and instance.opening_balance > 0 and instance.account:
         from apps.tenant.services.journal_service import _get_system_account
         from django.utils import timezone
-        capital_acc = _get_system_account('3100')
-        if capital_acc:
-            entry = JournalEntry.objects.create(
-                date=timezone.now().date(),
-                reference=f"OPENING-TR-{instance.id}",
-                description=f"رصيد افتتاحي - {instance.name}"
-            )
-            from .models import JournalEntryLine
-            JournalEntryLine.objects.create(entry=entry, account=instance.account, debit=instance.opening_balance, credit=0)
-            JournalEntryLine.objects.create(entry=entry, account=capital_acc, debit=0, credit=instance.opening_balance)
+        try:
+            capital_acc = _get_system_account('3100')
+            if capital_acc:
+                entry = JournalEntry.objects.create(
+                    date=timezone.now().date(),
+                    reference=f"OPENING-TR-{instance.id}",
+                    description=f"رصيد افتتاحي - {instance.name}"
+                )
+                from .models import JournalEntryLine
+                JournalEntryLine.objects.create(entry=entry, account=instance.account, debit=instance.opening_balance, credit=0)
+                JournalEntryLine.objects.create(entry=entry, account=capital_acc, debit=0, credit=instance.opening_balance)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error creating treasury opening balance entry: {str(e)}")
 
 @receiver(post_save, sender=BankAccount)
 def create_bank_account(sender, instance, created, **kwargs):
@@ -406,33 +535,42 @@ def create_bank_account(sender, instance, created, **kwargs):
         from apps.tenant.services.journal_service import _get_system_account
         try:
             parent_acc = _get_system_account('1120')
-            acc = Account.objects.create(
+            acc, _ = Account.objects.get_or_create(
                 code=f"{parent_acc.code}-{instance.id}",
-                name=f"{instance.name}",
-                account_type=parent_acc.account_type,
-                parent=parent_acc
+                defaults={
+                    'name': instance.name,
+                    'account_type': parent_acc.account_type,
+                    'parent': parent_acc,
+                    'allow_reconcile': True
+                }
             )
             instance.account = acc
             updated = True
         except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error creating bank account: {str(e)}")
             pass
             
-    if updated:
-        instance.save(update_fields=['account'])
+    if updated and instance.account:
+        BankAccount.objects.filter(id=instance.id).update(account=instance.account)
 
     if created and instance.opening_balance > 0 and instance.account:
         from apps.tenant.services.journal_service import _get_system_account
         from django.utils import timezone
-        capital_acc = _get_system_account('3100')
-        if capital_acc:
-            entry = JournalEntry.objects.create(
-                date=timezone.now().date(),
-                reference=f"OPENING-BK-{instance.id}",
-                description=f"رصيد افتتاحي - {instance.name}"
-            )
-            from .models import JournalEntryLine
-            JournalEntryLine.objects.create(entry=entry, account=instance.account, debit=instance.opening_balance, credit=0)
-            JournalEntryLine.objects.create(entry=entry, account=capital_acc, debit=0, credit=instance.opening_balance)
+        try:
+            capital_acc = _get_system_account('3100')
+            if capital_acc:
+                entry = JournalEntry.objects.create(
+                    date=timezone.now().date(),
+                    reference=f"OPENING-BK-{instance.id}",
+                    description=f"رصيد افتتاحي - {instance.name}"
+                )
+                from .models import JournalEntryLine
+                JournalEntryLine.objects.create(entry=entry, account=instance.account, debit=instance.opening_balance, credit=0)
+                JournalEntryLine.objects.create(entry=entry, account=capital_acc, debit=0, credit=instance.opening_balance)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error creating bank opening balance entry: {str(e)}")
 
 @receiver(post_save, sender=EWallet)
 def create_ewallet_account(sender, instance, created, **kwargs):
@@ -443,19 +581,24 @@ def create_ewallet_account(sender, instance, created, **kwargs):
         from apps.tenant.services.journal_service import _get_system_account
         try:
             parent_acc = _get_system_account('1160')
-            acc = Account.objects.create(
+            acc, _ = Account.objects.get_or_create(
                 code=f"{parent_acc.code}-{instance.id}",
-                name=f"{instance.name}",
-                account_type=parent_acc.account_type,
-                parent=parent_acc
+                defaults={
+                    'name': instance.name,
+                    'account_type': parent_acc.account_type,
+                    'parent': parent_acc,
+                    'allow_reconcile': True
+                }
             )
             instance.account = acc
             updated = True
         except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Error creating ewallet account: {str(e)}")
             pass
             
-    if updated:
-        instance.save(update_fields=['account'])
+    if updated and instance.account:
+        EWallet.objects.filter(id=instance.id).update(account=instance.account)
 
     if created and instance.opening_balance > 0 and instance.account:
         from apps.tenant.services.journal_service import _get_system_account
@@ -657,12 +800,16 @@ class Voucher(models.Model):
     ]
 
     CASH = 'CASH'
-    BANK_TRANSFER = 'BANK_TRANSFER'
+    CARD = 'CARD'
     EWALLET = 'EWALLET'
+    BANK_TRANSFER = 'BANK_TRANSFER'
+    SPLIT = 'SPLIT'
     PAYMENT_METHOD_CHOICES = [
-        (CASH, 'نقدي'),
-        (BANK_TRANSFER, 'تحويل بنكي'),
-        (EWALLET, 'محفظة إلكترونية')
+        (CASH, 'نقدي (كاش)'),
+        (CARD, 'بطاقة / فيزا'),
+        (EWALLET, 'محفظة إلكترونية'),
+        (BANK_TRANSFER, 'تحويل بنكي / إنستاباي'),
+        (SPLIT, 'سداد مقسم / متنوع'),
     ]
 
     voucher_type = models.CharField(max_length=15, choices=VOUCHER_TYPE_CHOICES, verbose_name='نوع السند')
@@ -681,8 +828,23 @@ class Voucher(models.Model):
     
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default=CASH, verbose_name='طريقة الدفع')
     treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, null=True, blank=True, verbose_name='الخزينة')
-    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, null=True, blank=True, verbose_name='الحساب البنكي')
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, null=True, blank=True, verbose_name='الحساب البنكي / ماكينة الفيزا')
     ewallet = models.ForeignKey(EWallet, on_delete=models.PROTECT, null=True, blank=True, verbose_name='المحفظة الإلكترونية')
+    transfer_bank_account = models.ForeignKey(
+        BankAccount, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='transfer_vouchers', verbose_name='حساب إنستاباي / التحويل البنكي'
+    )
+
+    # حقول تفاصيل السداد المقسم / المتنوع
+    paid_cash = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ النقدي')
+    paid_card = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ البطاقة / فيزا')
+    paid_ewallet = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ المحفظة الإلكترونية')
+    paid_bank = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ التحويل البنكي / إنستاباي')
+
+    pos_session = models.ForeignKey(
+        'invoicing.POSSession', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='vouchers', verbose_name='الوردية المرتبطة'
+    )
     
     description = models.TextField(verbose_name='البيان', blank=True, null=True)
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=DRAFT, verbose_name='الحالة')
@@ -716,17 +878,109 @@ class Voucher(models.Model):
             else:
                 last_num = 0
             self.voucher_number = f"{prefix}-{year}-{(last_num + 1):05d}"
+
+        # مزامنة تفاصيل السداد المقسم مع طريقة الدفع
+        if self.payment_method == self.CASH:
+            self.paid_cash = self.amount or Decimal('0')
+            self.paid_card = Decimal('0')
+            self.paid_ewallet = Decimal('0')
+            self.paid_bank = Decimal('0')
+        elif self.payment_method == self.CARD:
+            self.paid_card = self.amount or Decimal('0')
+            self.paid_cash = Decimal('0')
+            self.paid_ewallet = Decimal('0')
+            self.paid_bank = Decimal('0')
+        elif self.payment_method == self.EWALLET:
+            self.paid_ewallet = self.amount or Decimal('0')
+            self.paid_cash = Decimal('0')
+            self.paid_card = Decimal('0')
+            self.paid_bank = Decimal('0')
+        elif self.payment_method == self.BANK_TRANSFER:
+            self.paid_bank = self.amount or Decimal('0')
+            self.paid_cash = Decimal('0')
+            self.paid_card = Decimal('0')
+            self.paid_ewallet = Decimal('0')
+            if not self.bank_account and self.transfer_bank_account:
+                self.bank_account = self.transfer_bank_account
+            elif not self.transfer_bank_account and self.bank_account:
+                self.transfer_bank_account = self.bank_account
+        elif self.payment_method == self.SPLIT:
+            split_sum = (self.paid_cash or 0) + (self.paid_card or 0) + (self.paid_ewallet or 0) + (self.paid_bank or 0)
+            if split_sum == 0 and self.amount:
+                self.paid_cash = self.amount
             
         super().save(*args, **kwargs)
 
     @property
     def payment_account(self):
-        if self.payment_method == self.CASH and self.treasury:
-            return self.treasury.account
-        elif self.payment_method == self.BANK_TRANSFER and self.bank_account:
-            return self.bank_account.account
-        elif self.payment_method == self.EWALLET and self.ewallet:
-            return self.ewallet.account
+        if self.payment_method == self.CASH:
+            if not self.treasury:
+                from apps.tenant.core.models import SystemSetting
+                sys_setting = SystemSetting.get_settings()
+                if self.pos_session and self.pos_session.treasury:
+                    self.treasury = self.pos_session.treasury
+                elif sys_setting and sys_setting.default_pos_treasury:
+                    self.treasury = sys_setting.default_pos_treasury
+                elif Treasury.objects.exists():
+                    self.treasury = Treasury.objects.first()
+                if self.treasury and self.pk:
+                    Voucher.objects.filter(pk=self.pk).update(treasury=self.treasury)
+
+            if self.treasury:
+                return self.treasury.ensure_account()
+            return None
+
+        elif self.payment_method in (self.BANK_TRANSFER, self.CARD):
+            if not self.bank_account and self.transfer_bank_account and self.payment_method == self.BANK_TRANSFER:
+                self.bank_account = self.transfer_bank_account
+
+            if not self.bank_account:
+                from apps.tenant.core.models import SystemSetting
+                sys_setting = SystemSetting.get_settings()
+                if self.payment_method == self.CARD and sys_setting and sys_setting.default_pos_bank_account:
+                    self.bank_account = sys_setting.default_pos_bank_account
+                elif self.payment_method == self.BANK_TRANSFER and sys_setting and sys_setting.default_pos_instapay_account:
+                    self.bank_account = sys_setting.default_pos_instapay_account
+                elif self.payment_method == self.BANK_TRANSFER and sys_setting and sys_setting.default_pos_bank_account:
+                    self.bank_account = sys_setting.default_pos_bank_account
+                elif BankAccount.objects.exists():
+                    self.bank_account = BankAccount.objects.first()
+                if self.bank_account and self.pk:
+                    Voucher.objects.filter(pk=self.pk).update(bank_account=self.bank_account)
+
+            if self.bank_account:
+                return self.bank_account.ensure_account()
+            return None
+
+        elif self.payment_method == self.EWALLET:
+            if not self.ewallet:
+                from apps.tenant.core.models import SystemSetting
+                sys_setting = SystemSetting.get_settings()
+                if sys_setting and sys_setting.default_pos_ewallet:
+                    self.ewallet = sys_setting.default_pos_ewallet
+                elif EWallet.objects.exists():
+                    self.ewallet = EWallet.objects.first()
+                if self.ewallet and self.pk:
+                    Voucher.objects.filter(pk=self.pk).update(ewallet=self.ewallet)
+
+            if self.ewallet:
+                return self.ewallet.ensure_account()
+            return None
+
+        elif self.payment_method == self.SPLIT:
+            if self.treasury:
+                acc = self.treasury.ensure_account()
+                if acc: return acc
+            if self.bank_account:
+                acc = self.bank_account.ensure_account()
+                if acc: return acc
+            if self.ewallet:
+                acc = self.ewallet.ensure_account()
+                if acc: return acc
+            trans_acc = self.transfer_bank_account or self.bank_account
+            if trans_acc:
+                acc = trans_acc.ensure_account()
+                if acc: return acc
         return None
 
     def confirm_voucher(self):
@@ -738,33 +992,133 @@ class Voucher(models.Model):
             if self.status != self.DRAFT:
                 raise ValidationError("لا يمكن ترحيل إلا مسودة السند.")
             
-            if not self.payment_account:
-                raise ValidationError("يجب تحديد حساب الدفع (الخزينة/البنك/المحفظة) المرتبط بطريقة الدفع.")
-                
-            # Clean up any orphaned journal entry
-            JournalEntry.objects.filter(reference=self.voucher_number).delete()
-            
-            entry = JournalEntry.objects.create(
-                date=self.date,
-                reference=self.voucher_number,
-                description=f"{self.get_voucher_type_display()} - {self.description or ''}",
-                status=JournalEntry.POSTED
-            )
-            
-            if self.voucher_type == self.RECEIPT:
-                # Receipt: Dr Treasury | Cr Account
-                JournalItem.objects.create(entry=entry, account=self.payment_account, debit=self.amount, credit=0)
-                JournalItem.objects.create(entry=entry, account=self.account, debit=0, credit=self.amount)
+            if self.payment_method == self.SPLIT:
+                split_sum = (self.paid_cash or Decimal('0')) + (self.paid_card or Decimal('0')) + (self.paid_ewallet or Decimal('0')) + (self.paid_bank or Decimal('0'))
+                if abs(split_sum - self.amount) > Decimal('0.05'):
+                    raise ValidationError(f"إجمالي مبالغ السداد المقسم ({split_sum}) لا يساوي إجمالي مبلغ السند ({self.amount}).")
+
+                if self.paid_cash > 0:
+                    if not self.treasury:
+                        from apps.tenant.core.models import SystemSetting
+                        sys_setting = SystemSetting.get_settings()
+                        self.treasury = (sys_setting.default_pos_treasury if sys_setting else None) or Treasury.objects.first()
+                        if self.treasury and self.pk:
+                            Voucher.objects.filter(pk=self.pk).update(treasury=self.treasury)
+                    if not self.treasury or not self.treasury.ensure_account():
+                        raise ValidationError("يجب تحديد الخزينة للجزء النقدي والتأكد من ربطها بحساب محاسبي.")
+
+                if self.paid_card > 0:
+                    if not self.bank_account:
+                        from apps.tenant.core.models import SystemSetting
+                        sys_setting = SystemSetting.get_settings()
+                        self.bank_account = (sys_setting.default_pos_bank_account if sys_setting else None) or BankAccount.objects.first()
+                        if self.bank_account and self.pk:
+                            Voucher.objects.filter(pk=self.pk).update(bank_account=self.bank_account)
+                    if not self.bank_account or not self.bank_account.ensure_account():
+                        raise ValidationError("يجب تحديد ماكينة الفيزا / الحساب البنكي لجزء البطاقة.")
+
+                if self.paid_ewallet > 0:
+                    if not self.ewallet:
+                        from apps.tenant.core.models import SystemSetting
+                        sys_setting = SystemSetting.get_settings()
+                        self.ewallet = (sys_setting.default_pos_ewallet if sys_setting else None) or EWallet.objects.first()
+                        if self.ewallet and self.pk:
+                            Voucher.objects.filter(pk=self.pk).update(ewallet=self.ewallet)
+                    if not self.ewallet or not self.ewallet.ensure_account():
+                        raise ValidationError("يجب تحديد المحفظة الإلكترونية لجزء المحفظة.")
+
+                trans_acc = self.transfer_bank_account or self.bank_account
+                if self.paid_bank > 0:
+                    if not trans_acc:
+                        from apps.tenant.core.models import SystemSetting
+                        sys_setting = SystemSetting.get_settings()
+                        trans_acc = (sys_setting.default_pos_instapay_account if sys_setting else None) or (sys_setting.default_pos_bank_account if sys_setting else None) or BankAccount.objects.first()
+                        if trans_acc and self.pk:
+                            Voucher.objects.filter(pk=self.pk).update(transfer_bank_account=trans_acc)
+                    if not trans_acc or not trans_acc.ensure_account():
+                        raise ValidationError("يجب تحديد حساب إنستاباي / التحويل البنكي لجزء التحويل.")
+
+                # Clean up any orphaned journal entry
+                JournalEntry.objects.filter(reference=self.voucher_number).delete()
+
+                entry = JournalEntry.objects.create(
+                    date=self.date,
+                    reference=self.voucher_number,
+                    description=f"{self.get_voucher_type_display()} (سداد مقسم) - {self.description or ''}",
+                    status=JournalEntry.POSTED
+                )
+
+                if self.voucher_type == self.RECEIPT:
+                    # Receipt: Dr Payment Methods | Cr Account
+                    if self.paid_cash > 0:
+                        JournalItem.objects.create(entry=entry, account=self.treasury.account, debit=self.paid_cash, credit=0, description=f"{self.voucher_number} - نقدي")
+                    if self.paid_card > 0:
+                        JournalItem.objects.create(entry=entry, account=self.bank_account.account, debit=self.paid_card, credit=0, description=f"{self.voucher_number} - بطاقة / فيزا")
+                    if self.paid_ewallet > 0:
+                        JournalItem.objects.create(entry=entry, account=self.ewallet.account, debit=self.paid_ewallet, credit=0, description=f"{self.voucher_number} - محفظة إلكترونية")
+                    if self.paid_bank > 0:
+                        JournalItem.objects.create(entry=entry, account=trans_acc.account, debit=self.paid_bank, credit=0, description=f"{self.voucher_number} - إنستاباي / تحويل بنكي")
+                    JournalItem.objects.create(entry=entry, account=self.account, debit=0, credit=self.amount)
+                else:
+                    # Payment: Dr Account | Cr Payment Methods
+                    JournalItem.objects.create(entry=entry, account=self.account, debit=self.amount, credit=0)
+                    if self.paid_cash > 0:
+                        JournalItem.objects.create(entry=entry, account=self.treasury.account, debit=0, credit=self.paid_cash, description=f"{self.voucher_number} - نقدي")
+                    if self.paid_card > 0:
+                        JournalItem.objects.create(entry=entry, account=self.bank_account.account, debit=0, credit=self.paid_card, description=f"{self.voucher_number} - بطاقة / فيزا")
+                    if self.paid_ewallet > 0:
+                        JournalItem.objects.create(entry=entry, account=self.ewallet.account, debit=0, credit=self.paid_ewallet, description=f"{self.voucher_number} - محفظة إلكترونية")
+                    if self.paid_bank > 0:
+                        JournalItem.objects.create(entry=entry, account=trans_acc.account, debit=0, credit=self.paid_bank, description=f"{self.voucher_number} - إنستاباي / تحويل بنكي")
+
+                entry.post()
+                self.status = self.POSTED
+                self.journal_entry = entry
+                self.save()
             else:
-                # Payment: Dr Account | Cr Treasury
-                JournalItem.objects.create(entry=entry, account=self.account, debit=self.amount, credit=0)
-                JournalItem.objects.create(entry=entry, account=self.payment_account, debit=0, credit=self.amount)
-            
-            entry.post()
-            
-            self.status = self.POSTED
-            self.journal_entry = entry
-            self.save()
+                if not self.payment_account:
+                    raise ValidationError("يجب تحديد حساب الدفع (الخزينة/البنك/المحفظة) المرتبط بطريقة الدفع.")
+                    
+                # Clean up any orphaned journal entry
+                JournalEntry.objects.filter(reference=self.voucher_number).delete()
+                
+                entry = JournalEntry.objects.create(
+                    date=self.date,
+                    reference=self.voucher_number,
+                    description=f"{self.get_voucher_type_display()} - {self.description or ''}",
+                    status=JournalEntry.POSTED
+                )
+                
+                if self.voucher_type == self.RECEIPT:
+                    # Receipt: Dr Treasury | Cr Account
+                    JournalItem.objects.create(entry=entry, account=self.payment_account, debit=self.amount, credit=0)
+                    JournalItem.objects.create(entry=entry, account=self.account, debit=0, credit=self.amount)
+                else:
+                    # Payment: Dr Account | Cr Treasury
+                    JournalItem.objects.create(entry=entry, account=self.account, debit=self.amount, credit=0)
+                    JournalItem.objects.create(entry=entry, account=self.payment_account, debit=0, credit=self.amount)
+                
+                entry.post()
+                
+                self.status = self.POSTED
+                self.journal_entry = entry
+                self.save()
+
+    def cancel_voucher(self):
+        """Cancels the voucher and deletes its linked journal entry."""
+        from django.db import transaction
+        from django.core.exceptions import ValidationError
+
+        with transaction.atomic():
+            if self.status == self.CANCELLED:
+                raise ValidationError("السند ملغي بالفعل.")
+
+            if self.journal_entry:
+                self.journal_entry.delete()
+                self.journal_entry = None
+
+            self.status = self.CANCELLED
+            self.save(update_fields=['status', 'journal_entry', 'updated_at'])
 
 
 # ---------------------------------------------------------------------------
@@ -1120,3 +1474,1250 @@ class EServiceTransaction(models.Model):
         except Exception as e:
             import logging
             logging.getLogger(__name__).error(f'Error creating service invoice: {e}')
+
+
+# ---------------------------------------------------------------------------
+# Internal Transfer (تحويل الأموال بين الحسابات: خزن، بنوك، ومحافظ فقط)
+# ---------------------------------------------------------------------------
+
+class InternalTransfer(models.Model):
+    TREASURY = 'TREASURY'
+    BANK = 'BANK'
+    EWALLET = 'EWALLET'
+
+    ACCOUNT_TYPE_CHOICES = [
+        (TREASURY, 'خزينة / درج'),
+        (BANK, 'حساب بنكي'),
+        (EWALLET, 'محفظة إلكترونية'),
+    ]
+
+    DRAFT = 'DRAFT'
+    POSTED = 'POSTED'
+    CANCELLED = 'CANCELLED'
+
+    STATUS_CHOICES = [
+        (DRAFT, 'مسودة'),
+        (POSTED, 'مُرحل'),
+        (CANCELLED, 'ملغي'),
+    ]
+
+    transfer_number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم سند التحويل')
+    date = models.DateField(default=datetime.date.today, verbose_name='تاريخ التحويل')
+    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ المحول')
+
+    # Source Account
+    from_account_type = models.CharField(max_length=20, choices=ACCOUNT_TYPE_CHOICES, default=TREASURY, verbose_name='نوع الجهة المحول منها')
+    from_treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, null=True, blank=True, related_name='transfers_from', verbose_name='الخزينة (المحول منها)')
+    from_bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, null=True, blank=True, related_name='transfers_from', verbose_name='الحساب البنكي (المحول منه)')
+    from_ewallet = models.ForeignKey(EWallet, on_delete=models.PROTECT, null=True, blank=True, related_name='transfers_from', verbose_name='المحفظة الإلكترونية (المحول منها)')
+
+    # Destination Account
+    to_account_type = models.CharField(max_length=20, choices=ACCOUNT_TYPE_CHOICES, default=TREASURY, verbose_name='نوع الجهة المحول إليها')
+    to_treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, null=True, blank=True, related_name='transfers_to', verbose_name='الخزينة (المحول إليها)')
+    to_bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, null=True, blank=True, related_name='transfers_to', verbose_name='الحساب البنكي (المحول إليه)')
+    to_ewallet = models.ForeignKey(EWallet, on_delete=models.PROTECT, null=True, blank=True, related_name='transfers_to', verbose_name='المحفظة الإلكترونية (المحول إليها)')
+
+    description = models.TextField(blank=True, null=True, verbose_name='البيان / ملاحظات')
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=DRAFT, verbose_name='الحالة')
+
+    journal_entry = models.OneToOneField(
+        JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='internal_transfer', verbose_name='قيد اليومية'
+    )
+    pos_session = models.ForeignKey(
+        'invoicing.POSSession', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='transfers', verbose_name='الوردية المرتبطة'
+    )
+    created_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='internal_transfers', verbose_name='المحرر'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'تحويل مالي بين الحسابات'
+        verbose_name_plural = 'تحويلات الأموال بين الحسابات'
+        ordering = ['-date', '-created_at']
+
+    def __str__(self):
+        return f"تحويل #{self.transfer_number} - {self.amount} ج.م"
+
+    def save(self, *args, **kwargs):
+        if not self.transfer_number:
+            year = datetime.date.today().year
+            last_trf = InternalTransfer.objects.filter(transfer_number__startswith=f"TRF-{year}-").order_by('-transfer_number').first()
+            if last_trf:
+                try:
+                    last_num = int(last_trf.transfer_number.split('-')[-1])
+                except ValueError:
+                    last_num = 0
+            else:
+                last_num = 0
+            self.transfer_number = f"TRF-{year}-{(last_num + 1):05d}"
+        super().save(*args, **kwargs)
+
+    @property
+    def source_object(self):
+        if self.from_account_type == self.TREASURY:
+            return self.from_treasury
+        elif self.from_account_type == self.BANK:
+            return self.from_bank_account
+        elif self.from_account_type == self.EWALLET:
+            return self.from_ewallet
+        return None
+
+    @property
+    def destination_object(self):
+        if self.to_account_type == self.TREASURY:
+            return self.to_treasury
+        elif self.to_account_type == self.BANK:
+            return self.to_bank_account
+        elif self.to_account_type == self.EWALLET:
+            return self.to_ewallet
+        return None
+
+    @property
+    def source_name(self):
+        obj = self.source_object
+        return obj.name if obj else '-'
+
+    @property
+    def destination_name(self):
+        obj = self.destination_object
+        return obj.name if obj else '-'
+
+    @property
+    def source_gl_account(self):
+        obj = self.source_object
+        return obj.account if (obj and hasattr(obj, 'account')) else None
+
+    @property
+    def destination_gl_account(self):
+        obj = self.destination_object
+        return obj.account if (obj and hasattr(obj, 'account')) else None
+
+    def confirm_transfer(self):
+        """Generates accounting entry and marks transfer as POSTED."""
+        from django.db import transaction
+        from django.core.exceptions import ValidationError
+
+        with transaction.atomic():
+            if self.status != self.DRAFT:
+                raise ValidationError("لا يمكن ترحيل إلا مسودة التحويل.")
+
+            src_acc = self.source_gl_account
+            dst_acc = self.destination_gl_account
+
+            if not src_acc:
+                raise ValidationError("يجب تحديد حساب شجرة الحسابات المرتبط بالجهة المحول منها.")
+            if not dst_acc:
+                raise ValidationError("يجب تحديد حساب شجرة الحسابات المرتبط بالجهة المحول إليها.")
+            if src_acc == dst_acc:
+                raise ValidationError("غير مسموح بالتحويل من وإلى نفس الحساب المحاسبي.")
+
+            src_obj = self.source_object
+            if src_obj:
+                src_balance = getattr(src_obj, 'current_balance', Decimal('0.00'))
+                if src_balance < self.amount:
+                    raise ValidationError(f"عفواً، رصيد {self.source_name} الحالي ({src_balance:,.2f} ج.م) غير كافٍ لإكمال تحويل بمبلغ {self.amount:,.2f} ج.م.")
+
+
+            # Delete any orphaned journal entry
+            JournalEntry.objects.filter(reference=self.transfer_number).delete()
+
+            entry = JournalEntry.objects.create(
+                date=self.date,
+                reference=self.transfer_number,
+                description=f"تحويل مالي ({self.source_name} ⬅️ {self.destination_name}) - {self.description or ''}",
+                status=JournalEntry.POSTED
+            )
+
+            # Debit: Destination Account
+            JournalItem.objects.create(entry=entry, account=dst_acc, debit=self.amount, credit=0)
+            # Credit: Source Account
+            JournalItem.objects.create(entry=entry, account=src_acc, debit=0, credit=self.amount)
+
+            entry.post()
+
+            self.status = self.POSTED
+            self.journal_entry = entry
+            self.save()
+
+    def cancel_transfer(self):
+        """Cancels transfer and deletes its linked journal entry."""
+        from django.db import transaction
+        from django.core.exceptions import ValidationError
+
+        with transaction.atomic():
+            if self.status == self.CANCELLED:
+                raise ValidationError("التحويل ملغي بالفعل.")
+
+            if self.journal_entry:
+                self.journal_entry.delete()
+                self.journal_entry = None
+
+            self.status = self.CANCELLED
+            self.save(update_fields=['status', 'journal_entry', 'updated_at'])
+
+
+# ---------------------------------------------------------------------------
+# Cheque Management (أوراق القبض وأوراق الدفع)
+# ---------------------------------------------------------------------------
+
+class ChequeBook(models.Model):
+    """
+    دفاتر الشيكات الخاصة بحسابات بنوك الشركة (لشيكات الدفع الصادرة).
+    """
+    bank_account = models.ForeignKey(
+        'BankAccount', on_delete=models.CASCADE, related_name='cheque_books',
+        verbose_name='حساب بنك الشركة'
+    )
+    book_number = models.CharField(max_length=50, verbose_name='رقم / اسم الدفتر')
+    series_prefix = models.CharField(max_length=15, blank=True, verbose_name='بادئة الترقيم (إن وجدت)')
+    start_number = models.PositiveIntegerField(verbose_name='رقم أول شيك')
+    end_number = models.PositiveIntegerField(verbose_name='رقم آخر شيك')
+    current_number = models.PositiveIntegerField(verbose_name='الرقم الحالي التالي')
+    is_active = models.BooleanField(default=True, verbose_name='نشط')
+    notes = models.TextField(blank=True, verbose_name='ملاحظات')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'دفتر شيكات'
+        verbose_name_plural = 'دفاتر الشيكات'
+        ordering = ['bank_account', 'book_number']
+
+    def __str__(self):
+        return f"{self.book_number} ({self.bank_account.name}) [{self.start_number} - {self.end_number}]"
+
+    def get_next_number(self):
+        """Returns next formatted cheque number or None if exhausted."""
+        if self.current_number > self.end_number:
+            return None
+        prefix = self.series_prefix or ''
+        return f"{prefix}{self.current_number}"
+
+    def advance_number(self):
+        """Increments current number if within range."""
+        if self.current_number <= self.end_number:
+            self.current_number += 1
+            self.save(update_fields=['current_number'])
+
+
+class ChequeType(models.TextChoices):
+    RECEIVABLE = 'RECEIVABLE', 'شيك قبض (ورقة قبض من عميل)'
+    PAYABLE = 'PAYABLE', 'شيك صرف (ورقة دفع لمورد)'
+
+
+class ChequeStatus(models.TextChoices):
+    # شيكات القبض (Receivable)
+    UNDER_COLLECTION = 'UNDER_COLLECTION', 'تحت التحصيل'
+    COLLECTED = 'COLLECTED', 'تم التحصيل'
+    BOUNCED = 'BOUNCED', 'مرتد (مرفوض)'
+    IN_PORTFOLIO = 'IN_PORTFOLIO', 'تحت التحصيل'  # للتوافقية السابقة
+
+    # شيكات الصرف (Payable)
+    ISSUED = 'ISSUED', 'صادر (تحت الصرف)'
+    CLEARED = 'CLEARED', 'تم الصرف من البنك'
+    CANCELLED = 'CANCELLED', 'ملغي'
+
+
+class Cheque(models.Model):
+    """
+    نموذج الشيك التجاري (ورقة قبض أو ورقة دفع).
+    يدير دورة الحياة المحاسبية الكاملة للشيك وفق المعايير المحاسبية عبر حساب وسيط.
+    """
+    cheque_type = models.CharField(
+        max_length=20, choices=ChequeType.choices, verbose_name='نوع الشيك', db_index=True
+    )
+    cheque_number = models.CharField(max_length=50, verbose_name='رقم الشيك', db_index=True)
+    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ (ج.م)')
+    
+    received_date = models.DateField(default=datetime.date.today, verbose_name='تاريخ الاستلام / التحرير')
+    due_date = models.DateField(verbose_name='تاريخ الاستحقاق', db_index=True)
+    clearance_date = models.DateField(null=True, blank=True, verbose_name='تاريخ التحصيل / الصرف الفعلي')
+    
+    partner = models.ForeignKey(
+        'partners.Partner', on_delete=models.PROTECT, related_name='cheques',
+        verbose_name='الشريك (العميل / المورد)'
+    )
+    payee_name = models.CharField(max_length=200, blank=True, verbose_name='المستفيد المكتوب بالشيك')
+    
+    # تفاصيل شيك الصرف (Payable)
+    bank_account = models.ForeignKey(
+        'BankAccount', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='issued_cheques', verbose_name='حساب بنك الشركة (المسحوب منه)'
+    )
+    cheque_book = models.ForeignKey(
+        ChequeBook, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='cheques', verbose_name='دفتر الشيكات'
+    )
+    
+    # تفاصيل شيك القبض (Receivable)
+    drawer_bank_name = models.CharField(max_length=150, blank=True, verbose_name='بنك العميل المسحوب عليه')
+    drawer_branch = models.CharField(max_length=100, blank=True, verbose_name='فرع بنك العميل')
+    treasury = models.ForeignKey(
+        'Treasury', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='held_cheques', verbose_name='خزينة / حافظة الحفظ'
+    )
+    collecting_bank = models.ForeignKey(
+        'BankAccount', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='collecting_cheques', verbose_name='بنك الإيداع والتحصيل'
+    )
+    bank_fee = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name='عمولة ومصاريف التحصيل البنكية'
+    )
+    endorsed_to_partner = models.ForeignKey(
+        'partners.Partner', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='endorsed_cheques', verbose_name='المورد المظهر له الشيك'
+    )
+    bounce_reason = models.TextField(blank=True, verbose_name='سبب الارتداد / الرفض')
+    
+    status = models.CharField(
+        max_length=25, choices=ChequeStatus.choices, default=ChequeStatus.UNDER_COLLECTION,
+        verbose_name='حالة الشيك', db_index=True
+    )
+    
+    # القيود المحاسبية المرتبطة بمراحل الشيك
+    entry_receive_issue = models.ForeignKey(
+        'JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='cheque_receive_issue_entries', verbose_name='قيد الاستلام / التحرير'
+    )
+    entry_deposit = models.ForeignKey(
+        'JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='cheque_deposit_entries', verbose_name='قيد الإيداع للتحصيل'
+    )
+    entry_clearance = models.ForeignKey(
+        'JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='cheque_clearance_entries', verbose_name='قيد التحصيل / الصرف'
+    )
+    entry_bounce = models.ForeignKey(
+        'JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='cheque_bounce_entries', verbose_name='قيد الارتداد'
+    )
+    entry_endorse = models.ForeignKey(
+        'JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='cheque_endorse_entries', verbose_name='قيد التظهير'
+    )
+
+    attachment = models.ImageField(upload_to='cheques/', null=True, blank=True, verbose_name='صورة الشيك')
+    notes = models.TextField(blank=True, verbose_name='ملاحظات')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='أنشئ بواسطة')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'شيك'
+        verbose_name_plural = 'الشيكات وأوراق القبض والدفع'
+        ordering = ['-received_date', '-created_at']
+
+    def __str__(self):
+        return f"{self.get_cheque_type_display()} #{self.cheque_number} - {self.amount} ج.م ({self.partner.name})"
+
+    # ── Helpers للحسابات المحاسبية ─────────────────────────────
+    @staticmethod
+    def get_notes_receivable_account():
+        """1180 - أوراق قبض (حافظة الشيكات)"""
+        acc = Account.objects.filter(code='1180').first()
+        if not acc:
+            curr_assets = Account.objects.filter(code='1100').first()
+            acc = Account.objects.create(code='1180', name='أوراق قبض (حافظة الشيكات)', account_type=Account.ASSET, parent=curr_assets, allow_reconcile=True)
+        return acc
+
+    @staticmethod
+    def get_under_collection_account():
+        """1185 - شيكات برسم التحصيل (الحساب الوسيط بالبنك)"""
+        acc = Account.objects.filter(code='1185').first()
+        if not acc:
+            curr_assets = Account.objects.filter(code='1100').first()
+            acc = Account.objects.create(code='1185', name='شيكات برسم التحصيل', account_type=Account.ASSET, parent=curr_assets, allow_reconcile=True)
+        return acc
+
+    @staticmethod
+    def get_notes_payable_account():
+        """2170 - أوراق دفع (شيكات صادرة برسم السداد)"""
+        acc = Account.objects.filter(code='2170').first()
+        if not acc:
+            curr_liab = Account.objects.filter(code='2100').first()
+            acc = Account.objects.create(code='2170', name='أوراق دفع (شيكات برسم السداد)', account_type=Account.LIABILITY, parent=curr_liab, allow_reconcile=True)
+        return acc
+
+    @staticmethod
+    def get_bank_expense_account():
+        """5300 - مصاريف إدارية وعمولات بنكية"""
+        acc = Account.objects.filter(code='5300').first()
+        if not acc:
+            exp = Account.objects.filter(code='5000').first()
+            acc = Account.objects.create(code='5300', name='مصاريف إدارية وعمولات بنكية', account_type=Account.EXPENSE, parent=exp)
+        return acc
+
+    def get_partner_account(self):
+        """تحديد حساب الشريك المناسب (مدين للعملاء أو دائن للموردين أو الموحد)"""
+        p = self.partner
+        if self.cheque_type == ChequeType.RECEIVABLE:
+            if p.receivable_account:
+                return p.receivable_account
+            if p.account:
+                return p.account
+            # افتراضي ذمم مدينة
+            acc = Account.objects.filter(code='1130').first()
+            return acc
+        else: # PAYABLE
+            if p.payable_account:
+                return p.payable_account
+            if p.account:
+                return p.account
+            # افتراضي ذمم دائنة
+            acc = Account.objects.filter(code='2110').first()
+            return acc
+
+    def log_action(self, action, from_status, to_status, user=None, notes=''):
+        ChequeActionLog.objects.create(
+            cheque=self,
+            action=action,
+            from_status=from_status,
+            to_status=to_status,
+            user=user,
+            notes=notes
+        )
+
+    # ── دورة حياة شيك القبض (RECEIVABLE) ────────────────────────
+    def action_receive(self, user=None):
+        """
+        1. استلام شيك القبض وإثباته مباشرة في الحساب الوسيط (1180 - أوراق قبض / تحت التحصيل):
+        من حـ/ أوراق قبض - وسيط (1180)
+        إلى حـ/ العملاء - ذمم مدينة (1130 / حساب الشريك)
+        """
+        with transaction.atomic():
+            if self.cheque_type != ChequeType.RECEIVABLE:
+                raise ValidationError("هذا الإجراء مخصص لشيكات القبض فقط.")
+
+            notes_rec_acc = self.get_notes_receivable_account()
+            partner_acc = self.get_partner_account()
+            if not partner_acc:
+                raise ValidationError("لا يوجد حساب محاسبي مرتبط بالشريك.")
+
+            # إنشاء قيد الاستلام بالحساب الوسيط
+            ref = f"CHK-REC-{self.cheque_number}"
+            JournalEntry.objects.filter(reference=ref).delete()
+
+            entry = JournalEntry.objects.create(
+                date=self.received_date,
+                reference=ref,
+                description=f"استلام شيك قبض رقم {self.cheque_number} من العميل {self.partner.name} (حساب وسيط) - استحقاق {self.due_date}",
+                status=JournalEntry.POSTED
+            )
+
+            # مدين: أوراق قبض (الحساب الوسيط)
+            JournalItem.objects.create(
+                entry=entry, account=notes_rec_acc, debit=self.amount, credit=0,
+                description=f"ورقة قبض شيك {self.cheque_number} - {self.partner.name}"
+            )
+            # دائن: العميل (تخفيض المديونية)
+            JournalItem.objects.create(
+                entry=entry, account=partner_acc, debit=0, credit=self.amount,
+                description=f"سداد بشيك رقم {self.cheque_number} - استحقاق {self.due_date}"
+            )
+            entry.post()
+
+            old_status = self.status
+            self.status = ChequeStatus.UNDER_COLLECTION
+            self.entry_receive_issue = entry
+            self.save()
+            self.log_action("استلام الشيك وإيداعه بالحساب الوسيط (تحت التحصيل)", old_status, self.status, user=user)
+
+    def action_confirm_collection(self, destination=None, clearance_date=None, bank_fee=Decimal('0.00'), user=None):
+        """
+        2. التحصيل الفعلي لشيك القبض (في البنك أو الخزينة) وإقفال الحساب الوسيط:
+        من حـ/ البنك أو الخزينة (بالمبلغ الصافي)
+        من حـ/ عمولات ومصاريف بنكية (5300) بمبلغ العمولة (إن وجدت)
+        إلى حـ/ أوراق قبض - وسيط (1180) بإجمالي مبلغ الشيك
+        """
+        with transaction.atomic():
+            if self.cheque_type != ChequeType.RECEIVABLE:
+                raise ValidationError("هذا الإجراء مخصص لشيكات القبض فقط.")
+            if self.status not in (ChequeStatus.UNDER_COLLECTION, ChequeStatus.IN_PORTFOLIO):
+                raise ValidationError("لا يمكن تحصيل الشيك إلا وهو في حالة تحت التحصيل.")
+
+            # تحديد حساب جهة التحصيل (بنك أو خزينة)
+            dest_acc = None
+            dest_name = ""
+            if destination:
+                if hasattr(destination, 'ensure_account'):
+                    dest_acc = destination.ensure_account()
+                elif hasattr(destination, 'account'):
+                    dest_acc = destination.account
+                dest_name = getattr(destination, 'name', str(destination))
+                if isinstance(destination, BankAccount):
+                    self.collecting_bank = destination
+                elif isinstance(destination, Treasury):
+                    self.treasury = destination
+            elif self.collecting_bank:
+                dest_acc = self.collecting_bank.ensure_account()
+                dest_name = self.collecting_bank.name
+            elif self.treasury:
+                dest_acc = self.treasury.ensure_account()
+                dest_name = self.treasury.name
+
+            if not dest_acc:
+                raise ValidationError("يجب تحديد البنك أو الخزينة المراد تحصيل وإيداع الشيك بها.")
+
+            clr_date = clearance_date or datetime.date.today()
+            notes_rec_acc = self.get_notes_receivable_account()
+            fee = Decimal(str(bank_fee or 0))
+            net_amount = self.amount - fee
+
+            if net_amount < 0:
+                raise ValidationError("عمولة التحصيل لا يمكن أن تكون أكبر من قيمة الشيك.")
+
+            ref = f"CHK-CLR-{self.cheque_number}"
+            JournalEntry.objects.filter(reference=ref).delete()
+
+            entry = JournalEntry.objects.create(
+                date=clr_date,
+                reference=ref,
+                description=f"تحصيل شيك قبض رقم {self.cheque_number} وإيداعه في {dest_name}",
+                status=JournalEntry.POSTED
+            )
+
+            # مدين: جهة التحصيل (البنك أو الخزينة) بالصافي
+            JournalItem.objects.create(
+                entry=entry, account=dest_acc, debit=net_amount, credit=0,
+                description=f"إيداع صافي تحصيل شيك {self.cheque_number} في {dest_name}"
+            )
+            # مدين: مصاريف وعمولات بنكية (إن وجدت)
+            if fee > 0:
+                fee_acc = self.get_bank_expense_account()
+                JournalItem.objects.create(
+                    entry=entry, account=fee_acc, debit=fee, credit=0,
+                    description=f"عمولة ومصاريف تحصيل شيك {self.cheque_number}"
+                )
+            # دائن: أوراق قبض (الحساب الوسيط 1180)
+            JournalItem.objects.create(
+                entry=entry, account=notes_rec_acc, debit=0, credit=self.amount,
+                description=f"إقفال ورقة قبض شيك {self.cheque_number} بعد التحصيل"
+            )
+            entry.post()
+
+            old_status = self.status
+            self.status = ChequeStatus.COLLECTED
+            self.clearance_date = clr_date
+            self.bank_fee = fee
+            self.entry_clearance = entry
+            self.save()
+            self.log_action(f"تحصيل الشيك في {dest_name} (صافي: {net_amount:,.2f} ج.م)", old_status, self.status, user=user)
+
+    def action_bounce(self, bounce_reason, bounce_date=None, user=None):
+        """
+        3. ارتداد / رفض الشيك (إعادة فتح مديونية العميل وإلغاء الحساب الوسيط):
+        من حـ/ العميل (1130 / حساب الشريك)
+        إلى حـ/ أوراق قبض - وسيط (1180)
+        """
+        with transaction.atomic():
+            if self.cheque_type != ChequeType.RECEIVABLE:
+                raise ValidationError("هذا الإجراء مخصص لشيكات القبض فقط.")
+            if self.status not in (ChequeStatus.UNDER_COLLECTION, ChequeStatus.IN_PORTFOLIO):
+                raise ValidationError("لا يمكن إثبات ارتداد الشيك إلا وهو في حالة تحت التحصيل.")
+
+            bnc_date = bounce_date or datetime.date.today()
+            partner_acc = self.get_partner_account()
+            notes_rec_acc = self.get_notes_receivable_account()
+
+            ref = f"CHK-BNC-{self.cheque_number}"
+            JournalEntry.objects.filter(reference=ref).delete()
+
+            entry = JournalEntry.objects.create(
+                date=bnc_date,
+                reference=ref,
+                description=f"ارتداد ورفض شيك قبض رقم {self.cheque_number} للعميل {self.partner.name} - السبب: {bounce_reason}",
+                status=JournalEntry.POSTED
+            )
+
+            # مدين: العميل (إعادة مديونيته)
+            JournalItem.objects.create(
+                entry=entry, account=partner_acc, debit=self.amount, credit=0,
+                description=f"إعادة مديونية شيك مرتد رقم {self.cheque_number} - {bounce_reason}"
+            )
+            # دائن: أوراق قبض (الحساب الوسيط)
+            JournalItem.objects.create(
+                entry=entry, account=notes_rec_acc, debit=0, credit=self.amount,
+                description=f"إلغاء ورقة قبض شيك مرتد {self.cheque_number}"
+            )
+            entry.post()
+
+            old_status = self.status
+            self.status = ChequeStatus.BOUNCED
+            self.bounce_reason = bounce_reason
+            self.entry_bounce = entry
+            self.save()
+            self.log_action(f"ارتداد الشيك: {bounce_reason}", old_status, self.status, user=user)
+
+    # ── دورة حياة شيك الصرف (PAYABLE) ───────────────────────────
+    def action_issue(self, user=None):
+        """
+        1. تحرير وتسليم شيك دفع لمورد:
+        من حـ/ الموردين - ذمم دائنة (2110 / حساب الشريك)
+        إلى حـ/ أوراق دفع (2170)
+        """
+        with transaction.atomic():
+            if self.cheque_type != ChequeType.PAYABLE:
+                raise ValidationError("هذا الإجراء مخصص لشيكات الصرف فقط.")
+            if not self.bank_account:
+                raise ValidationError("يجب تحديد حساب بنك الشركة المسحوب منه الشيك.")
+
+            supplier_acc = self.get_partner_account()
+            notes_pay_acc = self.get_notes_payable_account()
+
+            ref = f"CHK-PAY-{self.cheque_number}"
+            JournalEntry.objects.filter(reference=ref).delete()
+
+            entry = JournalEntry.objects.create(
+                date=self.received_date,
+                reference=ref,
+                description=f"تحرير شيك دفع رقم {self.cheque_number} للمورد {self.partner.name} مسحوب على {self.bank_account.name} - استحقاق {self.due_date}",
+                status=JournalEntry.POSTED
+            )
+
+            # مدين: المورد (تخفيض التزامه)
+            JournalItem.objects.create(
+                entry=entry, account=supplier_acc, debit=self.amount, credit=0,
+                description=f"سداد بشيك دفع رقم {self.cheque_number} - مسحوب على {self.bank_account.name}"
+            )
+            # دائن: أوراق دفع
+            JournalItem.objects.create(
+                entry=entry, account=notes_pay_acc, debit=0, credit=self.amount,
+                description=f"ورقة دفع شيك رقم {self.cheque_number} - استحقاق {self.due_date}"
+            )
+            entry.post()
+
+            # تقدم رقم دفتر الشيكات إذا كان مسجلاً بالدفتر
+            if self.cheque_book:
+                self.cheque_book.advance_number()
+
+            old_status = self.status
+            self.status = ChequeStatus.ISSUED
+            self.entry_receive_issue = entry
+            self.save()
+            self.log_action(f"تحرير وتسليم الشيك للمورد {self.partner.name}", old_status, self.status, user=user)
+
+    def action_clear_payable(self, clearance_date=None, user=None):
+        """
+        2. صرف شيك الدفع وخصمه فعلياً من حساب بنك الشركة:
+        من حـ/ أوراق دفع (2170)
+        إلى حـ/ بنك الشركة (1120)
+        """
+        with transaction.atomic():
+            if self.cheque_type != ChequeType.PAYABLE:
+                raise ValidationError("هذا الإجراء مخصص لشيكات الصرف فقط.")
+            if self.status != ChequeStatus.ISSUED:
+                raise ValidationError("لا يمكن صرف الشيك إلا إذا كان في حالة محرر ومُسلّم.")
+            if not self.bank_account:
+                raise ValidationError("لم يتم تحديد حساب بنك الشركة المسحوب منه.")
+
+            clr_date = clearance_date or datetime.date.today()
+            notes_pay_acc = self.get_notes_payable_account()
+            bank_acc = self.bank_account.ensure_account()
+
+            ref = f"CHK-CLR-PAY-{self.cheque_number}"
+            JournalEntry.objects.filter(reference=ref).delete()
+
+            entry = JournalEntry.objects.create(
+                date=clr_date,
+                reference=ref,
+                description=f"صرف شيك دفع رقم {self.cheque_number} وخصمه من حساب {self.bank_account.name} (المستفيد: {self.partner.name})",
+                status=JournalEntry.POSTED
+            )
+
+            # مدين: أوراق دفع (إقفال الالتزام)
+            JournalItem.objects.create(
+                entry=entry, account=notes_pay_acc, debit=self.amount, credit=0,
+                description=f"صرف ورقة دفع شيك {self.cheque_number}"
+            )
+            # دائن: بنك الشركة (الخصم الفعلي من الرصيد البنكي)
+            JournalItem.objects.create(
+                entry=entry, account=bank_acc, debit=0, credit=self.amount,
+                description=f"خصم قيمة شيك {self.cheque_number} من كشف حساب {self.bank_account.name}"
+            )
+            entry.post()
+
+            old_status = self.status
+            self.status = ChequeStatus.CLEARED
+            self.clearance_date = clr_date
+            self.entry_clearance = entry
+            self.save()
+            self.log_action(f"صرف الشيك من حساب {self.bank_account.name}", old_status, self.status, user=user)
+
+    def action_cancel_payable(self, cancel_reason, user=None):
+        """
+        3. إلغاء شيك دفع وإعادة مديونية المورد:
+        من حـ/ أوراق دفع (2170)
+        إلى حـ/ الموردين (2110 / حساب الشريك)
+        """
+        with transaction.atomic():
+            if self.cheque_type != ChequeType.PAYABLE:
+                raise ValidationError("هذا الإجراء مخصص لشيكات الصرف فقط.")
+            if self.status != ChequeStatus.ISSUED:
+                raise ValidationError("لا يمكن إلغاء الشيك إلا إذا كان في حالة محرر ومُسلّم.")
+
+            notes_pay_acc = self.get_notes_payable_account()
+            supplier_acc = self.get_partner_account()
+
+            ref = f"CHK-CNC-PAY-{self.cheque_number}"
+            JournalEntry.objects.filter(reference=ref).delete()
+
+            entry = JournalEntry.objects.create(
+                date=datetime.date.today(),
+                reference=ref,
+                description=f"إلغاء شيك دفع رقم {self.cheque_number} للمورد {self.partner.name} - السبب: {cancel_reason}",
+                status=JournalEntry.POSTED
+            )
+
+            # مدين: أوراق دفع
+            JournalItem.objects.create(
+                entry=entry, account=notes_pay_acc, debit=self.amount, credit=0,
+                description=f"إلغاء ورقة دفع شيك {self.cheque_number}"
+            )
+            # دائن: المورد (إعادة استحقاقه)
+            JournalItem.objects.create(
+                entry=entry, account=supplier_acc, debit=0, credit=self.amount,
+                description=f"إعادة مديونية لإلغاء شيك {self.cheque_number} - {cancel_reason}"
+            )
+            entry.post()
+
+            old_status = self.status
+            self.status = ChequeStatus.CANCELLED
+            self.notes = f"{self.notes}\n[سبب الإلغاء]: {cancel_reason}".strip()
+            self.save()
+            self.log_action(f"إلغاء الشيك: {cancel_reason}", old_status, self.status, user=user)
+
+
+class ChequeActionLog(models.Model):
+    """سجل تدقيق ومتابعة جميع الحركات التي تمت على الشيك."""
+    cheque = models.ForeignKey(
+        Cheque, on_delete=models.CASCADE, related_name='action_logs', verbose_name='الشيك'
+    )
+    action = models.CharField(max_length=100, verbose_name='نوع الإجراء')
+    from_status = models.CharField(max_length=30, blank=True, choices=ChequeStatus.choices, verbose_name='من حالة')
+    to_status = models.CharField(max_length=30, choices=ChequeStatus.choices, verbose_name='إلى حالة')
+    user = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='المستخدم'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='وقت الإجراء')
+    notes = models.TextField(blank=True, verbose_name='ملاحظات')
+
+    class Meta:
+        verbose_name = 'سجل حركة شيك'
+        verbose_name_plural = 'سجل حركات الشيكات'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.cheque.cheque_number} - {self.action} ({self.created_at.strftime('%Y-%m-%d %H:%M')})"
+
+    @classmethod
+    def get_status_label(cls, status_val):
+        if not status_val or status_val == '-':
+            return '-'
+        status_map = {
+            'UNDER_COLLECTION': 'تحت التحصيل',
+            'IN_PORTFOLIO': 'تحت التحصيل',
+            'COLLECTED': 'تم التحصيل',
+            'BOUNCED': 'مرتد (مرفوض)',
+            'ISSUED': 'صادر (تحت الصرف)',
+            'CLEARED': 'تم الصرف من البنك',
+            'CANCELLED': 'ملغي',
+            'ENDORSED': 'مظهر لمورد',
+            'DEPOSITED': 'مودع للتحصيل',
+        }
+        for k, v in ChequeStatus.choices:
+            if k not in status_map:
+                status_map[k] = v
+        return status_map.get(status_val, status_val)
+
+    @property
+    def from_status_display(self):
+        return self.get_status_label(self.from_status)
+
+    @property
+    def to_status_display(self):
+        return self.get_status_label(self.to_status)
+
+    def get_from_status_display(self):
+        return self.from_status_display
+
+    def get_to_status_display(self):
+        return self.to_status_display
+
+
+# ---------------------------------------------------------------------------
+# Fixed Assets & Depreciation (الأصول الثابتة والإهلاك)
+# ---------------------------------------------------------------------------
+
+class FixedAsset(models.Model):
+    """
+    Fixed Asset card representing machinery, vehicles, POS equipment, fixtures, etc.
+    Maintains cost, straight-line depreciation schedule, book value, and lifecycle.
+    """
+    class AssetCategory(models.TextChoices):
+        EQUIPMENT = 'EQUIPMENT', 'أجهزة ومعدات ومبردات'
+        VEHICLE = 'VEHICLE', 'سيارات ومركبات توصيل'
+        ELECTRONICS = 'ELECTRONICS', 'أجهزة إلكترونية ونقاط بيع وكاشير'
+        FURNITURE = 'FURNITURE', 'أثاث وتجهيزات وديكور'
+        BUILDING = 'BUILDING', 'مباني وتحسينات وتجهيزات مقرات'
+        OTHER = 'OTHER', 'أصول أخرى'
+
+    class AssetStatus(models.TextChoices):
+        ACTIVE = 'ACTIVE', 'نشط ويعمل'
+        FULLY_DEPRECIATED = 'FULLY_DEPRECIATED', 'مستهلك بالكامل دفترياً'
+        DISPOSED = 'DISPOSED', 'مستبعد / تم بيعه أو تخريده'
+
+    # Identification
+    code = models.CharField(max_length=50, unique=True, verbose_name='كود الأصل')
+    name = models.CharField(max_length=200, verbose_name='اسم الأصل')
+    category = models.CharField(
+        max_length=30, choices=AssetCategory.choices, default=AssetCategory.EQUIPMENT, verbose_name='تصنيف الأصل'
+    )
+    branch = models.ForeignKey('core.Branch', on_delete=models.SET_NULL, null=True, blank=True, verbose_name='الفرع')
+    location = models.CharField(max_length=150, blank=True, verbose_name='مكان التواجد / القسم')
+
+    # Purchase Details
+    purchase_date = models.DateField(verbose_name='تاريخ الشراء / بدء الاستخدام')
+    purchase_cost = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='تكلفة الشراء الأصلية')
+    salvage_value = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='القيمة التخريدية (الخردة)'
+    )
+
+    # Opening Balance Handling (for assets purchased before system launch)
+    is_opening_balance = models.BooleanField(
+        default=False, verbose_name='أصل قائم (رصيد افتتاحي سابق)'
+    )
+    opening_accumulated_depreciation = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00'),
+        verbose_name='مجمع الإهلاك السابق (رصيد افتتاحي)'
+    )
+
+    # Depreciation Policy (Straight-Line)
+    useful_life_years = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('5.00'), verbose_name='العمر الافتراضي (بالسنوات)'
+    )
+    depreciation_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('20.00'), verbose_name='نسبة الإهلاك السنوية %'
+    )
+
+    # Accounts
+    asset_account = models.ForeignKey(
+        Account, on_delete=models.PROTECT, related_name='fixed_assets',
+        limit_choices_to={'account_type': Account.ASSET},
+        verbose_name='حساب الأصل'
+    )
+    accumulated_depreciation_account = models.ForeignKey(
+        Account, on_delete=models.PROTECT, related_name='fixed_assets_acc_dep',
+        verbose_name='حساب مجمع الإهلاك'
+    )
+    depreciation_expense_account = models.ForeignKey(
+        Account, on_delete=models.PROTECT, related_name='fixed_assets_dep_exp',
+        limit_choices_to={'account_type': Account.EXPENSE},
+        verbose_name='حساب مصروف الإهلاك'
+    )
+
+    # Acquisition Journal Entry
+    purchase_entry = models.ForeignKey(
+        JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='fixed_asset_purchase_entries', verbose_name='قيد الشراء / الإثبات'
+    )
+
+    # Lifecycle Status & Disposal
+    status = models.CharField(
+        max_length=20, choices=AssetStatus.choices, default=AssetStatus.ACTIVE, verbose_name='الحالة الدفترية'
+    )
+    disposal_date = models.DateField(null=True, blank=True, verbose_name='تاريخ الاستبعاد / البيع')
+    disposal_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='سعر البيع / الاستبعاد'
+    )
+    disposal_entry = models.ForeignKey(
+        JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='fixed_asset_disposal_entries', verbose_name='قيد الاستبعاد'
+    )
+    disposal_notes = models.TextField(blank=True, verbose_name='ملاحظات الاستبعاد')
+
+    notes = models.TextField(blank=True, verbose_name='ملاحظات عامة')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'أصل ثابت'
+        verbose_name_plural = 'الأصول الثابتة'
+        ordering = ['-purchase_date', '-id']
+
+    def __str__(self):
+        return f"{self.code} - {self.name} ({self.get_category_display()})"
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            prefix = "AST-"
+            last = FixedAsset.objects.filter(code__startswith=prefix).order_by('-id').first()
+            if last:
+                try:
+                    num = int(last.code.replace(prefix, '')) + 1
+                except ValueError:
+                    num = FixedAsset.objects.count() + 1
+            else:
+                num = 1
+            self.code = f"{prefix}{num:04d}"
+
+        # Automatic sync between useful_life_years and depreciation_rate
+        if self.useful_life_years and self.useful_life_years > Decimal('0'):
+            self.depreciation_rate = (Decimal('100.0') / self.useful_life_years).quantize(Decimal('0.01'))
+        elif self.depreciation_rate and self.depreciation_rate > Decimal('0'):
+            self.useful_life_years = (Decimal('100.0') / self.depreciation_rate).quantize(Decimal('0.01'))
+
+        # Auto-update status if fully depreciated and still active
+        if self.pk and self.status == self.AssetStatus.ACTIVE:
+            if self.total_accumulated_depreciation >= self.depreciable_base and self.depreciable_base > Decimal('0'):
+                self.status = self.AssetStatus.FULLY_DEPRECIATED
+
+        super().save(*args, **kwargs)
+
+    @property
+    def depreciable_base(self):
+        """القيمة القابلة للإهلاك = تكلفة الأصل - قيمة الخردة"""
+        cost = self.purchase_cost or Decimal('0.00')
+        salvage = self.salvage_value or Decimal('0.00')
+        return max(cost - salvage, Decimal('0.00'))
+
+    @property
+    def monthly_depreciation_amount(self):
+        """قسط الإهلاك الشهري بطريقة القسط الثابت"""
+        if self.depreciable_base <= Decimal('0.00'):
+            return Decimal('0.00')
+        if self.useful_life_years and self.useful_life_years > Decimal('0'):
+            total_months = self.useful_life_years * Decimal('12.0')
+            return (self.depreciable_base / total_months).quantize(Decimal('0.01'))
+        if self.depreciation_rate and self.depreciation_rate > Decimal('0'):
+            annual = self.depreciable_base * (self.depreciation_rate / Decimal('100.0'))
+            return (annual / Decimal('12.0')).quantize(Decimal('0.01'))
+        return Decimal('0.00')
+
+    @property
+    def total_accumulated_depreciation(self):
+        """إجمالي مجمع الإهلاك حتى اليوم (افتتاحي + أقساط مسجلة)"""
+        opening = self.opening_accumulated_depreciation or Decimal('0.00')
+        logged = Decimal('0.00')
+        if self.pk:
+            logged = self.depreciation_logs.aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
+        total = opening + logged
+        return min(total, self.depreciable_base)
+
+    @property
+    def current_book_value(self):
+        """صافي القيمة الدفترية = التكلفة - مجمع الإهلاك"""
+        cost = self.purchase_cost or Decimal('0.00')
+        salvage = self.salvage_value or Decimal('0.00')
+        return max(cost - self.total_accumulated_depreciation, salvage)
+
+    @property
+    def depreciation_progress_percent(self):
+        """نسبة استهلاك الأصل حتى اليوم"""
+        if self.depreciable_base <= Decimal('0.00'):
+            return 100.0
+        pct = (self.total_accumulated_depreciation / self.depreciable_base) * Decimal('100.0')
+        return float(min(round(pct, 1), Decimal('100.0')))
+
+    @property
+    def is_depreciable(self):
+        """هل الأصل مؤهل لحساب إهلاك عليه؟"""
+        return (
+            self.status == self.AssetStatus.ACTIVE and
+            self.total_accumulated_depreciation < self.depreciable_base and
+            self.current_book_value > (self.salvage_value or Decimal('0.00'))
+        )
+
+
+class AssetDepreciationLog(models.Model):
+    """
+    Periodic depreciation run entry for an asset, linking to the double-entry JournalEntry.
+    """
+    asset = models.ForeignKey(
+        FixedAsset, on_delete=models.CASCADE, related_name='depreciation_logs', verbose_name='الأصل'
+    )
+    year = models.IntegerField(verbose_name='السنة')
+    month = models.IntegerField(verbose_name='الشهر')
+    date = models.DateField(verbose_name='تاريخ احتساب الإهلاك')
+    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='قسط الإهلاك')
+    book_value_after = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='القيمة الدفترية بعد الإهلاك')
+    entry = models.ForeignKey(
+        JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='fixed_asset_depreciation_entries', verbose_name='قيد اليومية'
+    )
+    notes = models.CharField(max_length=255, blank=True, verbose_name='ملاحظات')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='وقت الاحتساب')
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='المستخدم'
+    )
+
+    class Meta:
+        verbose_name = 'سجل إهلاك أصل'
+        verbose_name_plural = 'سجل إهلاكات الأصول'
+        unique_together = ('asset', 'year', 'month')
+        ordering = ['-year', '-month', '-id']
+
+    def __str__(self):
+        return f"{self.asset.name} - {self.year}/{self.month:02d} ({self.amount})"
+
+
+# ---------------------------------------------------------------------------
+# Loans & Financing (القروض والتسهيلات البنكية وجداول الأقساط)
+# ---------------------------------------------------------------------------
+
+class Loan(models.Model):
+    """
+    Bank loans, Islamic financing, overdraft facilities, or partner loans.
+    Tracks principal, interest, repayment installments schedule, and ledger balances.
+    """
+    class LoanType(models.TextChoices):
+        BANK_LOAN = 'BANK_LOAN', 'قرض بنكي تجاري'
+        ISLAMIC = 'ISLAMIC', 'تمويل / مرابحة إسلامية'
+        PARTNER_LOAN = 'PARTNER_LOAN', 'تمويل شخصي / قرض شريك (بدون فوائد)'
+        CREDIT_FACILITY = 'CREDIT_FACILITY', 'تسهيل ائتماني / جاري مدين'
+
+    class LoanStatus(models.TextChoices):
+        ACTIVE = 'ACTIVE', 'قائم وجاري السداد'
+        FULLY_PAID = 'FULLY_PAID', 'مسدد بالكامل'
+        DEFAULTED = 'DEFAULTED', 'متعثر'
+
+    # Identification
+    code = models.CharField(max_length=50, unique=True, verbose_name='رقم/كود القرض')
+    name = models.CharField(max_length=200, verbose_name='اسم/بيان القرض')
+    loan_type = models.CharField(
+        max_length=30, choices=LoanType.choices, default=LoanType.BANK_LOAN, verbose_name='نوع القرض والتمويل'
+    )
+    lender_name = models.CharField(max_length=150, verbose_name='جهة التمويل / اسم البنك أو المقرض')
+    contract_number = models.CharField(max_length=100, blank=True, verbose_name='رقم العقد / المعاملة')
+    branch = models.ForeignKey('core.Branch', on_delete=models.SET_NULL, null=True, blank=True, verbose_name='الفرع')
+
+    # Financial details
+    principal_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='أصل مبلغ القرض المقترض')
+    total_interest_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='إجمالي الفوائد / أرباح التمويل'
+    )
+    total_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, verbose_name='إجمالي التزام القرض (أصل + فوائد)'
+    )
+
+    start_date = models.DateField(verbose_name='تاريخ بدء / استلام القرض')
+    installments_count = models.PositiveIntegerField(default=12, verbose_name='عدد الأقساط')
+    first_due_date = models.DateField(verbose_name='تاريخ استحقاق أول قسط')
+
+    # Accounts
+    loan_account = models.ForeignKey(
+        Account, on_delete=models.PROTECT, related_name='loans',
+        limit_choices_to={'account_type': Account.LIABILITY},
+        verbose_name='حساب التزام القرض (خصوم)'
+    )
+    interest_expense_account = models.ForeignKey(
+        Account, on_delete=models.PROTECT, related_name='loans_interest_exp',
+        limit_choices_to={'account_type': Account.EXPENSE},
+        verbose_name='حساب مصروف الفوائد (مصروفات)'
+    )
+
+    # Initial receipt journal entry
+    disbursement_entry = models.ForeignKey(
+        JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='loan_disbursement_entries', verbose_name='قيد استلام وصرف القرض'
+    )
+
+    status = models.CharField(
+        max_length=20, choices=LoanStatus.choices, default=LoanStatus.ACTIVE, verbose_name='حالة القرض'
+    )
+    notes = models.TextField(blank=True, verbose_name='ملاحظات')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'قرض / تمويل'
+        verbose_name_plural = 'القروض والتسهيلات'
+        ordering = ['-start_date', '-id']
+
+    def __str__(self):
+        return f"{self.code} - {self.name} ({self.lender_name})"
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            prefix = "LOAN-"
+            last = Loan.objects.filter(code__startswith=prefix).order_by('-id').first()
+            if last:
+                try:
+                    num = int(last.code.replace(prefix, '')) + 1
+                except ValueError:
+                    num = Loan.objects.count() + 1
+            else:
+                num = 1
+            self.code = f"{prefix}{num:04d}"
+
+        # Automatic calculation of total commitment
+        principal = self.principal_amount or Decimal('0.00')
+        interest = self.total_interest_amount or Decimal('0.00')
+        self.total_amount = principal + interest
+
+        # Auto-update status if all installments are paid
+        if self.pk and self.status == self.LoanStatus.ACTIVE:
+            unpaid = self.installments.filter(is_paid=False).exists()
+            if not unpaid and self.installments.exists():
+                self.status = self.LoanStatus.FULLY_PAID
+
+        super().save(*args, **kwargs)
+
+    @property
+    def interest_rate(self):
+        """معدل الفائدة التقديري السنوي"""
+        if not self.principal_amount or self.principal_amount <= Decimal('0.00'):
+            return Decimal('0.00')
+        years = Decimal(self.installments_count or 12) / Decimal('12.0')
+        if years <= Decimal('0.00'):
+            years = Decimal('1.0')
+        rate = (self.total_interest_amount / (self.principal_amount * years)) * Decimal('100.0')
+        return round(rate, 2)
+
+    @property
+    def paid_principal(self):
+        """إجمالي أصل القرض المسدد حتى اليوم"""
+        if not self.pk:
+            return Decimal('0.00')
+        return self.installments.filter(is_paid=True).aggregate(s=Sum('principal_amount'))['s'] or Decimal('0.00')
+
+    @property
+    def paid_interest(self):
+        """إجمالي الفوائد المسددة حتى اليوم"""
+        if not self.pk:
+            return Decimal('0.00')
+        return self.installments.filter(is_paid=True).aggregate(s=Sum('interest_amount'))['s'] or Decimal('0.00')
+
+    @property
+    def total_paid(self):
+        """إجمالي المبالغ المسددة (أصل + فوائد)"""
+        return self.paid_principal + self.paid_interest
+
+    @property
+    def remaining_principal(self):
+        """المتبقي من أصل القرض (الالتزام الحقيقي بالميزانية)"""
+        return max(self.principal_amount - self.paid_principal, Decimal('0.00'))
+
+    @property
+    def remaining_total(self):
+        """المتبقي الكلي من القرض شامل الفوائد القادمة"""
+        return max(self.total_amount - self.total_paid, Decimal('0.00'))
+
+    @property
+    def repayment_progress_percent(self):
+        """نسبة السداد المكتملة"""
+        if not self.total_amount or self.total_amount <= Decimal('0.00'):
+            return 100.0
+        pct = (self.total_paid / self.total_amount) * Decimal('100.0')
+        return float(min(round(pct, 1), Decimal('100.0')))
+
+    @property
+    def overdue_count(self):
+        """عدد الأقساط المتأخرة"""
+        if not self.pk:
+            return 0
+        return self.installments.filter(is_paid=False, due_date__lt=datetime.date.today()).count()
+
+    @property
+    def next_pending_installment(self):
+        """القسط القادم المستحق"""
+        if not self.pk:
+            return None
+        return self.installments.filter(is_paid=False).order_by('due_date').first()
+
+    def generate_installments_schedule(self):
+        """توليد جدول الأقساط الشهرية تلقائياً"""
+        if not self.installments_count or self.installments_count <= 0:
+            return
+
+        # Delete any unpaid installments before regenerating
+        self.installments.filter(is_paid=False).delete()
+
+        n = self.installments_count
+        base_p = (self.principal_amount / Decimal(n)).quantize(Decimal('0.01'))
+        base_int = (self.total_interest_amount / Decimal(n)).quantize(Decimal('0.01'))
+
+        current_date = self.first_due_date
+        accumulated_p = Decimal('0.00')
+        accumulated_int = Decimal('0.00')
+
+        for i in range(1, n + 1):
+            if i == n:
+                # Adjust last installment for pennies rounding difference
+                p_amt = self.principal_amount - accumulated_p
+                int_amt = self.total_interest_amount - accumulated_int
+            else:
+                p_amt = base_p
+                int_amt = base_int
+                accumulated_p += p_amt
+                accumulated_int += int_amt
+
+            tot_amt = p_amt + int_amt
+
+            LoanInstallment.objects.create(
+                loan=self,
+                installment_number=i,
+                due_date=current_date,
+                principal_amount=p_amt,
+                interest_amount=int_amt,
+                total_amount=tot_amt
+            )
+
+            # Advance by 1 month
+            y = current_date.year
+            m = current_date.month + 1
+            if m > 12:
+                y += 1
+                m = 1
+            d = min(current_date.day, 28)
+            current_date = datetime.date(y, m, d)
+
+
+class LoanInstallment(models.Model):
+    """
+    Individual scheduled installment for a loan.
+    """
+    loan = models.ForeignKey(Loan, on_delete=models.CASCADE, related_name='installments', verbose_name='القرض')
+    installment_number = models.PositiveIntegerField(verbose_name='رقم القسط')
+    due_date = models.DateField(verbose_name='تاريخ الاستحقاق')
+
+    principal_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='أصل القرض في القسط')
+    interest_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='فائدة القسط')
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='إجمالي مبلغ القسط')
+
+    # Payment details
+    is_paid = models.BooleanField(default=False, verbose_name='تم السداد')
+    payment_date = models.DateField(null=True, blank=True, verbose_name='تاريخ السداد الفعلي')
+    payment_entry = models.ForeignKey(
+        JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='loan_installment_entries', verbose_name='قيد سداد القسط'
+    )
+    paid_treasury = models.ForeignKey(
+        Treasury, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='الخزينة المسدد منها'
+    )
+    paid_bank = models.ForeignKey(
+        BankAccount, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='البنك المسدد منه'
+    )
+    payment_notes = models.CharField(max_length=255, blank=True, verbose_name='ملاحظات السداد')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'قسط قرض'
+        verbose_name_plural = 'أقساط القروض'
+        ordering = ['due_date', 'installment_number']
+        unique_together = ('loan', 'installment_number')
+
+    def __str__(self):
+        return f"{self.loan.name} - قسط #{self.installment_number} ({self.total_amount})"
+
+    @property
+    def is_overdue(self):
+        return not self.is_paid and self.due_date < datetime.date.today()
+
+
+

@@ -192,6 +192,10 @@ class Product(models.Model):
         verbose_name = _('منتج')
         verbose_name_plural = _('المنتجات')
         ordering = ['name']
+        indexes = [
+            models.Index(fields=['name']),
+            models.Index(fields=['is_active']),
+        ]
 
     def __str__(self):
         return f'{self.name} [{self.get_unit_display()}]'
@@ -209,8 +213,7 @@ class Product(models.Model):
             return Decimal(str(qs.count()))
             
         qs = InventoryBatch.objects.filter(
-            product=self,
-            quantity_remaining__gt=Decimal('0')
+            product=self
         )
         if warehouse is not None:
             qs = qs.filter(warehouse=warehouse)
@@ -358,6 +361,10 @@ class InventoryBatch(models.Model):
         verbose_name_plural = _('دفعات المخزون')
         # CRITICAL: This ordering ensures FIFO - oldest batches are consumed first
         ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['quantity_remaining', 'created_at']),
+            models.Index(fields=['product', 'quantity_remaining']),
+        ]
 
     def __str__(self):
         return (
@@ -411,9 +418,12 @@ class InventoryBatch(models.Model):
         return self.quantity_remaining * self.unit_cost
 
     def clean(self):
-        if self.quantity_remaining < 0:
+        from apps.tenant.core.models import SystemSetting
+        # Master Lock: Global setting strictly governs negative stock
+        allow_neg = getattr(SystemSetting.get_settings(), 'allow_negative_stock', False)
+        if not allow_neg and self.quantity_remaining < 0:
             raise ValidationError('الكمية المتبقية لا يمكن أن تكون سالبة.')
-        if self.quantity_remaining > self.quantity_original:
+        if self.quantity_original > Decimal('0') and self.quantity_remaining > self.quantity_original:
             raise ValidationError('الكمية المتبقية لا يمكن أن تتجاوز الكمية الأصلية.')
 
 
@@ -499,10 +509,11 @@ class StockAdjustment(models.Model):
         ('OUT', 'إعدام / تسوية نقص'),
         ('IN', 'تسوية بالزيادة'),
         ('OPENING', 'رصيد افتتاحي'),
+        ('STOCKTAKE', 'جرد فعلي وتسوية أرصدة'),
     ]
 
     adjustment_type = models.CharField(
-        max_length=10, choices=ADJUSTMENT_TYPE_CHOICES, default='OUT', verbose_name=_('نوع العملية')
+        max_length=15, choices=ADJUSTMENT_TYPE_CHOICES, default='OUT', verbose_name=_('نوع العملية')
     )
     warehouse = models.ForeignKey(
         Warehouse,
@@ -527,6 +538,9 @@ class StockAdjustment(models.Model):
         verbose_name = _('تسوية مخزون')
         verbose_name_plural = _('تسويات المخزون')
         ordering = ['-date', '-created_at']
+        permissions = [
+            ("perform_stocktake", "إجراء واعتماد الجرد الفعلي وتسوية الأرصدة"),
+        ]
 
     def __str__(self):
         return f'تسوية #{self.id} - {self.warehouse.name}'
@@ -545,7 +559,28 @@ class StockAdjustmentLine(models.Model):
         related_name='adjustment_lines',
         verbose_name=_('المنتج')
     )
-    quantity = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('الكمية'))
+    uom = models.ForeignKey(
+        'ProductUoM',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name=_('الوحدة')
+    )
+    conversion_factor = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=Decimal('1.0'),
+        null=True,
+        blank=True,
+        verbose_name=_('معامل التحويل')
+    )
+    quantity = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('كمية التسوية / الفارق'))
+    system_quantity = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('الرصيد الدفتري')
+    )
+    physical_quantity = models.DecimalField(
+        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('الرصيد الفعلي (على الرف)')
+    )
     unit_cost = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('تكلفة الوحدة (تقديرية)'))
 
     class Meta:
@@ -554,6 +589,35 @@ class StockAdjustmentLine(models.Model):
 
     def __str__(self):
         return f'{self.product.name} - {self.quantity}'
+
+    @property
+    def display_unit_name(self):
+        if self.uom and getattr(self.uom, 'uom', None):
+            return self.uom.uom.name
+        return getattr(self.product, 'pos_unit_name', None) or ''
+
+    @property
+    def factor(self):
+        if self.conversion_factor and self.conversion_factor > Decimal('0'):
+            return self.conversion_factor
+        if self.uom and self.uom.conversion_factor:
+            return self.uom.conversion_factor
+        return Decimal('1.0')
+
+    @property
+    def base_quantity(self):
+        qty = self.quantity or Decimal('0')
+        return (qty * self.factor).quantize(Decimal('0.0001'))
+
+    @property
+    def base_unit_cost(self):
+        cost = self.unit_cost or Decimal('0')
+        if cost <= Decimal('0'):
+            return Decimal('0')
+        f = self.factor
+        if f > Decimal('0'):
+            return (cost / f).quantize(Decimal('0.0001'))
+        return cost
 
 # ---------------------------------------------------------------------------
 # Serial Item (For SERIALIZED products like Mobile Phones)

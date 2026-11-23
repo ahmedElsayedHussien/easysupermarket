@@ -264,6 +264,7 @@
             product_type: "{{ p.product_type }}",
             has_serial: {{ p.has_serial|yesno:"true,false" }},
             has_imei: {{ p.has_imei|yesno:"true,false" }},
+            base_unit_name: "{{ p.pos_unit_name|default:p.get_unit_display|escapejs }}",
             uoms: [
                 {% for pu in p.uoms.all %}
                 { id: "{{ pu.id }}", name: "{{ pu.uom.name|escapejs }}", factor: {{ pu.conversion_factor|stringformat:"f" }}, is_base: {{ pu.is_base|yesno:"true,false" }} },
@@ -374,12 +375,16 @@
             // Populate UOM options
             let uomHtml = '';
             if (prod.uoms && prod.uoms.length > 0) {
+                const hasBase = prod.uoms.some(u => u.is_base || u.name === prod.base_unit_name);
+                if (!hasBase) {
+                    uomHtml += `<option value="" data-factor="1" selected>${prod.base_unit_name || 'الأساسية'}</option>`;
+                }
                 prod.uoms.forEach(u => {
-                    const selAttr = u.is_base ? 'selected' : '';
+                    const selAttr = (!hasBase ? '' : (u.is_base ? 'selected' : ''));
                     uomHtml += `<option value="${u.id}" data-factor="${u.factor}" ${selAttr}>${u.name} (معامل: ${u.factor})</option>`;
                 });
             } else {
-                uomHtml = '<option value="">الأساسية</option>';
+                uomHtml = `<option value="" data-factor="1" selected>${prod.base_unit_name || 'الأساسية'}</option>`;
             }
             uomSelect.innerHTML = uomHtml;
             row.dataset.basePrice = prod.price;

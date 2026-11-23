@@ -2,7 +2,7 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="glass-container" style="padding: 2rem; max-width: 900px; margin: auto;">
+<div class="glass-container" style="padding: 2rem; max-width: 950px; margin: auto;">
     <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
         <h2 class="text-neon-cyan m-0"><i class="fas fa-file-invoice me-2"></i> {{ title }}</h2>
         <div>
@@ -21,8 +21,9 @@
             </form>
             {% else %}
             <span class="badge badge-success"><i class="fas fa-check-double"></i> مرحل ومكتمل</span>
+            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-orange ms-2">⬅️ العودة للتسويات والجرد</a>
+            <a href="{% url 'inventory:adjustment_create' %}" class="btn btn-outline-light ms-2" style="color:#00e5ff; border-color:rgba(0,229,255,0.4);">➕ تسوية جديدة</a>
             {% endif %}
-            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-ghost ms-2"><i class="fas fa-arrow-right"></i> عودة</a>
         </div>
     </div>
 
@@ -38,6 +39,8 @@
                             <span class="text-success font-weight-bold">زيادة بضاعة</span>
                         {% elif adjustment.adjustment_type == 'OPENING' %}
                             <span class="text-info font-weight-bold">رصيد افتتاحي</span>
+                        {% elif adjustment.adjustment_type == 'STOCKTAKE' %}
+                            <span class="badge" style="background: rgba(255, 115, 0, 0.2); color: #ff7300; border: 1px solid #ff7300; font-weight: bold; font-size: 0.95rem;">📋 جرد فعلي وتسوية أرصدة</span>
                         {% endif %}
                     </td>
                 </tr>
@@ -72,21 +75,59 @@
                 <tr>
                     <th>المنتج</th>
                     <th>الباركود</th>
-                    <th>الكمية</th>
-                    {% if adjustment.adjustment_type != 'OUT' %}
-                    <th>التكلفة (للوحدة)</th>
+                    <th>الوحدة</th>
+                    {% if adjustment.adjustment_type == 'STOCKTAKE' %}
+                    <th>الدفتري</th>
+                    <th>الفعلي على الرف</th>
+                    <th>فارق الجرد</th>
+                    {% else %}
+                    <th>الكمية المسواة</th>
+                    <th>الكمية بالمخزون (الأساسية)</th>
                     {% endif %}
+                    <th>التكلفة (للوحدة)</th>
                 </tr>
             </thead>
             <tbody>
                 {% for line in adjustment.lines.all %}
                 <tr>
-                    <td>{{ line.product.name }}</td>
+                    <td style="font-weight: 600;">{{ line.product.name }}</td>
                     <td class="en">{{ line.product.barcode|default:"-" }}</td>
-                    <td class="en">{{ line.quantity|floatformat:2 }}</td>
-                    {% if adjustment.adjustment_type != 'OUT' %}
-                    <td class="en">{{ line.unit_cost|floatformat:2 }} ج.م</td>
+                    <td>
+                        <span class="badge" style="background: rgba(0, 229, 255, 0.15); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.3); font-weight: 600; padding: 3px 8px; border-radius: 4px;">
+                            {{ line.display_unit_name }}
+                        </span>
+                        {% if line.factor > 1 %}
+                        <small style="color: #94a3b8; display: block; font-size: 0.75rem; margin-top: 2px;">(معامل: × {{ line.factor|floatformat:"-2" }})</small>
+                        {% endif %}
+                    </td>
+                    {% if adjustment.adjustment_type == 'STOCKTAKE' %}
+                    <td class="en">
+                        <span class="badge {% if line.system_quantity < 0 %}bg-danger{% else %}bg-secondary{% endif %}">
+                            {{ line.system_quantity|floatformat:2 }}
+                        </span>
+                    </td>
+                    <td class="en font-weight-bold text-white">{{ line.physical_quantity|floatformat:2 }}</td>
+                    <td class="en font-weight-bold">
+                        {% if line.quantity > 0 %}
+                            <span class="badge bg-success">+{{ line.quantity|floatformat:2 }} (زيادة)</span>
+                        {% elif line.quantity < 0 %}
+                            <span class="badge bg-danger">{{ line.quantity|floatformat:2 }} (عجز)</span>
+                        {% else %}
+                            <span class="badge bg-info">0.00 (مطابق)</span>
+                        {% endif %}
+                    </td>
+                    {% else %}
+                    <td class="en" style="font-weight: 700; color: #fff;">
+                        {{ line.quantity|floatformat:2 }} {{ line.display_unit_name }}
+                    </td>
+                    <td class="en" style="color: #00e5ff; font-weight: 700;">
+                        {{ line.base_quantity|floatformat:2 }}
+                        {% if line.factor > 1 %}
+                        <small style="color: #94a3b8; font-weight: normal;">(أساسي)</small>
+                        {% endif %}
+                    </td>
                     {% endif %}
+                    <td class="en">{{ line.unit_cost|floatformat:2 }} ج.م</td>
                 </tr>
                 {% endfor %}
             </tbody>

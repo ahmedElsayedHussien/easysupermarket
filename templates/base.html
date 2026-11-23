@@ -5,7 +5,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token }}">
-    <title>{% block title %}EASYSTORE ERP{% endblock %}</title>
+    <title>{% block title %}مسار - Masar ERP{% endblock %}</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
+    <link rel="shortcut icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
+    <link rel="apple-touch-icon" href="{% static 'img/logo.png' %}">
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -55,9 +60,10 @@
         </button>
 
         <!-- Logo -->
-        <div class="navbar-logo">
-            <span class="logo-arabic">{% trans 'إيزي ستور' %}</span>
-            <span class="logo-english">EASYSTORE</span>
+        <div class="navbar-logo" style="display:flex; align-items:center; gap:8px;">
+            <img src="{% static 'img/logo.png' %}" alt="مسار" style="height:36px; border-radius:6px; object-fit:contain;">
+            <span class="logo-arabic" style="font-size:1.1rem; font-weight:800; color:var(--neon-orange);">{% trans 'مسار' %}</span>
+            <span class="logo-english" style="font-size:0.85rem; font-weight:700; color:var(--text-secondary);">Masar</span>
         </div>
 
         <div class="navbar-divider"></div>
@@ -99,7 +105,7 @@
                 <div class="user-info-text">
                     <span class="user-name">{{ request.user.get_full_name|default:request.user.username }}</span>
                     <span class="user-role">
-                        {% if request.user.is_superuser %}مدير النظام{% elif request.user.is_staff %}مشرف{% else %}كاشير{% endif %}
+                        {% if request.user.is_superuser or is_admin %}مدير النظام{% elif request.user.is_staff %}مشرف{% else %}كاشير{% endif %}
                     </span>
                 </div>
                 
@@ -135,10 +141,17 @@
                 </select>
             </form>
 
-            <!-- Connection Status -->
-            <div class="connected-indicator" style="margin-inline-start: 0.75rem;">
-                <div class="connected-dot"></div>
-                <span style="font-family:var(--font-english);font-size:0.68rem;letter-spacing:0.5px;">CONNECTED</span>
+            <!-- Connection Status & DB Engine -->
+            <div class="connected-indicator" style="margin-inline-start: 0.75rem; display: flex; align-items: center; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <div class="connected-dot"></div>
+                    <span style="font-family:var(--font-english);font-size:0.68rem;letter-spacing:0.5px;">CONNECTED</span>
+                </div>
+                <a href="{% url 'core:database_backup' %}" style="text-decoration: none;" title="قاعدة البيانات المتصلة حالياً: {{ db_engine_name }} - اضغط لإدارة النسخ الاحتياطي">
+                    <span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; font-weight: 700; white-space: nowrap; cursor: pointer; transition: all 0.2s; {% if db_engine_name == 'PostgreSQL' %}background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4);{% else %}background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.4);{% endif %}">
+                        {% if db_engine_name == 'PostgreSQL' %}🐘 PostgreSQL{% else %}🗄️ SQLite{% endif %}
+                    </span>
+                </a>
             </div>
 
         </div>
@@ -154,196 +167,369 @@
              ============================================================ -->
         <aside class="sidebar {% block sidebar_class %}{% endblock %}">
 
+            {% if system_setting is None or system_setting.show_nav_dashboard or system_setting.show_nav_pos %}
             <p class="nav-section-title">{% trans 'التنقل السريع' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_dashboard %}
             <a href="{% url 'core:main_screen' %}" class="nav-link nav-orange {% if request.resolver_match.url_name == 'main_screen' %}active{% endif %}">
                 <span class="nav-icon">⚡</span>
                 <span class="nav-text">{% trans 'لوحة التحكم' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_pos %}
             <a href="{% url 'invoicing:pos' %}" class="nav-link nav-orange {% if request.resolver_match.app_name == 'invoicing' and request.resolver_match.url_name == 'pos' %}active{% endif %}">
                 <span class="nav-icon">🖥️</span>
                 <span class="nav-text">{% trans 'نقطة البيع' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_quotations or system_setting.show_nav_sales_invoices or system_setting.show_nav_pricelists %}
             <p class="nav-section-title">{% trans 'المبيعات' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_quotations %}
+            <a href="{% url 'invoicing:quotation_list' %}" class="nav-link nav-orange {% if 'quotation' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">📋</span>
+                <span class="nav-text">{% trans 'عروض الأسعار' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_sales_invoices %}
             <a href="{% url 'invoicing:sales_invoice_list' %}" class="nav-link nav-green {% if request.resolver_match.url_name == 'sales_invoice_list' %}active{% endif %}">
                 <span class="nav-icon">📄</span>
                 <span class="nav-text">{% trans 'فواتير المبيعات' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_pricelists %}
+            <a href="{% url 'pricing:pricelist_list' %}" class="nav-link nav-orange {% if request.resolver_match.app_name == 'pricing' and 'pricelist' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">🏷️</span>
+                <span class="nav-text">{% trans 'قوائم الأسعار' %}</span>
+            </a>
+            {% endif %}
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_purchase_invoices or system_setting.show_nav_create_purchase %}
             <p class="nav-section-title">{% trans 'المشتريات' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_purchase_invoices %}
             <a href="{% url 'invoicing:purchase_invoice_list' %}" class="nav-link nav-red {% if request.resolver_match.url_name == 'purchase_invoice_list' %}active{% endif %}">
                 <span class="nav-icon">🛒</span>
                 <span class="nav-text">{% trans 'فواتير المشتريات' %}</span>
             </a>
+            {% endif %}
             
+            {% if system_setting is None or system_setting.show_nav_create_purchase %}
             <a href="{% url 'invoicing:purchase_invoice' %}" class="nav-link nav-red {% if request.resolver_match.url_name == 'purchase_invoice' %}active{% endif %}">
                 <span class="nav-icon">➕</span>
                 <span class="nav-text">{% trans 'إنشاء فاتورة مشتريات' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_inventory_fifo or system_setting.show_nav_stocktake or system_setting.show_nav_adjustments or system_setting.show_nav_products or system_setting.show_nav_uom %}
             <p class="nav-section-title">{% trans 'المخزون' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_inventory_fifo %}
             <a href="{% url 'inventory:stock_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'stock_list' %}active{% endif %}">
                 <span class="nav-icon">📦</span>
                 <span class="nav-text">{% trans 'تتبع المخزون FIFO' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_stocktake %}
+            <a href="{% url 'inventory:stocktake' %}" class="nav-link nav-orange {% if request.resolver_match.url_name == 'stocktake' %}active{% endif %}">
+                <span class="nav-icon">📋</span>
+                <span class="nav-text">{% trans 'الجرد الفعلي والتسوية' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_adjustments %}
+            <a href="{% url 'inventory:adjustment_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name in 'adjustment_list,adjustment_detail,adjustment_create' %}active{% endif %}">
+                <span class="nav-icon">⚖️</span>
+                <span class="nav-text">{% trans 'تسويات المخزون' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_products %}
             <a href="{% url 'inventory:product_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'product_list' %}active{% endif %}">
                 <span class="nav-icon">🏷️</span>
                 <span class="nav-text">{% trans 'الأصناف' %}</span>
             </a>
+            <a href="{% url 'inventory:product_bulk_import' %}" class="nav-link nav-orange {% if request.resolver_match.url_name == 'product_bulk_import' %}active{% endif %}">
+                <span class="nav-icon">📥</span>
+                <span class="nav-text">{% trans 'استيراد الأصناف (إكسيل)' %}</span>
+            </a>
+            <a href="{% url 'inventory:opening_stock_list' %}" class="nav-link nav-orange {% if request.resolver_match.url_name == 'opening_stock_list' %}active{% endif %}">
+                <span class="nav-icon">📦</span>
+                <span class="nav-text">{% trans 'أرصدة أول المدة' %}</span>
+            </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_uom %}
             <a href="{% url 'inventory:uom_list' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'uom_list' %}active{% endif %}">
-                <span class="nav-icon">⚖️</span>
+                <span class="nav-icon">📐</span>
                 <span class="nav-text">{% trans 'وحدات القياس' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_rentals_equipment or system_setting.show_nav_rentals_contracts or system_setting.show_nav_rentals_reports %}
             <p class="nav-section-title">{% trans 'تأجير المعدات' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_rentals_equipment %}
             <a href="{% url 'rentals:equipment_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'rentals' and request.resolver_match.url_name == 'equipment_list' %}active{% endif %}">
                 <span class="nav-icon">🛠️</span>
                 <span class="nav-text">{% trans 'المعدات' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_rentals_contracts %}
             <a href="{% url 'rentals:rental_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'rentals' and request.resolver_match.url_name == 'rental_list' %}active{% endif %}">
                 <span class="nav-icon">📜</span>
                 <span class="nav-text">{% trans 'عقود الإيجار' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_rentals_reports %}
             <a href="{% url 'rentals:rental_reports' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'rentals' and request.resolver_match.url_name == 'rental_reports' %}active{% endif %}">
                 <span class="nav-icon">📊</span>
                 <span class="nav-text">{% trans 'تقارير الإيجارات' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_maintenance_tickets %}
             <p class="nav-section-title">{% trans 'الصيانة' %}</p>
 
             <a href="{% url 'maintenance:ticket_list' %}" class="nav-link nav-orange {% if request.resolver_match.app_name == 'maintenance' and request.resolver_match.url_name != 'commission_rules' and request.resolver_match.url_name != 'commission_report' %}active{% endif %}">
                 <span class="nav-icon">🔧</span>
                 <span class="nav-text">{% trans 'تذاكر الصيانة' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_commission_rules or system_setting.show_nav_commission_report %}
             <p class="nav-section-title">{% trans 'العمولات والمبيعات' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_commission_rules %}
             <a href="{% url 'maintenance:commission_rules' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'commission_rules' %}active{% endif %}">
                 <span class="nav-icon">⚖️</span>
                 <span class="nav-text">{% trans 'قواعد العمولات' %}</span>
             </a>
+            {% endif %}
             
+            {% if system_setting is None or system_setting.show_nav_commission_report %}
             <a href="{% url 'maintenance:commission_report' %}" class="nav-link nav-cyan {% if request.resolver_match.url_name == 'commission_report' %}active{% endif %}">
                 <span class="nav-icon">📈</span>
                 <span class="nav-text">{% trans 'تقرير العمولات' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_hr_attendance or system_setting.show_nav_hr_payroll %}
             <p class="nav-section-title">{% trans 'شؤون الموظفين' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_hr_attendance %}
             <a href="{% url 'hr:attendance_dashboard' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'attendance_dashboard' %}active{% endif %}">
                 <span class="nav-icon">⏰</span>
                 <span class="nav-text">{% trans 'الحضور والانصراف' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_hr_payroll %}
             <a href="{% url 'hr:payroll_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'payroll_list' %}active{% endif %}">
                 <span class="nav-icon">💸</span>
                 <span class="nav-text">{% trans 'مسير الرواتب' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_suppliers or system_setting.show_nav_customers or system_setting.show_nav_sectors or system_setting.show_nav_partners_report %}
             <p class="nav-section-title">{% trans 'الشركاء' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_suppliers %}
             <a href="{% url 'partners:supplier_list' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'supplier_list' %}active{% endif %}">
                 <span class="nav-icon">🚚</span>
                 <span class="nav-text">{% trans 'الموردون' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_customers %}
             <a href="{% url 'partners:customer_list' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'customer_list' %}active{% endif %}">
                 <span class="nav-icon">👥</span>
                 <span class="nav-text">{% trans 'العملاء' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_sectors %}
+            <a href="{% url 'pricing:sector_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'pricing' and 'sector' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">🏢</span>
+                <span class="nav-text">{% trans 'قطاعات العملاء' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_partners_report %}
+            <a href="{% url 'core:report_partners' %}" class="nav-link nav-blue {% if 'report_partners' in request.resolver_match.url_name or 'ledger' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">📑</span>
+                <span class="nav-text">{% trans 'تقرير وحسابات الشركاء' %}</span>
+            </a>
+            {% endif %}
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_expenses or system_setting.show_nav_receipts or system_setting.show_nav_payments or system_setting.show_nav_transfers or system_setting.show_nav_cheques or system_setting.show_nav_fixed_assets or system_setting.show_nav_loans or system_setting.show_nav_journals or system_setting.show_nav_chart_of_accounts or system_setting.show_nav_treasuries or system_setting.show_nav_banks or system_setting.show_nav_ewallets %}
             <p class="nav-section-title">{% trans 'المحاسبة' %}</p>
 
+            {% if system_setting is None or system_setting.show_nav_expenses %}
             <a href="{% url 'accounting:expense_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'expense_list' %}active{% endif %}">
                 <span class="nav-icon">🧾</span>
                 <span class="nav-text">{% trans 'المصروفات' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_receipts %}
             <a href="{% url 'accounting:receipt_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'receipt_list' %}active{% endif %}">
                 <span class="nav-icon">📥</span>
                 <span class="nav-text">{% trans 'سندات القبض' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_payments %}
             <a href="{% url 'accounting:payment_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'payment_list' %}active{% endif %}">
                 <span class="nav-icon">📤</span>
                 <span class="nav-text">{% trans 'سندات الصرف' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_transfers %}
+            <a href="{% url 'accounting:transfer_list' %}" class="nav-link nav-gold {% if 'transfer' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">🔄</span>
+                <span class="nav-text">{% trans 'تحويل الأموال' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_cheques %}
+            <a href="{% url 'accounting:cheque_list' %}" class="nav-link nav-gold {% if 'cheque' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">📑</span>
+                <span class="nav-text">{% trans 'إدارة الشيكات' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_fixed_assets %}
+            <a href="{% url 'accounting:fixed_asset_list' %}" class="nav-link nav-gold {% if 'fixed_asset' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">🏛️</span>
+                <span class="nav-text">{% trans 'الأصول الثابتة' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_loans %}
+            <a href="{% url 'accounting:loan_list' %}" class="nav-link nav-gold {% if 'loan' in request.resolver_match.url_name %}active{% endif %}">
+                <span class="nav-icon">🏦</span>
+                <span class="nav-text">{% trans 'القروض والتمويل' %}</span>
+            </a>
+            {% endif %}
+
+
+            {% if request.user.is_superuser or request.user.employee_profile.is_admin or is_admin %}
+            {% if system_setting is None or system_setting.show_nav_journals %}
             <a href="{% url 'accounting:journal_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'journal_list' %}active{% endif %}">
                 <span class="nav-icon">📒</span>
                 <span class="nav-text">{% trans 'قيود اليومية' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_chart_of_accounts %}
             <a href="{% url 'accounting:chart_of_accounts' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'chart_of_accounts' %}active{% endif %}">
                 <span class="nav-icon">📊</span>
                 <span class="nav-text">{% trans 'دليل الحسابات' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_treasuries %}
             <a href="{% url 'accounting:treasury_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'treasury_list' %}active{% endif %}">
                 <span class="nav-icon">💰</span>
                 <span class="nav-text">{% trans 'الخزائن' %}</span>
             </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_banks %}
             <a href="{% url 'accounting:bank_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'bank_list' %}active{% endif %}">
                 <span class="nav-icon">🏦</span>
                 <span class="nav-text">{% trans 'حسابات البنوك' %}</span>
             </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_ewallets %}
             <a href="{% url 'accounting:ewallet_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'ewallet_list' %}active{% endif %}">
                 <span class="nav-icon">📱</span>
                 <span class="nav-text">{% trans 'المحافظ الإلكترونية' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if request.user.is_staff or request.user.is_superuser or request.user.employee_profile.is_admin or is_admin %}
+            {% if system_setting is None or system_setting.show_nav_admin_dashboard or system_setting.show_nav_branches or system_setting.show_nav_users or system_setting.show_nav_reports %}
             <p class="nav-section-title">{% trans 'الإدارة' %}</p>
 
-            {% if request.user.is_staff %}
+
+            {% if system_setting is None or system_setting.show_nav_admin_dashboard %}
             <a href="{% url 'core:admin_dashboard' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'admin_dashboard' %}active{% endif %}">
                 <span class="nav-icon">📈</span>
                 <span class="nav-text">{% trans 'لوحة المدير' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_branches %}
             <a href="{% url 'core:branch_list' %}" class="nav-link nav-lime {% if request.resolver_match.url_name == 'branch_list' %}active{% endif %}">
                 <span class="nav-icon">🏪</span>
                 <span class="nav-text">{% trans 'الفروع والكيانات' %}</span>
             </a>
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_users %}
             <a href="{% url 'core:user_list' %}" class="nav-link nav-lime {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
                 <span class="nav-icon">👤</span>
                 <span class="nav-text">{% trans 'المستخدمين' %}</span>
             </a>
+            {% endif %}
             
+            {% if system_setting is None or system_setting.show_nav_reports %}
             <a href="{% url 'core:reports_index' %}" class="nav-link nav-lime {% if request.resolver_match.url_name == 'reports_index' %}active{% endif %}">
                 <span class="nav-icon">📊</span>
                 <span class="nav-text">{% trans 'التقارير الشاملة' %}</span>
             </a>
+            {% endif %}
+            {% endif %}
 
+            {% if system_setting is None or system_setting.show_nav_einvoice_approval or system_setting.show_nav_einvoice_history or system_setting.show_nav_tax_settings %}
             <p class="nav-section-title">{% trans 'منظومة الضرائب' %}</p>
+
+            {% if system_setting is None or system_setting.show_nav_einvoice_approval %}
             <a href="{% url 'einvoicing:invoice_approval_list' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'invoice_approval_list' %}active{% endif %}">
                 <span class="nav-icon">📤</span>
                 <span class="nav-text">{% trans 'إرسال للتوقيع' %}</span>
             </a>
+            {% endif %}
             
+            {% if system_setting is None or system_setting.show_nav_einvoice_history %}
             <a href="{% url 'einvoicing:invoice_history' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'invoice_history' %}active{% endif %}">
                 <span class="nav-icon">📖</span>
                 <span class="nav-text">{% trans 'سجل الفواتير المرسلة' %}</span>
             </a>
+            {% endif %}
             
+            {% if system_setting is None or system_setting.show_nav_tax_settings %}
             <a href="{% url 'einvoicing:tax_settings' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'tax_settings' %}active{% endif %}">
                 <span class="nav-icon">🧾</span>
                 <span class="nav-text">{% trans 'إعدادات الضرائب' %}</span>
             </a>
             {% endif %}
+            {% endif %}
+            {% endif %}
 
             <div style="margin-top:auto;padding-top:1rem;">
-                <div class="sidebar-version">EasySupermarket ERP v1.0</div>
+                <div class="sidebar-version">Masar ERP v1.0</div>
             </div>
 
         </aside>
@@ -379,7 +565,7 @@
 <!-- ============================================================
      JAVASCRIPT
      ============================================================ -->
-<script src="{% static 'js/dashboard.js' %}"></script>
+<script src="{% static 'js/dashboard.js' %}?v=2.5"></script>
 
 <script>
     // User Menu Toggle

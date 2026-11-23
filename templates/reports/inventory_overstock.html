@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>📈 {{ title }}</h1>
+        <p>الأصناف التي تجاوز رصيدها الحد الأقصى للمخزون ورأس المال المعطل فيها</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange">⬅️ العودة للتقارير</a>
+        <button onclick="window.print()" class="btn btn-primary">🖨️ طباعة</button>
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="card" style="padding: 1.25rem; border-left: 4px solid var(--neon-cyan); background: var(--bg-secondary);">
+        <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem;">📦 إجمالي الأصناف الفائضة</div>
+        <div style="font-size: 1.75rem; font-weight: 800; color: #fff;">{{ total_excess_items }} <span style="font-size: 0.9rem; font-weight: normal; color: var(--text-muted);">صنف</span></div>
+    </div>
+    <div class="card" style="padding: 1.25rem; border-left: 4px solid #f59e0b; background: var(--bg-secondary);">
+        <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem;">📊 إجمالي الكميات المتكدسة</div>
+        <div style="font-size: 1.75rem; font-weight: 800; color: #f59e0b;">{{ total_excess_qty|floatformat:"-2" }} <span style="font-size: 0.9rem; font-weight: normal; color: var(--text-muted);">قطعة / وحدة</span></div>
+    </div>
+    <div class="card" style="padding: 1.25rem; border-left: 4px solid var(--neon-red); background: var(--bg-secondary);">
+        <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem;">💰 رأس المال المجمد في الفائض</div>
+        <div style="font-size: 1.75rem; font-weight: 800; color: #ff6b6b;">{{ total_frozen_capital|floatformat:"2" }} <span style="font-size: 0.9rem; font-weight: normal; color: var(--text-muted);">ج.م</span></div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="get" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 250px;">
+            <label class="form-label">🔍 بحث باسم الصنف أو الباركود</label>
+            <input type="text" name="search_query" class="form-control" value="{{ search_query }}" placeholder="ابحث باسم الصنف أو الباركود...">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap;">
+            <button type="submit" class="btn btn-primary">تصفية النتائج</button>
+            <button type="submit" name="export" value="excel" class="btn btn-success" style="background-color: #28a745; color: white; border: none;">📊 تصدير إكسيل</button>
+            <a href="{% url 'core:report_overstock' %}" class="btn btn-orange">إعادة ضبط</a>
+        </div>
+    </form>
+</div>
+
+<!-- Table Data -->
+<div class="card">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>الباركود</th>
+                    <th>اسم الصنف</th>
+                    <th style="text-align: center;">الرصيد الحالي</th>
+                    <th style="text-align: center;">الحد الأقصى</th>
+                    <th style="text-align: center;">الكمية الفائضة</th>
+                    <th style="text-align: center;">تكلفة الوحدة</th>
+                    <th style="text-align: center;">رأس المال المجمد</th>
+                    <th style="text-align: center;">نسبة التكدس</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for product in products %}
+                <tr>
+                    <td style="font-family: monospace; color: var(--text-primary);">{{ product.barcode|default:"-" }}</td>
+                    <td style="font-weight: bold; color: var(--text-primary);">
+                        {{ product.name }}
+                        {% if product.category %}
+                        <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">{{ product.category.name }}</div>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #ff6b6b; font-size: 1rem; font-weight: 700;">
+                            {{ product.current_stock|floatformat:"-2" }}
+                        </span>
+                    </td>
+                    <td style="text-align: center; color: var(--text-secondary); font-weight: 600;">{{ product.max_stock_level|floatformat:"-2" }}</td>
+                    <td style="text-align: center; color: #f59e0b; font-weight: bold; font-size: 1rem;">
+                        +{{ product.excess_qty|floatformat:"-2" }}
+                    </td>
+                    <td style="text-align: center; color: var(--text-secondary);">
+                        {{ product.last_purchase_price|default:"0.00"|floatformat:"2" }} ج.م
+                    </td>
+                    <td style="text-align: center; color: #ff6b6b; font-weight: 700;">
+                        {{ product.excess_cost|default:"0.00"|floatformat:"2" }} ج.م
+                    </td>
+                    <td style="text-align: center;">
+                        <span class="badge" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b; font-weight: 700;">
+                            +{{ product.overstock_pct }}%
+                        </span>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="8" style="text-align: center; padding: 2.5rem; color: var(--neon-green); font-size: 1.1rem;">
+                        ✓ لا توجد أصناف متكدسة أو متجاوزة للحد الأقصى للمخزون حالياً 👍
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    {% if is_paginated %}
+    <div class="pagination" style="margin-top: 1.5rem; display: flex; justify-content: center; gap: 0.5rem;">
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&search_query={{ search_query }}" class="btn btn-sm btn-secondary">السابق</a>
+        {% endif %}
+        
+        <span class="btn btn-sm" style="background: var(--bg-tertiary);">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+        
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&search_query={{ search_query }}" class="btn btn-sm btn-secondary">التالي</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .pagination { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; }
+        .data-table th, .data-table td { border: 1px solid #ddd !important; }
+    }
+</style>
+{% endblock %}

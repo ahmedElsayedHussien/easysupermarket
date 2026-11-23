@@ -5,11 +5,16 @@
 <div class="container-fluid py-4">
     <div class="row justify-content-center">
         <div class="col-md-10">
-            <div class="d-flex justify-content-between align-items-center mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
                 <h2 class="text-white mb-0">تفاصيل المصروف {{ expense.expense_number }}</h2>
-                <a href="{% url 'accounting:expense_list' %}" class="btn btn-ghost">
-                    <i class="fas fa-arrow-right me-2"></i> رجوع للقائمة
-                </a>
+                <div class="d-flex gap-2">
+                    <a href="{% url 'accounting:expense_list' %}" class="btn" style="background:#ff7300; color:#fff; font-weight:bold; border-radius:8px;">
+                        ⬅️ العودة لقائمة المصروفات
+                    </a>
+                    <a href="{% url 'accounting:expense_create' %}" class="btn" style="background:rgba(0,229,255,0.15); color:#00e5ff; border:1px solid rgba(0,229,255,0.4); font-weight:bold; border-radius:8px;">
+                        ➕ إضافة مصروف جديد
+                    </a>
+                </div>
             </div>
 
             <div class="card p-0 overflow-hidden mb-4">
@@ -115,7 +120,7 @@
                         <i class="fas fa-book-open fa-2x text-info me-3"></i>
                         <div>
                             <h6 class="mb-1 text-info">قيد يومية رقم: {{ expense.journal_entry.reference }}</h6>
-                            <p class="mb-0 small text-white-50">تم توليد القيد المحاسبي بنجاح. <a href="{% url 'accounting:journal_detail' expense.journal_entry.id %}" class="text-info fw-bold text-decoration-none">عرض القيد</a></p>
+                            <p class="mb-0 small text-white-50">تم توليد القيد المحاسبي بنجاح. {% if request.user.is_superuser or request.user.employee_profile.is_admin %}<a href="{% url 'accounting:journal_detail' expense.journal_entry.id %}" class="text-info fw-bold text-decoration-none">عرض القيد</a>{% endif %}</p>
                         </div>
                     </div>
                     {% endif %}

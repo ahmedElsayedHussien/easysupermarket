@@ -6,6 +6,7 @@
     <div class="d-flex flex-column flex-md-row justify-between align-md-center mb-4 gap-3">
         <h2 class="text-neon-cyan mb-0 text-center" style="text-align: right;">تتبع المخزون (FIFO)</h2>
         <div class="d-flex flex-wrap gap-2" style="justify-content: center;">
+            <a href="{% url 'inventory:stocktake' %}" class="btn-orange" style="flex: 1 1 calc(50% - 0.5rem); text-align: center; white-space: nowrap; box-shadow: 0 0 15px rgba(255, 115, 0, 0.4);">📋 جرد فعلي وتسوية</a>
             <a href="{% url 'inventory:transfer_stock' %}" class="btn btn-neon-cyan" style="flex: 1 1 calc(50% - 0.5rem); text-align: center; white-space: nowrap;">🔄 تحويل مخزني</a>
             <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-neon-cyan" style="flex: 1 1 calc(50% - 0.5rem); text-align: center; white-space: nowrap;">تسوية وإعدام</a>
             <a href="{% url 'inventory:product_list' %}" class="btn btn-ghost" style="flex: 1 1 calc(50% - 0.5rem); text-align: center; white-space: nowrap;">المنتجات</a>
@@ -14,15 +15,21 @@
     </div>
 
     <div class="card mb-4 p-3">
-        <div class="d-flex gap-3">
-            <select class="form-select" id="warehouseFilter">
+        <form method="GET" class="d-flex gap-3 align-items-center flex-wrap">
+            <select class="form-select" name="warehouse" style="max-width: 250px;" onchange="this.form.submit()">
                 <option value="">كل المستودعات</option>
                 {% for wh in warehouses %}
-                <option value="{{ wh.name }}">{{ wh.name }}</option>
+                <option value="{{ wh.name }}" {% if selected_warehouse == wh.name %}selected{% endif %}>{{ wh.name }}</option>
                 {% endfor %}
             </select>
-            <input type="text" id="productSearch" class="form-control" placeholder="بحث باسم المنتج...">
-        </div>
+            <input type="text" name="q" class="form-control" placeholder="بحث باسم المنتج..." value="{{ search_query|default:'' }}" style="flex: 1; min-width: 200px;">
+            <button type="submit" class="btn btn-orange" style="background: #ff7300; border-color: #ff7300; color: #fff; font-weight: bold; white-space: nowrap; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35);">
+                🔍 بحث
+            </button>
+            {% if selected_warehouse or search_query %}
+            <a href="{% url 'inventory:stock_list' %}" class="btn btn-secondary" style="white-space: nowrap;">إلغاء الفلترة</a>
+            {% endif %}
+        </form>
     </div>
 
     <div style="overflow-x: auto;">
@@ -61,40 +68,33 @@
         </tbody>
     </table>
     </div>
+
+    <!-- Pagination & Summary Footer -->
+    {% if total_count > 0 %}
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="color: var(--text-muted); font-size: 0.9rem;">
+            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ total_count }}</b> دفعة مخزون
+        </div>
+
+        {% if is_paginated %}
+        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1{% if selected_warehouse %}&warehouse={{ selected_warehouse }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if selected_warehouse %}&warehouse={{ selected_warehouse }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
+            {% endif %}
+
+            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if selected_warehouse %}&warehouse={{ selected_warehouse }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if selected_warehouse %}&warehouse={{ selected_warehouse }}{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    const warehouseFilter = document.getElementById('warehouseFilter');
-    const productSearch = document.getElementById('productSearch');
-    const tableRows = document.querySelectorAll('.data-table tbody tr');
-
-    function filterTable() {
-        const whValue = warehouseFilter.value.toLowerCase();
-        const searchValue = productSearch.value.toLowerCase();
-
-        tableRows.forEach(row => {
-            // Ignore the empty state row
-            if (row.querySelector('td[colspan]')) return;
-
-            const productName = row.cells[0].textContent.toLowerCase();
-            const warehouseName = row.cells[1].textContent.toLowerCase();
-
-            const matchesWarehouse = whValue === "" || warehouseName.includes(whValue);
-            const matchesSearch = searchValue === "" || productName.includes(searchValue);
-
-            if (matchesWarehouse && matchesSearch) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
-        });
-    }
-
-    warehouseFilter.addEventListener('change', filterTable);
-    if (productSearch) {
-        productSearch.addEventListener('keyup', filterTable);
-    }
-});
-</script>
 {% endblock %}

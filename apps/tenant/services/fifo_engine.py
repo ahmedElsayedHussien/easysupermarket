@@ -27,7 +27,8 @@ def consume_fifo_batches(
     warehouse,
     quantity_needed: Decimal,
     reference: str = '',
-    notes: str = ''
+    notes: str = '',
+    movement_type: str = 'OUT'
 ) -> List[dict]:
     """
     Consume inventory from the oldest available batches (FIFO order).
@@ -72,7 +73,11 @@ def consume_fifo_batches(
         t=Sum('quantity_remaining')
     )['t'] or Decimal('0')
 
-    if total_available < quantity_needed and not product.allow_negative_stock:
+    from apps.tenant.core.models import SystemSetting
+    # Master Lock: Global setting strictly governs negative stock
+    allow_negative = getattr(SystemSetting.get_settings(), 'allow_negative_stock', False)
+
+    if total_available < quantity_needed and not allow_negative:
         raise ValueError(
             f'المخزون غير كافٍ للمنتج "{product.name}" في مستودع "{warehouse.name}". '
             f'المتاح: {total_available}, المطلوب: {quantity_needed}'
@@ -99,7 +104,7 @@ def consume_fifo_batches(
             product=product,
             warehouse=warehouse,
             batch=batch,
-            movement_type='OUT',
+            movement_type=movement_type,
             quantity=consume_from_this,
             unit_cost=batch.unit_cost,
             reference=reference,
@@ -119,6 +124,47 @@ def consume_fifo_batches(
             f'qty={consume_from_this}, cost={batch.unit_cost}'
         )
 
+    if remaining_to_consume > Decimal('0'):
+        estimated_unit_cost = (
+            product.get_average_cost(warehouse=warehouse)
+            or product.last_purchase_price
+            or Decimal('0')
+        )
+
+        deficit_batch = InventoryBatch.objects.create(
+            product=product,
+            warehouse=warehouse,
+            quantity_original=Decimal('0'),
+            quantity_remaining=-remaining_to_consume,
+            unit_cost=estimated_unit_cost,
+            batch_number='DEFICIT',
+        )
+
+        StockMovement.objects.create(
+            product=product,
+            warehouse=warehouse,
+            batch=deficit_batch,
+            movement_type=movement_type,
+            quantity=remaining_to_consume,
+            unit_cost=estimated_unit_cost,
+            reference=reference,
+            notes=notes or f'استهلاك رصيد سالب - عجز {remaining_to_consume}'
+        )
+
+        total_cost = (remaining_to_consume * estimated_unit_cost).quantize(Decimal('0.0001'))
+        consumptions.append({
+            'batch': deficit_batch,
+            'quantity_consumed': remaining_to_consume,
+            'unit_cost': estimated_unit_cost,
+            'total_cost': total_cost,
+        })
+
+        logger.info(
+            f'FIFO consume (negative stock): product={product.id}, '
+            f'qty={remaining_to_consume}, estimated_cost={estimated_unit_cost}'
+        )
+        remaining_to_consume = Decimal('0')
+
     return consumptions
 
 
@@ -132,6 +178,7 @@ def add_inventory_batch(
     batch_number: str = '',
     invoice_line=None,
     reference: str = '',
+    movement_type: str = 'IN',
 ) -> 'InventoryBatch':
     """
     Creates a new FIFO inventory batch (on purchase/stock-in).
@@ -174,6 +221,27 @@ def add_inventory_batch(
         source_invoice_line=invoice_line,
     )
 
+    # Offset any existing negative deficit batches for this product & warehouse
+    negative_batches = InventoryBatch.objects.select_for_update().filter(
+        product=product,
+        warehouse=warehouse,
+        quantity_remaining__lt=Decimal('0')
+    ).exclude(id=batch.id).order_by('created_at')
+
+    remaining_to_offset = batch.quantity_remaining
+    for neg_batch in negative_batches:
+        if remaining_to_offset <= Decimal('0'):
+            break
+        deficit = abs(neg_batch.quantity_remaining)
+        offset = min(deficit, remaining_to_offset)
+        neg_batch.quantity_remaining += offset
+        neg_batch.save(update_fields=['quantity_remaining', 'updated_at'])
+        remaining_to_offset -= offset
+
+    if remaining_to_offset != batch.quantity_remaining:
+        batch.quantity_remaining = remaining_to_offset
+        batch.save(update_fields=['quantity_remaining', 'updated_at'])
+
     # Update product's last purchase price
     product.last_purchase_price = unit_cost
     product.save(update_fields=['last_purchase_price', 'updated_at'])
@@ -183,7 +251,7 @@ def add_inventory_batch(
         product=product,
         warehouse=warehouse,
         batch=batch,
-        movement_type='IN',
+        movement_type=movement_type,
         quantity=quantity,
         unit_cost=unit_cost,
         reference=reference,

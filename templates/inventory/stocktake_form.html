@@ -1,0 +1,719 @@
+{% extends 'base.html' %}
+{% load i18n %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.stocktake-container {
+    padding: 1.5rem;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.stocktake-card {
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    backdrop-filter: blur(12px);
+    padding: 1.5rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 1rem;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.stat-box:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 115, 0, 0.4);
+}
+
+.stat-box .val {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-top: 0.25rem;
+}
+
+.table-stocktake {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 6px;
+}
+
+.table-stocktake th {
+    background: rgba(30, 41, 59, 0.8);
+    color: #94a3b8;
+    font-weight: 600;
+    padding: 0.85rem 1rem;
+    font-size: 0.9rem;
+    border: none;
+}
+
+.table-stocktake th:first-child { border-radius: 8px 0 0 8px; }
+.table-stocktake th:last-child { border-radius: 0 8px 8px 0; }
+
+.table-stocktake tbody tr {
+    background: rgba(255, 255, 255, 0.02);
+    transition: background 0.2s ease;
+}
+
+.table-stocktake tbody tr:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.table-stocktake td {
+    padding: 0.75rem 1rem;
+    vertical-align: middle;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.qty-input {
+    width: 110px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    font-weight: 700;
+    font-size: 1.05rem;
+    text-align: center;
+    border-radius: 8px;
+    padding: 0.4rem 0.5rem;
+    transition: all 0.2s;
+}
+
+.qty-input:focus {
+    border-color: #ff7300;
+    box-shadow: 0 0 10px rgba(255, 115, 0, 0.4);
+    outline: none;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.badge-variance-gain {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    padding: 0.35rem 0.75rem;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.badge-variance-loss {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    padding: 0.35rem 0.75rem;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+.badge-variance-match {
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    padding: 0.35rem 0.75rem;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.badge-negative-stock {
+    background: rgba(239, 68, 68, 0.25);
+    color: #f87171;
+    border: 1px solid #ef4444;
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    font-weight: 700;
+}
+
+.badge-positive-stock {
+    background: rgba(14, 165, 233, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(14, 165, 233, 0.3);
+    padding: 0.25rem 0.6rem;
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+.btn-orange-glow {
+    background: linear-gradient(135deg, #ff7300, #e65c00);
+    color: #fff !important;
+    border: none;
+    border-radius: 8px;
+    padding: 0.75rem 1.75rem;
+    font-weight: 700;
+    font-size: 1rem;
+    box-shadow: 0 4px 15px rgba(255, 115, 0, 0.35);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btn-orange-glow:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(255, 115, 0, 0.5);
+    background: linear-gradient(135deg, #ff851a, #ff7300);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="stocktake-container">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
+        <div>
+            <h2 class="text-white m-0 d-flex align-items-center gap-2">
+                <i class="fas fa-clipboard-check" style="color: #ff7300;"></i>
+                <span>{{ title }}</span>
+            </h2>
+            <p class="text-muted m-0 mt-1" style="font-size: 0.9rem;">
+                إدخال الكميات الفعلية على الرف؛ يقوم النظام بحساب الفارق وتصفير أي عجز سالب وضبط الرصيد تلقائياً.
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-ghost">
+                <i class="fas fa-arrow-right me-1"></i> العودة لقائمة التسويات
+            </a>
+        </div>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="stats-grid">
+        <div class="stat-box">
+            <div class="text-muted" style="font-size: 0.85rem;">الأصناف بالجرد</div>
+            <div class="val text-white" id="statTotalItems">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="text-muted" style="font-size: 0.85rem;">أصناف مطابقة</div>
+            <div class="val text-cyan" id="statMatchedItems">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="text-muted" style="font-size: 0.85rem;">أصناف بزيادة (+)</div>
+            <div class="val text-success" id="statGainItems">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="text-muted" style="font-size: 0.85rem;">أصناف بعجز (-)</div>
+            <div class="val text-danger" id="statLossItems">0</div>
+        </div>
+        <div class="stat-box">
+            <div class="text-muted" style="font-size: 0.85rem;">صافي الأثر المالي التقديري</div>
+            <div class="val" id="statNetImpact" style="color: #ff7300;">0.00 ج.م</div>
+        </div>
+    </div>
+
+    <form method="post" id="stocktakeForm" class="stocktake-card">
+        {% csrf_token %}
+        <input type="hidden" name="action" id="formAction" value="save_and_confirm">
+
+        <!-- Top Controls -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-3">
+                <label class="form-label text-white fw-bold">المستودع <span class="text-danger">*</span></label>
+                <select name="warehouse" id="warehouseSelect" class="form-select" required onchange="onWarehouseChange()">
+                    <option value="">-- اختر المستودع --</option>
+                    {% for wh in warehouses %}
+                    <option value="{{ wh.id }}" {% if forloop.first %}selected{% endif %}>{{ wh.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label text-white fw-bold">تاريخ الجرد</label>
+                <input type="date" name="date" class="form-control" required value="{% now 'Y-m-d' %}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label text-white fw-bold">البيان / ملاحظات الجرد</label>
+                <input type="text" name="reason" class="form-control" placeholder="مثال: جرد نهاية الشهر، تسوية أصناف الرف الأمامي" value="جرد فعلي وتسوية أرصدة">
+            </div>
+        </div>
+
+        <!-- Quick Item Finder & Loader Toolbar -->
+        <div class="p-3 mb-4 rounded" style="background: rgba(255, 115, 0, 0.06); border: 1px dashed rgba(255, 115, 0, 0.3);">
+            <div class="row g-3 align-items-center">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <span class="input-group-text bg-dark border-secondary text-warning"><i class="fas fa-barcode"></i></span>
+                        <input type="text" id="quickBarcodeInput" class="form-control" placeholder="امسح الباركود أو اكتب اسم الصنف للإضافة السريعة..." autocomplete="off">
+                    </div>
+                </div>
+                <div class="col-md-6 d-flex gap-2 justify-content-md-end flex-wrap">
+                    <button type="button" class="btn btn-outline-warning" id="btnLoadAllWarehouse" onclick="loadAllWarehouseProducts()">
+                        <i class="fas fa-sync-alt me-1"></i> تحميل كافة أصناف المستودع للجرد
+                    </button>
+                    <button type="button" class="btn btn-ghost" onclick="addNewEmptyRow()">
+                        <i class="fas fa-plus me-1"></i> سطر يدوي
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stocktake Table -->
+        <div class="table-responsive mb-4">
+            <table class="table-stocktake" id="stocktakeTable">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th style="width: 140px;">الباركود</th>
+                        <th>اسم الصنف</th>
+                        <th style="width: 130px; text-align: center;">الرصيد الدفتري</th>
+                        <th style="width: 150px; text-align: center;">الفعلي على الرف</th>
+                        <th style="width: 160px; text-align: center;">الفارق (التسوية)</th>
+                        <th style="width: 130px; text-align: center;">التكلفة التقديرية</th>
+                        <th style="width: 130px; text-align: center;">قيمة الفارق</th>
+                        <th style="width: 50px; text-align: center;">حذف</th>
+                    </tr>
+                </thead>
+                <tbody id="stocktakeTbody">
+                    <!-- Populated dynamically via JS -->
+                </tbody>
+            </table>
+
+            <div id="emptyNotice" class="text-center py-5 text-muted">
+                <i class="fas fa-boxes fa-3x mb-3" style="opacity: 0.3;"></i>
+                <h5>لم يتم تحميل أو إضافة أي أصناف للجرد بعد</h5>
+                <p>امسح باركود الصنف أعلاه أو اضغط <strong>"تحميل كافة أصناف المستودع للجرد"</strong> للبدء الفوري.</p>
+            </div>
+        </div>
+
+        <!-- Submit & Actions Bar -->
+        <div class="d-flex justify-content-between align-items-center pt-3 border-top border-secondary flex-wrap gap-3">
+            <div class="text-muted" style="font-size: 0.9rem;">
+                <i class="fas fa-shield-alt text-warning me-1"></i>
+                عند الاعتماد: يتم ترحيل قيود اليومية آلياً وتسوية أي أرصدة سالبة وتثبيت الرصيد ليطابق الرف.
+            </div>
+            <div class="d-flex gap-3">
+                <button type="button" class="btn btn-ghost" onclick="submitForm('save_draft')">
+                    <i class="fas fa-save me-1"></i> حفظ كمسودة
+                </button>
+                <button type="button" class="btn-orange-glow" onclick="submitForm('save_and_confirm')">
+                    <i class="fas fa-check-circle"></i> حفظ واعتماد التسوية فوراً
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Raw Products Data for quick client-side lookup -->
+<script>
+const allProductsLookup = [
+    {% for p in products %}
+    {
+        id: {{ p.id }},
+        name: "{{ p.name|escapejs }}",
+        barcode: "{{ p.barcode|default:''|escapejs }}",
+        sku: "{{ p.sku|default:''|escapejs }}",
+        price: {{ p.price|default:0 }},
+        cost: {{ p.last_purchase_price|default:0 }}
+    },
+    {% endfor %}
+];
+
+let rowCounter = 0;
+
+function onWarehouseChange() {
+    // If table already has rows, ask user
+    const rows = document.querySelectorAll('#stocktakeTbody tr');
+    if (rows.length > 0) {
+        if (confirm('تغيير المستودع سيعيد قراءة أرصدة الأصناف. هل تريد تحديث الأرصدة الدفترية؟')) {
+            refreshCurrentRowsStock();
+        }
+    }
+}
+
+function refreshCurrentRowsStock() {
+    const whId = document.getElementById('warehouseSelect').value;
+    if (!whId) return;
+
+    fetch(`?ajax=1&warehouse_id=${whId}`, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === 'success') {
+            const stockMap = {};
+            data.products.forEach(p => {
+                stockMap[p.id] = { stock: p.stock, cost: p.cost };
+            });
+
+            document.querySelectorAll('#stocktakeTbody tr').forEach(tr => {
+                const pId = tr.querySelector('.product-id-input').value;
+                if (stockMap[pId]) {
+                    const sysInput = tr.querySelector('.system-qty-input');
+                    const sysBadge = tr.querySelector('.system-qty-badge');
+                    const costInput = tr.querySelector('.unit-cost-input');
+
+                    sysInput.value = stockMap[pId].stock;
+                    sysBadge.textContent = stockMap[pId].stock.toFixed(2);
+                    if (stockMap[pId].stock < 0) {
+                        sysBadge.className = 'badge-negative-stock system-qty-badge';
+                    } else {
+                        sysBadge.className = 'badge-positive-stock system-qty-badge';
+                    }
+                    if (stockMap[pId].cost > 0) {
+                        costInput.value = stockMap[pId].cost.toFixed(2);
+                    }
+                    calculateRow(tr);
+                }
+            });
+            updateStats();
+        }
+    })
+    .catch(err => console.error(err));
+}
+
+function loadAllWarehouseProducts() {
+    const whId = document.getElementById('warehouseSelect').value;
+    if (!whId) {
+        alert('يرجى اختيار المستودع أولاً!');
+        return;
+    }
+
+    const btn = document.getElementById('btnLoadAllWarehouse');
+    const origHtml = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> جارٍ التحميل...';
+    btn.disabled = true;
+
+    fetch(`?ajax=1&warehouse_id=${whId}`, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(res => res.json())
+    .then(data => {
+        btn.innerHTML = origHtml;
+        btn.disabled = false;
+
+        if (data.status === 'success') {
+            const tbody = document.getElementById('stocktakeTbody');
+            tbody.innerHTML = '';
+            rowCounter = 0;
+
+            data.products.forEach(item => {
+                addRowToTable({
+                    id: item.id,
+                    name: item.name,
+                    barcode: item.barcode,
+                    systemQty: item.stock,
+                    physicalQty: item.stock, // Default physical to system so variance starts at 0
+                    unitCost: item.cost
+                });
+            });
+
+            checkEmptyNotice();
+            updateStats();
+        } else {
+            alert(data.message || 'حدث خطأ أثناء تحميل الأصناف');
+        }
+    })
+    .catch(err => {
+        btn.innerHTML = origHtml;
+        btn.disabled = false;
+        alert('تعذر تحميل الأصناف من الخادم');
+    });
+}
+
+function addRowToTable(item) {
+    const tbody = document.getElementById('stocktakeTbody');
+    rowCounter++;
+
+    const tr = document.createElement('tr');
+    tr.id = `row-${item.id}`;
+
+    const isNeg = parseFloat(item.systemQty) < 0;
+    const sysBadgeClass = isNeg ? 'badge-negative-stock' : 'badge-positive-stock';
+
+    tr.innerHTML = `
+        <td class="text-muted text-center">${rowCounter}</td>
+        <td class="en" style="color: #94a3b8; font-size: 0.9rem;">${item.barcode || '-'}</td>
+        <td>
+            <strong class="text-white">${item.name}</strong>
+            <input type="hidden" name="product_id[]" class="product-id-input" value="${item.id}">
+        </td>
+        <td class="text-center">
+            <span class="${sysBadgeClass} system-qty-badge">${parseFloat(item.systemQty).toFixed(2)}</span>
+            <input type="hidden" name="system_qty[]" class="system-qty-input" value="${item.systemQty}">
+        </td>
+        <td class="text-center">
+            <input type="number" step="0.01" name="physical_qty[]" class="qty-input physical-qty-input" 
+                   value="${item.physicalQty !== undefined ? item.physicalQty : item.systemQty}" 
+                   oninput="calculateRow(this.closest('tr'))">
+        </td>
+        <td class="text-center">
+            <span class="variance-badge badge-variance-match">0.00 (مطابق)</span>
+        </td>
+        <td class="text-center">
+            <input type="number" step="0.0001" name="unit_cost[]" class="form-control text-center unit-cost-input" 
+                   style="width: 100px; display: inline-block; background: rgba(0,0,0,0.3); border-color: rgba(255,255,255,0.1); color: #fff;" 
+                   value="${parseFloat(item.unitCost || 0).toFixed(2)}" 
+                   oninput="calculateRow(this.closest('tr'))">
+        </td>
+        <td class="text-center en variance-impact" style="font-weight: 700; color: #94a3b8;">
+            0.00
+        </td>
+        <td class="text-center">
+            <button type="button" class="btn btn-sm btn-ghost text-danger" onclick="removeRow(this.closest('tr'))" title="حذف من الجرد">
+                <i class="fas fa-times"></i>
+            </button>
+        </td>
+    `;
+
+    tbody.appendChild(tr);
+    calculateRow(tr);
+    checkEmptyNotice();
+}
+
+function calculateRow(tr) {
+    const sysQty = parseFloat(tr.querySelector('.system-qty-input').value) || 0;
+    const physQtyInput = tr.querySelector('.physical-qty-input');
+    const physQty = physQtyInput.value !== '' ? parseFloat(physQtyInput.value) : sysQty;
+    const unitCost = parseFloat(tr.querySelector('.unit-cost-input').value) || 0;
+
+    const variance = physQty - sysQty;
+    const varianceBadge = tr.querySelector('.variance-badge');
+    const impactEl = tr.querySelector('.variance-impact');
+
+    const totalImpact = variance * unitCost;
+
+    if (variance > 0.0001) {
+        varianceBadge.className = 'variance-badge badge-variance-gain';
+        varianceBadge.innerHTML = `+${variance.toFixed(2)} (زيادة)`;
+        impactEl.style.color = '#10b981';
+        impactEl.textContent = `+${totalImpact.toFixed(2)}`;
+    } else if (variance < -0.0001) {
+        varianceBadge.className = 'variance-badge badge-variance-loss';
+        varianceBadge.innerHTML = `${variance.toFixed(2)} (عجز)`;
+        impactEl.style.color = '#ef4444';
+        impactEl.textContent = `${totalImpact.toFixed(2)}`;
+    } else {
+        varianceBadge.className = 'variance-badge badge-variance-match';
+        varianceBadge.innerHTML = `0.00 (مطابق)`;
+        impactEl.style.color = '#94a3b8';
+        impactEl.textContent = `0.00`;
+    }
+
+    updateStats();
+}
+
+function updateStats() {
+    const rows = document.querySelectorAll('#stocktakeTbody tr');
+    let total = rows.length;
+    let matched = 0;
+    let gains = 0;
+    let losses = 0;
+    let netImpact = 0;
+
+    rows.forEach(tr => {
+        const sysQty = parseFloat(tr.querySelector('.system-qty-input').value) || 0;
+        const physQtyInput = tr.querySelector('.physical-qty-input');
+        const physQty = physQtyInput.value !== '' ? parseFloat(physQtyInput.value) : sysQty;
+        const unitCost = parseFloat(tr.querySelector('.unit-cost-input').value) || 0;
+
+        const diff = physQty - sysQty;
+        netImpact += (diff * unitCost);
+
+        if (diff > 0.0001) gains++;
+        else if (diff < -0.0001) losses++;
+        else matched++;
+    });
+
+    document.getElementById('statTotalItems').textContent = total;
+    document.getElementById('statMatchedItems').textContent = matched;
+    document.getElementById('statGainItems').textContent = gains;
+    document.getElementById('statLossItems').textContent = losses;
+
+    const netEl = document.getElementById('statNetImpact');
+    netEl.textContent = `${netImpact >= 0 ? '+' : ''}${netImpact.toFixed(2)} ج.م`;
+    if (netImpact > 0) netEl.style.color = '#10b981';
+    else if (netImpact < 0) netEl.style.color = '#ef4444';
+    else netEl.style.color = '#ff7300';
+}
+
+function removeRow(tr) {
+    tr.remove();
+    checkEmptyNotice();
+    updateStats();
+}
+
+function checkEmptyNotice() {
+    const rows = document.querySelectorAll('#stocktakeTbody tr');
+    const notice = document.getElementById('emptyNotice');
+    if (rows.length === 0) {
+        notice.style.display = 'block';
+    } else {
+        notice.style.display = 'none';
+    }
+}
+
+// Quick Barcode Scanning / Item Search
+document.getElementById('quickBarcodeInput').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const query = this.value.trim().toLowerCase();
+        if (!query) return;
+
+        // Check if item is already in the table
+        let existingRow = null;
+        document.querySelectorAll('#stocktakeTbody tr').forEach(tr => {
+            const pId = tr.querySelector('.product-id-input').value;
+            const item = allProductsLookup.find(x => x.id == pId);
+            if (item && (item.barcode.toLowerCase() === query || item.name.toLowerCase().includes(query))) {
+                existingRow = tr;
+            }
+        });
+
+        if (existingRow) {
+            existingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            existingRow.style.transition = 'background 0.5s';
+            existingRow.style.background = 'rgba(255, 115, 0, 0.25)';
+            setTimeout(() => { existingRow.style.background = ''; }, 1500);
+            const input = existingRow.querySelector('.physical-qty-input');
+            input.focus();
+            input.select();
+            this.value = '';
+            return;
+        }
+
+        // Not in table: find product in lookup
+        const found = allProductsLookup.find(x => x.barcode.toLowerCase() === query) 
+                   || allProductsLookup.find(x => x.name.toLowerCase().includes(query));
+
+        if (found) {
+            const whId = document.getElementById('warehouseSelect').value;
+            // Fetch warehouse stock for this item
+            fetch(`?ajax=1&warehouse_id=${whId}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(res => res.json())
+            .then(data => {
+                let stock = 0;
+                let cost = found.cost;
+                if (data.status === 'success') {
+                    const match = data.products.find(p => p.id === found.id);
+                    if (match) {
+                        stock = match.stock;
+                        cost = match.cost;
+                    }
+                }
+                addRowToTable({
+                    id: found.id,
+                    name: found.name,
+                    barcode: found.barcode,
+                    systemQty: stock,
+                    physicalQty: stock,
+                    unitCost: cost
+                });
+                // Focus newly added row
+                const lastRow = document.querySelector('#stocktakeTbody tr:last-child');
+                if (lastRow) {
+                    lastRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const input = lastRow.querySelector('.physical-qty-input');
+                    input.focus();
+                    input.select();
+                }
+            });
+            this.value = '';
+        } else {
+            alert(`لم يتم العثور على أي صنف بالباركود أو الاسم: ${query}`);
+        }
+    }
+});
+
+function addNewEmptyRow() {
+    const whId = document.getElementById('warehouseSelect').value;
+    if (!whId) {
+        alert('يرجى اختيار المستودع أولاً!');
+        return;
+    }
+    const selectOptions = allProductsLookup.map(p => `<option value="${p.id}">${p.name} (${p.barcode || 'بدون باركود'})</option>`).join('');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+        <td class="text-center text-muted">جديد</td>
+        <td class="en">-</td>
+        <td>
+            <select class="form-select form-select-sm" onchange="onManualProductSelected(this)">
+                <option value="">-- اختر الصنف --</option>
+                ${selectOptions}
+            </select>
+        </td>
+        <td class="text-center"><span class="badge-positive-stock">0.00</span></td>
+        <td class="text-center">-</td>
+        <td class="text-center">-</td>
+        <td class="text-center">-</td>
+        <td class="text-center">-</td>
+        <td class="text-center">
+            <button type="button" class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button>
+        </td>
+    `;
+    document.getElementById('stocktakeTbody').appendChild(tr);
+    checkEmptyNotice();
+}
+
+function onManualProductSelected(selectEl) {
+    const prodId = selectEl.value;
+    if (!prodId) return;
+    const found = allProductsLookup.find(p => p.id == prodId);
+    if (!found) return;
+
+    const tr = selectEl.closest('tr');
+    tr.remove();
+
+    const whId = document.getElementById('warehouseSelect').value;
+    fetch(`?ajax=1&warehouse_id=${whId}`, {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(res => res.json())
+    .then(data => {
+        let stock = 0;
+        let cost = found.cost;
+        if (data.status === 'success') {
+            const match = data.products.find(p => p.id == found.id);
+            if (match) {
+                stock = match.stock;
+                cost = match.cost;
+            }
+        }
+        addRowToTable({
+            id: found.id,
+            name: found.name,
+            barcode: found.barcode,
+            systemQty: stock,
+            physicalQty: stock,
+            unitCost: cost
+        });
+    });
+}
+
+function submitForm(actionType) {
+    const rows = document.querySelectorAll('#stocktakeTbody tr');
+    if (rows.length === 0) {
+        alert('يرجى إضافة أو تحميل أصناف أولاً قبل الحفظ!');
+        return;
+    }
+
+    if (actionType === 'save_and_confirm') {
+        if (!confirm('هل أنت متأكد من حفظ واعتماد التسوية الجردية فوراً؟ سيتم ضبط الأرصدة وترحيل القيود المحاسبية.')) {
+            return;
+        }
+    }
+
+    document.getElementById('formAction').value = actionType;
+    document.getElementById('stocktakeForm').submit();
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    checkEmptyNotice();
+});
+</script>
+{% endblock %}

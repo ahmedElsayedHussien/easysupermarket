@@ -22,22 +22,42 @@ ALLOWED_HOSTS = config(
 ).split(',')
 
 # =============================================================================
-# DATABASE (PostgreSQL with django-tenants backend)
+# DATABASE CONFIGURATION (Controlled via .env DB_ENGINE: 'sqlite' or 'postgresql')
 # =============================================================================
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django_tenants.postgresql_backend',
-        'NAME': config('DB_NAME', default='easysupermarket'),
-        'USER': config('DB_USER', default='postgres'),
-        'PASSWORD': config('DB_PASSWORD', default=''),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
-        'OPTIONS': {
-            'connect_timeout': 10,
-        },
+DB_ENGINE = config('DB_ENGINE', default='sqlite').strip().lower()
+
+if DB_ENGINE in ['postgresql', 'postgres', 'pgsql', 'pg']:
+    # PostgreSQL with django-tenants (Multi-Tenant)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django_tenants.postgresql_backend',
+            'NAME': config('DB_NAME', default='easysupermarket').strip(),
+            'USER': config('DB_USER', default='postgres').strip(),
+            'PASSWORD': config('DB_PASSWORD', default='thesordd12').strip(),
+            'HOST': config('DB_HOST', default='localhost').strip(),
+            'PORT': config('DB_PORT', default='5432').strip(),
+            'OPTIONS': {
+                'connect_timeout': 10,
+            },
+        }
     }
-}
+else:
+    # SQLite3 (Standalone / Single Instance)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+            'OPTIONS': {
+                'timeout': 30,
+            }
+        }
+    }
+    # Auto-adjust for SQLite: remove django_tenants and its schema dependencies
+    INSTALLED_APPS = [app for app in INSTALLED_APPS if app != 'django_tenants']
+    MIDDLEWARE = [m for m in MIDDLEWARE if 'django_tenants' not in m]
+    DATABASE_ROUTERS = []
+    ROOT_URLCONF = 'config.urls'
 
 # =============================================================================
 # CACHING (simple local-memory for dev)
@@ -77,3 +97,24 @@ CORS_ALLOW_ALL_ORIGINS = True
 SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = False
 CSRF_COOKIE_SECURE = False
+
+# Auto-tune SQLite on connection (WAL mode + 30s busy timeout + auto indexes)
+if DB_ENGINE != 'postgresql':
+    from django.db.backends.signals import connection_created
+    _sqlite_tuned = False
+    def _tune_sqlite(sender, connection, **kwargs):
+        global _sqlite_tuned
+        if connection.vendor == 'sqlite' and not _sqlite_tuned:
+            _sqlite_tuned = True
+            with connection.cursor() as cursor:
+                cursor.execute('PRAGMA journal_mode=WAL;')
+                cursor.execute('PRAGMA synchronous=NORMAL;')
+                cursor.execute('PRAGMA busy_timeout=30000;')
+                try:
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prod_name_fast ON inventory_product(name);')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_prod_active_fast ON inventory_product(is_active);')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_batch_fast ON inventory_inventorybatch(quantity_remaining, created_at);')
+                    cursor.execute('CREATE INDEX IF NOT EXISTS idx_batch_prod_qty_fast ON inventory_inventorybatch(product_id, quantity_remaining);')
+                except Exception:
+                    pass
+    connection_created.connect(_tune_sqlite)

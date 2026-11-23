@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% load i18n static %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1 class="text-neon-cyan">🚜 تقرير المعدات المؤجرة التفصيلي</h1>
+        <p>عرض تفصيلي لجميع عقود إيجار المعدات، التواريخ، عدد الأيام، التكاليف، وصافي الأرباح والإيرادات.</p>
+    </div>
+    <div class="content-actions" style="display:flex; gap:10px; align-items:center;">
+        <a href="{% url 'rentals:report_detailed_rentals_excel' %}?start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&equipment_id={{ filters.equipment_id }}&customer_id={{ filters.customer_id }}&status={{ filters.status }}&payment_method={{ filters.payment_method }}" class="btn btn-success" style="background:#2ed573; border-color:#2ed573; font-weight:700;">
+            <i class="fas fa-file-excel"></i> تصدير إكسيل (Excel)
+        </a>
+        <button class="btn btn-primary" onclick="window.print()">
+            <i class="fas fa-print"></i> طباعة التقرير
+        </button>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-secondary">
+            <i class="fas fa-arrow-right"></i> عودة للتقارير
+        </a>
+    </div>
+</div>
+
+<!-- Filter Panel -->
+<div class="card p-3 mb-4" style="background:var(--bg-secondary); border:1px solid var(--border-bright);">
+    <form method="GET" action="." class="row g-3 align-items-end">
+        <div class="col-md-2">
+            <label class="form-label" style="font-weight:700; color:#cbd5e1;">من تاريخ:</label>
+            <input type="date" name="start_date" value="{{ filters.start_date }}" class="form-control">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label" style="font-weight:700; color:#cbd5e1;">إلى تاريخ:</label>
+            <input type="date" name="end_date" value="{{ filters.end_date }}" class="form-control">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label" style="font-weight:700; color:#cbd5e1;">المعدة:</label>
+            <select name="equipment_id" class="form-select">
+                <option value="">-- كل المعدات --</option>
+                {% for eq in equipments %}
+                <option value="{{ eq.id }}" {% if filters.equipment_id == eq.id|stringformat:"s" %}selected{% endif %}>{{ eq.name }} ({{ eq.code }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label" style="font-weight:700; color:#cbd5e1;">العميل:</label>
+            <select name="customer_id" class="form-select">
+                <option value="">-- كل العملاء --</option>
+                {% for c in customers %}
+                <option value="{{ c.id }}" {% if filters.customer_id == c.id|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label" style="font-weight:700; color:#cbd5e1;">حالة العقد:</label>
+            <select name="status" class="form-select">
+                <option value="">-- الكل --</option>
+                <option value="ACTIVE" {% if filters.status == "ACTIVE" %}selected{% endif %}>نشط (مؤجرة)</option>
+                <option value="RETURNED" {% if filters.status == "RETURNED" %}selected{% endif %}>تم الإرجاع</option>
+                <option value="OVERDUE" {% if filters.status == "OVERDUE" %}selected{% endif %}>متأخر عن الموعد</option>
+            </select>
+        </div>
+        <div class="col-md-2" style="display:flex; gap:6px;">
+            <button type="submit" class="btn" style="background:#ff7300; color:#fff; font-weight:700; flex:1;">
+                <i class="fas fa-filter"></i> تصفية
+            </button>
+            <a href="{% url 'rentals:report_detailed_rentals' %}" class="btn btn-ghost" title="تفريغ الفلاتر">🔄</a>
+        </div>
+    </form>
+</div>
+
+<!-- Summary Stats Cards -->
+<div class="grid-4 mb-4">
+    <div class="stat-card stat-cyan">
+        <div class="stat-label">إجمالي عقود التأجير</div>
+        <div class="stat-value">{{ summary.count }}</div>
+        <div class="stat-change" style="color:var(--neon-cyan);">عقد مسجل</div>
+    </div>
+    <div class="stat-card stat-gold">
+        <div class="stat-label">إجمالي أيام الإيجار</div>
+        <div class="stat-value">{{ summary.total_days }}</div>
+        <div class="stat-change" style="color:var(--neon-gold);">يوم إيجار كلي</div>
+    </div>
+    <div class="stat-card stat-green">
+        <div class="stat-label">إجمالي المبلغ المتفق عليه</div>
+        <div class="stat-value">{{ summary.total_gross|floatformat:2 }}</div>
+        <div class="stat-change up">ج.م (إجمالي الإيراد)</div>
+    </div>
+    <div class="stat-card stat-orange">
+        <div class="stat-label">صافي الربح / المكسب</div>
+        <div class="stat-value" style="color:#ff7300;">{{ summary.total_net_profit|floatformat:2 }}</div>
+        <div class="stat-change up" style="color:#ff7300;">ج.م (الصافي بعد المرتجع والغرامات)</div>
+    </div>
+</div>
+
+<!-- Detailed Table -->
+<div class="card p-4">
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>#العقد</th>
+                    <th>المعدة</th>
+                    <th>العميل</th>
+                    <th>تاريخ البدء</th>
+                    <th>تاريخ العودة المتوقع</th>
+                    <th>الأيام</th>
+                    <th>السعر اليومي</th>
+                    <th>الإجمالي المتفق عليه</th>
+                    <th>المسترد</th>
+                    <th>الغرامات/التلفيات</th>
+                    <th>صافي الربح/المكسب</th>
+                    <th>طريقة الدفع</th>
+                    <th>الحالة</th>
+                    <th>إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rentals_list %}
+                <tr {% if row.is_overdue %}style="background:rgba(255, 71, 87, 0.1); border-right:4px solid #ff4757;"{% endif %}>
+                    <td><strong>#{{ row.rental.id }}</strong></td>
+                    <td>
+                        <strong>{{ row.rental.equipment.name }}</strong>
+                        <br><small class="text-muted">كود: {{ row.rental.equipment.code }}</small>
+                    </td>
+                    <td>
+                        <strong>{{ row.rental.customer.name }}</strong>
+                        {% if row.rental.customer.phone %}
+                        <br><small class="text-muted"><i class="fas fa-phone"></i> {{ row.rental.customer.phone }}</small>
+                        {% endif %}
+                    </td>
+                    <td class="en">{{ row.rental.start_date|date:"Y-m-d" }}</td>
+                    <td class="en">
+                        {{ row.rental.end_date|date:"Y-m-d" }}
+                        {% if row.is_overdue %}
+                        <br><span class="badge bg-danger">⚠️ متأخر</span>
+                        {% endif %}
+                    </td>
+                    <td><strong class="text-neon-cyan">{{ row.days }} يوم</strong></td>
+                    <td class="en">{{ row.rental.daily_rate|floatformat:2 }} ج.م</td>
+                    <td class="en"><strong>{{ row.gross|floatformat:2 }} ج.م</strong></td>
+                    <td class="en text-warning">{% if row.refund > 0 %}-{{ row.refund|floatformat:2 }} ج.م{% else %}-{% endif %}</td>
+                    <td class="en text-danger">{% if row.penalty > 0 %}+{{ row.penalty|floatformat:2 }} ج.م{% else %}-{% endif %}</td>
+                    <td class="en"><strong style="color:#2ed573; font-size:1.05rem;">{{ row.net_profit|floatformat:2 }} ج.م</strong></td>
+                    <td>
+                        {% if row.rental.payment_method == 'CASH' %}
+                        <span class="badge bg-success">💵 كاش</span>
+                        {% else %}
+                        <span class="badge bg-secondary">⏳ آجل</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if row.rental.status == 'ACTIVE' %}
+                            {% if row.is_overdue %}
+                            <span class="badge bg-danger">متأخر</span>
+                            {% else %}
+                            <span class="badge bg-warning text-dark">نشط (مؤجرة)</span>
+                            {% endif %}
+                        {% else %}
+                        <span class="badge bg-success">تم الإرجاع</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{% url 'rentals:rental_detail' row.rental.id %}" class="btn btn-sm btn-ghost" title="عرض العقد">
+                            👁️
+                        </a>
+                        {% if row.rental.status == 'ACTIVE' %}
+                        <a href="{% url 'rentals:rental_return' row.rental.id %}" class="btn btn-sm" style="background:#ff7300; color:#fff; padding:2px 8px; font-size:0.75rem;" title="استلام المعدة">
+                            ↩️
+                        </a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="14" class="text-center text-muted" style="padding:2rem;">
+                        ❌ لا توجد عقود تأجير تطابق فلاتر البحث الحالية.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            {% if rentals_list %}
+            <tfoot>
+                <tr style="background:#0f172a; font-weight:800; color:#ffffff; font-size:0.95rem;">
+                    <td colspan="5" class="text-right">الإجمالي الكلي ({{ summary.count }} عقد):</td>
+                    <td class="text-neon-cyan">{{ summary.total_days }} يوم</td>
+                    <td>-</td>
+                    <td class="en">{{ summary.total_gross|floatformat:2 }} ج.م</td>
+                    <td class="en text-warning">-{{ summary.total_refunds|floatformat:2 }} ج.م</td>
+                    <td class="en text-danger">+{{ summary.total_penalties|floatformat:2 }} ج.م</td>
+                    <td class="en"><strong style="color:#2ed573; font-size:1.15rem;">{{ summary.total_net_profit|floatformat:2 }} ج.م</strong></td>
+                    <td colspan="3"></td>
+                </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -498,27 +498,195 @@ function initTableSort(tableId) {
 }
 
 // ============================================================
-// EXPORT TO CSV
+// EXPORT TO EXCEL & CSV (UNIVERSAL)
 // ============================================================
+
+/**
+ * Universal table exporter to Excel (.xls/.xlsx compatible HTML/XML)
+ * Properly handles Arabic UTF-8, RTL layout, cell styling, and cleans action columns.
+ */
+function exportTableToExcel(tableId, filename) {
+    const table = (typeof tableId === 'string') ? document.getElementById(tableId) : tableId;
+    if (!table) {
+        console.warn('exportTableToExcel: جدول غير موجود بالمعرف', tableId);
+        return;
+    }
+
+    filename = filename || 'تقرير';
+    if (!filename.toLowerCase().endsWith('.xls') && !filename.toLowerCase().endsWith('.xlsx')) {
+        filename += '.xls';
+    }
+
+    // Clone table so DOM remains completely untouched
+    const clone = table.cloneNode(true);
+
+    // Identify and remove action/operation columns (buttons, links, "إجراءات", "التقرير التفصيلي")
+    const headerRow = clone.querySelector('thead tr') || clone.querySelector('tr');
+    const colsToRemove = [];
+    if (headerRow) {
+        const headers = Array.from(headerRow.children);
+        headers.forEach((th, idx) => {
+            const txt = (th.textContent || '').trim();
+            if (txt.includes('إجراءات') || txt.includes('التقرير التفصيلي') || txt.includes('عمليات') || txt.includes('خيارات') || th.classList.contains('no-export')) {
+                colsToRemove.push(idx);
+            }
+        });
+    }
+
+    if (colsToRemove.length > 0) {
+        clone.querySelectorAll('tr').forEach(row => {
+            for (let i = colsToRemove.length - 1; i >= 0; i--) {
+                const colIdx = colsToRemove[i];
+                if (row.children[colIdx]) {
+                    row.removeChild(row.children[colIdx]);
+                }
+            }
+        });
+    }
+
+    // Remove rows hidden by search/filter in original table
+    const originalRows = Array.from(table.querySelectorAll('tbody tr'));
+    const cloneRows = Array.from(clone.querySelectorAll('tbody tr'));
+    originalRows.forEach((origRow, idx) => {
+        if (origRow.style.display === 'none' && cloneRows[idx]) {
+            cloneRows[idx].remove();
+        }
+    });
+
+    // Clean cell contents: strip buttons, inputs, excess whitespace
+    clone.querySelectorAll('th, td').forEach(cell => {
+        cell.querySelectorAll('button, input, select, script, style, .no-export').forEach(el => el.remove());
+        let text = (cell.innerText || cell.textContent || '').trim();
+        text = text.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ');
+        cell.textContent = text;
+    });
+
+    const tableHtml = clone.outerHTML;
+
+    // Excel XML wrapper with UTF-8 BOM, RTL direction, and gridlines
+    const excelDocument = '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+        'xmlns:x="urn:schemas-microsoft-com:office:excel" ' +
+        'xmlns="http://www.w3.org/TR/REC-html40">' +
+        '<head>' +
+        '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">' +
+        '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>' +
+        '<x:Name>ورقة1</x:Name>' +
+        '<x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>' +
+        '</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->' +
+        '<style>' +
+        'body { font-family: Tahoma, "Segoe UI", Arial, sans-serif; direction: rtl; text-align: right; }' +
+        'table { border-collapse: collapse; direction: rtl; width: 100%; margin: 10px 0; }' +
+        'th { background-color: #1F4E79; color: #FFFFFF; font-weight: bold; border: 0.5pt solid #B0C4DE; padding: 8px 12px; text-align: center; }' +
+        'td { border: 0.5pt solid #D9D9D9; padding: 6px 10px; text-align: right; mso-number-format: "\\@"; }' +
+        '.text-center { text-align: center; }' +
+        '</style>' +
+        '</head>' +
+        '<body dir="rtl">' +
+        tableHtml +
+        '</body></html>';
+
+    const blob = new Blob(['\uFEFF' + excelDocument], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/**
+ * Exporter for multiple tables on the same page into a single Excel file
+ */
+function exportAllTablesToExcel(tableIds, filename) {
+    if (!tableIds || !Array.isArray(tableIds) || tableIds.length === 0) {
+        tableIds = ['treasuries-table', 'banks-table', 'wallets-table'];
+    }
+    filename = filename || 'تقرير_شامل';
+    if (!filename.toLowerCase().endsWith('.xls') && !filename.toLowerCase().endsWith('.xlsx')) {
+        filename += '.xls';
+    }
+
+    let combinedHtml = '';
+    tableIds.forEach(id => {
+        const table = (typeof id === 'string') ? document.getElementById(id) : id;
+        if (table) {
+            const clone = table.cloneNode(true);
+            clone.querySelectorAll('button, input, select, script, style, .no-export').forEach(el => el.remove());
+            clone.querySelectorAll('th, td').forEach(cell => {
+                let text = (cell.innerText || cell.textContent || '').trim().replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ');
+                cell.textContent = text;
+            });
+            combinedHtml += clone.outerHTML + '<br/><br/>';
+        }
+    });
+
+    if (!combinedHtml) {
+        console.warn('exportAllTablesToExcel: لم يتم العثور على أي جداول صالحة للتصدير');
+        return;
+    }
+
+    const excelDocument = '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+        'xmlns:x="urn:schemas-microsoft-com:office:excel" ' +
+        'xmlns="http://www.w3.org/TR/REC-html40">' +
+        '<head>' +
+        '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">' +
+        '<!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>' +
+        '<x:Name>بيانات</x:Name>' +
+        '<x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>' +
+        '</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->' +
+        '<style>' +
+        'body { font-family: Tahoma, "Segoe UI", Arial, sans-serif; direction: rtl; text-align: right; }' +
+        'table { border-collapse: collapse; direction: rtl; width: 100%; margin: 15px 0; }' +
+        'th { background-color: #1F4E79; color: #FFFFFF; font-weight: bold; border: 0.5pt solid #B0C4DE; padding: 8px 12px; text-align: center; }' +
+        'td { border: 0.5pt solid #D9D9D9; padding: 6px 10px; text-align: right; mso-number-format: "\\@"; }' +
+        '</style>' +
+        '</head>' +
+        '<body dir="rtl">' +
+        combinedHtml +
+        '</body></html>';
+
+    const blob = new Blob(['\uFEFF' + excelDocument], { type: 'application/vnd.ms-excel;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
 function exportTableToCSV(tableId, filename) {
-    const table = document.getElementById(tableId);
+    const table = (typeof tableId === 'string') ? document.getElementById(tableId) : tableId;
     if (!table) return;
 
-    const rows = Array.from(table.querySelectorAll('tr'));
+    const clone = table.cloneNode(true);
+    clone.querySelectorAll('button, input, select, script, style, .no-export').forEach(el => el.remove());
+
+    const rows = Array.from(clone.querySelectorAll('tr'));
     const csv = rows.map(row => {
         const cells = Array.from(row.querySelectorAll('th, td'));
-        return cells.map(cell => `"${cell.textContent.trim().replace(/"/g, '""')}"`).join(',');
-    }).join('\n');
+        return cells.map(cell => {
+            const val = (cell.textContent || '').trim().replace(/[\r\n\t]+/g, ' ').replace(/"/g, '""');
+            return `"${val}"`;
+        }).join(',');
+    }).join('\r\n');
 
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename || 'export.csv';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+window.exportTableToExcel = exportTableToExcel;
+window.exportAllTablesToExcel = exportAllTablesToExcel;
 window.exportTableToCSV = exportTableToCSV;
 
 // ============================================================

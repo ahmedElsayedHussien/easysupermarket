@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="content-header">
+    <div class="content-title">
+        <h1>👥 {{ title }}</h1>
+        <p>تقرير موحد وشامل لجميع الشركاء (عملاء وموردين) يوضح الأرصدة المستحقة وحركات البيع والشراء والتحصيلات في شاشة واحدة</p>
+    </div>
+    <div class="content-actions">
+        <a href="{% url 'core:reports_index' %}" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+            ⬅️ العودة للتقارير
+        </a>
+        <a href="{% url 'partners:partner_create' %}" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+            ➕ إضافة شريك جديد
+        </a>
+        <button type="button" onclick="exportTableToExcel('partners-table', 'تقرير_الشركاء_الشامل')" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+            📊 تصدير Excel
+        </button>
+        <button type="button" onclick="window.print()" class="btn btn-secondary">
+            🖨️ طباعة
+        </button>
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="grid grid-4" style="margin-bottom: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem;">
+    <div class="card stat-card">
+        <div class="stat-icon" style="font-size: 2.2rem;">👥</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.9rem; color: var(--text-muted);">إجمالي الشركاء المطابقين</div>
+            <div class="stat-value" style="font-size: 1.85rem; font-weight: 800; font-family: monospace; color: var(--neon-cyan, #00e5ff);">
+                {{ total_partners_count }} <span style="font-size: 1rem; font-weight: normal; color: var(--text-secondary);">شريك</span>
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 3px;">
+                منهم {{ total_balanced_count }} شريك رصيدهم متزن
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card" style="border-right: 4px solid var(--neon-green, #00e676);">
+        <div class="stat-icon" style="font-size: 2.2rem;">📈</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.9rem; color: var(--text-muted);">مديونيات لنا (طرف العملاء)</div>
+            <div class="stat-value" style="font-size: 1.85rem; font-weight: 800; font-family: monospace; color: var(--neon-green, #00e676);">
+                {{ total_receivables|floatformat:"-2" }} <span style="font-size: 0.95rem; font-weight: normal; color: var(--text-secondary);">ج.م</span>
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 3px;">
+                مجموع الأرصدة المدينة المستحقة للشركة
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card" style="border-right: 4px solid var(--neon-gold, #ffab00);">
+        <div class="stat-icon" style="font-size: 2.2rem;">📉</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.9rem; color: var(--text-muted);">مستحقات علينا (للموردين)</div>
+            <div class="stat-value" style="font-size: 1.85rem; font-weight: 800; font-family: monospace; color: var(--neon-gold, #ffab00);">
+                {{ total_payables|floatformat:"-2" }} <span style="font-size: 0.95rem; font-weight: normal; color: var(--text-secondary);">ج.م</span>
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 3px;">
+                مجموع الأرصدة الدائنة المطلوبة منا
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card" style="border-right: 4px solid #ff7300;">
+        <div class="stat-icon" style="font-size: 2.2rem;">⚖️</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.9rem; color: var(--text-muted);">صافي المركز المالي للشركاء</div>
+            <div class="stat-value" style="font-size: 1.85rem; font-weight: 800; font-family: monospace; color: #ff7300;">
+                {{ net_position|floatformat:"-2" }} <span style="font-size: 0.95rem; font-weight: normal; color: var(--text-secondary);">ج.م</span>
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 3px;">
+                {% if net_position > 0 %}
+                    <span style="color: var(--neon-green);">صافي لصالح الشركة (لنا)</span>
+                {% elif net_position < 0 %}
+                    <span style="color: var(--neon-gold);">صافي التزام على الشركة (علينا)</span>
+                {% else %}
+                    <span>متزن تماماً</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters Card -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form method="GET" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 170px;">
+            <label class="form-label">نوع الشريك</label>
+            <select name="partner_type" class="form-control">
+                <option value="">-- كافة الشركاء (الكل) --</option>
+                <option value="CUSTOMER" {% if selected_partner_type == 'CUSTOMER' %}selected{% endif %}>👥 عملاء فقط</option>
+                <option value="SUPPLIER" {% if selected_partner_type == 'SUPPLIER' %}selected{% endif %}>🚚 موردين فقط</option>
+                <option value="BOTH" {% if selected_partner_type == 'BOTH' %}selected{% endif %}>🔄 عميل ومورد معاً</option>
+            </select>
+        </div>
+
+        <div class="form-group" style="flex: 1; min-width: 180px;">
+            <label class="form-label">حالة الرصيد</label>
+            <select name="balance_status" class="form-control">
+                <option value="">-- كافة حالات الأرصدة --</option>
+                <option value="active" {% if selected_balance_status == 'active' %}selected{% endif %}>⚡ أرصدة غير مسفرة (نشطة)</option>
+                <option value="receivable" {% if selected_balance_status == 'receivable' %}selected{% endif %}>📈 عليه مديونية لنا (مدين)</option>
+                <option value="payable" {% if selected_balance_status == 'payable' %}selected{% endif %}>📉 له مستحقات علينا (دائن)</option>
+                <option value="zero" {% if selected_balance_status == 'zero' %}selected{% endif %}>⚖️ أرصدة متزنة (مسفرة)</option>
+            </select>
+        </div>
+
+        <div class="form-group" style="flex: 2; min-width: 220px;">
+            <label class="form-label">بحث باسم الشريك / الهاتف / الرقم الضريبي</label>
+            <input type="text" name="search_query" class="form-control" value="{{ search_query|default:'' }}" placeholder="اكتب اسم الشريك أو هاتفه...">
+        </div>
+
+        <div class="form-group" style="width: 120px;">
+            <label class="form-label">العدد بالصفحة</label>
+            <select name="per_page" class="form-control">
+                <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+                <option value="25" {% if per_page == 25 %}selected{% endif %}>25</option>
+                <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+            </select>
+        </div>
+
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
+            <button type="submit" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+                🔍 تطبيق الفلترة
+            </button>
+            {% if selected_partner_type or selected_balance_status or search_query or per_page != 25 %}
+            <a href="{% url 'core:report_partners' %}" class="btn btn-secondary">إلغاء الفلاتر</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+<!-- Table Card -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
+        <h3 style="margin: 0; font-size: 1.2rem;">
+            📋 سجل الشركاء وحساباتهم (اضغط على أي شريك لعرض كشف الحساب التفصيلي)
+        </h3>
+        <div class="search-box" style="flex: 1; max-width: 320px;">
+            <input type="text" id="liveSearchInput" onkeyup="filterTable()" placeholder="⚡ بحث فوري في الجدول..." class="form-control" style="background: var(--bg-tertiary); border: 1px solid var(--border-default);">
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table" id="partners-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="width: 45px;">#</th>
+                    <th>اسم الشريك</th>
+                    <th>النوع</th>
+                    <th>الهاتف / الموبايل</th>
+                    <th>رصيد أول مدة</th>
+                    <th>إجمالي مدين (لنا)</th>
+                    <th>إجمالي دائن (له)</th>
+                    <th style="background: rgba(255, 115, 0, 0.12); color: #ff7300;">الرصيد الحالي المستحق</th>
+                    <th>الحالة</th>
+                    <th>عدد الحركات</th>
+                    <th class="no-print">إجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in partners %}
+                <tr class="partner-row" onclick="window.location.href='{% url 'partners:partner_ledger' p.id %}';" style="cursor: pointer;">
+                    <td>{{ forloop.counter0|add:page_obj.start_index }}</td>
+                    <td>
+                        <a href="{% url 'partners:partner_ledger' p.id %}" class="partner-name-link" onclick="event.stopPropagation();">
+                            <strong>{{ p.name }}</strong>
+                        </a>
+                    </td>
+                    <td>
+                        {% if p.partner_type == 'BOTH' %}
+                            <span class="badge" style="background: rgba(0, 229, 255, 0.2); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4);">🔄 عميل ومورد</span>
+                        {% elif p.partner_type == 'SUPPLIER' %}
+                            <span class="badge" style="background: rgba(255, 171, 0, 0.2); color: #ffab00; border: 1px solid rgba(255, 171, 0, 0.4);">🚚 مورد</span>
+                        {% else %}
+                            <span class="badge" style="background: rgba(0, 230, 118, 0.2); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4);">👥 عميل</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace;">{{ p.phone }}</td>
+                    <td style="font-family: monospace;">
+                        {% if p.opening_balance > 0 %}
+                            {{ p.opening_balance|floatformat:"-2" }}
+                            <small style="color: var(--text-muted); font-size: 0.75rem;">({{ p.opening_balance_type }})</small>
+                        {% else %}
+                            <span style="color: var(--text-muted);">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace; color: var(--neon-cyan, #00e5ff);">
+                        {{ p.period_debit|floatformat:"-2" }}
+                    </td>
+                    <td style="font-family: monospace; color: var(--neon-yellow, #ffd600);">
+                        {{ p.period_credit|floatformat:"-2" }}
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.15rem; font-weight: 800; background: rgba(255, 115, 0, 0.06);">
+                        {% if p.balance_status == 'DEBIT' %}
+                            <span style="color: var(--neon-green, #00e676);">
+                                +{{ p.abs_balance|floatformat:"-2" }} <small style="font-size: 0.75rem;">ج.م</small>
+                            </span>
+                        {% elif p.balance_status == 'CREDIT' %}
+                            <span style="color: var(--neon-gold, #ffab00);">
+                                -{{ p.abs_balance|floatformat:"-2" }} <small style="font-size: 0.75rem;">ج.م</small>
+                            </span>
+                        {% else %}
+                            <span style="color: var(--text-muted);">
+                                0.00 <small style="font-size: 0.75rem;">ج.م</small>
+                            </span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if p.balance_status == 'DEBIT' %}
+                            <span class="badge" style="background: rgba(0, 230, 118, 0.15); color: #00e676; font-size: 0.8rem;">مدين (عليه لنا)</span>
+                        {% elif p.balance_status == 'CREDIT' %}
+                            <span class="badge" style="background: rgba(255, 171, 0, 0.15); color: #ffab00; font-size: 0.8rem;">دائن (له علينا)</span>
+                        {% else %}
+                            <span class="badge badge-secondary" style="font-size: 0.8rem;">متزن (0.00)</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace; text-align: center;">
+                        {{ p.transactions_count }}
+                    </td>
+                    <td class="no-print" onclick="event.stopPropagation();">
+                        <div style="display: flex; gap: 0.4rem; align-items: center;">
+                            <a href="{% url 'partners:partner_ledger' p.id %}" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; padding: 4px 10px; font-size: 0.82rem; white-space: nowrap;">
+                                📑 كشف الحساب
+                            </a>
+                            <a href="{% url 'partners:partner_edit' p.id %}" class="btn btn-sm btn-secondary" style="padding: 4px 8px; font-size: 0.82rem;" title="تعديل الشريك">
+                                ✏️
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="11" class="text-center" style="padding: 3rem; color: var(--text-muted); font-size: 1.1rem;">
+                        ⚠️ لا يوجد شركاء مطابقين لمعايير البحث المحددة
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            {% if partners %}
+            <tfoot>
+                <tr style="background: rgba(255, 115, 0, 0.1); font-weight: bold; border-top: 2px solid #ff7300;">
+                    <td colspan="5" style="text-align: left; padding: 12px 16px; font-size: 1.1rem;">
+                        الإجماليات الكلية:
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.1rem; color: var(--neon-cyan, #00e5ff);">
+                        —
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.1rem; color: var(--neon-yellow, #ffd600);">
+                        —
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.25rem; color: #ff7300;">
+                        {{ net_position|floatformat:"-2" }} ج.م
+                    </td>
+                    <td colspan="3" class="no-print" style="color: var(--text-secondary); font-size: 0.85rem;">
+                        مديونيات لنا: {{ total_receivables|floatformat:"-2" }} | مستحقات علينا: {{ total_payables|floatformat:"-2" }}
+                    </td>
+                </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+    </div>
+
+    {% if is_paginated %}
+    <div style="display: flex; justify-content: space-between; align-items: center; padding: 1.1rem 1.5rem; flex-wrap: wrap; gap: 1rem; border-top: 1px solid var(--border-default); background: var(--bg-secondary); border-radius: 0 0 10px 10px;" class="no-print">
+        <div style="color: var(--text-muted); font-size: 0.95rem;">
+            عرض الشركاء: <strong style="color: var(--text-primary);">{{ page_obj.start_index }} - {{ page_obj.end_index }}</strong> من إجمالي <strong style="color: #ff7300;">{{ page_obj.paginator.count }}</strong> شريك
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1{% if selected_partner_type %}&partner_type={{ selected_partner_type }}{% endif %}{% if selected_balance_status %}&balance_status={{ selected_balance_status }}{% endif %}{% if search_query %}&search_query={{ search_query }}{% endif %}{% if per_page %}&per_page={{ per_page }}{% endif %}" class="btn btn-sm btn-secondary" title="الصفحة الأولى">
+                ⏮️ الأولى
+            </a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if selected_partner_type %}&partner_type={{ selected_partner_type }}{% endif %}{% if selected_balance_status %}&balance_status={{ selected_balance_status }}{% endif %}{% if search_query %}&search_query={{ search_query }}{% endif %}{% if per_page %}&per_page={{ per_page }}{% endif %}" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.3);">
+                ⬅️ السابق
+            </a>
+            {% endif %}
+
+            <span class="btn btn-sm" style="background: var(--bg-card); border: 1px solid var(--border-default); pointer-events: none; font-weight: 700; color: var(--text-primary); padding: 4px 12px;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if selected_partner_type %}&partner_type={{ selected_partner_type }}{% endif %}{% if selected_balance_status %}&balance_status={{ selected_balance_status }}{% endif %}{% if search_query %}&search_query={{ search_query }}{% endif %}{% if per_page %}&per_page={{ per_page }}{% endif %}" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.3);">
+                التالي ➡️
+            </a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if selected_partner_type %}&partner_type={{ selected_partner_type }}{% endif %}{% if selected_balance_status %}&balance_status={{ selected_balance_status }}{% endif %}{% if search_query %}&search_query={{ search_query }}{% endif %}{% if per_page %}&per_page={{ per_page }}{% endif %}" class="btn btn-sm btn-secondary" title="الصفحة الأخيرة">
+                الأخيرة ⏭️
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .stat-card {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        padding: 1.25rem 1.5rem;
+        border-radius: 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-default);
+    }
+    .partner-row {
+        transition: all 0.2s ease;
+    }
+    .partner-row:hover {
+        background: rgba(255, 115, 0, 0.08) !important;
+        transform: translateX(-3px);
+    }
+    .partner-name-link {
+        color: var(--neon-cyan, #00e5ff);
+        text-decoration: none;
+        font-size: 1.05rem;
+        transition: color 0.2s ease;
+    }
+    .partner-name-link:hover {
+        color: #ff7300;
+        text-decoration: underline;
+    }
+    .data-table th, .data-table td {
+        padding: 11px 12px;
+        text-align: right;
+        border-bottom: 1px solid var(--border-default);
+        vertical-align: middle;
+    }
+    .data-table th {
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+    @media print {
+        body { background: white !important; color: black !important; }
+        .sidebar, .navbar, .content-actions, form, .search-box, .no-print { display: none !important; }
+        .card { box-shadow: none !important; border: 1px solid #ddd !important; margin-bottom: 20px !important; }
+        .data-table th, .data-table td { border-color: #ddd !important; color: black !important; }
+        .stat-card { border: 1px solid #ddd !important; break-inside: avoid; }
+        .stat-icon { display: none !important; }
+        .stat-value { color: black !important; font-weight: bold !important; }
+    }
+</style>
+
+<script>
+function filterTable() {
+    let input = document.getElementById("liveSearchInput");
+    let filter = input.value.toUpperCase();
+    let table = document.getElementById("partners-table");
+    let tbody = table.getElementsByTagName("tbody")[0];
+    let tr = tbody.getElementsByTagName("tr");
+
+    for (let i = 0; i < tr.length; i++) {
+        let textValue = tr[i].textContent || tr[i].innerText;
+        if (textValue.toUpperCase().indexOf(filter) > -1) {
+            tr[i].style.display = "";
+        } else {
+            tr[i].style.display = "none";
+        }
+    }
+}
+
+if (typeof window.exportTableToExcel !== 'function') {
+    window.exportTableToExcel = function(tableId, filename) {
+        let table = document.getElementById(tableId);
+        if (!table) return;
+        filename = (filename || 'تقرير_الشركاء_الشامل') + '.xls';
+        let clone = table.cloneNode(true);
+        clone.querySelectorAll('.no-print').forEach(el => el.remove());
+        clone.querySelectorAll('th, td').forEach(c => {
+            c.querySelectorAll('button, a, input').forEach(el => el.remove());
+            c.textContent = (c.innerText || c.textContent || '').trim().replace(/\s+/g, ' ');
+        });
+        let doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>body{direction:rtl;text-align:right;} th{background:#1F4E79;color:#fff;border:0.5pt solid #ddd;padding:8px;} td{border:0.5pt solid #ddd;padding:6px;}</style></head><body dir="rtl">' + clone.outerHTML + '</body></html>';
+        let blob = new Blob(['\uFEFF' + doc], { type: 'application/vnd.ms-excel;charset=utf-8' });
+        let url = URL.createObjectURL(blob);
+        let a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
+}
+</script>
+{% endblock %}

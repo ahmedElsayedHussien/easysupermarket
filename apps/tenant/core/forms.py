@@ -20,16 +20,40 @@ class SystemSettingForm(forms.ModelForm):
             'allow_negative_stock': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'auto_print_receipt': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'allow_pos_price_modification': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'show_pos_cost': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'pos_price_margin_percent': forms.NumberInput(attrs={'class': 'form-control', 'min': 0, 'step': '0.01'}),
             'apply_vat_by_default': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'default_pos_treasury': forms.Select(attrs={'class': 'form-select'}),
+            'default_pos_bank_account': forms.Select(attrs={'class': 'form-select'}),
+            'default_pos_instapay_account': forms.Select(attrs={'class': 'form-select'}),
+            'default_pos_ewallet': forms.Select(attrs={'class': 'form-select'}),
+            'lock_pos_payment_accounts': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'enable_expiry_tracking': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'auto_post_journals': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        radio_choices = [(True, ''), (False, '')]
+        for field_name, field in self.fields.items():
+            if field_name.startswith('show_nav_'):
+                field.widget = forms.RadioSelect(choices=radio_choices)
 
 
 class EmployeeUserCreationForm(UserCreationForm):
     first_name = forms.CharField(label='الاسم الأول', max_length=30, required=True)
     last_name = forms.CharField(label='الاسم الأخير', max_length=30, required=True)
+    email = forms.EmailField(label='البريد الإلكتروني', required=False)
+    password1 = forms.CharField(
+        label='كلمة المرور',
+        widget=forms.PasswordInput(attrs={'class': 'form-control', 'placeholder': 'أدخل كلمة مرور (6 أحرف على الأقل)'}),
+        help_text='كلمة المرور يجب ألا تقل عن 6 أحرف.'
+    )
+    password2 = forms.CharField(
+        label='تأكيد كلمة المرور',
+        widget=forms.PasswordInput(attrs={'class': 'form-control', 'placeholder': 'أعد إدخال كلمة المرور للتأكيد'}),
+        help_text='أدخل نفس كلمة المرور السابقة للتأكيد.'
+    )
     branch = forms.ModelChoiceField(
         queryset=Branch.objects.filter(is_active=True), 
         label='الفرع التابع له', 
@@ -59,6 +83,36 @@ class EmployeeUserCreationForm(UserCreationForm):
     class Meta(UserCreationForm.Meta):
         model = User
         fields = ('username', 'first_name', 'last_name', 'email')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if 'username' in self.fields:
+            self.fields['username'].label = 'اسم المستخدم (Username)'
+            self.fields['username'].help_text = 'اسم تسجيل الدخول للنظام (حروف إنجليزية أو أرقام).'
+
+    def _post_clean(self):
+        forms.ModelForm._post_clean(self)
+
+    def clean_password2(self):
+        password1 = self.cleaned_data.get("password1")
+        password2 = self.cleaned_data.get("password2")
+        if password1 and password2:
+            if password1 != password2:
+                raise forms.ValidationError("كلمتا المرور غير متطابقتين.")
+            if len(password1) < 6:
+                raise forms.ValidationError("كلمة المرور يجب ألا تقل عن 6 أحرف.")
+        return password2
+
+    def clean(self):
+        cleaned_data = super().clean()
+        p1 = cleaned_data.get('password1')
+        p2 = cleaned_data.get('password2')
+        if p1 and p2:
+            if p1 != p2:
+                self.add_error('password2', 'كلمتا المرور غير متطابقتين.')
+            elif len(p1) < 6:
+                self.add_error('password1', 'كلمة المرور يجب ألا تقل عن 6 أحرف.')
+        return cleaned_data
 
     @transaction.atomic
     def save(self, commit=True):
@@ -90,13 +144,28 @@ class EmployeeUserCreationForm(UserCreationForm):
                     'overtime_per_hour': self.cleaned_data.get('overtime_per_hour') or 0,
                 }
             )
-            user.user_permissions.set(self.cleaned_data.get('user_permissions', []))
+            if role == Role.ADMIN:
+                user.user_permissions.set(Permission.objects.all())
+            else:
+                user.user_permissions.set(self.cleaned_data.get('user_permissions', []))
         return user
+
 
 
 class EmployeeUserUpdateForm(forms.ModelForm):
     first_name = forms.CharField(label='الاسم الأول', max_length=30, required=True)
     last_name = forms.CharField(label='الاسم الأخير', max_length=30, required=True)
+    new_password = forms.CharField(
+        label='كلمة المرور الجديدة (اختياري)',
+        widget=forms.PasswordInput(attrs={'placeholder': 'أدخل كلمة مرور جديدة للتعيين'}),
+        required=False,
+        help_text='اتركه فارغاً إذا كنت لا ترغب بتغيير كلمة المرور الحالية.'
+    )
+    confirm_password = forms.CharField(
+        label='تأكيد كلمة المرور الجديدة',
+        widget=forms.PasswordInput(attrs={'placeholder': 'أعد كتابة كلمة المرور الجديدة'}),
+        required=False
+    )
     branch = forms.ModelChoiceField(
         queryset=Branch.objects.filter(is_active=True), 
         label='الفرع التابع له', 
@@ -144,6 +213,18 @@ class EmployeeUserUpdateForm(forms.ModelForm):
                 pass
             self.fields['user_permissions'].initial = self.instance.user_permissions.all()
 
+    def clean(self):
+        cleaned_data = super().clean()
+        new_pass = cleaned_data.get('new_password')
+        confirm_pass = cleaned_data.get('confirm_password')
+
+        if new_pass or confirm_pass:
+            if new_pass != confirm_pass:
+                self.add_error('confirm_password', 'كلمتا المرور غير متطابقتين.')
+            elif len(new_pass) < 6:
+                self.add_error('new_password', 'كلمة المرور يجب ألا تقل عن 6 أحرف.')
+        return cleaned_data
+
     @transaction.atomic
     def save(self, commit=True):
         user = super().save(commit=False)
@@ -155,6 +236,10 @@ class EmployeeUserUpdateForm(forms.ModelForm):
             user.is_superuser = False
             user.is_staff = False
             
+        new_pass = self.cleaned_data.get('new_password')
+        if new_pass:
+            user.set_password(new_pass)
+
         if commit:
             user.save()
             Employee.objects.update_or_create(
@@ -170,5 +255,9 @@ class EmployeeUserUpdateForm(forms.ModelForm):
                     'overtime_per_hour': self.cleaned_data.get('overtime_per_hour') or 0,
                 }
             )
-            user.user_permissions.set(self.cleaned_data.get('user_permissions', []))
+            if role == Role.ADMIN:
+                user.user_permissions.set(Permission.objects.all())
+            else:
+                user.user_permissions.set(self.cleaned_data.get('user_permissions', []))
         return user
+

@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="content-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="content-title">
+        <h1 style="color: #fff; font-weight: 800; margin: 0;">🏢 سجل الأصول الثابتة والإهلاك (Fixed Assets Register)</h1>
+        <p style="color: var(--text-muted); margin: 0;">بيان تفصيلي بجميع الأصول وقيمتها التاريخية ومجمع الإهلاك وصافي القيمة الدفترية ومعدلات الاستهلاك</p>
+    </div>
+    <div class="header-actions" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <button type="button" class="btn btn-outline-secondary" onclick="window.print()">🖨️ طباعة</button>
+        <a href="?{{ request.GET.urlencode }}&export=csv" class="btn btn-outline-success">📥 تصدير CSV</a>
+        <a href="{% url 'accounting:fixed_asset_list' %}" class="btn" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px;">
+            <i class="fas fa-cog"></i> إدارة الأصول
+        </a>
+        <a href="{% url 'core:reports_index' %}" class="btn btn-outline-secondary">⬅️ عودة للتقارير</a>
+    </div>
+</div>
+
+<!-- Filters Card -->
+<div class="card p-3 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+    <form method="get" class="row align-items-end g-3">
+        <div class="col-md-3">
+            <label class="form-label text-white-50 small mb-1">بحث بالأصل أو الكود</label>
+            <input type="text" name="q" class="form-control bg-dark text-white border-secondary" value="{{ search_query }}" placeholder="اسم الأصل، الكود...">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-white-50 small mb-1">التصنيف</label>
+            <select name="category" class="form-select bg-dark text-white border-secondary">
+                <option value="">جميع التصنيفات</option>
+                {% for cat_val, cat_name in categories %}
+                <option value="{{ cat_val }}" {% if selected_category == cat_val %}selected{% endif %}>{{ cat_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-white-50 small mb-1">الحالة الدفترية</label>
+            <select name="status" class="form-select bg-dark text-white border-secondary">
+                <option value="">جميع الحالات</option>
+                {% for st_val, st_name in statuses %}
+                <option value="{{ st_val }}" {% if selected_status == st_val %}selected{% endif %}>{{ st_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-white-50 small mb-1">شراء من تاريخ</label>
+            <input type="date" name="date_from" class="form-control bg-dark text-white border-secondary" value="{{ date_from }}">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label text-white-50 small mb-1">شراء إلى تاريخ</label>
+            <input type="date" name="date_to" class="form-control bg-dark text-white border-secondary" value="{{ date_to }}">
+        </div>
+        <div class="col-md-1">
+            <button type="submit" class="btn btn-orange w-100" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px;">
+                عرض
+            </button>
+        </div>
+    </form>
+</div>
+
+<!-- ملخص الأرقام المالية -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3 col-sm-6">
+        <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(0, 229, 255, 0.3);">
+            <span class="text-white-50 small d-block mb-1">إجمالي تكلفة الأصول التاريخية</span>
+            <h4 class="mb-0 fw-bold" style="color: #00e5ff;">{{ total_cost|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+            <small class="text-white-50">{{ total_count }} أصل مفحوص</small>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(239, 68, 68, 0.3);">
+            <span class="text-white-50 small d-block mb-1">إجمالي مجمع الإهلاك المتراكم</span>
+            <h4 class="mb-0 fw-bold" style="color: #ef4444;">{{ total_accumulated_depreciation|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+            <small class="text-white-50">ما تم استهلاكه دفترياً</small>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(16, 185, 129, 0.3);">
+            <span class="text-white-50 small d-block mb-1">صافي القيمة الدفترية الحالية</span>
+            <h4 class="mb-0 fw-bold" style="color: #10b981;">{{ total_book_value|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+            <small class="text-white-50">قيمة الأصول بالميزانية</small>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6">
+        <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 184, 0, 0.3);">
+            <span class="text-white-50 small d-block mb-1">قسط الإهلاك الشهري الإجمالي</span>
+            <h4 class="mb-0 fw-bold" style="color: #ffb800;">{{ total_monthly_depreciation|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+            <small class="text-white-50">للأصول النشطة الحالية</small>
+        </div>
+    </div>
+</div>
+
+<!-- ستايل مخصص لجدول تقرير الأصول لمنع التكدس -->
+<style>
+    .asset-report-table-wrapper {
+        border-radius: 12px;
+        overflow-x: auto;
+    }
+    .asset-report-table-wrapper::-webkit-scrollbar {
+        height: 8px;
+    }
+    .asset-report-table-wrapper::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.8);
+        border-radius: 6px;
+    }
+    .asset-report-table-wrapper::-webkit-scrollbar-thumb {
+        background: rgba(255, 115, 0, 0.4);
+        border-radius: 6px;
+    }
+    .asset-report-table-wrapper::-webkit-scrollbar-thumb:hover {
+        background: #ff7300;
+    }
+    .asset-report-table th, .asset-report-table td {
+        white-space: nowrap;
+        padding: 1.1rem 1.15rem;
+        vertical-align: middle;
+    }
+</style>
+
+{% if assets %}
+<!-- جدول تقرير الأصول التفصيلي -->
+<div class="card" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden;">
+    <div class="table-responsive asset-report-table-wrapper">
+        <table class="table table-hover asset-report-table align-middle mb-0" style="color: #e2e8f0; font-size: 0.9rem; min-width: 1400px;">
+            <thead style="background: rgba(30, 41, 59, 0.95); color: #cbd5e1; border-bottom: 2px solid #ff7300;">
+                <tr>
+                    <th style="padding: 1.1rem 1.15rem; min-width: 130px;">كود الأصل</th>
+                    <th style="min-width: 200px;">اسم الأصل</th>
+                    <th style="min-width: 130px;">التصنيف</th>
+                    <th style="min-width: 120px;">تاريخ الشراء</th>
+                    <th style="min-width: 130px;">العمر (سنوات)</th>
+                    <th style="text-align: left; min-width: 130px;">تكلفة الشراء</th>
+                    <th style="text-align: left; min-width: 130px;">مجمع الإهلاك</th>
+                    <th style="text-align: left; min-width: 140px;">صافي القيمة الدفترية</th>
+                    <th style="text-align: center; min-width: 130px;">نسبة الاستهلاك</th>
+                    <th style="text-align: left; min-width: 130px;">القسط الشهري</th>
+                    <th style="text-align: center; min-width: 120px;">الحالة</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in assets %}
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 0.75rem 1rem;">
+                        <a href="{% url 'accounting:fixed_asset_detail' a.id %}" style="color: #ff9500; font-weight: 700; text-decoration: none;">
+                            {{ a.code }}
+                        </a>
+                    </td>
+                    <td>
+                        <strong class="text-white">{{ a.name }}</strong>
+                        {% if a.location %}
+                        <div class="text-white-50 small">{{ a.location }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge" style="background: rgba(255,255,255,0.08); color: #94a3b8;">
+                            {{ a.category_display }}
+                        </span>
+                    </td>
+                    <td class="text-white-50">{{ a.purchase_date|date:"Y-m-d" }}</td>
+                    <td class="text-white-50">{{ a.useful_life_years }} س ({{ a.depreciation_rate }}%)</td>
+                    <td style="color: #00e5ff; font-weight: 600; text-align: left;">{{ a.purchase_cost|floatformat:2 }}</td>
+                    <td style="color: #ef4444; font-weight: 600; text-align: left;">{{ a.total_accumulated_depreciation|floatformat:2 }}</td>
+                    <td style="color: #10b981; font-weight: 700; text-align: left;">{{ a.current_book_value|floatformat:2 }}</td>
+                    <td style="text-align: center;">
+                        <span class="badge" style="background: rgba(255,255,255,0.08); color: {% if a.depreciation_progress_percent >= 100 %}#ef4444{% elif a.depreciation_progress_percent >= 70 %}#ffb800{% else %}#10b981{% endif %};">
+                            {{ a.depreciation_progress_percent }}%
+                        </span>
+                    </td>
+                    <td style="color: #ffb800; font-weight: 600; text-align: left;">{{ a.monthly_depreciation_amount|floatformat:2 }}</td>
+                    <td style="text-align: center;">
+                        {% if a.status == 'ACTIVE' %}
+                            <span class="badge bg-success-subtle text-success border border-success">نشط</span>
+                        {% elif a.status == 'FULLY_DEPRECIATED' %}
+                            <span class="badge bg-warning-subtle text-warning border border-warning">مستهلك</span>
+                        {% else %}
+                            <span class="badge bg-danger-subtle text-danger border border-danger">مستبعد</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot style="background: rgba(15, 23, 42, 0.95); font-weight: 700; border-top: 2px solid #ff7300;">
+                <tr>
+                    <td colspan="5" style="padding: 1rem; color: #fff;">الإجمالي العام (لجميع الأصول النشطة):</td>
+                    <td style="color: #00e5ff; text-align: left;">{{ total_cost|floatformat:2 }} ج.م</td>
+                    <td style="color: #ef4444; text-align: left;">{{ total_accumulated_depreciation|floatformat:2 }} ج.م</td>
+                    <td style="color: #10b981; text-align: left;">{{ total_book_value|floatformat:2 }} ج.م</td>
+                    <td></td>
+                    <td style="color: #ffb800; text-align: left;">{{ total_monthly_depreciation|floatformat:2 }} ج.م</td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% else %}
+<!-- حالة عدم وجود بيانات بالتقرير -->
+<div class="empty-state text-center py-5 px-4 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 4px 20px rgba(0,0,0,0.25);">
+    <div style="color: #64748b; font-size: 3.5rem; margin-bottom: 1.25rem;">
+        <i class="fas fa-boxes"></i>
+    </div>
+    <h4 class="text-white fw-bold mb-2">لا توجد بيانات مطابقة لعرضها في التقرير</h4>
+    <p class="text-white-50 mx-auto mb-4" style="max-width: 480px; font-size: 0.95rem;">
+        لم يتم العثور على أصول تطابق معايير وتصنيفات البحث المحددة. جرب اختيار تصنيف آخر أو إعادة التعيين.
+    </p>
+    <a href="{% url 'reports:fixed_assets_report' %}" class="btn btn-outline-secondary px-4 py-2" style="border-radius: 8px;">
+        <i class="fas fa-redo me-1"></i> إعادة تعيين الفلترة
+    </a>
+</div>
+{% endif %}
+{% endblock %}

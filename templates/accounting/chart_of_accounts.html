@@ -70,8 +70,8 @@
                             {% else %}
                             <span class="badge bg-danger px-3 py-2 fs-6" style="min-width: 120px;">رصيد: {{ node.current_balance|floatformat:2 }} ج.م</span>
                             {% endif %}
-                            <a href="{% url 'accounting:account_update' node.pk %}" class="btn btn-sm btn-outline-light" title="تعديل الحساب">
-                                <i class="fas fa-edit"></i>
+                            <a href="{% url 'accounting:account_update' node.pk %}" class="btn btn-sm btn-outline-warning text-warning font-weight-bold" style="border-color: rgba(255, 184, 0, 0.5); padding: 0.25rem 0.65rem;" title="تعديل بيانات الحساب (الاسم، الكود، الأب، خصائص الصرف والضرائب)">
+                                <i class="fas fa-edit me-1"></i> تعديل
                             </a>
                         </div>
                     </div>

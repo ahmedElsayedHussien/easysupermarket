@@ -3,12 +3,29 @@
 
 {% block content %}
 <div class="glass-container" style="padding: 2rem;">
-    <div class="top-header">
+    <div class="top-header" style="margin-bottom: 1.5rem;">
         <h2 style="margin: 0; color: #fff;"><i class="fas fa-sliders-h text-gold" style="margin-left: 0.5rem;"></i> {{ title }}</h2>
-        <a href="{% url 'inventory:adjustment_create' %}" class="btn-orange">
-            <i class="fas fa-plus"></i> إضافة تسوية جديدة
-        </a>
+        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+            <a href="{% url 'inventory:opening_stock_list' %}" class="btn-ghost" style="border: 1px solid rgba(0, 229, 255, 0.4); color: #00e5ff;">
+                <i class="fas fa-boxes"></i> 📦 أرصدة أول المدة
+            </a>
+            <a href="{% url 'inventory:stocktake' %}" class="btn-orange" style="box-shadow: 0 0 15px rgba(255, 115, 0, 0.4);">
+                <i class="fas fa-clipboard-check"></i> 📋 جرد فعلي وتسوية الأرصدة
+            </a>
+            <a href="{% url 'inventory:adjustment_create' %}" class="btn-orange" style="background: rgba(255, 115, 0, 0.15); border: 1px solid #ff7300; color: #ff7300;">
+                <i class="fas fa-plus"></i> تسوية يدوية
+            </a>
+        </div>
     </div>
+
+    <!-- Search Form -->
+    <form method="get" style="margin-bottom: 1.5rem; display: flex; gap: 0.5rem; max-width: 480px;">
+        <input type="text" name="q" value="{{ query|default:'' }}" class="form-control" placeholder="🔍 بحث باسم المنتج، الباركود، السبب، أو المستودع..." style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.15); color: #fff; border-radius: 8px; padding: 0.5rem 1rem;">
+        <button type="submit" class="btn-orange" style="padding: 0.5rem 1.2rem; border-radius: 8px;">بحث</button>
+        {% if query %}
+        <a href="{% url 'inventory:adjustment_list' %}" class="btn-ghost" style="padding: 0.5rem 1rem; border-radius: 8px;" title="إلغاء البحث">إلغاء</a>
+        {% endif %}
+    </form>
 
     <div class="data-table-container">
         <table class="data-table">
@@ -16,6 +33,7 @@
                 <tr>
                     <th>رقم التسوية</th>
                     <th style="text-align: center;">النوع</th>
+                    <th>المنتج / الأصناف</th>
                     <th>المستودع</th>
                     <th>التاريخ</th>
                     <th>السبب</th>
@@ -34,7 +52,37 @@
                             <span class="badge-status badge-success">زيادة بضاعة</span>
                         {% elif adj.adjustment_type == 'OPENING' %}
                             <span class="badge-status badge-info">رصيد افتتاحي</span>
+                        {% elif adj.adjustment_type == 'STOCKTAKE' %}
+                            <span class="badge-status" style="background: rgba(255, 115, 0, 0.2); color: #ff7300; border: 1px solid #ff7300; font-weight: bold;">📋 جرد فعلي</span>
                         {% endif %}
+                    </td>
+                    <td>
+                        {% with lines=adj.lines.all %}
+                            {% if lines|length == 1 %}
+                                <div style="font-weight: 600; color: #f8fafc;">{{ lines.0.product.name }}</div>
+                                <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">
+                                    {% if lines.0.product.barcode %}
+                                    <span class="en" style="color: #64748b; margin-left: 5px;">[{{ lines.0.product.barcode }}]</span>
+                                    {% endif %}
+                                    الكمية: <b style="color: #00e5ff;">{{ lines.0.quantity|floatformat:"-2" }} {{ lines.0.display_unit_name }}</b>
+                                    {% if lines.0.factor > 1 %}
+                                    <span style="color: #cbd5e1; font-size: 0.7rem;">({{ lines.0.base_quantity|floatformat:"-2" }} أساسي)</span>
+                                    {% endif %}
+                                </div>
+                            {% elif lines|length > 1 %}
+                                <div style="font-weight: 600; color: #f8fafc;" title="{% for l in lines %}{{ l.product.name }} (الكمية: {{ l.quantity|floatformat:'-2' }} {{ l.display_unit_name }}){% if not forloop.last %}&#10;{% endif %}{% endfor %}">
+                                    {{ lines.0.product.name }}
+                                    <span class="badge" style="background: rgba(255, 115, 0, 0.15); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.3); font-size: 0.75rem; margin-right: 4px; padding: 2px 7px; border-radius: 4px; font-weight: normal; cursor: help;">
+                                        +{{ lines|length|add:"-1" }} أصناف أخرى
+                                    </span>
+                                </div>
+                                <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">
+                                    إجمالي الأصناف: <b style="color: #00e5ff;">{{ lines|length }}</b>
+                                </div>
+                            {% else %}
+                                <span style="color: #64748b;">-</span>
+                            {% endif %}
+                        {% endwith %}
                     </td>
                     <td>{{ adj.warehouse.name }}</td>
                     <td class="en">{{ adj.date|date:"Y-m-d" }}</td>
@@ -70,7 +118,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="7" style="text-align: center; padding: 2rem; color: #94a3b8;">
+                    <td colspan="8" style="text-align: center; padding: 2rem; color: #94a3b8;">
                         <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
                         لا توجد تسويات
                     </td>
@@ -79,5 +127,30 @@
             </tbody>
         </table>
     </div>
+
+    <!-- Pagination & Summary Footer -->
+    {% if is_paginated %}
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
+        <div style="color: var(--text-muted); font-size: 0.9rem;">
+            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ total_count }}</b> تسوية مخزنية
+        </div>
+
+        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
+            {% if page_obj.has_previous %}
+            <a href="?page=1{% if query %}&q={{ query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
+            <a href="?page={{ page_obj.previous_page_number }}{% if query %}&q={{ query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
+            {% endif %}
+
+            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% if query %}&q={{ query }}{% endif %}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
+            <a href="?page={{ page_obj.paginator.num_pages }}{% if query %}&q={{ query }}{% endif %}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

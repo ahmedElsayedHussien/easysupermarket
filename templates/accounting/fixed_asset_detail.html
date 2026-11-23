@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<div class="glass-container" style="padding: 2rem;">
+    <!-- الهيدر والأزرار -->
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+        <div>
+            <div class="d-flex align-items-center gap-3">
+                <h2 style="margin: 0; color: #fff; font-weight: 800;">
+                    <i class="fas fa-cube text-warning" style="margin-left: 0.5rem;"></i> {{ asset.name }}
+                </h2>
+                <span class="badge" style="background: rgba(255,255,255,0.1); font-size: 0.95rem; font-weight: 600; color: #ff9500; padding: 0.4rem 0.8rem;">
+                    {{ asset.code }}
+                </span>
+                {% if asset.status == 'ACTIVE' %}
+                    <span class="badge bg-success-subtle text-success border border-success px-3 py-1" style="font-size: 0.85rem;">نشط ويعمل</span>
+                {% elif asset.status == 'FULLY_DEPRECIATED' %}
+                    <span class="badge bg-warning-subtle text-warning border border-warning px-3 py-1" style="font-size: 0.85rem;">مستهلك بالكامل دفترياً</span>
+                {% else %}
+                    <span class="badge bg-danger-subtle text-danger border border-danger px-3 py-1" style="font-size: 0.85rem;">مستبعد / تم بيعه</span>
+                {% endif %}
+            </div>
+            <small class="text-white-50 mt-1 d-block">
+                {{ asset.get_category_display }} 
+                {% if asset.location %} • <i class="fas fa-map-marker-alt"></i> {{ asset.location }}{% endif %}
+                {% if asset.branch %} • {{ asset.branch.name }}{% endif %}
+            </small>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="{% url 'accounting:fixed_asset_list' %}" class="btn btn-outline-secondary" style="border-radius: 8px;">
+                <i class="fas fa-arrow-right"></i> قائمة الأصول
+            </a>
+            {% if asset.status != 'DISPOSED' %}
+            <a href="{% url 'accounting:fixed_asset_update' asset.id %}" class="btn btn-outline-warning" style="border-radius: 8px;">
+                <i class="fas fa-edit"></i> تعديل
+            </a>
+            <button type="button" class="btn" onclick="openDisposalModal()" style="background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #fca5a5; font-weight: 700; border-radius: 8px;">
+                <i class="fas fa-hand-holding-usd"></i> استبعاد أو بيع الأصل
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- كروت البيانات المالية السريعة -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(0, 229, 255, 0.3);">
+                <span class="text-white-50 small d-block mb-1">تكلفة الشراء التاريخية</span>
+                <h4 class="mb-0 fw-bold" style="color: #00e5ff;">{{ asset.purchase_cost|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                <small class="text-white-50">تاريخ: {{ asset.purchase_date|date:"Y-m-d" }}</small>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(239, 68, 68, 0.3);">
+                <span class="text-white-50 small d-block mb-1">مجمع الإهلاك حتى اليوم</span>
+                <h4 class="mb-0 fw-bold" style="color: #ef4444;">{{ asset.total_accumulated_depreciation|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                <small class="text-white-50">نسبة الاستهلاك: {{ asset.depreciation_progress_percent }}%</small>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(16, 185, 129, 0.3);">
+                <span class="text-white-50 small d-block mb-1">صافي القيمة الدفترية الحالية</span>
+                <h4 class="mb-0 fw-bold" style="color: #10b981;">{{ asset.current_book_value|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                <small class="text-white-50">قيمة الخردة: {{ asset.salvage_value|floatformat:2 }} ج.م</small>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="p-3 rounded-3" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255, 184, 0, 0.3);">
+                <span class="text-white-50 small d-block mb-1">قسط الإهلاك الشهري التقديري</span>
+                <h4 class="mb-0 fw-bold" style="color: #ffb800;">{{ asset.monthly_depreciation_amount|floatformat:2 }} <small style="font-size:0.7rem;">ج.م</small></h4>
+                <small class="text-white-50">بمعدل سنوي {{ asset.depreciation_rate }}%</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- شريط تقدم استهلاك الأصل -->
+    <div class="card p-3 mb-4" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-bold" style="color: #e2e8f0;"><i class="fas fa-hourglass-half text-warning"></i> مؤشر استهلاك الأصل دفترياً</span>
+            <span class="badge" style="background: rgba(255, 115, 0, 0.2); color: #ff9500; font-weight: 700; font-size: 0.9rem;">
+                {{ asset.depreciation_progress_percent }}% مستهلك
+            </span>
+        </div>
+        <div class="progress" style="height: 12px; background: rgba(255,255,255,0.08); border-radius: 6px;">
+            <div class="progress-bar" role="progressbar" style="width: {{ asset.depreciation_progress_percent }}%; background: linear-gradient(90deg, #10b981, #ffb800, #ef4444); border-radius: 6px;"></div>
+        </div>
+        <div class="d-flex justify-content-between text-white-50 small mt-2">
+            <span>القيمة القابلة للإهلاك: {{ asset.depreciable_base|floatformat:2 }} ج.م</span>
+            <span>المتبقي للإهلاك: {{ asset.current_book_value|floatformat:2 }} ج.م</span>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <!-- بطاقة السياسة المحاسبية والحسابات -->
+        <div class="col-lg-6">
+            <div class="card p-4 h-100" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+                <h5 class="mb-3" style="color: #00e5ff; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                    <i class="fas fa-balance-scale"></i> السياسة المحاسبية وربط الأستاذ العام
+                </h5>
+                <table class="table table-borderless text-white-50 mb-0">
+                    <tbody>
+                        <tr>
+                            <td style="width: 40%; padding: 0.5rem 0;">طريقة الإهلاك:</td>
+                            <td class="text-white fw-bold">القسط الثابت (Straight-Line)</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0.5rem 0;">العمر الافتراضي:</td>
+                            <td class="text-white fw-bold">{{ asset.useful_life_years }} سنوات ({{ asset.depreciation_rate }}% سنوياً)</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0.5rem 0;">حساب الأصل:</td>
+                            <td><span class="badge bg-dark border border-secondary text-info">{{ asset.asset_account }}</span></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0.5rem 0;">حساب مجمع الإهلاك:</td>
+                            <td><span class="badge bg-dark border border-secondary text-danger">{{ asset.accumulated_depreciation_account }}</span></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0.5rem 0;">حساب مصروف الإهلاك:</td>
+                            <td><span class="badge bg-dark border border-secondary text-warning">{{ asset.depreciation_expense_account }}</span></td>
+                        </tr>
+                        {% if asset.purchase_entry %}
+                        <tr>
+                            <td style="padding: 0.5rem 0;">قيد الشراء الأصلي:</td>
+                            <td>
+                                <a href="{% url 'accounting:journal_detail' asset.purchase_entry.id %}" style="color: #ff9500; font-weight: 700; text-decoration: none;">
+                                    <i class="fas fa-external-link-alt"></i> {{ asset.purchase_entry.reference }}
+                                </a>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% if asset.is_opening_balance %}
+                        <tr>
+                            <td style="padding: 0.5rem 0;">رصيد افتتاحي سابق:</td>
+                            <td class="text-warning">نعم (مجمع سابق: {{ asset.opening_accumulated_depreciation|floatformat:2 }} ج.م)</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- بطاقة الاستبعاد إن وجد أو الملاحظات -->
+        <div class="col-lg-6">
+            <div class="card p-4 h-100" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;">
+                <h5 class="mb-3" style="color: {% if asset.status == 'DISPOSED' %}#ef4444{% else %}#ffb800{% endif %}; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 0.5rem;">
+                    <i class="fas fa-info-circle"></i> {% if asset.status == 'DISPOSED' %}بيانات الاستبعاد والبيع{% else %}المواصفات والملاحظات{% endif %}
+                </h5>
+                {% if asset.status == 'DISPOSED' %}
+                <div class="p-3 rounded-3 mb-3" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <small class="text-white-50 d-block">تاريخ الاستبعاد:</small>
+                            <strong class="text-white">{{ asset.disposal_date|date:"Y-m-d" }}</strong>
+                        </div>
+                        <div class="col-6">
+                            <small class="text-white-50 d-block">سعر البيع المحصل:</small>
+                            <strong style="color: #10b981;">{{ asset.disposal_amount|floatformat:2 }} ج.م</strong>
+                        </div>
+                        {% if asset.disposal_entry %}
+                        <div class="col-12 mt-2 pt-2 border-top border-secondary">
+                            <small class="text-white-50 d-block">قيد إقفال الاستبعاد المحاسبي:</small>
+                            <a href="{% url 'accounting:journal_detail' asset.disposal_entry.id %}" style="color: #ff9500; font-weight: 700; text-decoration: none;">
+                                <i class="fas fa-file-invoice"></i> {{ asset.disposal_entry.reference }}
+                            </a>
+                        </div>
+                        {% endif %}
+                        {% if asset.disposal_notes %}
+                        <div class="col-12 mt-2">
+                            <small class="text-white-50 d-block">ملاحظات الاستبعاد:</small>
+                            <p class="mb-0 text-white-50 small">{{ asset.disposal_notes }}</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% else %}
+                    <p class="text-white-50">
+                        {{ asset.notes|default:"لا توجد ملاحظات مسجلة لهذا الأصل." }}
+                    </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- جدول سجل حركات الإهلاك الدوري -->
+    <div class="card" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden;">
+        <div class="card-header p-3 d-flex justify-content-between align-items-center" style="background: rgba(30, 41, 59, 0.8); border-bottom: 2px solid #ff7300;">
+            <h5 class="mb-0 fw-bold text-white">
+                <i class="fas fa-history text-warning"></i> سجل أقساط الإهلاك المحسوبة دفترياً
+            </h5>
+            <span class="badge" style="background: rgba(255,255,255,0.1); color: #cbd5e1;">
+                عدد الحركات: {{ logs.count }}
+            </span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="color: #e2e8f0;">
+                <thead style="background: rgba(15, 23, 42, 0.8); color: #94a3b8; font-size: 0.85rem;">
+                    <tr>
+                        <th style="padding: 1rem;">الفترة</th>
+                        <th>تاريخ القيد</th>
+                        <th>قسط الإهلاك</th>
+                        <th>صافي القيمة الدفترية بعدها</th>
+                        <th>قيد اليومية المرتبط</th>
+                        <th>المستخدم</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                        <td style="padding: 0.85rem 1rem;">
+                            <strong style="color: #00e5ff;">شهر {{ log.month|stringformat:"02d" }} / {{ log.year }}</strong>
+                        </td>
+                        <td class="text-white-50">{{ log.date|date:"Y-m-d" }}</td>
+                        <td style="color: #ef4444; font-weight: 700;">{{ log.amount|floatformat:2 }} ج.م</td>
+                        <td style="color: #10b981; font-weight: 700;">{{ log.book_value_after|floatformat:2 }} ج.م</td>
+                        <td>
+                            {% if log.entry %}
+                            <a href="{% url 'accounting:journal_detail' log.entry.id %}" style="color: #ff9500; font-weight: 700; text-decoration: none;">
+                                <i class="fas fa-file-invoice"></i> {{ log.entry.reference }}
+                            </a>
+                            {% else %}
+                            <span class="text-white-50">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-white-50 small">{{ log.created_by.username|default:"النظام" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-white-50">
+                            لم يتم احتساب أي أقساط إهلاك دفتري لهذا الأصل حتى الآن.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- نافذة منبثقة (Modal) لاستبعاد أو بيع الأصل -->
+{% if asset.status != 'DISPOSED' %}
+<div id="disposalModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 1050; align-items: center; justify-content: center; backdrop-filter: blur(5px);">
+    <div style="background: #0f172a; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 14px; max-width: 580px; width: 90%; padding: 2rem; box-shadow: 0 20px 40px rgba(0,0,0,0.8);">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4 style="color: #fca5a5; margin: 0; font-weight: 700;">
+                <i class="fas fa-hand-holding-usd"></i> استبعاد أو بيع الأصل الثابت
+            </h4>
+            <button type="button" class="btn-close btn-close-white" onclick="closeDisposalModal()"></button>
+        </div>
+        <p class="text-white-50 small mb-4">
+            سيقوم النظام بإقفال تكلفة الأصل التاريخية وإقفال مجمع إهلاكه، وتوليد القيد المحاسبي المولد لأرباح أو خسائر الاستبعاد آلياً.
+        </p>
+
+        <form method="post" action="{% url 'accounting:fixed_asset_dispose' asset.id %}">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label text-white-50">{{ disposal_form.disposal_date.label }}</label>
+                {{ disposal_form.disposal_date }}
+            </div>
+            <div class="mb-3">
+                <label class="form-label text-white-50">{{ disposal_form.disposal_amount.label }}</label>
+                {{ disposal_form.disposal_amount }}
+                <small class="text-white-50">اكتب 0 في حال تخريد الأصل أو التخلص منه بدون بيع</small>
+            </div>
+            <div class="mb-3">
+                <label class="form-label text-white-50">{{ disposal_form.destination_type.label }}</label>
+                {{ disposal_form.destination_type }}
+            </div>
+            <div class="mb-3" id="disp_treasury_div" style="display: none;">
+                <label class="form-label text-white-50">{{ disposal_form.treasury.label }}</label>
+                {{ disposal_form.treasury }}
+            </div>
+            <div class="mb-3" id="disp_bank_div" style="display: none;">
+                <label class="form-label text-white-50">{{ disposal_form.bank_account.label }}</label>
+                {{ disposal_form.bank_account }}
+            </div>
+            <div class="mb-3">
+                <label class="form-label text-white-50">{{ disposal_form.disposal_notes.label }}</label>
+                {{ disposal_form.disposal_notes }}
+            </div>
+
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <button type="button" class="btn btn-outline-secondary" onclick="closeDisposalModal()">إلغاء</button>
+                <button type="submit" class="btn btn-orange" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+                    تأكيد الاستبعاد وترحيل القيد
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openDisposalModal() {
+    const modal = document.getElementById('disposalModal');
+    if (modal) modal.style.display = 'flex';
+}
+function closeDisposalModal() {
+    const modal = document.getElementById('disposalModal');
+    if (modal) modal.style.display = 'none';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const destSelect = document.getElementById('id_disp_dest_type');
+    const divTreasury = document.getElementById('disp_treasury_div');
+    const divBank = document.getElementById('disp_bank_div');
+
+    function toggleDest() {
+        if (!destSelect) return;
+        const val = destSelect.value;
+        if (divTreasury) divTreasury.style.display = (val === 'TREASURY') ? 'block' : 'none';
+        if (divBank) divBank.style.display = (val === 'BANK') ? 'block' : 'none';
+    }
+
+    if (destSelect) {
+        destSelect.addEventListener('change', toggleDest);
+        toggleDest();
+    }
+});
+</script>
+{% endif %}
+{% endblock %}

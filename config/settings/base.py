@@ -46,6 +46,7 @@ TENANT_APPS = [
     'apps.tenant.rentals',
     'apps.tenant.maintenance',
     'apps.tenant.hr',
+    'apps.tenant.pricing',
 ]
 
 # INSTALLED_APPS must be SHARED_APPS + unique TENANT_APPS
@@ -72,15 +73,16 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'apps.tenant.core.middleware.BranchMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.tenant.core.middleware.BranchMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'django.middleware.locale.LocaleMiddleware',
 ]
+
 
 ROOT_URLCONF = 'config.urls'
 
@@ -119,7 +121,7 @@ ASGI_APPLICATION = 'config.asgi.application'
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'

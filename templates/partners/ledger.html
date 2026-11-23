@@ -1,44 +1,1090 @@
 {% extends 'base.html' %}
+{% load static %}
+
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <div class="d-flex justify-between align-center mb-4">
-        <h2 class="text-neon-cyan">{{ title }}</h2>
+<!-- Official Print Header (Visible ONLY in print) -->
+<div class="official-print-header">
+    <div class="print-brand-bar">
+        <div class="print-brand-right">
+            <div class="print-company-name">{{ company_name|default:"EasySupermarket" }}</div>
+            <div class="print-doc-badge">كشف حساب مالي رسمي معتمد</div>
+        </div>
+        <div class="print-brand-left">
+            <div><strong>تاريخ الطباعة:</strong> {% now "Y-m-d H:i" %}</div>
+            <div><strong>صفحة:</strong> <span class="print-page-num"></span></div>
+        </div>
     </div>
 
-    <div class="card p-3 mb-4">
-        <h4>معلومات الشريك</h4>
-        <p>الاسم: {{ partner.name }}</p>
-        <p>الرصيد الحالي: <span class="text-neon-pink">{{ partner.outstanding_balance }} ج.م</span></p>
-        <p>حد الائتمان: {{ partner.credit_limit }} ج.م</p>
+    <div class="print-title-main">
+        <h2>كشف حساب: {{ partner.name }}</h2>
+        <div class="print-subtitle">
+            {% if show_items %}كشف حساب تحليلي تفصيلي بالأصناف والكميات والأسعار{% else %}كشف حساب مالي إجمالي للحركات والعمليات الفاتورية{% endif %}
+        </div>
     </div>
 
-    <table class="data-table">
+    <div class="print-partner-box">
+        <div class="print-info-item">
+            <span class="lbl">اسم الشريك:</span>
+            <span class="val bold">{{ partner.name }}</span>
+        </div>
+        <div class="print-info-item">
+            <span class="lbl">نوع الشريك:</span>
+            <span class="val">{{ partner.get_partner_type_display }}</span>
+        </div>
+        <div class="print-info-item">
+            <span class="lbl">الهاتف / الجوال:</span>
+            <span class="val en">{{ partner.phone|default:partner.mobile|default:"—" }}</span>
+        </div>
+        <div class="print-info-item">
+            <span class="lbl">فترة التقرير:</span>
+            <span class="val bold">
+                {% if start_date and end_date %}من {{ start_date }} إلى {{ end_date }}{% elif start_date %}من {{ start_date }} حتى الآن{% elif end_date %}حتى تاريخ {{ end_date }}{% else %}كافة الحركات المسجلة{% endif %}
+            </span>
+        </div>
+        {% if partner.tax_id %}
+        <div class="print-info-item">
+            <span class="lbl">الرقم الضريبي:</span>
+            <span class="val en">{{ partner.tax_id }}</span>
+        </div>
+        {% endif %}
+        <div class="print-info-item">
+            <span class="lbl">رصيد ما قبل الفترة (المنقول):</span>
+            <span class="val bold en">{{ opening_balance|floatformat:"-2" }} ج.م</span>
+        </div>
+    </div>
+
+    <!-- Compact Period Summary Strip -->
+    <table class="print-summary-strip">
         <thead>
             <tr>
-                <th>التاريخ</th>
-                <th>رقم القيد</th>
-                <th>الوصف</th>
-                <th>مدين</th>
-                <th>دائن</th>
+                <th style="width: 20%;">رصيد ما قبل الفترة (منقول)</th>
+                <th style="width: 20%;">إجمالي مدين الفترة (لنا)</th>
+                <th style="width: 20%;">إجمالي دائن الفترة (له)</th>
+                <th style="width: 22%;">الرصيد الختامي</th>
+                <th style="width: 18%;">حالة الحساب</th>
             </tr>
         </thead>
         <tbody>
-            {% for item in items %}
             <tr>
-                <td>{{ item.entry.date|date:"Y-m-d" }}</td>
-                <td>{{ item.entry.reference }}</td>
-                <td>{{ item.entry.description }}</td>
-                <td>{{ item.debit }}</td>
-                <td>{{ item.credit }}</td>
+                <td class="en bold">{{ opening_balance|floatformat:"-2" }} ج.م</td>
+                <td class="en bold font-green">{{ period_debit|floatformat:"-2" }} ج.م</td>
+                <td class="en bold font-red">{{ period_credit|floatformat:"-2" }} ج.م</td>
+                <td class="en bold font-balance">{{ final_balance|floatformat:"-2" }} ج.م</td>
+                <td class="bold">
+                    {% if final_balance > 0 %}مدين (عليه لنا){% elif final_balance < 0 %}دائن (له علينا){% else %}متزن (0.00){% endif %}
+                </td>
             </tr>
-            {% empty %}
-            <tr>
-                <td colspan="5" class="text-center">لا توجد حركات مسجلة</td>
-            </tr>
-            {% endfor %}
         </tbody>
     </table>
 </div>
+<div class="content-header">
+    <div class="content-title">
+        <h1>📑 {{ title }}</h1>
+        <p>كشف حساب مالي تفصيلي وشامل يوضح كافة حركات المبيعات، المشتريات، المرتجعات، وسندات القبض والصرف والرصيد التراكمي</p>
+    </div>
+    <div class="content-actions">
+        {% if show_items %}
+        <a href="?start_date={{ start_date }}&end_date={{ end_date }}" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+            <span>📄</span> <span>عرض إجمالي الفواتير</span>
+        </a>
+        {% else %}
+        <a href="?start_date={{ start_date }}&end_date={{ end_date }}&show_items=1" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+            <span>📦</span> <span>عرض تفصيلي بالأصناف</span>
+        </a>
+        {% endif %}
+        <a href="{% url 'partners:partner_ledger_export_excel' partner.id %}?start_date={{ start_date }}&end_date={{ end_date }}{% if show_items %}&show_items=1{% endif %}" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+            📊 تصدير Excel احترافي
+        </a>
+        <button onclick="window.print()" class="btn btn-secondary" style="font-weight:700;">
+            🖨️ طباعة
+        </button>
+        {% if is_paginated %}
+        <a href="?start_date={{ start_date }}&end_date={{ end_date }}{% if show_items %}&show_items=1{% endif %}&print_all=1" target="_blank" class="btn btn-secondary" style="font-weight:700;" title="طباعة كافة حركات الفترة بدون تقسيم صفحات">
+            🖨️ طباعة الكشف كاملاً
+        </a>
+        {% endif %}
+        <a href="{% url 'core:report_partners' %}" class="btn btn-secondary" style="font-weight:600;">
+            ⬅️ العودة للتقرير
+        </a>
+    </div>
+</div>
+
+<!-- Partner Info & Switcher Card -->
+<div class="card card-partner-info" style="margin-bottom: 1.5rem; padding: 1.25rem 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; border-bottom: 1px solid var(--border-default); padding-bottom: 1rem; margin-bottom: 1rem;">
+        <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+            <h2 style="margin: 0; font-size: 1.4rem; color: var(--text-primary);">
+                👤 {{ partner.name }}
+            </h2>
+            {% if partner.partner_type == 'BOTH' %}
+                <span class="badge" style="background: rgba(0, 229, 255, 0.2); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4); padding: 5px 10px; font-size: 0.85rem;">🔄 عميل ومورد</span>
+            {% elif partner.partner_type == 'SUPPLIER' %}
+                <span class="badge" style="background: rgba(255, 171, 0, 0.2); color: #ffab00; border: 1px solid rgba(255, 171, 0, 0.4); padding: 5px 10px; font-size: 0.85rem;">🚚 مورد</span>
+            {% else %}
+                <span class="badge" style="background: rgba(0, 230, 118, 0.2); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4); padding: 5px 10px; font-size: 0.85rem;">👥 عميل</span>
+            {% endif %}
+            {% if partner.phone or partner.mobile %}
+                <span style="color: var(--text-muted); font-size: 0.95rem; font-family: monospace;">📞 {{ partner.phone|default:partner.mobile }}</span>
+            {% endif %}
+        </div>
+
+        {% if all_partners %}
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="margin: 0; font-weight: bold; font-size: 0.9rem; white-space: nowrap; color: var(--text-secondary);">تبديل الشريك السريع:</label>
+            <select class="form-control" style="min-width: 240px; background: var(--bg-tertiary); color: var(--text-primary); border-radius: 6px; padding: 6px 12px;" onchange="if(this.value) window.location.href='/partners/' + this.value + '/ledger/';">
+                {% for p in all_partners %}
+                <option value="{{ p.id }}" {% if p.id == partner.id %}selected{% endif %}>
+                    {{ p.name }} [{{ p.get_partner_type_display }}]
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+    </div>
+
+    <div style="display: flex; gap: 2.5rem; flex-wrap: wrap; align-items: center; font-size: 0.95rem;">
+        {% if partner.opening_balance > 0 %}
+        <div>
+            <span style="color: var(--text-muted);">رصيد أول مدة الافتتاحي:</span>
+            <strong style="color: #ff7300; font-family: monospace; font-size: 1.05rem;">
+                {{ partner.opening_balance|floatformat:"-2" }} ج.م ({{ partner.get_opening_balance_type_display }})
+            </strong>
+        </div>
+        {% endif %}
+        <div>
+            <span style="color: var(--text-muted);">صافي الرصيد اللحظي العام:</span>
+            <strong style="font-family: monospace; font-size: 1.15rem; font-weight: 800; {% if final_balance > 0 %}color: var(--neon-green, #00e676);{% elif final_balance < 0 %}color: var(--neon-gold, #ffab00);{% else %}color: var(--text-muted);{% endif %}">
+                {% if final_balance > 0 %}
+                    +{{ final_balance|floatformat:"-2" }} ج.م (مدين - عليه لنا)
+                {% elif final_balance < 0 %}
+                    {{ final_balance|floatformat:"-2" }} ج.م (دائن - له علينا)
+                {% else %}
+                    0.00 ج.م (متزن)
+                {% endif %}
+            </strong>
+        </div>
+        {% if partner.credit_limit %}
+        <div>
+            <span style="color: var(--text-muted);">حد الائتمان المسموح:</span>
+            <strong style="font-family: monospace;">{{ partner.credit_limit|floatformat:"-2" }} ج.م</strong>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Date Filter Form -->
+<div class="card card-date-filter" style="margin-bottom: 1.5rem;">
+    <form method="GET" style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
+        <div class="form-group" style="flex: 1; min-width: 180px;">
+            <label class="form-label">📅 من تاريخ:</label>
+            <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+        </div>
+        <div class="form-group" style="flex: 1; min-width: 180px;">
+            <label class="form-label">📅 إلى تاريخ:</label>
+            <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+        </div>
+        {% if show_items %}
+        <input type="hidden" name="show_items" value="1">
+        {% endif %}
+        <div style="display: flex; gap: 0.5rem; flex-wrap: nowrap; margin-bottom: 0.5rem;">
+            <button type="submit" class="btn btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4);">
+                🔍 تصفية الفترة
+            </button>
+            {% if start_date or end_date %}
+            <a href="{% url 'partners:partner_ledger' partner.id %}{% if show_items %}?show_items=1{% endif %}" class="btn btn-secondary">إلغاء التصفية</a>
+            {% endif %}
+        </div>
+    </form>
+</div>
+
+<!-- Period Summary KPI Cards -->
+<div class="grid grid-4 kpi-dashboard-grid" style="margin-bottom: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem;">
+    <div class="card stat-card" style="border-right: 4px solid var(--neon-cyan, #00e5ff);">
+        <div class="stat-icon" style="font-size: 2rem;">⚖️</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.85rem; color: var(--text-muted);">رصيد ما قبل الفترة (سابق منقول)</div>
+            <div class="stat-value" style="font-size: 1.5rem; font-weight: 800; font-family: monospace; color: var(--neon-cyan, #00e5ff);">
+                {{ opening_balance|floatformat:"-2" }} <small style="font-size: 0.85rem; font-weight: normal; color: var(--text-secondary);">ج.م</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card" style="border-right: 4px solid var(--neon-green, #00e676);">
+        <div class="stat-icon" style="font-size: 2rem;">📈</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.85rem; color: var(--text-muted);">إجمالي مدين الفترة (حركات لنا)</div>
+            <div class="stat-value" style="font-size: 1.5rem; font-weight: 800; font-family: monospace; color: var(--neon-green, #00e676);">
+                {{ period_debit|floatformat:"-2" }} <small style="font-size: 0.85rem; font-weight: normal; color: var(--text-secondary);">ج.م</small>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">مبيعات، سدادات للمورد، إلخ</div>
+        </div>
+    </div>
+
+    <div class="card stat-card" style="border-right: 4px solid var(--neon-gold, #ffab00);">
+        <div class="stat-icon" style="font-size: 2rem;">📉</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.85rem; color: var(--text-muted);">إجمالي دائن الفترة (حركات للشريك)</div>
+            <div class="stat-value" style="font-size: 1.5rem; font-weight: 800; font-family: monospace; color: var(--neon-gold, #ffab00);">
+                {{ period_credit|floatformat:"-2" }} <small style="font-size: 0.85rem; font-weight: normal; color: var(--text-secondary);">ج.م</small>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">مشتريات، مقبوضات من العميل، إلخ</div>
+        </div>
+    </div>
+
+    <div class="card stat-card" style="border-right: 4px solid #ff7300;">
+        <div class="stat-icon" style="font-size: 2rem;">🎯</div>
+        <div>
+            <div class="stat-label" style="font-size: 0.85rem; color: var(--text-muted);">الرصيد الختامي في نهاية الفترة</div>
+            <div class="stat-value" style="font-size: 1.5rem; font-weight: 800; font-family: monospace; color: #ff7300;">
+                {{ final_balance|floatformat:"-2" }} <small style="font-size: 0.85rem; font-weight: normal; color: var(--text-secondary);">ج.م</small>
+            </div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">
+                {% if final_balance > 0 %}مدين (عليه لنا){% elif final_balance < 0 %}دائن (له علينا){% else %}متزن{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ledger Table -->
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 1rem;">
+        <h3 style="margin: 0; font-size: 1.2rem;">📋 جدول الحركات والعمليات المالية لكشف الحساب</h3>
+        <div class="search-box" style="flex: 1; max-width: 320px;">
+            <input type="text" id="ledgerSearchInput" onkeyup="filterTable()" placeholder="⚡ بحث في حركات الجدول..." class="form-control" style="background: var(--bg-tertiary); border: 1px solid var(--border-default);">
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="data-table" id="ledger-table" style="width: 100%; border-collapse: collapse;">
+            {% if show_items %}
+            <!-- وضع العرض التفصيلي بالأصناف -->
+            <thead>
+                <tr>
+                    <th style="width: 40px; text-align: center;">#</th>
+                    <th style="width: 95px; text-align: center;">التاريخ</th>
+                    <th style="width: 135px; text-align: center;">رقم الفاتورة / المستند</th>
+                    <th style="width: 110px; text-align: center;">نوع الحركة</th>
+                    <th style="min-width: 140px;">البيان / الشرح</th>
+                    <th style="min-width: 160px;">اسم الصنف</th>
+                    <th style="width: 70px; text-align: center;">الكمية</th>
+                    <th style="width: 65px; text-align: center;">الوحدة</th>
+                    <th style="width: 85px; text-align: center;">سعر الوحدة</th>
+                    <th style="width: 75px; text-align: center;">الخصم</th>
+                    <th style="width: 75px; text-align: center;">الضريبة</th>
+                    <th style="width: 95px; text-align: center;">إجمالي الصنف</th>
+                    <th style="width: 95px; text-align: right; color: var(--neon-green, #00e676);">مدين (لنا)</th>
+                    <th style="width: 95px; text-align: right; color: var(--neon-gold, #ffab00);">دائن (له)</th>
+                    <th style="width: 110px; text-align: right; background: rgba(255, 115, 0, 0.12); color: #ff7300;">الرصيد التراكمي</th>
+                    <th style="width: 60px; text-align: center;" class="no-print">إجراء</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if opening_balance != 0 and not page_obj.has_previous %}
+                <tr style="background: rgba(255, 255, 255, 0.04); font-weight: bold;">
+                    <td style="text-align: center;">-</td>
+                    <td style="text-align: center;">{{ start_date|default:"رصيد سابق" }}</td>
+                    <td style="text-align: center; color: var(--neon-cyan, #00e5ff); font-family: monospace;">⚖️ OPN-{{ partner.id }}</td>
+                    <td style="text-align: center;"><span class="badge" style="background: rgba(0, 229, 255, 0.2); color: #00e5ff;">رصيد مرحل</span></td>
+                    <td style="color: var(--text-muted);">رصيد مرحل ما قبل بداية الفترة المحددة</td>
+                    <td style="color: var(--text-muted); text-align: center;">—</td>
+                    <td style="color: var(--text-muted); text-align: center;">—</td>
+                    <td style="color: var(--text-muted); text-align: center;">—</td>
+                    <td style="color: var(--text-muted); text-align: center;">—</td>
+                    <td style="color: var(--text-muted); text-align: center;">—</td>
+                    <td style="color: var(--text-muted); text-align: center;">—</td>
+                    <td style="color: var(--text-muted); text-align: center;">—</td>
+                    <td style="font-family: monospace; color: var(--neon-green, #00e676); text-align: right;">
+                        {% if opening_balance > 0 %}{{ opening_balance|floatformat:"-2" }}{% else %}—{% endif %}
+                    </td>
+                    <td style="font-family: monospace; color: var(--neon-gold, #ffab00); text-align: right;">
+                        {% if opening_balance < 0 %}{{ opening_balance|floatformat:"-2" }}{% else %}—{% endif %}
+                    </td>
+                    <td style="font-weight: bold; font-family: monospace; font-size: 1.1rem; color: #ff7300; background: rgba(255, 115, 0, 0.06); text-align: right;">
+                        {{ opening_balance|floatformat:"-2" }}
+                    </td>
+                    <td class="no-print" style="text-align: center;">—</td>
+                </tr>
+                {% endif %}
+
+                {% for item in items %}
+                <tr class="ledger-row {% if item.is_line %}ledger-item-row{% endif %}">
+                    <td style="text-align: center; color: var(--text-muted);">{{ item.counter }}</td>
+                    <td style="white-space: nowrap; text-align: center;">{{ item.date|date:"Y-m-d"|default:item.date }}</td>
+                    <td style="font-family: monospace; font-weight: bold; text-align: center;">
+                        {% if item.url %}
+                            <a href="{{ item.url }}" target="_blank" style="color: var(--neon-cyan, #00e5ff); text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 4px;" title="عرض المستند">
+                                <span>📄</span>
+                                <span style="direction: ltr; unicode-bidi: isolate; font-family: monospace; font-weight: 700; color: #00e5ff;">{{ item.reference }}</span>
+                            </a>
+                        {% else %}
+                            <span style="direction: ltr; unicode-bidi: isolate; font-family: monospace; font-weight: 600;">{{ item.reference }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if item.badge_type == 'sale' %}
+                            <span class="badge" style="background: rgba(0, 230, 118, 0.18); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4);">فاتورة مبيعات</span>
+                        {% elif item.badge_type == 'purchase' %}
+                            <span class="badge" style="background: rgba(33, 150, 243, 0.18); color: #2196f3; border: 1px solid rgba(33, 150, 243, 0.4);">فاتورة مشتريات</span>
+                        {% elif item.badge_type == 'return_sale' %}
+                            <span class="badge" style="background: rgba(255, 23, 68, 0.18); color: #ff1744; border: 1px solid rgba(255, 23, 68, 0.4);">مرتجع مبيعات</span>
+                        {% elif item.badge_type == 'return_purchase' %}
+                            <span class="badge" style="background: rgba(255, 152, 0, 0.18); color: #ff9800; border: 1px solid rgba(255, 152, 0, 0.4);">مرتجع مشتريات</span>
+                        {% elif item.badge_type == 'receipt' %}
+                            <span class="badge" style="background: rgba(0, 229, 255, 0.18); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4);">سند قبض (وارد)</span>
+                        {% elif item.badge_type == 'payment' %}
+                            <span class="badge" style="background: rgba(255, 115, 0, 0.18); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.4);">سند صرف (صادر)</span>
+                        {% elif item.badge_type == 'payment_instant' %}
+                            <span class="badge" style="background: rgba(156, 39, 176, 0.18); color: #ce93d8; border: 1px solid rgba(156, 39, 176, 0.4);">سداد/تسوية فورية</span>
+                        {% elif item.badge_type == 'opening' %}
+                            <span class="badge" style="background: rgba(255, 214, 0, 0.18); color: #ffd600; border: 1px solid rgba(255, 214, 0, 0.4);">رصيد أول مدة</span>
+                        {% else %}
+                            <span class="badge badge-secondary">{{ item.doc_type }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="max-width: 220px; white-space: normal; color: var(--text-secondary); font-size: 0.88rem;">
+                        {{ item.description }}
+                    </td>
+                    <td style="font-weight: 700; color: var(--text-primary); font-size: 0.92rem;">
+                        {% if item.is_line %}
+                            {{ item.product_name }}
+                        {% else %}
+                            <span style="color: var(--text-muted);">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center; font-family: monospace; font-weight: 700; color: var(--neon-cyan, #00e5ff);">
+                        {% if item.is_line %}
+                            {{ item.quantity|floatformat:"-2" }}
+                        {% else %}
+                            <span style="color: var(--text-muted);">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center; color: var(--text-secondary); font-size: 0.85rem;">
+                        {% if item.is_line %}
+                            {{ item.uom_name }}
+                        {% else %}
+                            <span style="color: var(--text-muted);">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center; font-family: monospace;">
+                        {% if item.is_line %}
+                            {{ item.unit_price|floatformat:"-2" }}
+                        {% else %}
+                            <span style="color: var(--text-muted);">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center; font-family: monospace; color: var(--neon-gold, #ffab00);">
+                        {% if item.is_line and item.discount_amount > 0 %}
+                            {{ item.discount_amount|floatformat:"-2" }}
+                        {% else %}
+                            <span style="color: var(--text-muted);">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center; font-family: monospace; color: var(--text-muted);">
+                        {% if item.is_line and item.tax_amount > 0 %}
+                            {{ item.tax_amount|floatformat:"-2" }}
+                        {% else %}
+                            <span style="color: var(--text-muted);">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center; font-family: monospace; font-weight: 700; color: var(--text-primary);">
+                        {% if item.is_line %}
+                            {{ item.total_amount|floatformat:"-2" }}
+                        {% else %}
+                            <span style="color: var(--text-muted);">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace; font-weight: bold; color: var(--neon-green, #00e676); text-align: right;">
+                        {% if item.debit > 0 %}{{ item.debit|floatformat:"-2" }}{% else %}—{% endif %}
+                    </td>
+                    <td style="font-family: monospace; font-weight: bold; color: var(--neon-gold, #ffab00); text-align: right;">
+                        {% if item.credit > 0 %}{{ item.credit|floatformat:"-2" }}{% else %}—{% endif %}
+                    </td>
+                    <td style="font-family: monospace; font-weight: 800; font-size: 1.05rem; background: rgba(255, 115, 0, 0.06); text-align: right; {% if item.running_balance > 0 %}color: var(--neon-green, #00e676);{% elif item.running_balance < 0 %}color: var(--neon-gold, #ffab00);{% else %}color: var(--text-muted);{% endif %}">
+                        {{ item.running_balance|floatformat:"-2" }}
+                    </td>
+                    <td class="no-print" style="text-align: center;">
+                        {% if item.url %}
+                            <a href="{{ item.url }}" target="_blank" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; padding: 2px 7px; font-size: 0.78rem;">
+                                👁️ عرض
+                            </a>
+                        {% else %}
+                            <span style="color: var(--text-muted); font-size: 0.8rem;">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="16" class="text-center" style="padding: 3rem; color: var(--text-muted); font-size: 1.1rem;">
+                        ⚠️ لا توجد حركات مسجلة لهذا الشريك خلال الفترة المحددة
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            {% if items %}
+            <tfoot>
+                <tr style="background: rgba(255, 115, 0, 0.1); font-weight: bold; border-top: 2px solid #ff7300;">
+                    <td colspan="12" style="text-align: left; padding: 12px 16px; font-size: 1.05rem;">
+                        إجماليات الفترة والرصيد الختامي:
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.15rem; color: var(--neon-green, #00e676); text-align: right;">
+                        {{ period_debit|floatformat:"-2" }} ج.م
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.15rem; color: var(--neon-gold, #ffab00); text-align: right;">
+                        {{ period_credit|floatformat:"-2" }} ج.م
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.25rem; color: #ff7300; text-align: right;">
+                        {{ final_balance|floatformat:"-2" }} ج.م
+                    </td>
+                    <td class="no-print"></td>
+                </tr>
+            </tfoot>
+            {% endif %}
+
+            {% else %}
+            <!-- وضع العرض الإجمالي بالفواتير -->
+            <thead>
+                <tr>
+                    <th style="width: 45px; text-align: center;">#</th>
+                    <th style="text-align: center;">التاريخ</th>
+                    <th style="text-align: center;">رقم المستند / المرجع</th>
+                    <th style="text-align: center;">نوع الحركة</th>
+                    <th>البيان / الشرح</th>
+                    <th style="text-align: right; color: var(--neon-green, #00e676);">مدين (لنا)</th>
+                    <th style="text-align: right; color: var(--neon-gold, #ffab00);">دائن (له)</th>
+                    <th style="background: rgba(255, 115, 0, 0.12); color: #ff7300; text-align: right;">الرصيد التراكمي</th>
+                    <th style="text-align: center;" class="no-print">إجراء</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if opening_balance != 0 and not page_obj.has_previous %}
+                <tr style="background: rgba(255, 255, 255, 0.04); font-weight: bold;">
+                    <td style="text-align: center;">-</td>
+                    <td style="text-align: center;">{{ start_date|default:"رصيد سابق" }}</td>
+                    <td style="text-align: center; color: var(--neon-cyan, #00e5ff); font-family: monospace;">⚖️ OPN-{{ partner.id }}</td>
+                    <td style="text-align: center;">
+                        <span class="badge" style="background: rgba(0, 229, 255, 0.2); color: #00e5ff;">رصيد مرحل</span>
+                    </td>
+                    <td style="color: var(--text-muted);">رصيد مرحل ما قبل بداية الفترة المحددة</td>
+                    <td style="font-family: monospace; color: var(--neon-green, #00e676); text-align: right;">
+                        {% if opening_balance > 0 %}{{ opening_balance|floatformat:"-2" }}{% else %}—{% endif %}
+                    </td>
+                    <td style="font-family: monospace; color: var(--neon-gold, #ffab00); text-align: right;">
+                        {% if opening_balance < 0 %}{{ opening_balance|floatformat:"-2" }}{% else %}—{% endif %}
+                    </td>
+                    <td style="font-weight: bold; font-family: monospace; font-size: 1.1rem; color: #ff7300; background: rgba(255, 115, 0, 0.06); text-align: right;">
+                        {{ opening_balance|floatformat:"-2" }}
+                    </td>
+                    <td class="no-print" style="text-align: center;">—</td>
+                </tr>
+                {% endif %}
+
+                {% for item in items %}
+                <tr class="ledger-row {% if item.has_lines %}has-invoice-lines{% endif %}">
+                    <td style="text-align: center; color: var(--text-muted);">{{ item.counter|default:forloop.counter }}</td>
+                    <td style="white-space: nowrap; text-align: center;">{{ item.date|date:"Y-m-d"|default:item.date }}</td>
+                    <td style="font-family: monospace; font-weight: bold; text-align: center;">
+                        {% if item.url %}
+                            <a href="{{ item.url }}" target="_blank" style="color: var(--neon-cyan, #00e5ff); text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 4px;" title="عرض المستند">
+                                <span>📄</span>
+                                <span style="direction: ltr; unicode-bidi: isolate; font-family: monospace; font-weight: 700; color: #00e5ff;">{{ item.reference }}</span>
+                            </a>
+                        {% else %}
+                            <span style="direction: ltr; unicode-bidi: isolate; font-family: monospace; font-weight: 600;">{{ item.reference }}</span>
+                        {% endif %}
+                        {% if item.has_lines %}
+                        <div class="no-print" style="margin-top: 4px;">
+                            <button type="button" class="btn-toggle-invoice-lines" onclick="toggleSingleInvoiceItems('inv-lines-{{ forloop.counter }}', this)" style="background: rgba(255, 115, 0, 0.12); border: 1px solid rgba(255, 115, 0, 0.45); color: #ff7300; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s;" onmouseover="this.style.background='rgba(255, 115, 0, 0.25)'" onmouseout="this.style.background='rgba(255, 115, 0, 0.12)'" title="عرض / طي أصناف الفاتورة">
+                                <span>📦 {{ item.lines|length }} أصناف</span>
+                                <span class="chevron-icon" style="font-size: 0.7rem; transition: transform 0.2s;">▼</span>
+                            </button>
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if item.badge_type == 'sale' %}
+                            <span class="badge" style="background: rgba(0, 230, 118, 0.18); color: #00e676; border: 1px solid rgba(0, 230, 118, 0.4);">فاتورة مبيعات</span>
+                        {% elif item.badge_type == 'purchase' %}
+                            <span class="badge" style="background: rgba(33, 150, 243, 0.18); color: #2196f3; border: 1px solid rgba(33, 150, 243, 0.4);">فاتورة مشتريات</span>
+                        {% elif item.badge_type == 'return_sale' %}
+                            <span class="badge" style="background: rgba(255, 23, 68, 0.18); color: #ff1744; border: 1px solid rgba(255, 23, 68, 0.4);">مرتجع مبيعات</span>
+                        {% elif item.badge_type == 'return_purchase' %}
+                            <span class="badge" style="background: rgba(255, 152, 0, 0.18); color: #ff9800; border: 1px solid rgba(255, 152, 0, 0.4);">مرتجع مشتريات</span>
+                        {% elif item.badge_type == 'receipt' %}
+                            <span class="badge" style="background: rgba(0, 229, 255, 0.18); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4);">سند قبض (وارد)</span>
+                        {% elif item.badge_type == 'payment' %}
+                            <span class="badge" style="background: rgba(255, 115, 0, 0.18); color: #ff7300; border: 1px solid rgba(255, 115, 0, 0.4);">سند صرف (صادر)</span>
+                        {% elif item.badge_type == 'payment_instant' %}
+                            <span class="badge" style="background: rgba(156, 39, 176, 0.18); color: #ce93d8; border: 1px solid rgba(156, 39, 176, 0.4);">سداد/تسوية فورية</span>
+                        {% elif item.badge_type == 'opening' %}
+                            <span class="badge" style="background: rgba(255, 214, 0, 0.18); color: #ffd600; border: 1px solid rgba(255, 214, 0, 0.4);">رصيد أول مدة</span>
+                        {% else %}
+                            <span class="badge badge-secondary">{{ item.doc_type }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="max-width: 280px; white-space: normal; color: var(--text-secondary); font-size: 0.92rem;">
+                        {{ item.description }}
+                    </td>
+                    <td style="font-family: monospace; font-weight: bold; color: var(--neon-green, #00e676); text-align: right;">
+                        {% if item.debit > 0 %}{{ item.debit|floatformat:"-2" }}{% else %}—{% endif %}
+                    </td>
+                    <td style="font-family: monospace; font-weight: bold; color: var(--neon-gold, #ffab00); text-align: right;">
+                        {% if item.credit > 0 %}{{ item.credit|floatformat:"-2" }}{% else %}—{% endif %}
+                    </td>
+                    <td style="font-family: monospace; font-weight: 800; font-size: 1.05rem; background: rgba(255, 115, 0, 0.06); text-align: right; {% if item.running_balance > 0 %}color: var(--neon-green, #00e676);{% elif item.running_balance < 0 %}color: var(--neon-gold, #ffab00);{% else %}color: var(--text-muted);{% endif %}">
+                        {{ item.running_balance|floatformat:"-2" }}
+                    </td>
+                    <td class="no-print" style="text-align: center;">
+                        {% if item.url %}
+                            <a href="{{ item.url }}" target="_blank" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700; padding: 3px 8px; font-size: 0.8rem;">
+                                👁️ عرض
+                            </a>
+                        {% else %}
+                            <span style="color: var(--text-muted); font-size: 0.8rem;">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if item.has_lines %}
+                <tr id="inv-lines-{{ forloop.counter }}" class="invoice-items-breakdown-row" style="display: none; background: rgba(15, 25, 41, 0.85);">
+                    <td colspan="9" style="padding: 10px 16px 14px 16px; border-top: none; border-bottom: 2px solid rgba(255, 115, 0, 0.35);">
+                        <div style="background: var(--bg-tertiary, #0d1624); border: 1px solid rgba(255, 115, 0, 0.35); border-radius: 8px; padding: 12px 14px; box-shadow: inset 0 2px 6px rgba(0,0,0,0.3); max-width: 900px; margin: 0 auto;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.85rem; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 6px;">
+                                <strong style="color: #ff7300; display: inline-flex; align-items: center; gap: 6px;">
+                                    <span>📦</span> تفاصيل أصناف الفاتورة: <span style="direction: ltr; unicode-bidi: isolate; font-family: monospace; color: #fff;">{{ item.reference }}</span> ({{ item.lines|length }} صنف)
+                                </strong>
+                                <span style="color: var(--text-muted); font-size: 0.82rem;">
+                                    إجمالي الفاتورة: <strong style="font-family: monospace; color: var(--neon-cyan, #00e5ff);">{{ item.debit|default:item.credit|floatformat:"-2" }} ج.م</strong>
+                                </span>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table class="breakdown-table" style="width: 100%; border-collapse: collapse; font-size: 0.82rem; text-align: right;">
+                                    <thead>
+                                        <tr style="background: rgba(255, 115, 0, 0.12); color: #ffab00; border-bottom: 1px solid rgba(255, 115, 0, 0.25);">
+                                            <th style="padding: 6px 8px; width: 35px; text-align: center;">#</th>
+                                            <th style="padding: 6px 10px;">اسم الصنف</th>
+                                            <th style="padding: 6px 10px; text-align: center; width: 90px;">الكمية</th>
+                                            <th style="padding: 6px 10px; text-align: center; width: 85px;">الوحدة</th>
+                                            <th style="padding: 6px 10px; text-align: center; width: 105px;">سعر الوحدة</th>
+                                            <th style="padding: 6px 10px; text-align: center; width: 95px;">الخصم</th>
+                                            <th style="padding: 6px 10px; text-align: left; width: 115px;">الإجمالي</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for line in item.lines %}
+                                        <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+                                             <td style="padding: 6px 8px; text-align: center; color: var(--text-muted);">{{ forloop.counter }}</td>
+                                             <td style="padding: 6px 10px; font-weight: 600; color: var(--text-primary);">{{ line.product_name }}</td>
+                                             <td style="padding: 6px 10px; text-align: center; font-family: monospace; font-weight: 700; color: var(--neon-cyan, #00e5ff);">{{ line.quantity|floatformat:"-2" }}</td>
+                                             <td style="padding: 6px 10px; text-align: center; color: var(--text-secondary);">{{ line.uom_name|default:"قطعة" }}</td>
+                                             <td style="padding: 6px 10px; text-align: center; font-family: monospace;">{{ line.unit_price|floatformat:"-2" }} ج.م</td>
+                                             <td style="padding: 6px 10px; text-align: center; font-family: monospace; color: var(--neon-gold, #ffab00);">{% if line.discount_amount > 0 %}{{ line.discount_amount|floatformat:"-2" }} ج.م{% else %}—{% endif %}</td>
+                                             <td style="padding: 6px 10px; text-align: left; font-family: monospace; font-weight: 700; color: var(--neon-green, #00e676);">{{ line.total_amount|floatformat:"-2" }} ج.م</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+                {% empty %}
+                <tr>
+                    <td colspan="9" class="text-center" style="padding: 3rem; color: var(--text-muted); font-size: 1.1rem;">
+                        ⚠️ لا توجد حركات مسجلة لهذا الشريك خلال الفترة المحددة
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            {% if items %}
+            <tfoot>
+                <tr style="background: rgba(255, 115, 0, 0.1); font-weight: bold; border-top: 2px solid #ff7300;">
+                    <td colspan="5" style="text-align: left; padding: 12px 16px; font-size: 1.1rem;">
+                        إجماليات الفترة والرصيد الختامي:
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.15rem; color: var(--neon-green, #00e676); text-align: right;">
+                        {{ period_debit|floatformat:"-2" }} ج.م
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.15rem; color: var(--neon-gold, #ffab00); text-align: right;">
+                        {{ period_credit|floatformat:"-2" }} ج.م
+                    </td>
+                    <td style="font-family: monospace; font-size: 1.25rem; color: #ff7300; text-align: right;">
+                        {{ final_balance|floatformat:"-2" }} ج.م
+                    </td>
+                    <td class="no-print"></td>
+                </tr>
+            </tfoot>
+            {% endif %}
+            {% endif %}
+        </table>
+    </div>
+
+    <!-- Pagination Controls -->
+    {% if is_paginated %}
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.5rem; flex-wrap: wrap; gap: 1rem; padding: 0.5rem 0;">
+        <div style="color: var(--text-muted); font-size: 0.9rem;">
+            عرض الحركات: {{ page_obj.start_index }} - {{ page_obj.end_index }} من إجمالي {{ page_obj.paginator.count }} حركة
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}{% if show_items %}&show_items=1{% endif %}" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700;">⬅️ السابق</a>
+            {% endif %}
+            
+            <span class="btn btn-sm" style="background: var(--bg-card); border: 1px solid var(--border-default); pointer-events: none;">
+                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+            </span>
+            
+            {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}&start_date={{ start_date }}&end_date={{ end_date }}{% if show_items %}&show_items=1{% endif %}" class="btn btn-sm btn-orange" style="background:#ff7300; border-color:#ff7300; color:#fff; font-weight:700;">التالي ➡️</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Official Signatures Footer (Visible only in Print) -->
+<div class="official-print-signatures">
+    <div class="sig-block">
+        <div class="sig-title">المحاسب المسئول</div>
+        <div class="sig-line">........................................</div>
+    </div>
+    <div class="sig-block">
+        <div class="sig-title">المراجعة والاعتماد المالي</div>
+        <div class="sig-line">........................................</div>
+    </div>
+    <div class="sig-block">
+        <div class="sig-title">توقيع واستلام الشريك / العميل</div>
+        <div class="sig-line">........................................</div>
+    </div>
+</div>
+
+<style>
+    .stat-card {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        padding: 1.25rem 1.5rem;
+        border-radius: 10px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-default);
+    }
+    .data-table th, .data-table td {
+        padding: 10px 12px;
+        text-align: right;
+        border-bottom: 1px solid var(--border-default);
+        vertical-align: middle;
+    }
+    .data-table th {
+        background: var(--bg-tertiary);
+        color: var(--text-secondary);
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+    .data-table tbody tr:hover {
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Screen-only display rules for print elements */
+    .official-print-header,
+    .official-print-signatures {
+        display: none;
+    }
+
+    /* ========================================================
+       OFFICIAL PRINT STYLESHEET (كشف حساب مالي رسمي معتمد)
+       ======================================================== */
+    @media print {
+        @page {
+            {% if show_items %}
+            size: A4 landscape;
+            margin: 8mm 6mm 10mm 6mm;
+            {% else %}
+            size: A4 portrait;
+            margin: 10mm 8mm 12mm 8mm;
+            {% endif %}
+        }
+
+        /* 1. Global Reset */
+        *, *::before, *::after {
+            box-shadow: none !important;
+            text-shadow: none !important;
+        }
+
+        body, html {
+            background: #ffffff !important;
+            color: #000000 !important;
+            font-size: 9pt !important;
+            line-height: 1.35 !important;
+            font-family: 'Segoe UI', Tahoma, Arial, sans-serif !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+        }
+
+        /* 2. Hide Web UI Elements Completely */
+        .sidebar, 
+        .navbar, 
+        header,
+        .content-header, 
+        .content-actions, 
+        .card-partner-info, 
+        .card-date-filter, 
+        .kpi-dashboard-grid, 
+        .search-box, 
+        .pagination, 
+        .no-print, 
+        form, 
+        button, 
+        a.btn, 
+        .btn-toggle-invoice-lines {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        /* 3. Cards & Containers */
+        .card {
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        .table-responsive {
+            overflow: visible !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        /* 4. Official Print Header */
+        .official-print-header {
+            display: block !important;
+            margin-bottom: 12px !important;
+            border-bottom: 2px solid #1F4E79 !important;
+            padding-bottom: 10px !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }
+        .print-brand-bar {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            border-bottom: 1px solid #ccc !important;
+            padding-bottom: 6px !important;
+            margin-bottom: 8px !important;
+        }
+        .print-company-name {
+            font-size: 14pt !important;
+            font-weight: 800 !important;
+            color: #1F4E79 !important;
+        }
+        .print-doc-badge {
+            display: inline-block !important;
+            background: #D9E1F2 !important;
+            color: #1F4E79 !important;
+            font-weight: 700 !important;
+            font-size: 8.5pt !important;
+            padding: 2px 10px !important;
+            border-radius: 4px !important;
+            margin-right: 12px !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .print-brand-left {
+            text-align: left !important;
+            font-size: 8pt !important;
+            color: #444 !important;
+            direction: ltr !important;
+        }
+        .print-title-main {
+            text-align: center !important;
+            margin: 6px 0 10px 0 !important;
+        }
+        .print-title-main h2 {
+            font-size: 13pt !important;
+            font-weight: 800 !important;
+            color: #000 !important;
+            margin: 0 0 3px 0 !important;
+        }
+        .print-subtitle {
+            font-size: 8.5pt !important;
+            color: #555 !important;
+            font-weight: 600 !important;
+        }
+
+        /* Partner Info Grid Box */
+        .print-partner-box {
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 6px 12px !important;
+            background: #f8fafc !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 6px !important;
+            padding: 8px 12px !important;
+            margin-bottom: 10px !important;
+            font-size: 8.5pt !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .print-info-item .lbl {
+            color: #475569 !important;
+            font-weight: 600 !important;
+            margin-left: 4px !important;
+        }
+        .print-info-item .val {
+            color: #000 !important;
+        }
+        .print-info-item .val.bold {
+            font-weight: 700 !important;
+            color: #1e293b !important;
+        }
+
+        /* Compact Period Summary Strip */
+        .print-summary-strip {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            margin-top: 6px !important;
+            font-size: 8.5pt !important;
+        }
+        .print-summary-strip th {
+            background: #1F4E79 !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+            text-align: center !important;
+            padding: 5px 6px !important;
+            border: 1px solid #1F4E79 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .print-summary-strip td {
+            background: #f8fafc !important;
+            color: #000000 !important;
+            text-align: center !important;
+            padding: 5px 6px !important;
+            border: 1px solid #cbd5e1 !important;
+            font-size: 9pt !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .print-summary-strip .font-green {
+            color: #006100 !important;
+        }
+        .print-summary-strip .font-red {
+            color: #9c0006 !important;
+        }
+        .print-summary-strip .font-balance {
+            color: #1F4E79 !important;
+            font-size: 9.5pt !important;
+        }
+
+        /* 5. Main Table Styling */
+        .data-table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+            table-layout: fixed !important;
+            margin-top: 6px !important;
+            {% if show_items %}
+            font-size: 7.8pt !important;
+            {% else %}
+            font-size: 8.5pt !important;
+            {% endif %}
+        }
+        .data-table thead {
+            display: table-header-group !important;
+        }
+        .data-table th {
+            background: #e2e8f0 !important;
+            color: #1e293b !important;
+            font-weight: 700 !important;
+            border: 1px solid #64748b !important;
+            padding: 6px 4px !important;
+            text-align: center !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .data-table td {
+            border: 1px solid #cbd5e1 !important;
+            padding: 5px 4px !important;
+            color: #000000 !important;
+            vertical-align: middle !important;
+            word-wrap: break-word !important;
+        }
+
+        {% if not show_items %}
+        .data-table th:nth-child(1), .data-table td:nth-child(1) { width: 5% !important; text-align: center !important; }
+        .data-table th:nth-child(2), .data-table td:nth-child(2) { width: 12% !important; text-align: center !important; }
+        .data-table th:nth-child(3), .data-table td:nth-child(3) { width: 17% !important; text-align: center !important; }
+        .data-table th:nth-child(4), .data-table td:nth-child(4) { width: 13% !important; text-align: center !important; }
+        .data-table th:nth-child(5), .data-table td:nth-child(5) { width: 25% !important; text-align: right !important; }
+        .data-table th:nth-child(6), .data-table td:nth-child(6) { width: 9% !important; text-align: right !important; }
+        .data-table th:nth-child(7), .data-table td:nth-child(7) { width: 9% !important; text-align: right !important; }
+        .data-table th:nth-child(8), .data-table td:nth-child(8) { width: 10% !important; text-align: right !important; }
+        {% else %}
+        .data-table th:nth-child(1), .data-table td:nth-child(1) { width: 3% !important; text-align: center !important; }
+        .data-table th:nth-child(2), .data-table td:nth-child(2) { width: 7% !important; text-align: center !important; }
+        .data-table th:nth-child(3), .data-table td:nth-child(3) { width: 9% !important; text-align: center !important; }
+        .data-table th:nth-child(4), .data-table td:nth-child(4) { width: 7% !important; text-align: center !important; }
+        .data-table th:nth-child(5), .data-table td:nth-child(5) { width: 10% !important; text-align: right !important; }
+        .data-table th:nth-child(6), .data-table td:nth-child(6) { width: 16% !important; text-align: right !important; }
+        .data-table th:nth-child(7), .data-table td:nth-child(7) { width: 5% !important; text-align: center !important; }
+        .data-table th:nth-child(8), .data-table td:nth-child(8) { width: 5% !important; text-align: center !important; }
+        .data-table th:nth-child(9), .data-table td:nth-child(9) { width: 6% !important; text-align: center !important; }
+        .data-table th:nth-child(10), .data-table td:nth-child(10) { width: 5% !important; text-align: center !important; }
+        .data-table th:nth-child(11), .data-table td:nth-child(11) { width: 5% !important; text-align: center !important; }
+        .data-table th:nth-child(12), .data-table td:nth-child(12) { width: 7% !important; text-align: center !important; }
+        .data-table th:nth-child(13), .data-table td:nth-child(13) { width: 7% !important; text-align: right !important; }
+        .data-table th:nth-child(14), .data-table td:nth-child(14) { width: 7% !important; text-align: right !important; }
+        .data-table th:nth-child(15), .data-table td:nth-child(15) { width: 8% !important; text-align: right !important; }
+        {% endif %}
+        .data-table tbody tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+        }
+        .data-table tbody tr:nth-child(even) {
+            background-color: #f8fafc !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .data-table tfoot {
+            display: table-footer-group !important;
+            page-break-inside: avoid !important;
+        }
+        .data-table tfoot tr {
+            background: #e2e8f0 !important;
+            font-weight: 800 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .data-table tfoot td {
+            border: 1px solid #64748b !important;
+            color: #000 !important;
+            padding: 6px 4px !important;
+        }
+
+        /* Badges & Highlights */
+        .badge {
+            background: transparent !important;
+            border: 1px solid #94a3b8 !important;
+            color: #0f172a !important;
+            padding: 1px 4px !important;
+            font-size: 7.5pt !important;
+            border-radius: 3px !important;
+            display: inline-block !important;
+        }
+
+        /* Breakdown items row in summary mode (if expanded) */
+        .invoice-items-breakdown-row {
+            background: #ffffff !important;
+            page-break-inside: avoid !important;
+        }
+        .invoice-items-breakdown-row td {
+            padding: 4px 6px !important;
+            border: 1px solid #cbd5e1 !important;
+        }
+        .invoice-items-breakdown-row div {
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            box-shadow: none !important;
+            padding: 6px !important;
+        }
+        .breakdown-table th {
+            background: #f1f5f9 !important;
+            color: #334155 !important;
+            border: 1px solid #cbd5e1 !important;
+            padding: 4px 6px !important;
+            font-size: 7.5pt !important;
+        }
+        .breakdown-table td {
+            color: #000 !important;
+            border: 1px solid #e2e8f0 !important;
+            padding: 3px 6px !important;
+            font-size: 7.5pt !important;
+        }
+
+        /* 6. Signatures Footer */
+        .official-print-signatures {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: flex-start !important;
+            margin-top: 25px !important;
+            padding-top: 15px !important;
+            border-top: 1px dashed #94a3b8 !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }
+        .sig-block {
+            text-align: center !important;
+            flex: 1 !important;
+        }
+        .sig-title {
+            font-weight: 700 !important;
+            font-size: 8.5pt !important;
+            color: #1e293b !important;
+            margin-bottom: 25px !important;
+        }
+        .sig-line {
+            font-size: 8pt !important;
+            color: #64748b !important;
+        }
+    }
+</style>
+
+<script>
+function toggleSingleInvoiceItems(rowId, btn) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    const isHidden = (row.style.display === 'none' || !row.style.display);
+    row.style.display = isHidden ? 'table-row' : 'none';
+    if (btn) {
+        const chevron = btn.querySelector('.chevron-icon');
+        if (chevron) {
+            chevron.textContent = isHidden ? '▲' : '▼';
+        }
+    }
+}
+
+function filterTable() {
+    let input = document.getElementById("ledgerSearchInput");
+    let filter = input.value.toUpperCase();
+    let table = document.getElementById("ledger-table");
+    let tbody = table.getElementsByTagName("tbody")[0];
+    let rows = tbody.querySelectorAll('tr:not(.invoice-items-breakdown-row)');
+
+    rows.forEach(tr => {
+        let textValue = tr.textContent || tr.innerText;
+        let nextRow = tr.nextElementSibling;
+        let hasBreakdown = nextRow && nextRow.classList.contains('invoice-items-breakdown-row');
+        let breakdownText = hasBreakdown ? (nextRow.textContent || nextRow.innerText) : '';
+
+        if (!filter || textValue.toUpperCase().indexOf(filter) > -1 || breakdownText.toUpperCase().indexOf(filter) > -1) {
+            tr.style.display = "";
+            if (hasBreakdown && filter && breakdownText.toUpperCase().indexOf(filter) > -1) {
+                nextRow.style.display = "table-row";
+                const chevron = tr.querySelector('.chevron-icon');
+                if (chevron) chevron.textContent = '▲';
+            }
+        } else {
+            tr.style.display = "none";
+            if (hasBreakdown) nextRow.style.display = "none";
+        }
+    });
+}
+
+window.exportTableToExcel = function(tableId, filename) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const exportUrl = "{% url 'partners:partner_ledger_export_excel' partner.id %}?" + urlParams.toString();
+    window.location.href = exportUrl;
+};
+{% if print_all %}
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        window.print();
+    }, 600);
+});
+{% endif %}
+</script>
 {% endblock %}

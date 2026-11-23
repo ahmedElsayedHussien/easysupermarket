@@ -1,0 +1,1219 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}تقرير مفصل للوردية #{{ details.session.id }} - مسار ERP{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ============================================================
+       SHIFT REPORT — DARK NEON GLASSMORPHISM DESIGN
+       ============================================================ */
+    .shift-report-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding-bottom: 2rem;
+    }
+
+    .report-glass-card {
+        background: rgba(13, 21, 38, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        backdrop-filter: blur(12px);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        position: relative;
+    }
+
+    /* KPI Cards Grid */
+    .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1.25rem;
+        margin-bottom: 1.5rem;
+    }
+    @media (max-width: 1100px) {
+        .kpi-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    @media (max-width: 600px) {
+        .kpi-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .kpi-stat-card {
+        background: rgba(15, 23, 42, 0.9);
+        border-radius: 12px;
+        padding: 1.25rem 1.4rem;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        position: relative;
+    }
+    .kpi-stat-card:hover {
+        transform: translateY(-2px);
+    }
+    .kpi-cyan {
+        border-top: 4px solid #00e5ff;
+        box-shadow: 0 4px 20px rgba(0, 229, 255, 0.1);
+    }
+    .kpi-green {
+        border-top: 4px solid #2ed573;
+        box-shadow: 0 4px 20px rgba(46, 213, 115, 0.1);
+    }
+    .kpi-gold {
+        border-top: 4px solid #fbbf24;
+        box-shadow: 0 4px 20px rgba(251, 191, 36, 0.1);
+    }
+    .kpi-orange {
+        border-top: 4px solid #ff8c42;
+        box-shadow: 0 4px 20px rgba(255, 140, 66, 0.1);
+    }
+
+    .kpi-stat-card .lbl {
+        color: #94a3b8;
+        font-size: 0.85rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .kpi-stat-card .num {
+        font-size: 1.65rem;
+        font-weight: 900;
+        font-family: var(--font-english, 'Inter', monospace);
+        margin-top: 0.5rem;
+        letter-spacing: -0.5px;
+    }
+    .kpi-stat-card .sub-info {
+        font-size: 0.78rem;
+        color: var(--text-muted);
+        margin-top: 0.4rem;
+        padding-top: 0.4rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    /* Cash Reconciliation Layout */
+    .recon-split {
+        display: grid;
+        grid-template-columns: 1.3fr 0.9fr;
+        gap: 1.5rem;
+    }
+    @media (max-width: 992px) {
+        .recon-split {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .recon-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 0.5rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        font-size: 0.92rem;
+    }
+    .recon-item:last-child {
+        border-bottom: none;
+    }
+    .recon-item .val {
+        font-family: var(--font-english, 'Inter', monospace);
+        font-weight: 700;
+        direction: ltr;
+    }
+
+    /* Result Showcase Card */
+    .recon-summary-box {
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 1.25rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 1rem;
+    }
+    .recon-metric-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.65rem 0.85rem;
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 8px;
+    }
+
+    /* Payment Methods Grid */
+    .payment-grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 0.85rem;
+    }
+    @media (max-width: 1024px) {
+        .payment-grid {
+            grid-template-columns: repeat(3, 1fr);
+        }
+    }
+    @media (max-width: 640px) {
+        .payment-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    .payment-box {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 1rem 0.75rem;
+        text-align: center;
+        transition: all 0.2s ease;
+    }
+    .payment-box:hover {
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(0, 229, 255, 0.3);
+    }
+    .payment-box .p-title {
+        color: #cbd5e1;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+    .payment-box .p-val {
+        font-size: 1.25rem;
+        font-weight: 800;
+        font-family: var(--font-english, 'Inter', monospace);
+        margin-top: 0.35rem;
+    }
+
+    /* Full-Width Report Tables */
+    .report-table-wrapper {
+        background: rgba(13, 20, 36, 0.8);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 12px;
+        overflow-x: auto;
+        width: 100%;
+        margin-top: 0.75rem;
+    }
+    .report-table {
+        width: 100% !important;
+        border-collapse: collapse;
+        text-align: right;
+    }
+    .report-table th {
+        background: #0b1120;
+        color: #94a3b8;
+        font-weight: 700;
+        font-size: 0.85rem;
+        padding: 0.9rem 1.2rem;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+        white-space: nowrap;
+    }
+    .report-table td {
+        padding: 0.85rem 1.2rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        color: #e2e8f0;
+        font-size: 0.9rem;
+        vertical-align: middle;
+    }
+    .report-table tbody tr:hover {
+        background: rgba(0, 229, 255, 0.03);
+    }
+    .report-table td.amount-cell {
+        font-family: var(--font-english, 'Inter', monospace);
+        font-weight: 700;
+        direction: ltr;
+        text-align: left;
+    }
+
+    /* Status Badges */
+    .pill-badge {
+        padding: 0.3rem 0.8rem;
+        border-radius: 6px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    .pill-sale {
+        background: rgba(46, 213, 115, 0.15);
+        color: #2ed573;
+        border: 1px solid rgba(46, 213, 115, 0.35);
+    }
+    .pill-return {
+        background: rgba(255, 71, 87, 0.15);
+        color: #ff4757;
+        border: 1px solid rgba(255, 71, 87, 0.35);
+    }
+    .pill-receipt {
+        background: rgba(0, 229, 255, 0.15);
+        color: #00e5ff;
+        border: 1px solid rgba(0, 229, 255, 0.35);
+    }
+    .pill-payment {
+        background: rgba(251, 191, 36, 0.15);
+        color: #fbbf24;
+        border: 1px solid rgba(251, 191, 36, 0.35);
+    }
+
+    /* ============================================================
+       PRINT MEDIA QUERY (A4 CORPORATE REPORT)
+       ============================================================ */
+    @media print {
+        @page {
+            size: A4 portrait;
+            margin: 10mm 10mm 15mm 10mm;
+        }
+        html, body {
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: 'Tajawal', sans-serif !important;
+            font-size: 9.5pt !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        .app-wrapper, .app-body, .main-content, .shift-report-container {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-height: auto !important;
+            box-shadow: none !important;
+            background: transparent !important;
+        }
+        [dir="rtl"] .main-content {
+            margin-right: 0 !important;
+            margin-left: 0 !important;
+        }
+        .no-print, nav, .navbar, .sidebar, .sidebar-nav-logo, .sidebar-version, .messages-container, .thermal-receipt, #thermalReceiptModal {
+            display: none !important;
+        }
+        .print-official-header {
+            display: block !important;
+            margin-bottom: 12px !important;
+            border-bottom: 2px solid #0f172a !important;
+            padding-bottom: 8px !important;
+        }
+        .print-signatures-block {
+            display: block !important;
+            margin-top: 25px !important;
+            padding-top: 15px !important;
+            border-top: 1px solid #cbd5e1 !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }
+        .printable-shift-report {
+            display: block !important;
+            width: 100% !important;
+        }
+        .report-glass-card {
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 6px !important;
+            box-shadow: none !important;
+            padding: 10px 14px !important;
+            margin-bottom: 12px !important;
+            color: #0f172a !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }
+        .report-glass-card h3, .report-glass-card h4 {
+            color: #0f172a !important;
+        }
+        .session-meta-grid {
+            background: #f8fafc !important;
+            border: 1px solid #e2e8f0 !important;
+            color: #0f172a !important;
+            gap: 8px !important;
+            padding: 8px 10px !important;
+        }
+        .session-meta-grid span {
+            color: #475569 !important;
+            font-size: 8pt !important;
+        }
+        .session-meta-grid strong {
+            color: #0f172a !important;
+            font-size: 9pt !important;
+        }
+        .kpi-grid {
+            display: grid !important;
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 8px !important;
+            margin-bottom: 12px !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }
+        .kpi-stat-card {
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            border-top: 3px solid #0f172a !important;
+            border-radius: 6px !important;
+            box-shadow: none !important;
+            padding: 8px 10px !important;
+            color: #0f172a !important;
+        }
+        .kpi-cyan { border-top: 3px solid #0284c7 !important; }
+        .kpi-green { border-top: 3px solid #16a34a !important; }
+        .kpi-gold { border-top: 3px solid #d97706 !important; }
+        .kpi-orange { border-top: 3px solid #ea580c !important; }
+        .kpi-stat-card .lbl {
+            color: #475569 !important;
+            font-size: 8pt !important;
+        }
+        .kpi-stat-card .num {
+            color: #0f172a !important;
+            font-size: 13pt !important;
+            font-weight: 800 !important;
+        }
+        .kpi-stat-card .sub-info {
+            color: #64748b !important;
+            font-size: 7.5pt !important;
+            border-top: 1px solid #e2e8f0 !important;
+        }
+        .kpi-stat-card .sub-info strong {
+            color: #0f172a !important;
+        }
+        .recon-split {
+            display: grid !important;
+            grid-template-columns: 1.25fr 0.75fr !important;
+            gap: 12px !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }
+        .recon-flow-container {
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 6px !important;
+            padding: 4px 8px !important;
+        }
+        .recon-item {
+            border-bottom: 1px solid #e2e8f0 !important;
+            padding: 4px 6px !important;
+            font-size: 8.5pt !important;
+            color: #0f172a !important;
+        }
+        .recon-item .val {
+            color: #0f172a !important;
+            font-weight: bold !important;
+        }
+        .recon-summary-box {
+            background: #f8fafc !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 6px !important;
+            padding: 8px !important;
+            box-shadow: none !important;
+            gap: 6px !important;
+        }
+        .recon-metric-row {
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 4px !important;
+            padding: 5px 8px !important;
+            color: #0f172a !important;
+        }
+        .recon-metric-row div {
+            color: #0f172a !important;
+        }
+        .payment-grid {
+            display: grid !important;
+            grid-template-columns: repeat(6, 1fr) !important;
+            gap: 6px !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }
+        .payment-box {
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 4px !important;
+            padding: 6px 4px !important;
+            text-align: center !important;
+        }
+        .payment-box .p-title {
+            color: #475569 !important;
+            font-size: 7.5pt !important;
+        }
+        .payment-box .p-val {
+            color: #0f172a !important;
+            font-size: 10pt !important;
+            font-weight: 800 !important;
+        }
+        .report-table-wrapper {
+            background: transparent !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 4px !important;
+            box-shadow: none !important;
+            overflow: visible !important;
+            margin-top: 8px !important;
+        }
+        .report-table {
+            width: 100% !important;
+            border-collapse: collapse !important;
+        }
+        .report-table th {
+            background: #f1f5f9 !important;
+            color: #0f172a !important;
+            border: 1px solid #cbd5e1 !important;
+            padding: 5px 8px !important;
+            font-size: 8.5pt !important;
+            font-weight: bold !important;
+        }
+        .report-table td {
+            border: 1px solid #e2e8f0 !important;
+            color: #1e293b !important;
+            padding: 4px 8px !important;
+            font-size: 8.5pt !important;
+        }
+        .report-table tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+        }
+        .report-table tr:hover {
+            background: transparent !important;
+        }
+        .report-table td.amount-cell {
+            color: #0f172a !important;
+            font-weight: bold !important;
+        }
+        .pill-badge {
+            background: transparent !important;
+            border: 1px solid #64748b !important;
+            color: #0f172a !important;
+            font-size: 7.5pt !important;
+            padding: 1px 5px !important;
+        }
+        a {
+            text-decoration: none !important;
+            color: #0f172a !important;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="shift-report-container">
+
+    <!-- Header Actions -->
+    <div class="no-print mb-4" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; padding: 0.5rem 0;">
+        <div>
+            <h1 style="color: #ffffff; font-size: 1.6rem; font-weight: 800; margin: 0; display: flex; align-items: center; gap: 0.6rem;">
+                <i class="fas fa-file-invoice-dollar text-neon-cyan"></i>
+                <span>تقرير مفصل للوردية رقم <span style="color: var(--neon-cyan, #00e5ff);">#{{ details.session.id }}</span></span>
+            </h1>
+            <p style="color: var(--text-muted); font-size: 0.88rem; margin: 0.35rem 0 0 0;">
+                الكاشير: <strong style="color: #fff;">{{ details.session.user.get_full_name|default:details.session.user.username }}</strong>
+                &nbsp;|&nbsp; الخزينة: <strong style="color: #fbbf24;">{{ details.session.treasury.name }}</strong>
+                &nbsp;|&nbsp; الفرع: <strong style="color: #38bdf8;">{{ details.session.branch.name }}</strong>
+            </p>
+        </div>
+
+        <div style="display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center;">
+            <a href="{% url 'core:report_shifts' %}" class="btn btn-ghost" style="border: 1px solid rgba(255,255,255,0.15); color: #fff;">
+                <i class="fas fa-arrow-right"></i> العودة للورديات
+            </a>
+            <a href="{% url 'core:report_shift_detail_excel' details.session.id %}" class="btn btn-action" style="background: rgba(46, 213, 115, 0.15); border: 1px solid #2ed573; color: #2ed573 !important;">
+                <i class="fas fa-file-excel"></i> تصدير Excel
+            </a>
+            <button onclick="window.print()" class="btn btn-orange">
+                <i class="fas fa-print"></i> طباعة تقرير (A4)
+            </button>
+            <button onclick="openThermalPreview()" class="btn btn-ghost" style="border: 1px solid rgba(0, 229, 255, 0.4); color: #00e5ff;">
+                <i class="fas fa-eye"></i> معاينة الإيصال الحراري
+            </button>
+            <button onclick="printThermalReceipt()" class="btn btn-ghost" style="border: 1px solid rgba(0, 229, 255, 0.4); color: #00e5ff;">
+                <i class="fas fa-receipt"></i> إيصال حراري (80mm)
+            </button>
+        </div>
+    </div>
+
+    <!-- Printable Report Area -->
+    <div class="printable-shift-report">
+
+        <!-- Corporate Official Header for A4 Print ONLY -->
+        <div class="print-official-header" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid #0f172a;">
+                <div>
+                    <h2 style="margin: 0; font-size: 16pt; font-weight: 800; color: #0f172a;">مسار لإدارة المبيعات والمنشآت التجارية</h2>
+                    <div style="font-size: 9pt; color: #475569; margin-top: 2px;">Masar ERP - نظام إدارة نقاط البيع والمالية والمخزون</div>
+                </div>
+                <div style="text-align: left;">
+                    <h3 style="margin: 0; font-size: 13pt; font-weight: 800; color: #0f172a;">تقرير تسوية وتقفيل الوردية</h3>
+                    <div style="font-size: 10.5pt; font-weight: bold; color: #ea580c; margin-top: 2px;">وردية رقم: #{{ details.session.id }}</div>
+                    <div style="font-size: 8pt; color: #64748b; margin-top: 2px;">تاريخ الطباعة: <span class="print-timestamp"></span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 1. Session Information Header Card -->
+        <div class="report-glass-card" style="border-right: 4px solid var(--neon-cyan, #00e5ff);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.25rem;">
+                <div>
+                    <h3 style="color: var(--neon-cyan, #00e5ff); font-size: 1.25rem; font-weight: 800; margin: 0 0 0.4rem 0; display: flex; align-items: center; gap: 0.5rem;">
+                        <i class="fas fa-clock"></i> بيانات الوردية #{{ details.session.id }}
+                    </h3>
+                    <div style="color: var(--text-muted); font-size: 0.85rem;">ملخص حركة المبيعات وتصفية الصندوق للوردية المنتهية</div>
+                </div>
+
+                <div>
+                    {% if details.session.status == 'OPEN' %}
+                    <span class="pill-badge" style="background: rgba(0,229,255,0.15); color: #00e5ff; border: 1px solid #00e5ff; font-size: 0.9rem; padding: 0.45rem 1rem;">
+                        <i class="fas fa-lock-open"></i> وردية مفتوحة حالياً
+                    </span>
+                    {% else %}
+                    <span class="pill-badge" style="background: rgba(46,213,115,0.15); color: #2ed573; border: 1px solid #2ed573; font-size: 0.9rem; padding: 0.45rem 1rem;">
+                        <i class="fas fa-lock"></i> وردية مغلقة ومرحلة
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Meta details grid -->
+            <div class="session-meta-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; background: rgba(0,0,0,0.25); padding: 1rem 1.25rem; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); font-size: 0.9rem;">
+                <div>
+                    <span style="color: #94a3b8; display: block; font-size: 0.78rem;">الكاشير المسؤول:</span>
+                    <strong style="color: #fff;"><i class="fas fa-user-circle me-1 text-neon-cyan"></i> {{ details.session.user.get_full_name|default:details.session.user.username }}</strong>
+                </div>
+                <div>
+                    <span style="color: #94a3b8; display: block; font-size: 0.78rem;">الخزينة المعتمدة:</span>
+                    <strong style="color: #fbbf24;"><i class="fas fa-cash-register me-1"></i> {{ details.session.treasury.name }}</strong>
+                </div>
+                <div>
+                    <span style="color: #94a3b8; display: block; font-size: 0.78rem;">الفرع:</span>
+                    <strong style="color: #fff;"><i class="fas fa-store-alt me-1"></i> {{ details.session.branch.name }}</strong>
+                </div>
+                <div>
+                    <span style="color: #94a3b8; display: block; font-size: 0.78rem;">تاريخ ووقت الفتح:</span>
+                    <strong style="color: #2ed573; font-family: var(--font-english);"><i class="fas fa-calendar-check me-1"></i> {{ details.session.start_time|date:"Y-m-d H:i" }}</strong>
+                </div>
+                <div>
+                    <span style="color: #94a3b8; display: block; font-size: 0.78rem;">تاريخ ووقت الإغلاق:</span>
+                    {% if details.session.end_time %}
+                    <strong style="color: #ff4757; font-family: var(--font-english);"><i class="fas fa-calendar-times me-1"></i> {{ details.session.end_time|date:"Y-m-d H:i" }}</strong>
+                    {% else %}
+                    <span style="color: #00e5ff; font-weight: bold;">- لا زالت تعمل -</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if details.session.notes %}
+            <div style="margin-top: 1rem; background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.25); border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.88rem; color: #fbbf24;">
+                <i class="fas fa-comment-dots me-1"></i> <strong>ملاحظات الإغلاق:</strong> {{ details.session.notes }}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- 2. Primary KPI Cards Grid (4 Columns) -->
+        <div class="kpi-grid">
+            <!-- 1. Opening Float -->
+            <div class="kpi-stat-card kpi-cyan">
+                <div>
+                    <div class="lbl">
+                        <span>رصيد بداية الوردية (العهدة)</span>
+                        <i class="fas fa-wallet" style="color: #00e5ff;"></i>
+                    </div>
+                    <div class="num" style="color: #00e5ff;">
+                        {{ details.session.opening_balance|floatformat:2 }} <span style="font-size: 0.85rem; font-weight: normal; color: #94a3b8;">ج.م</span>
+                    </div>
+                </div>
+                <div class="sub-info">المبلغ النقدي المسلم للكاشير عند بدء الوردية</div>
+            </div>
+
+            <!-- 2. Net Cash Sales in Drawer -->
+            <div class="kpi-stat-card kpi-green">
+                <div>
+                    <div class="lbl">
+                        <span>صافي المبيعات النقدية (كاش)</span>
+                        <i class="fas fa-money-bill-wave" style="color: #2ed573;"></i>
+                    </div>
+                    <div class="num" style="color: #2ed573;">
+                        {{ details.total_cash_sales|floatformat:2 }} <span style="font-size: 0.85rem; font-weight: normal; color: #94a3b8;">ج.م</span>
+                    </div>
+                </div>
+                <div class="sub-info">
+                    المرتجعات النقدية المسددة: <strong style="color: #ff4757;">{{ details.total_cash_refunds|floatformat:2 }} ج.م</strong>
+                </div>
+            </div>
+
+            <!-- 3. Electronic & Card Sales -->
+            <div class="kpi-stat-card kpi-gold">
+                <div>
+                    <div class="lbl">
+                        <span>مبيعات الشبكة والإلكتروني</span>
+                        <i class="fas fa-credit-card" style="color: #fbbf24;"></i>
+                    </div>
+                    <div class="num" style="color: #fbbf24;">
+                        {{ details.total_card_sales|add:details.total_ewallet_sales|add:details.total_bank_sales|floatformat:2 }} <span style="font-size: 0.85rem; font-weight: normal; color: #94a3b8;">ج.م</span>
+                    </div>
+                </div>
+                <div class="sub-info">
+                    فيزا: {{ details.total_card_sales|floatformat:2 }} | محفظة: {{ details.total_ewallet_sales|floatformat:2 }} ج.م
+                </div>
+            </div>
+
+            <!-- 4. Total Net Sales -->
+            <div class="kpi-stat-card kpi-orange">
+                <div>
+                    <div class="lbl">
+                        <span>إجمالي صافي المبيعات</span>
+                        <i class="fas fa-chart-line" style="color: #ff8c42;"></i>
+                    </div>
+                    <div class="num" style="color: #ff8c42;">
+                        {{ details.net_sales_amount|floatformat:2 }} <span style="font-size: 0.85rem; font-weight: normal; color: #94a3b8;">ج.م</span>
+                    </div>
+                </div>
+                <div class="sub-info">
+                    عدد الفواتير: <strong style="color: #fff;">{{ details.sales_count }}</strong> | مرتجعات: <strong style="color: #ff4757;">{{ details.returns_count }}</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Cash Drawer Reconciliation & Matching -->
+        <div class="report-glass-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.08);">
+                <h4 style="margin: 0; color: #fff; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="fas fa-balance-scale text-neon-cyan"></i>
+                    <span>مطابقة وحركة النقدية بالدرج (Cash Drawer Settlement)</span>
+                </h4>
+                <span style="font-size: 0.85rem; color: var(--text-muted);">تسوية حركة النقدية الفعلية مع المتوقعة</span>
+            </div>
+
+            <div class="recon-split">
+                <!-- Left: Flow Items -->
+                <div class="recon-flow-container" style="background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 0.5rem 1rem;">
+                    <div class="recon-item">
+                        <span><i class="fas fa-dot-circle me-2" style="color: #00e5ff; font-size: 0.75rem;"></i> الرصيد الافتتاحي (العهدة المستلمة):</span>
+                        <span class="val" style="color: #00e5ff;">{{ details.session.opening_balance|floatformat:2 }} ج.م</span>
+                    </div>
+                    <div class="recon-item">
+                        <span><i class="fas fa-plus-circle me-2" style="color: #2ed573; font-size: 0.85rem;"></i> (+) المقبوضات النقدية من المبيعات:</span>
+                        <span class="val" style="color: #2ed573;">+{{ details.total_cash_sales|floatformat:2 }} ج.م</span>
+                    </div>
+                    {% if details.total_cash_rentals > 0 %}
+                    <div class="recon-item">
+                        <span><i class="fas fa-plus-circle me-2" style="color: #2ed573; font-size: 0.85rem;"></i> (+) المقبوضات النقدية من إيجار المعدات:</span>
+                        <span class="val" style="color: #2ed573;">+{{ details.total_cash_rentals|floatformat:2 }} ج.م</span>
+                    </div>
+                    {% endif %}
+                    {% if details.total_cash_receipts > 0 %}
+                    <div class="recon-item">
+                        <span><i class="fas fa-plus-circle me-2" style="color: #2ed573; font-size: 0.85rem;"></i> (+) سندات القبض النقدية المقبوضة:</span>
+                        <span class="val" style="color: #2ed573;">+{{ details.total_cash_receipts|floatformat:2 }} ج.م</span>
+                    </div>
+                    {% endif %}
+                    <div class="recon-item">
+                        <span><i class="fas fa-minus-circle me-2" style="color: #ff4757; font-size: 0.85rem;"></i> (-) المرتجعات النقدية المسددة من الدرج:</span>
+                        <span class="val" style="color: #ff4757;">-{{ details.total_cash_refunds|floatformat:2 }} ج.م</span>
+                    </div>
+                    {% if details.total_cash_payments > 0 %}
+                    <div class="recon-item">
+                        <span><i class="fas fa-minus-circle me-2" style="color: #ff4757; font-size: 0.85rem;"></i> (-) سندات الصرف والمصروفات النقدية:</span>
+                        <span class="val" style="color: #ff4757;">-{{ details.total_cash_payments|floatformat:2 }} ج.م</span>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Right: High-Impact Reconciliation Box -->
+                <div class="recon-summary-box">
+                    <div class="recon-metric-row" style="border-right: 3px solid #fbbf24;">
+                        <div>
+                            <div style="font-size: 0.78rem; color: #94a3b8;">النقدية المتوقعة دفترياً بالدرج:</div>
+                            <div style="font-size: 1.25rem; font-weight: 800; color: #fbbf24; font-family: var(--font-english);">{{ details.expected_balance|floatformat:2 }} <small style="font-size: 0.8rem; font-family: var(--font-arabic);">ج.م</small></div>
+                        </div>
+                        <i class="fas fa-calculator" style="color: #fbbf24; font-size: 1.4rem;"></i>
+                    </div>
+
+                    <div class="recon-metric-row" style="border-right: 3px solid #2ed573;">
+                        <div>
+                            <div style="font-size: 0.78rem; color: #94a3b8;">النقدية الفعلية المسلمة عند الإغلاق:</div>
+                            <div style="font-size: 1.25rem; font-weight: 800; color: #2ed573; font-family: var(--font-english);">{{ details.actual_balance|floatformat:2 }} <small style="font-size: 0.8rem; font-family: var(--font-arabic);">ج.م</small></div>
+                        </div>
+                        <i class="fas fa-hand-holding-usd" style="color: #2ed573; font-size: 1.4rem;"></i>
+                    </div>
+
+                    <div class="recon-metric-row" style="border-right: 3px solid {% if details.difference > 0 %}#2ed573{% elif details.difference < 0 %}#ff4757{% else %}#00e5ff{% endif %}; background: rgba(0,0,0,0.45);">
+                        <div>
+                            <div style="font-size: 0.78rem; color: #cbd5e1;">الفارق النهائي (العجز / الزيادة):</div>
+                            <div style="font-size: 1.35rem; font-weight: 900; font-family: var(--font-english); color: {% if details.difference > 0 %}#2ed573{% elif details.difference < 0 %}#ff4757{% else %}#00e5ff{% endif %};">
+                                {% if details.difference > 0 %}+{% endif %}{{ details.difference|floatformat:2 }} <small style="font-size: 0.8rem; font-family: var(--font-arabic);">ج.م</small>
+                            </div>
+                        </div>
+                        <span class="pill-badge" style="background: {% if details.difference > 0 %}rgba(46,213,115,0.2); color:#2ed573; border: 1px solid #2ed573{% elif details.difference < 0 %}rgba(255,71,87,0.2); color:#ff4757; border: 1px solid #ff4757{% else %}rgba(0,229,255,0.2); color:#00e5ff; border: 1px solid #00e5ff{% endif %};">
+                            {% if details.difference > 0 %}
+                            <i class="fas fa-arrow-up"></i> زيادة بالدرج
+                            {% elif details.difference < 0 %}
+                            <i class="fas fa-arrow-down"></i> عجز بالدرج
+                            {% else %}
+                            <i class="fas fa-check-circle"></i> مطابق 100%
+                            {% endif %}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. Payment Types Breakdown Grid -->
+        <div class="report-glass-card">
+            <h4 style="margin: 0 0 1rem 0; color: #fff; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 0.5rem;">
+                <i class="fas fa-credit-card text-neon-cyan"></i>
+                <span>تفاصيل طرق الدفع والتحصيل</span>
+            </h4>
+
+            <div class="payment-grid">
+                <div class="payment-box">
+                    <div class="p-title">💵 كاش مبيعات</div>
+                    <div class="p-val" style="color: #2ed573;">{{ details.total_cash_sales|floatformat:2 }}</div>
+                </div>
+                <div class="payment-box">
+                    <div class="p-title">🚜 كاش إيجارات</div>
+                    <div class="p-val" style="color: #2ed573;">{{ details.total_cash_rentals|floatformat:2 }}</div>
+                </div>
+                <div class="payment-box">
+                    <div class="p-title">💳 فيزا / كارت</div>
+                    <div class="p-val" style="color: #00e5ff;">{{ details.total_card_sales|floatformat:2 }}</div>
+                </div>
+                <div class="payment-box">
+                    <div class="p-title">📱 محفظة إلكترونية</div>
+                    <div class="p-val" style="color: #fbbf24;">{{ details.total_ewallet_sales|floatformat:2 }}</div>
+                </div>
+                <div class="payment-box">
+                    <div class="p-title">📝 آجل / حساب</div>
+                    <div class="p-val" style="color: #ff4757;">{{ details.total_credit_sales|add:details.total_credit_rentals|floatformat:2 }}</div>
+                </div>
+                <div class="payment-box">
+                    <div class="p-title">🔄 مرتجعات</div>
+                    <div class="p-val" style="color: #ff4757;">{{ details.total_returns_amount|floatformat:2 }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. Shift Invoices Table -->
+        <div class="report-glass-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem;">
+                <h4 style="margin: 0; color: #fff; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="fas fa-receipt text-neon-cyan"></i>
+                    <span>فواتير الوردية ({{ details.posted_invoices|length }} فاتورة)</span>
+                </h4>
+                <span style="font-size: 0.85rem; color: var(--text-muted);">كافة الفواتير التي أصدرها الكاشير خلال الوردية</span>
+            </div>
+
+            <div class="report-table-wrapper">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 170px;">رقم الفاتورة</th>
+                            <th style="width: 120px; text-align: center;">الوقت</th>
+                            <th style="width: 110px; text-align: center;">النوع</th>
+                            <th>العميل</th>
+                            <th style="width: 140px; text-align: center;">طريقة الدفع</th>
+                            <th style="width: 160px; text-align: left;">المبلغ الإجمالي</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for inv in details.posted_invoices %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'invoicing:invoice_detail' inv.id %}" target="_blank" style="color: #00e5ff; font-weight: 700; text-decoration: none; font-family: var(--font-english); display: inline-flex; align-items: center; gap: 5px;">
+                                    <i class="fas fa-external-link-alt" style="font-size: 0.75rem; opacity: 0.7;"></i>
+                                    {{ inv.invoice_number }}
+                                </a>
+                            </td>
+                            <td style="text-align: center; color: #94a3b8; font-family: var(--font-english);">
+                                {{ inv.created_at|date:"H:i:s" }}
+                            </td>
+                            <td style="text-align: center;">
+                                {% if inv.invoice_type == 'SALE' %}
+                                <span class="pill-badge pill-sale">بيع</span>
+                                {% else %}
+                                <span class="pill-badge pill-return">مرتجع</span>
+                                {% endif %}
+                            </td>
+                            <td style="font-weight: 600; color: #fff;">
+                                {{ inv.partner.name|default:"عميل نقدي" }}
+                            </td>
+                            <td style="text-align: center; color: #cbd5e1;">
+                                {{ inv.get_payment_type_display }}
+                            </td>
+                            <td class="amount-cell" style="color: {% if inv.invoice_type == 'SALE' %}#2ed573{% else %}#ff4757{% endif %}; font-size: 1rem;">
+                                {% if inv.invoice_type == 'RETURN_SALE' %}-{% endif %}{{ inv.total_amount|floatformat:2 }} ج.م
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+                                لا توجد فواتير مسجلة في هذه الوردية
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 6. Shift Vouchers Table -->
+        {% if details.shift_vouchers %}
+        <div class="report-glass-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem;">
+                <h4 style="margin: 0; color: #fff; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="fas fa-file-invoice text-neon-cyan"></i>
+                    <span>سندات القبض والصرف والمصروفات ({{ details.shift_vouchers|length }} سند)</span>
+                </h4>
+                <span style="font-size: 0.85rem; color: var(--text-muted);">المصروفات والمقبوضات المباشرة المرتبطة بالصندوق</span>
+            </div>
+
+            <div class="report-table-wrapper">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 170px;">رقم السند</th>
+                            <th style="width: 120px; text-align: center;">الوقت</th>
+                            <th style="width: 140px; text-align: center;">نوع السند</th>
+                            <th>المحرر / الطرف</th>
+                            <th>البيان / السبب</th>
+                            <th style="width: 160px; text-align: left;">المبلغ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for v in details.shift_vouchers %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'accounting:voucher_detail' v.id %}" target="_blank" style="color: #00e5ff; font-weight: 700; text-decoration: none; font-family: var(--font-english); display: inline-flex; align-items: center; gap: 5px;">
+                                    <i class="fas fa-external-link-alt" style="font-size: 0.75rem; opacity: 0.7;"></i>
+                                    {{ v.voucher_number }}
+                                </a>
+                            </td>
+                            <td style="text-align: center; color: #94a3b8; font-family: var(--font-english);">
+                                {{ v.created_at|date:"H:i:s" }}
+                            </td>
+                            <td style="text-align: center;">
+                                {% if v.voucher_type == 'RECEIPT' %}
+                                <span class="pill-badge pill-receipt">سند قبض (+)</span>
+                                {% else %}
+                                <span class="pill-badge pill-payment">سند صرف (-)</span>
+                                {% endif %}
+                            </td>
+                            <td style="font-weight: 600; color: #fff;">
+                                {{ v.partner.name|default:"سند كاش / طرف عام" }}
+                            </td>
+                            <td style="color: #cbd5e1;">
+                                {{ v.description|default:"-" }}
+                            </td>
+                            <td class="amount-cell" style="color: {% if v.voucher_type == 'RECEIPT' %}#2ed573{% else %}#ff4757{% endif %}; font-size: 1rem;">
+                                {% if v.voucher_type == 'PAYMENT' %}-{% endif %}{{ v.amount|floatformat:2 }} ج.م
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 7. Shift Equipment Rentals Table -->
+        {% if details.shift_rentals %}
+        <div class="report-glass-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem;">
+                <h4 style="margin: 0; color: #fff; font-size: 1.15rem; font-weight: 800; display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="fas fa-truck-monster text-neon-cyan"></i>
+                    <span>عقود إيجار المعدات بالوردية ({{ details.shift_rentals|length }} عقد)</span>
+                </h4>
+                <span style="font-size: 0.85rem; color: var(--text-muted);">عقود الإيجار التي تم تسجيلها وتحصيلها</span>
+            </div>
+
+            <div class="report-table-wrapper">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 140px;">رقم العقد</th>
+                            <th style="width: 120px; text-align: center;">الوقت</th>
+                            <th>المعدة المؤجرة</th>
+                            <th>العميل</th>
+                            <th style="width: 100px; text-align: center;">المدة</th>
+                            <th style="width: 120px; text-align: center;">طريقة السداد</th>
+                            <th style="width: 160px; text-align: left;">المبلغ الإجمالي</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in details.shift_rentals %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'rentals:rental_detail' r.id %}" target="_blank" style="color: #00e5ff; font-weight: 700; text-decoration: none; font-family: var(--font-english); display: inline-flex; align-items: center; gap: 5px;">
+                                    <i class="fas fa-external-link-alt" style="font-size: 0.75rem; opacity: 0.7;"></i>
+                                    #{{ r.id }}
+                                </a>
+                            </td>
+                            <td style="text-align: center; color: #94a3b8; font-family: var(--font-english);">
+                                {{ r.created_at|date:"H:i:s" }}
+                            </td>
+                            <td style="font-weight: 600; color: #fff;">
+                                {{ r.equipment.name }} <code style="color: #38bdf8; font-size: 0.8rem;">({{ r.equipment.code }})</code>
+                            </td>
+                            <td style="color: #cbd5e1;">{{ r.customer.name }}</td>
+                            <td style="text-align: center; color: #00e5ff; font-weight: 700;">{{ r.days_rented }} يوم</td>
+                            <td style="text-align: center;">
+                                {% if r.payment_method == 'CASH' %}
+                                <span class="pill-badge pill-sale">كاش</span>
+                                {% else %}
+                                <span class="pill-badge pill-payment">آجل</span>
+                                {% endif %}
+                            </td>
+                            <td class="amount-cell" style="color: #2ed573; font-size: 1rem;">
+                                {{ r.total_amount|floatformat:2 }} ج.م
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Signatures Block for A4 Print ONLY -->
+        <div class="print-signatures-block" style="display: none;">
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; text-align: center; margin-top: 25px; padding-top: 15px; border-top: 1px solid #cbd5e1;">
+                <div>
+                    <div style="font-weight: bold; font-size: 9pt; color: #0f172a; margin-bottom: 35px;">مسؤول الوردية (الكاشير)</div>
+                    <div style="font-size: 8.5pt; color: #64748b;">التوقيع: ............................</div>
+                </div>
+                <div>
+                    <div style="font-weight: bold; font-size: 9pt; color: #0f172a; margin-bottom: 35px;">المشرف / مستلم الدرج</div>
+                    <div style="font-size: 8.5pt; color: #64748b;">التوقيع: ............................</div>
+                </div>
+                <div>
+                    <div style="font-weight: bold; font-size: 9pt; color: #0f172a; margin-bottom: 35px;">اعتماد الإدارة المالية</div>
+                    <div style="font-size: 8.5pt; color: #64748b;">التوقيع: ............................</div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Hidden Thermal Receipt for 80mm ESC/POS Printing -->
+    <div id="thermalReceiptPrint" class="thermal-receipt" data-session-id="{{ details.session.id }}" style="display: none;">
+        <div style="width: 76mm; margin: 0 auto; font-family: 'Courier New', Tahoma, monospace; font-size: 11px; direction: rtl; text-align: right; color: black; background: white; padding: 4px;">
+            <div style="text-align: center; border-bottom: 1px dashed black; padding-bottom: 6px; margin-bottom: 6px;">
+                <h3 style="margin: 0; font-size: 15px; font-weight: bold;">مسار ERP</h3>
+                <div style="font-size: 12px; font-weight: bold; margin: 2px 0;">إيصال تقفيل وتسوية وردية</div>
+                <div style="font-size: 13px; font-weight: bold; margin: 2px 0;">وردية رقم #{{ details.session.id }}</div>
+                <div style="font-size: 10px; margin-top: 4px;">الفرع: {{ details.session.branch.name }}</div>
+                <div style="font-size: 10px;">الخزينة: {{ details.session.treasury.name }}</div>
+                <div style="font-size: 10px;">الكاشير: {{ details.session.user.get_full_name|default:details.session.user.username }}</div>
+                <div style="font-size: 10px;">الفتح: {{ details.session.start_time|date:"Y-m-d H:i" }}</div>
+                <div style="font-size: 10px;">الإغلاق: {{ details.session.end_time|date:"Y-m-d H:i"|default:"مفتوحة حالياً" }}</div>
+            </div>
+
+            <div style="font-weight: bold; text-align: center; margin-bottom: 4px; font-size: 11px;">[ حركة النقدية بالصندوق ]</div>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 5px; font-size: 11px;">
+                <tr>
+                    <td>العهدة الافتتاحية:</td>
+                    <td style="text-align: left; font-weight: bold;">{{ details.session.opening_balance|floatformat:2 }}</td>
+                </tr>
+                <tr>
+                    <td>(+) مبيعات نقدية (كاش):</td>
+                    <td style="text-align: left; font-weight: bold;">+{{ details.total_cash_sales|floatformat:2 }}</td>
+                </tr>
+                {% if details.total_cash_rentals > 0 %}
+                <tr>
+                    <td>(+) إيجارات كاش:</td>
+                    <td style="text-align: left; font-weight: bold;">+{{ details.total_cash_rentals|floatformat:2 }}</td>
+                </tr>
+                {% endif %}
+                {% if details.total_cash_receipts > 0 %}
+                <tr>
+                    <td>(+) سندات قبض نقدية:</td>
+                    <td style="text-align: left; font-weight: bold;">+{{ details.total_cash_receipts|floatformat:2 }}</td>
+                </tr>
+                {% endif %}
+                <tr>
+                    <td>(-) مرتجعات كاش:</td>
+                    <td style="text-align: left; font-weight: bold;">-{{ details.total_cash_refunds|floatformat:2 }}</td>
+                </tr>
+                {% if details.total_cash_payments > 0 %}
+                <tr>
+                    <td>(-) مصروفات وسندات صرف:</td>
+                    <td style="text-align: left; font-weight: bold;">-{{ details.total_cash_payments|floatformat:2 }}</td>
+                </tr>
+                {% endif %}
+                <tr style="border-top: 1px dashed black; font-weight: bold;">
+                    <td>النقدية المتوقعة بالدرج:</td>
+                    <td style="text-align: left;">{{ details.expected_balance|floatformat:2 }}</td>
+                </tr>
+                <tr style="font-weight: bold;">
+                    <td>النقدية الفعلية المسلمة:</td>
+                    <td style="text-align: left;">{{ details.actual_balance|floatformat:2 }}</td>
+                </tr>
+                <tr style="border-top: 1px dashed black; font-weight: bold; font-size: 12px;">
+                    <td>الفارق (العجز/الزيادة):</td>
+                    <td style="text-align: left;">
+                        {% if details.difference > 0 %}+{% endif %}{{ details.difference|floatformat:2 }}
+                    </td>
+                </tr>
+            </table>
+
+            <div style="border-top: 1px dashed black; padding-top: 5px; margin-top: 5px;">
+                <div style="font-weight: bold; text-align: center; margin-bottom: 4px; font-size: 11px;">[ ملخص طرق التحصيل الأخرى ]</div>
+                <table style="width: 100%; border-collapse: collapse; font-size: 10.5px;">
+                    <tr>
+                        <td>مبيعات فيزا / شبكة:</td>
+                        <td style="text-align: left; font-weight: bold;">{{ details.total_card_sales|floatformat:2 }}</td>
+                    </tr>
+                    <tr>
+                        <td>مبيعات محافظ إلكترونية:</td>
+                        <td style="text-align: left; font-weight: bold;">{{ details.total_ewallet_sales|floatformat:2 }}</td>
+                    </tr>
+                    <tr>
+                        <td>مبيعات تحويلات بنكية:</td>
+                        <td style="text-align: left; font-weight: bold;">{{ details.total_bank_sales|floatformat:2 }}</td>
+                    </tr>
+                    <tr>
+                        <td>مبيعات آجلة (ذمم):</td>
+                        <td style="text-align: left; font-weight: bold;">{{ details.total_credit_sales|floatformat:2 }}</td>
+                    </tr>
+                    <tr style="border-top: 1px dashed black; font-weight: bold; font-size: 11.5px;">
+                        <td>صافي إجمالي المبيعات:</td>
+                        <td style="text-align: left;">{{ details.net_sales_amount|floatformat:2 }}</td>
+                    </tr>
+                    <tr>
+                        <td>عدد الفواتير:</td>
+                        <td style="text-align: left;">بيع: {{ details.sales_count }} | مرتجع: {{ details.returns_count }}</td>
+                    </tr>
+                </table>
+            </div>
+
+            {% if details.session.notes %}
+            <div style="border-top: 1px dashed black; padding-top: 4px; margin-top: 4px; font-size: 10px;">
+                <strong>ملاحظات:</strong> {{ details.session.notes }}
+            </div>
+            {% endif %}
+
+            <div style="text-align: center; margin-top: 10px; border-top: 1px dashed black; padding-top: 8px;">
+                <p style="margin: 4px 0;">توقيع مسؤول الوردية: ....................</p>
+                <p style="margin: 4px 0;">توقيع مستلم الصندوق: ....................</p>
+                <div style="font-size: 9px; color: #555; margin-top: 6px;">طُبع في: <span class="print-timestamp"></span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Thermal Receipt Modal Preview -->
+    <div id="thermalReceiptModal" class="no-print" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); z-index: 9999; align-items: center; justify-content: center; padding: 1rem;">
+        <div style="background: #0f172a; border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; width: 100%; max-width: 420px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,0.6);">
+            <!-- Modal Header -->
+            <div style="padding: 1rem 1.25rem; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center;">
+                <h4 style="margin: 0; color: #fff; font-size: 1.1rem; display: flex; align-items: center; gap: 0.5rem;">
+                    <i class="fas fa-receipt text-neon-cyan"></i> معاينة إيصال الوردية (80mm)
+                </h4>
+                <button onclick="closeThermalPreview()" style="background: none; border: none; color: #94a3b8; font-size: 1.4rem; cursor: pointer; line-height: 1;">&times;</button>
+            </div>
+            <!-- Modal Body (Paper Slip) -->
+            <div style="padding: 1.25rem; overflow-y: auto; background: #090d16; display: flex; justify-content: center;">
+                <div id="modalReceiptPaper" style="background: #ffffff; color: #000000; width: 80mm; padding: 10px; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); font-family: 'Courier New', Tahoma, monospace; font-size: 11px;">
+                    <!-- Cloned content from thermal receipt -->
+                </div>
+            </div>
+            <!-- Modal Footer -->
+            <div style="padding: 0.85rem 1.25rem; border-top: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; gap: 0.75rem;">
+                <button onclick="closeThermalPreview()" class="btn btn-ghost" style="color: #94a3b8; border: 1px solid rgba(255,255,255,0.15);">إغلاق</button>
+                <button onclick="printThermalReceipt(); closeThermalPreview();" class="btn btn-orange">
+                    <i class="fas fa-print"></i> طباعة فورية (80mm)
+                </button>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function openThermalPreview() {
+    const modal = document.getElementById('thermalReceiptModal');
+    const paper = document.getElementById('modalReceiptPaper');
+    const source = document.getElementById('thermalReceiptPrint');
+    if (modal && paper && source) {
+        paper.innerHTML = source.innerHTML;
+        modal.style.display = 'flex';
+    }
+}
+
+function closeThermalPreview() {
+    const modal = document.getElementById('thermalReceiptModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Close modal on Escape or clicking outside
+window.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeThermalPreview();
+});
+document.addEventListener('click', function(e) {
+    const modal = document.getElementById('thermalReceiptModal');
+    if (e.target === modal) closeThermalPreview();
+});
+
+function printThermalReceipt() {
+    const source = document.getElementById('thermalReceiptPrint');
+    if (!source) return;
+
+    let iframe = document.getElementById('thermal_print_iframe');
+    if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = 'thermal_print_iframe';
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = 'none';
+        iframe.style.visibility = 'hidden';
+        document.body.appendChild(iframe);
+    }
+
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(`
+        <!DOCTYPE html>
+        <html dir="rtl" lang="ar">
+        <head>
+            <meta charset="UTF-8">
+            <title>إيصال تقفيل وردية #${source.dataset.sessionId || ''}</title>
+            <style>
+                @page { size: 80mm auto; margin: 0; }
+                body {
+                    margin: 0;
+                    padding: 4mm;
+                    font-family: 'Courier New', 'Tahoma', 'Arial', monospace;
+                    font-size: 11px;
+                    color: #000;
+                    background: #fff;
+                    direction: rtl;
+                    text-align: right;
+                }
+                table { width: 100%; border-collapse: collapse; font-size: 11px; }
+                td { padding: 2px 0; }
+                .amount { font-family: 'Courier New', monospace; font-weight: bold; direction: ltr; }
+            </style>
+        </head>
+        <body>
+            ${source.innerHTML}
+        </body>
+        </html>
+    `);
+    doc.close();
+
+    setTimeout(() => {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+    }, 250);
+}
+
+// Populate print timestamp
+document.addEventListener('DOMContentLoaded', function() {
+    const now = new Date();
+    const formatted = now.toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' });
+    document.querySelectorAll('.print-timestamp').forEach(el => el.textContent = formatted);
+});
+</script>
+{% endblock %}
