@@ -10,10 +10,26 @@ from apps.tenant.inventory.models import Product, Warehouse, InventoryBatch
 from apps.tenant.core.models import Branch, SystemSetting
 from apps.tenant.partners.models import Partner
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from apps.tenant.core.decorators import custom_permission_required, is_admin_user
 
 from django.views.decorators.cache import never_cache
+
+
+_JSON_SCRIPT_ESCAPES = {
+    ord('>'): r'\u003E',
+    ord('<'): r'\u003C',
+    ord('&'): r'\u0026',
+}
+
+
+def _safe_json_for_script(obj):
+    """
+    Serialize obj to JSON that is safe to embed inside an inline <script> with |safe
+    (same escaping Django's json_script uses: <, >, & and line separators are escaped).
+    """
+    from django.core.serializers.json import DjangoJSONEncoder
+    return json.dumps(obj, cls=DjangoJSONEncoder).translate(_JSON_SCRIPT_ESCAPES)
 
 @never_cache
 @login_required
@@ -209,7 +225,7 @@ def pos_open_shift(request):
                 messages.error(request, f'حدث خطأ: {str(e)}')
             
     treasuries = Treasury.objects.all()
-    if user_branch and not (request.user.is_superuser or request.user.is_staff):
+    if user_branch and not is_admin_user(request.user):
         treasuries = treasuries.filter(branch=user_branch)
         
     context = {
@@ -227,11 +243,26 @@ def pos_open_shift(request):
 @custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
 def pos_close_shift(request):
     """View to close an active cashier shift"""
-    open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
-    if not open_session:
-        # If user is admin or supervisor, check for any open session
-        if request.user.is_superuser or (hasattr(request.user, 'employee_profile') and request.user.employee_profile.is_admin()):
-            open_session = POSSession.objects.filter(status=POSSession.OPEN).first()
+    requested_session_id = (request.POST.get('session_id') or request.GET.get('session_id') or '').strip()
+    open_session = None
+    if requested_session_id:
+        if not requested_session_id.isdigit():
+            messages.error(request, 'رقم الوردية غير صالح.')
+            return redirect('invoicing:pos_open_shift')
+        open_session = POSSession.objects.filter(id=int(requested_session_id), status=POSSession.OPEN).first()
+        # Closing another cashier's shift requires an explicit session id AND admin rights
+        if open_session and open_session.user_id != request.user.id and not is_admin_user(request.user):
+            open_session = None
+    else:
+        open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+        if not open_session and is_admin_user(request.user):
+            other_open = POSSession.objects.filter(status=POSSession.OPEN).count()
+            if other_open:
+                messages.warning(
+                    request,
+                    'ليس لديك وردية مفتوحة. لإغلاق وردية كاشير آخر يجب تحديد رقم الوردية صراحةً (session_id).'
+                )
+                return redirect('invoicing:pos_open_shift')
 
     if not open_session:
         messages.warning(request, 'ليس لديك وردية مفتوحة لإغلاقها.')
@@ -354,7 +385,8 @@ def pos_close_shift(request):
         actual_balance_str = request.POST.get('actual_balance', '').strip()
         if actual_balance_str == '':
             messages.error(request, 'يرجى إدخال مبلغ النقدية الفعلية بالدرج أولاً قبل إغلاق الوردية.')
-            return redirect('invoicing:pos_close_shift')
+            from django.urls import reverse
+            return redirect(f"{reverse('invoicing:pos_close_shift')}?session_id={open_session.id}")
         try:
             actual_balance = Decimal(actual_balance_str)
             difference = actual_balance - expected_balance
@@ -416,8 +448,8 @@ def purchase_invoice_view(request):
                 uoms.append({'id': puom.id, 'name': puom.uom.name, 'factor': factor})
                 seen_normalized.add(norm_name)
         product_uoms_map[p.id] = uoms
-    product_uoms_json = json.dumps(product_uoms_map)
-    product_last_prices_json = json.dumps(product_last_prices)
+    product_uoms_json = _safe_json_for_script(product_uoms_map)
+    product_last_prices_json = _safe_json_for_script(product_last_prices)
 
     from django.db.models import Sum, Count
     from apps.tenant.inventory.models import InventoryBatch, SerialItem
@@ -442,7 +474,7 @@ def purchase_invoice_view(request):
             'max_stock': float(p.max_stock_level) if p.max_stock_level else 0.0,
             'min_stock': float(p.min_stock_level) if p.min_stock_level else 0.0,
         }
-    product_stock_info_json = json.dumps(product_stock_info)
+    product_stock_info_json = _safe_json_for_script(product_stock_info)
 
     is_admin = is_admin_user(request.user)
     user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
@@ -675,7 +707,7 @@ def purchase_invoice_view(request):
                 'ewallets': ewallets,
                 'title': 'إنشاء فاتورة مشتريات',
                 'posted_data': request.POST,
-                'posted_lines_json': json.dumps(posted_lines),
+                'posted_lines_json': _safe_json_for_script(posted_lines),
             }
             return render(request, 'invoicing/purchase_invoice.html', context)
             
@@ -944,6 +976,7 @@ def get_product_by_barcode(request):
         for puom in product.uoms.all():
             uoms.append({
                 'id': puom.id,
+                'unit_id': puom.uom_id,
                 'name': puom.uom.name,
                 'factor': float(puom.conversion_factor or 1.0)
             })
@@ -969,12 +1002,22 @@ def get_product_by_barcode(request):
             req_qty = Decimal('1')
 
         from apps.tenant.pricing.services import PricingEngineService
+        selected_puom = None
+        if selected_uom_id != 'base':
+            selected_puom = next((u for u in product.uoms.all() if u.id == selected_uom_id), None)
         pricing_info = PricingEngineService.get_effective_price(
             product=product,
             partner=partner,
             branch=current_branch,
-            quantity=req_qty
+            uom=selected_puom,
+            quantity=req_qty,
+            price_per_uom=True,
         )
+        unit_price = Decimal(str(pricing_info.get('unit_price', pricing_info['price']) or 0))
+        uom_factor = Decimal(str(pricing_info.get('uom_factor', 1) or 1))
+        # `sale_price` stays per BASE unit (POS JS multiplies by the uom factor);
+        # `unit_price` is the price of one selected uom.
+        base_unit_price = Decimal(str(pricing_info.get('base_unit_price', unit_price / uom_factor)))
             
         return JsonResponse({
             'found': True,
@@ -983,8 +1026,10 @@ def get_product_by_barcode(request):
                 'name': product.name,
                 'barcode': product.barcode or '',
                 'product_type': product.product_type,
-                'sale_price': str(pricing_info['price']),
-                'original_sale_price': str(pricing_info['original_price']),
+                'sale_price': str(base_unit_price),
+                'unit_price': str(unit_price),
+                'uom_factor': str(uom_factor),
+                'original_sale_price': str(pricing_info['original_price'] / uom_factor if pricing_info.get('price_is_per_uom') else pricing_info['original_price']),
                 'pricing_tier': pricing_info['tier'],
                 'pricing_tier_display': pricing_info['tier_display'],
                 'pricing_badge_text': pricing_info['badge_text'],
@@ -1034,79 +1079,168 @@ def get_available_serials(request):
     ]
     return JsonResponse({'serials': serials})
 
+class _SaleAbort(Exception):
+    """Raised inside complete_sale's atomic block so every partial write is rolled back."""
+
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+def _to_decimal(value, field_label, default='0'):
+    from decimal import InvalidOperation as _InvalidOperation
+    try:
+        if value is None or value == '':
+            value = default
+        d = Decimal(str(value))
+    except (_InvalidOperation, ValueError, TypeError):
+        raise _SaleAbort(f'قيمة غير صالحة في الحقل ({field_label}).')
+    if not d.is_finite():
+        raise _SaleAbort(f'قيمة غير صالحة في الحقل ({field_label}).')
+    return d
+
+
+def _pos_unit_price(product, puom, partner, branch, quantity):
+    """
+    Server-side price for one unit of `puom` (or of the base unit when puom is None),
+    using the same PricingEngineService call as the barcode API.
+    Returns (unit_price, min_unit_price).
+    """
+    from apps.tenant.pricing.services import PricingEngineService
+    factor = Decimal(str(puom.conversion_factor or 1)) if puom else Decimal('1')
+    # The engine resolves customer -> sector -> default tiers (highest min_quantity <= qty
+    # for this uom) and returns the price of ONE requested uom in `unit_price`.
+    info = PricingEngineService.get_effective_price(
+        product=product, partner=partner, branch=branch, uom=puom, quantity=quantity,
+        price_per_uom=True,
+    )
+    price = Decimal(str(info.get('unit_price', info['price']) or 0))
+
+    min_price = product.min_sale_price or Decimal('0')
+    if branch:
+        pb = product.branch_prices.filter(branch=branch).first()
+        if pb and pb.min_sale_price is not None:
+            min_price = pb.min_sale_price
+    min_price = Decimal(str(min_price or 0)) * factor
+    return price.quantize(Decimal('0.0001')), min_price.quantize(Decimal('0.0001'))
+
+
 @login_required
+@custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
 def complete_sale(request):
+    """
+    POS checkout. Creates and posts a SALE invoice.
+
+    Security: prices, taxes and totals are computed server-side; the client may only
+    override the unit price for open-price / editable products and never below the
+    minimum sale price. Payment breakdown is reconciled against the server total.
+    """
     if request.method != 'POST':
         return JsonResponse({'success': False})
-        
+
+    from django.db import transaction
+    from apps.tenant.services.invoice_service import confirm_invoice
+    from apps.tenant.inventory.models import ProductUoM, SerialItem
+
     try:
-        data = json.loads(request.body)
-        cart = data.get('cart', [])
+        try:
+            data = json.loads(request.body)
+        except (ValueError, TypeError):
+            raise _SaleAbort('بيانات الطلب غير صالحة.')
+        if not isinstance(data, dict):
+            raise _SaleAbort('بيانات الطلب غير صالحة.')
+
+        cart = data.get('cart', []) or []
         payment_type = data.get('payment_type', 'CASH')
         warehouse_id = data.get('warehouse_id')
         branch_id = data.get('branch_id')
         treasury_id = data.get('treasury_id')
         ewallet_id = data.get('ewallet_id')
         bank_account_id = data.get('bank_account_id')
-        
         partner_id = data.get('partner_id')
-        invoice_type = data.get('invoice_type', 'SALE')
-        
-        from django.db import transaction
-        from apps.tenant.services.invoice_service import confirm_invoice
-        
-        if not cart:
-            return JsonResponse({'success': False, 'error': 'السلة فارغة. يرجى إضافة منتجات أولاً.'}, status=400)
+
+        # This endpoint ONLY creates SALE invoices. Returns must go through the
+        # return screens (process_invoice_return / create_standalone_sales_return).
+        invoice_type = data.get('invoice_type', 'SALE') or 'SALE'
+        if invoice_type != Invoice.SALE:
+            raise _SaleAbort(
+                'لا يمكن تسجيل مرتجع من شاشة البيع مباشرة. يرجى استخدام شاشة مرتجع المبيعات '
+                '(من الفاتورة الأصلية أو مرتجع بدون فاتورة).'
+            )
+
+        valid_payment_types = {c[0] for c in Invoice.PAYMENT_TYPE_CHOICES}
+        if payment_type not in valid_payment_types:
+            raise _SaleAbort('طريقة دفع غير معروفة.')
+
+        if not cart or not isinstance(cart, list):
+            raise _SaleAbort('السلة فارغة. يرجى إضافة منتجات أولاً.')
+
+        if not warehouse_id:
+            raise _SaleAbort('يجب اختيار مستودع لإتمام عملية البيع', status=200)
+
+        is_admin = is_admin_user(request.user)
+        can_override_discount = is_admin or request.user.has_perm('invoicing.change_invoice')
+        setting = SystemSetting.get_settings()
+        allow_price_edit_setting = bool(getattr(setting, 'allow_pos_price_modification', False))
 
         with transaction.atomic():
-            branch = Branch.objects.get(id=branch_id)
-            
-            if not warehouse_id:
-                return JsonResponse({'success': False, 'error': 'يجب اختيار مستودع لإتمام عملية البيع'})
-            
+            branch = Branch.objects.filter(id=branch_id).first() if branch_id else None
+            if not branch:
+                raise _SaleAbort('الفرع المحدد غير موجود.')
+            user_branch = getattr(getattr(request.user, 'employee_profile', None), 'branch', None)
+            if not is_admin and user_branch and branch.id != user_branch.id:
+                raise _SaleAbort('لا يمكنك البيع على فرع غير الفرع المرتبط بحسابك.', status=403)
+
             warehouse = Warehouse.objects.filter(id=warehouse_id, is_active=True).first()
             if not warehouse:
-                return JsonResponse({'success': False, 'error': 'المستودع المحدد غير صالح أو غير نشط'})
-            if branch and warehouse.branch_id and warehouse.branch_id != branch.id:
-                return JsonResponse({'success': False, 'error': 'المستودع المختار لا يتبع الفرع الحالي'})
-            
+                raise _SaleAbort('المستودع المحدد غير صالح أو غير نشط', status=200)
+            if warehouse.branch_id and warehouse.branch_id != branch.id:
+                raise _SaleAbort('المستودع المختار لا يتبع الفرع الحالي', status=200)
+
             if partner_id:
-                partner = Partner.objects.get(id=partner_id)
+                partner = Partner.objects.filter(id=partner_id).first()
+                if not partner:
+                    raise _SaleAbort('العميل المحدد غير موجود.')
             else:
                 partner, _ = Partner.objects.get_or_create(
                     name="عميل نقدي",
                     defaults={'partner_type': 'CUSTOMER', 'is_active': True}
                 )
-            
-            # Check if there is an open POSSession for this cashier
+
             open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
             if not open_session:
-                return JsonResponse({'success': False, 'error': 'يجب فتح وردية أولاً قبل الدخول لنقطة البيع أو إجراء أي عملية بيع.'}, status=400)
+                raise _SaleAbort('يجب فتح وردية أولاً قبل الدخول لنقطة البيع أو إجراء أي عملية بيع.')
 
-            # Fallback treasury to cashier shift treasury if not specified
             if not treasury_id and open_session.treasury_id:
                 treasury_id = open_session.treasury_id
 
-            payments = data.get('payments', {})
-            paid_cash = Decimal(str(payments.get('cash', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CASH' else Decimal('0'))
-            paid_card = Decimal(str(payments.get('card', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CARD' else Decimal('0'))
-            paid_ewallet = Decimal(str(payments.get('ewallet', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'EWALLET' else Decimal('0'))
-            paid_bank = Decimal(str(payments.get('bank', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'BANK_TRANSFER' else Decimal('0'))
-            paid_credit = Decimal(str(payments.get('credit', 0))) if payment_type == 'SPLIT' else (Decimal(data.get('total_amount', 0)) if payment_type == 'CREDIT' else Decimal('0'))
+            payments = data.get('payments', {}) or {}
+            if not isinstance(payments, dict):
+                payments = {}
 
-            # Validate credit sales are never attributed to cash customer
-            if payment_type == 'CREDIT' or paid_credit > Decimal('0'):
+            # Client-declared split amounts (validated against the server total later)
+            if payment_type == 'SPLIT':
+                cl_cash = _to_decimal(payments.get('cash', 0), 'نقدي')
+                cl_card = _to_decimal(payments.get('card', 0), 'بطاقة')
+                cl_ewallet = _to_decimal(payments.get('ewallet', 0), 'محفظة')
+                cl_bank = _to_decimal(payments.get('bank', 0), 'تحويل بنكي')
+                cl_credit = _to_decimal(payments.get('credit', 0), 'آجل')
+                if min(cl_cash, cl_card, cl_ewallet, cl_bank, cl_credit) < 0:
+                    raise _SaleAbort('مبالغ الدفع لا يمكن أن تكون سالبة.')
+            else:
+                cl_cash = cl_card = cl_ewallet = cl_bank = cl_credit = Decimal('0')
+
+            has_credit = payment_type == 'CREDIT' or cl_credit > 0
+            if has_credit:
                 if not partner_id:
-                    return JsonResponse({'success': False, 'error': 'يجب اختيار عميل لتسجيل بيع آجل.'}, status=400)
+                    raise _SaleAbort('يجب اختيار عميل لتسجيل بيع آجل.')
                 if partner and ('عميل نقدي' in partner.name or partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']):
-                    return JsonResponse({'success': False, 'error': 'لا يمكن تسجيل بيع آجل لـ (عميل نقدي). يرجى اختيار أو إضافة حساب العميل أولاً.'}, status=400)
+                    raise _SaleAbort('لا يمكن تسجيل بيع آجل لـ (عميل نقدي). يرجى اختيار أو إضافة حساب العميل أولاً.')
 
-            # For SPLIT: resolve visa_bank_id (card) and insta_bank_id (bank transfer) separately
             visa_bank_account_id = payments.get('visa_bank_id') if payment_type == 'SPLIT' else None
             insta_bank_account_id = payments.get('insta_bank_id') if payment_type == 'SPLIT' else None
 
-            setting = SystemSetting.get_settings()
-            if payment_type == 'CARD' or paid_card > Decimal('0'):
+            if payment_type == 'CARD' or cl_card > 0:
                 if visa_bank_account_id:
                     bank_account_id = visa_bank_account_id
                 elif not bank_account_id:
@@ -1114,30 +1248,27 @@ def complete_sale(request):
                     if default_visa:
                         bank_account_id = default_visa.id
                 if not bank_account_id:
-                    return JsonResponse({'success': False, 'error': 'يجب اختيار ماكينة الفيزا من القائمة العلوية أو تحديدها في الإعدادات.'}, status=400)
+                    raise _SaleAbort('يجب اختيار ماكينة الفيزا من القائمة العلوية أو تحديدها في الإعدادات.')
 
-            if payment_type == 'BANK_TRANSFER' or paid_bank > Decimal('0'):
+            if payment_type == 'BANK_TRANSFER' or cl_bank > 0:
                 if not insta_bank_account_id:
                     default_insta = getattr(setting, 'default_pos_instapay_account', None) or getattr(setting, 'default_pos_bank_account', None)
                     if default_insta:
                         insta_bank_account_id = default_insta.id
                 if not insta_bank_account_id and payment_type == 'BANK_TRANSFER':
                     insta_bank_account_id = bank_account_id
-                if not insta_bank_account_id and paid_bank > Decimal('0'):
-                    return JsonResponse({'success': False, 'error': 'يجب اختيار حساب إنستاباي / التحويل البنكي من القائمة العلوية أو تحديده في الإعدادات.'}, status=400)
+                if not insta_bank_account_id and cl_bank > 0:
+                    raise _SaleAbort('يجب اختيار حساب إنستاباي / التحويل البنكي من القائمة العلوية أو تحديده في الإعدادات.')
 
-            notes = data.get('notes', '')
+            notes = str(data.get('notes', '') or '')
 
-            subtotal = Decimal(str(data.get('subtotal', 0)))
-            discount_percentage = Decimal(str(data.get('discount_percentage', 0)))
-            discount_amount = Decimal(str(data.get('discount_amount', 0)))
-            tax_amount = Decimal(str(data.get('tax_amount', 0)))
-            wht_amount = Decimal(str(data.get('wht_amount', 0)))
-            total_amount = Decimal(str(data.get('total_amount', 0)))
+            discount_percentage = _to_decimal(data.get('discount_percentage', 0), 'نسبة الخصم')
+            if discount_percentage < 0 or discount_percentage > 100:
+                raise _SaleAbort('نسبة الخصم يجب أن تكون بين 0 و 100.')
 
-            # Create Invoice
+            # Totals are recomputed from lines by recalculate_totals(); start from zero.
             invoice = Invoice.objects.create(
-                invoice_type=invoice_type,
+                invoice_type=Invoice.SALE,
                 branch=branch,
                 warehouse=warehouse,
                 partner=partner,
@@ -1147,73 +1278,167 @@ def complete_sale(request):
                 ewallet_id=ewallet_id if ewallet_id else None,
                 bank_account_id=bank_account_id if bank_account_id else None,
                 insta_bank_account_id=insta_bank_account_id if insta_bank_account_id else None,
-                paid_cash=paid_cash,
-                paid_card=paid_card,
-                paid_ewallet=paid_ewallet,
-                paid_bank=paid_bank,
-                paid_credit=paid_credit,
-                status='DRAFT',
+                status=Invoice.DRAFT,
                 cashier=request.user,
                 pos_session=open_session,
-                subtotal=subtotal,
                 discount_percentage=discount_percentage,
-                discount_amount=discount_amount,
-                tax_amount=tax_amount,
-                wht_amount=wht_amount,
-                total_amount=total_amount,
                 notes=notes,
             )
-            
+
+            used_serial_ids = set()
+            line_count = 0
             for item in cart:
+                if not isinstance(item, dict):
+                    continue
                 pid = item.get('product_id')
                 if not pid:
                     continue
                 try:
                     product = Product.objects.get(id=int(pid))
                 except (Product.DoesNotExist, ValueError, TypeError):
-                    return JsonResponse({
-                        'success': False, 
-                        'error': f'الصنف برقم ({pid}) غير موجود في قاعدة البيانات أو تم حذفه. يرجى مراجعة الأصناف بالسلة.'
-                    })
-                uom_id = item.get('uom_id')
-                if uom_id == 'base':
-                    uom_id = None
+                    raise _SaleAbort(
+                        f'الصنف برقم ({pid}) غير موجود في قاعدة البيانات أو تم حذفه. يرجى مراجعة الأصناف بالسلة.',
+                        status=200,
+                    )
+                if not product.is_active:
+                    raise _SaleAbort(f'الصنف "{product.name}" غير نشط.')
 
-                # Resolve serial_item for SERIALIZED products
-                serial_item_id = item.get('serial_item_id')
-                serial_item = None
-                if product.product_type == 'SERIALIZED' and serial_item_id:
-                    from apps.tenant.inventory.models import SerialItem
+                quantity = _to_decimal(item.get('quantity'), f'الكمية - {product.name}')
+                if quantity <= 0:
+                    raise _SaleAbort(f'الكمية للصنف "{product.name}" يجب أن تكون أكبر من صفر.')
+
+                uom_id = item.get('uom_id')
+                puom = None
+                if uom_id not in (None, '', 'base'):
                     try:
-                        serial_item = SerialItem.objects.get(id=int(serial_item_id))
+                        puom = ProductUoM.objects.select_related('uom').get(id=int(uom_id), product=product)
+                    except (ProductUoM.DoesNotExist, ValueError, TypeError):
+                        raise _SaleAbort(f'وحدة القياس المحددة غير صالحة للصنف "{product.name}".')
+                    if puom.is_base:
+                        puom = None
+
+                # --- Server-side pricing ---
+                server_price, min_price = _pos_unit_price(product, puom, partner, branch, quantity)
+                unit_price = server_price
+                client_price_raw = item.get('unit_price')
+                can_edit_price = (
+                    product.is_open_price
+                    or product.product_type == 'SERVICE'
+                    or allow_price_edit_setting
+                    or is_admin
+                )
+                if client_price_raw not in (None, ''):
+                    client_price = _to_decimal(client_price_raw, f'السعر - {product.name}')
+                    if client_price < 0:
+                        raise _SaleAbort(f'سعر الصنف "{product.name}" لا يمكن أن يكون سالباً.')
+                    if can_edit_price:
+                        unit_price = client_price
+                if min_price > 0 and unit_price < min_price:
+                    raise _SaleAbort(
+                        f'سعر الصنف "{product.name}" ({unit_price:.2f}) أقل من أدنى سعر بيع مسموح ({min_price:.2f}).'
+                    )
+
+                discount_pct = _to_decimal(item.get('discount_percent', 0), f'الخصم - {product.name}')
+                if discount_pct < 0 or discount_pct > 100:
+                    raise _SaleAbort(f'نسبة الخصم للصنف "{product.name}" يجب أن تكون بين 0 و 100.')
+                if discount_pct > 0 and not can_override_discount and min_price > 0:
+                    net_unit = unit_price * (Decimal('1') - discount_pct / Decimal('100'))
+                    if net_unit < min_price:
+                        raise _SaleAbort(
+                            f'الخصم على الصنف "{product.name}" ينزل بالسعر ({net_unit:.2f}) عن أدنى سعر بيع ({min_price:.2f}). '
+                            'يتطلب ذلك صلاحية مدير.'
+                        )
+
+                # Taxes: client may only toggle them on/off; the rate comes from the product.
+                client_tax = _to_decimal(item.get('tax_rate', 0), 'الضريبة')
+                client_wht = _to_decimal(item.get('wht_rate', 0), 'الخصم والإضافة')
+                tax_rate = (product.tax_rate or Decimal('0')) if client_tax > 0 else Decimal('0')
+                wht_rate = (product.withholding_tax_rate or Decimal('0')) if client_wht > 0 else Decimal('0')
+
+                # --- Serial validation ---
+                serial_item = None
+                if product.product_type == 'SERIALIZED':
+                    serial_item_id = item.get('serial_item_id')
+                    if not serial_item_id:
+                        raise _SaleAbort(f'يجب تحديد السيريال/IMEI للصنف "{product.name}".')
+                    if quantity != 1:
+                        raise _SaleAbort(f'الصنف "{product.name}" مسلسل؛ الكمية لكل سطر يجب أن تكون 1.')
+                    try:
+                        serial_item = SerialItem.objects.select_for_update().get(
+                            id=int(serial_item_id), product=product, is_sold=False, warehouse=warehouse,
+                        )
                     except (SerialItem.DoesNotExist, ValueError, TypeError):
-                        return JsonResponse({
-                            'success': False,
-                            'error': f'السيريال المحدد للصنف "{product.name}" غير متاح أو تم بيعه مسبقاً.'
-                        })
+                        raise _SaleAbort(
+                            f'السيريال المحدد للصنف "{product.name}" غير متاح أو تم بيعه مسبقاً.', status=200
+                        )
+                    if serial_item.id in used_serial_ids:
+                        raise _SaleAbort(f'السيريال نفسه مكرر في السلة للصنف "{product.name}".')
+                    used_serial_ids.add(serial_item.id)
 
                 InvoiceLine.objects.create(
                     invoice=invoice,
                     product=product,
                     serial_item=serial_item,
-                    quantity=Decimal(str(item['quantity'])),
-                    unit_price=Decimal(str(item['unit_price'])),
-                    discount_pct=Decimal(str(item.get('discount_percent', 0))),
-                    uom_id=uom_id,
-                    tax_rate=Decimal(str(item.get('tax_rate', 0))),
-                    wht_rate=Decimal(str(item.get('wht_rate', 0))),
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    discount_pct=discount_pct,
+                    uom=puom,
+                    tax_rate=tax_rate,
+                    wht_rate=wht_rate,
                 )
-                
-            # Confirm
+                line_count += 1
+
+            if line_count == 0:
+                raise _SaleAbort('السلة فارغة. يرجى إضافة منتجات أولاً.')
+
+            # --- Server-side totals and payment reconciliation ---
+            invoice.recalculate_totals()
+            total = Decimal(str(invoice.total_amount)).quantize(Decimal('0.01'))
+            tolerance = Decimal('0.05')
+            paid = {'paid_cash': Decimal('0'), 'paid_card': Decimal('0'), 'paid_ewallet': Decimal('0'),
+                    'paid_bank': Decimal('0'), 'paid_credit': Decimal('0')}
+            if payment_type == 'SPLIT':
+                non_cash = cl_card + cl_ewallet + cl_bank + cl_credit
+                if non_cash > total + tolerance:
+                    raise _SaleAbort(
+                        f'مجموع المبالغ غير النقدية ({non_cash:.2f}) يتجاوز إجمالي الفاتورة ({total:.2f}).'
+                    )
+                cash_due = max(Decimal('0'), total - non_cash)
+                if cl_cash + tolerance < cash_due:
+                    raise _SaleAbort(
+                        f'المبالغ المدفوعة ({(cl_cash + non_cash):.2f}) أقل من إجمالي الفاتورة ({total:.2f}).'
+                    )
+                # Cash overpayment is change returned to the customer: only the due part is recorded.
+                paid.update(paid_cash=cash_due, paid_card=cl_card, paid_ewallet=cl_ewallet,
+                            paid_bank=cl_bank, paid_credit=cl_credit)
+            else:
+                field = {
+                    'CASH': 'paid_cash', 'CARD': 'paid_card', 'EWALLET': 'paid_ewallet',
+                    'BANK_TRANSFER': 'paid_bank', 'CREDIT': 'paid_credit',
+                }[payment_type]
+                if payment_type == 'CASH' and data.get('cash_received') not in (None, ''):
+                    cash_received = _to_decimal(data.get('cash_received'), 'المبلغ المستلم')
+                    if cash_received + tolerance < total:
+                        raise _SaleAbort(
+                            f'المبلغ المستلم ({cash_received:.2f}) أقل من إجمالي الفاتورة ({total:.2f}).'
+                        )
+                paid[field] = total
+            for k, v in paid.items():
+                setattr(invoice, k, v)
+            invoice.save(update_fields=list(paid.keys()) + ['updated_at'])
+
             confirmed_invoice = confirm_invoice(invoice.id)
-            
+
         return JsonResponse({
-            'success': True, 
+            'success': True,
             'invoice_number': confirmed_invoice.invoice_number,
             'invoice_id': confirmed_invoice.id,
+            'total_amount': str(Decimal(str(confirmed_invoice.total_amount)).quantize(Decimal('0.01'))),
             'partner_id': confirmed_invoice.partner_id if confirmed_invoice.partner else None,
             'partner_name': confirmed_invoice.partner.name if confirmed_invoice.partner else 'عميل نقدي',
         })
+    except _SaleAbort as e:
+        return JsonResponse({'success': False, 'error': str(e)}, status=e.status)
     except Exception as e:
         return JsonResponse({'success': False, 'error': str(e)})
 
@@ -1399,6 +1624,11 @@ def process_invoice_return(request, invoice_id):
         session_to_use = open_session or original_invoice.pos_session
 
         with transaction.atomic():
+            # Lock the original invoice so concurrent returns against it are serialized
+            original_invoice = Invoice.objects.select_for_update().get(id=original_invoice.id)
+            if original_invoice.status != Invoice.POSTED:
+                raise Exception('الفاتورة الأصلية لم تعد مرحّلة.')
+
             # Create Return Invoice
             return_invoice = Invoice.objects.create(
                 invoice_type=return_type,
@@ -1424,10 +1654,14 @@ def process_invoice_return(request, invoice_id):
                 return_qty = Decimal(str(item.get('quantity', 0)))
                 serial_id = item.get('serial_id')
                 
-                original_line = get_object_or_404(InvoiceLine, id=line_id, invoice=original_invoice)
-                
                 if return_qty <= 0:
                     continue
+
+                original_line = InvoiceLine.objects.select_for_update().filter(
+                    id=line_id, invoice=original_invoice
+                ).select_related('product').first()
+                if not original_line:
+                    raise Exception('سطر الفاتورة المحدد غير موجود.')
                     
                 available_to_return = original_line.quantity - original_line.returned_quantity
                 if return_qty > available_to_return:
@@ -1435,11 +1669,12 @@ def process_invoice_return(request, invoice_id):
                     
                 # Update original line
                 original_line.returned_quantity += return_qty
-                original_line.save()
+                original_line.save(update_fields=['returned_quantity'])
                 
                 # Create return line
                 InvoiceLine.objects.create(
                     invoice=return_invoice,
+                    original_line=original_line,
                     product=original_line.product,
                     serial_item=original_line.serial_item,
                     quantity=return_qty,
@@ -1605,6 +1840,7 @@ def create_standalone_sales_return(request):
             product_ids = request.POST.getlist('product_ids[]')
             quantities = request.POST.getlist('quantities[]')
             prices = request.POST.getlist('prices[]')
+            uom_ids = request.POST.getlist('uom_ids[]')
             
             if not product_ids:
                 messages.error(request, 'يرجى إضافة صنف واحد على الأقل للمرتجع.')
@@ -1634,6 +1870,8 @@ def create_standalone_sales_return(request):
                 for idx, (pid, qty_str, price_str) in enumerate(zip(product_ids, quantities, prices)):
                     qty = Decimal(qty_str or '0')
                     price = Decimal(price_str or '0')
+                    if qty < 0 or price < 0:
+                        raise ValueError('الكمية والسعر لا يمكن أن يكونا بقيم سالبة.')
                     if qty > 0:
                         prod = Product.objects.get(id=pid)
                         uom_id = uom_ids[idx] if idx < len(uom_ids) and uom_ids[idx] else None
@@ -1641,7 +1879,8 @@ def create_standalone_sales_return(request):
                         if uom_id:
                             uom_obj = ProductUoM.objects.filter(id=uom_id, product=prod).first()
                         if not uom_obj:
-                            uom_obj = prod.uoms.filter(is_base=True).first() or prod.uoms.first()
+                            # Empty value in the form means the base unit (factor 1)
+                            uom_obj = prod.uoms.filter(is_base=True).first()
                         
                         line_tax_rate = prod.tax_rate if apply_vat else Decimal('0')
                         line_wht_rate = prod.withholding_tax_rate if apply_wht else Decimal('0')
@@ -1666,6 +1905,11 @@ def create_standalone_sales_return(request):
                                     serial_item = SerialItem.objects.filter(product=prod, serial_number=sn).first()
                                     
                                 if serial_item:
+                                    serial_item = SerialItem.objects.select_for_update().get(pk=serial_item.pk)
+                                    if not serial_item.is_sold and serial_item.warehouse_id:
+                                        raise ValueError(
+                                            f'السيريال/IMEI ({i1 or sn}) للصنف "{prod.name}" موجود بالفعل في المخزون ولم يُبع.'
+                                        )
                                     serial_item.warehouse = warehouse
                                     serial_item.is_sold = False
                                     serial_item.is_returned = False
@@ -1789,7 +2033,7 @@ def _get_quotation_products_json():
             'base_unit': base_unit_name,
             'uoms': p_uoms
         }
-    return json.dumps(products_dict)
+    return _safe_json_for_script(products_dict)
 
 
 def _format_quotation_form_errors(form, formset):
@@ -1867,17 +2111,22 @@ def quotation_create(request):
 def quotation_edit(request, quotation_id):
     """Edit an existing Quotation."""
     quotation = get_object_or_404(Quotation, id=quotation_id)
-    if quotation.status in [Quotation.CONVERTED]:
-        messages.warning(request, 'لا يمكن تعديل عرض سعر تم تحويله بالفعل إلى فاتورة.')
+    if quotation.status in [Quotation.CONVERTED, Quotation.CANCELLED]:
+        messages.warning(request, 'لا يمكن تعديل عرض سعر تم تحويله إلى فاتورة أو ملغى.')
         return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
 
     if request.method == 'POST':
         form = QuotationForm(request.POST, instance=quotation)
         formset = QuotationLineFormSet(request.POST, instance=quotation)
         if form.is_valid() and formset.is_valid():
-            form.save()
-            formset.save()
-            quotation.recalculate_totals()
+            from django.db import transaction
+            with transaction.atomic():
+                # Quotations confirmed under the old logic deducted stock; give it back
+                # before the lines/warehouse change (quotations no longer move stock).
+                quotation.restore_legacy_stock()
+                form.save()
+                formset.save()
+                quotation.recalculate_totals()
             messages.success(request, f'تم تعديل عرض السعر ({quotation.quotation_number}) بنجاح.')
             return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
         else:
@@ -1921,8 +2170,15 @@ def quotation_delete(request, quotation_id):
         return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
 
     if request.method == 'POST':
+        from django.db import transaction
         num = quotation.quotation_number
-        quotation.delete()
+        try:
+            with transaction.atomic():
+                quotation.restore_legacy_stock()
+                quotation.delete()
+        except Exception as e:
+            messages.error(request, f'تعذر حذف عرض السعر: {str(e)}')
+            return redirect('invoicing:quotation_detail', quotation_id=quotation.id)
         messages.success(request, f'تم حذف عرض السعر {num} بنجاح.')
         return redirect('invoicing:quotation_list')
 
@@ -1932,12 +2188,12 @@ def quotation_delete(request, quotation_id):
 @login_required
 @custom_permission_required('invoicing.change_quotation', redirect_url='core:main_screen')
 def quotation_confirm(request, quotation_id):
-    """Post / Confirm quotation (creates stock movements for physical items)."""
+    """Confirm quotation: status change only (no stock / accounting effect)."""
     quotation = get_object_or_404(Quotation, id=quotation_id)
     if request.method == 'POST':
         try:
             quotation.confirm_quotation()
-            messages.success(request, f'تم ترحيل عرض السعر ({quotation.quotation_number}) وتثبيت أثره المخزني بنجاح.')
+            messages.success(request, f'تم تأكيد عرض السعر ({quotation.quotation_number}). سيتم خصم المخزون عند تحويله إلى فاتورة بيع.')
         except Exception as e:
             messages.error(request, f'تعذر ترحيل عرض السعر: {str(e)}')
     return redirect('invoicing:quotation_detail', quotation_id=quotation.id)

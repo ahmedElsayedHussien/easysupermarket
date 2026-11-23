@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect
 from django.views.generic import View, ListView, TemplateView, DetailView
 from django.db import models
 from django.db.models import Sum, Count, F, Q, FloatField
-from django.db.models.functions import TruncDay, TruncMonth, Cast
+from django.db.models.functions import TruncDay, TruncMonth, Cast, Coalesce
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -16,6 +16,48 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from django.http import HttpResponse
+from django.contrib import messages
+from apps.tenant.core.access import (
+    filter_by_branch, get_branch_scope, is_branch_restricted, is_tenant_admin,
+)
+
+# Hard cap on the number of rows written to an Excel export.
+EXPORT_MAX_ROWS = 50000
+
+
+def _date_param(request, name):
+    """Return the GET date param if it is a valid YYYY-MM-DD date, else None
+    (invalid input must never reach a queryset filter and raise a 500)."""
+    import datetime as _dt
+    value = (request.GET.get(name) or '').strip()
+    if not value:
+        return None
+    try:
+        _dt.datetime.strptime(value, '%Y-%m-%d')
+    except ValueError:
+        return None
+    return value
+
+
+def _scope_treasuries(qs, request):
+    """Restrict a Treasury queryset to the request's branch scope."""
+    return filter_by_branch(qs, request, 'branch')
+
+
+class BranchRestrictedDenyMixin:
+    """
+    For reports built purely on company-wide data (journal entries, partner
+    balances) that cannot be scoped to a branch: deny access to non-admin
+    employees who are pinned to a branch instead of leaking company figures.
+    """
+    branch_restricted_message = 'عفواً، هذا التقرير يعرض بيانات على مستوى الشركة بالكامل ولا يتاح لموظفي الفروع.'
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated and is_branch_restricted(request):
+            messages.error(request, self.branch_restricted_message)
+            return redirect('core:reports_index')
+        return super().dispatch(request, *args, **kwargs)
+
 
 class CsvExportMixin:
     """
@@ -39,6 +81,11 @@ class CsvExportMixin:
             context = getattr(response, 'context_data', {}) or {}
             obj_name = getattr(self, 'context_object_name', None)
             object_list = (context.get(obj_name) if obj_name else None) or context.get('object_list') or context.get('transactions') or context.get('report_data') or []
+            # Cap the number of exported rows to protect the server.
+            try:
+                object_list = object_list[:EXPORT_MAX_ROWS]
+            except TypeError:
+                object_list = list(object_list)[:EXPORT_MAX_ROWS]
             
             # Create Workbook using openpyxl
             wb = openpyxl.Workbook()
@@ -142,10 +189,11 @@ class ProductSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
             invoice__invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
             invoice__status=Invoice.POSTED
         )
+        qs = filter_by_branch(qs, self.request, 'invoice__branch')
         
         # Apply Filters
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         
         if start_date:
@@ -240,10 +288,11 @@ class PeriodSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListV
             invoice__invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
             invoice__status=Invoice.POSTED
         )
+        qs = filter_by_branch(qs, self.request, 'invoice__branch')
         
         # Apply Filters
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         group_by = self.request.GET.get('group_by', 'day') # day or month
         search_query = self.request.GET.get('search_query')
         
@@ -347,9 +396,10 @@ class DetailedSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
             invoice__invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
             invoice__status=Invoice.POSTED
         ).select_related('invoice', 'invoice__partner', 'product')
+        qs = filter_by_branch(qs, self.request, 'invoice__branch')
         
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         
         if start_date:
@@ -458,8 +508,9 @@ class ItemProfitabilityReportView(CsvExportMixin, CustomPermissionRequiredMixin,
             invoice__invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
             invoice__status=Invoice.POSTED
         )
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        qs = filter_by_branch(qs, self.request, 'invoice__branch')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         if start_date: qs = qs.filter(invoice__date__gte=start_date)
         if end_date: qs = qs.filter(invoice__date__lte=end_date)
@@ -550,8 +601,9 @@ class UserSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVie
             invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
             status=Invoice.POSTED
         )
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        qs = filter_by_branch(qs, self.request)
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         
         if start_date:
@@ -613,7 +665,7 @@ class UserSalesReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVie
             
         return context
 
-class CustomerDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
+class CustomerDebtsReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomPermissionRequiredMixin, ListView):
     permission_required = 'core.view_sales_reports'
     template_name = 'reports/customer_debts.html'
     context_object_name = 'customers'
@@ -680,9 +732,10 @@ class SalesReturnsReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
             invoice_type=Invoice.RETURN_SALE,
             status=Invoice.POSTED
         ).select_related('partner', 'cashier').order_by('-date', '-created_at')
+        qs = filter_by_branch(qs, self.request)
         
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         
         if start_date:
@@ -755,9 +808,10 @@ class ProductPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
             invoice__invoice_type=Invoice.PURCHASE,
             invoice__status=Invoice.POSTED
         )
+        qs = filter_by_branch(qs, self.request, 'invoice__branch')
         
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         
         if start_date:
@@ -771,6 +825,8 @@ class ProductPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
                 Q(product__barcode__icontains=search_query)
             )
             
+        _ret_branch = get_branch_scope(self.request)
+        _ret_extra = {'product__invoice_lines__invoice__branch': _ret_branch} if _ret_branch is not None else {}
         aggregated = qs.values(
             'product__id', 
             'product__name', 
@@ -784,14 +840,16 @@ class ProductPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, 
                 filter=Q(product__invoice_lines__invoice__invoice_type=Invoice.RETURN_PURCHASE, 
                          product__invoice_lines__invoice__status=Invoice.POSTED,
                          product__invoice_lines__invoice__date__gte=start_date if start_date else '2000-01-01',
-                         product__invoice_lines__invoice__date__lte=end_date if end_date else '2100-01-01')
+                         product__invoice_lines__invoice__date__lte=end_date if end_date else '2100-01-01',
+                         **_ret_extra)
             ),
             returned_total=Sum(
                 'total_amount', 
                 filter=Q(product__invoice_lines__invoice__invoice_type=Invoice.RETURN_PURCHASE, 
                          product__invoice_lines__invoice__status=Invoice.POSTED,
                          product__invoice_lines__invoice__date__gte=start_date if start_date else '2000-01-01',
-                         product__invoice_lines__invoice__date__lte=end_date if end_date else '2100-01-01')
+                         product__invoice_lines__invoice__date__lte=end_date if end_date else '2100-01-01',
+                         **_ret_extra)
             )
         )
         
@@ -847,9 +905,10 @@ class DetailedPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin,
             invoice__invoice_type__in=[Invoice.PURCHASE, Invoice.RETURN_PURCHASE],
             invoice__status=Invoice.POSTED
         ).select_related('invoice', 'invoice__partner', 'product')
+        qs = filter_by_branch(qs, self.request, 'invoice__branch')
         
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         
         if start_date:
@@ -912,9 +971,10 @@ class PeriodPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, L
             invoice__invoice_type=Invoice.PURCHASE,
             invoice__status=Invoice.POSTED
         )
+        qs = filter_by_branch(qs, self.request, 'invoice__branch')
         
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         period_type = self.request.GET.get('period_type', 'daily')
         
         if start_date:
@@ -937,6 +997,7 @@ class PeriodPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, L
             invoice__invoice_type=Invoice.RETURN_PURCHASE,
             invoice__status=Invoice.POSTED
         )
+        returns_qs = filter_by_branch(returns_qs, self.request, 'invoice__branch')
         if start_date:
             returns_qs = returns_qs.filter(invoice__date__gte=start_date)
         if end_date:
@@ -1001,9 +1062,10 @@ class PurchasePriceVariationReportView(CsvExportMixin, CustomPermissionRequiredM
             invoice__invoice_type=Invoice.PURCHASE,
             invoice__status=Invoice.POSTED
         )
+        qs = filter_by_branch(qs, self.request, 'invoice__branch')
         
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         
         if start_date:
@@ -1019,11 +1081,12 @@ class PurchasePriceVariationReportView(CsvExportMixin, CustomPermissionRequiredM
 
         # We need the last purchase price per product
         # Subquery to get the unit_price of the most recent purchase line for a product
-        last_price_subquery = InvoiceLine.objects.filter(
+        last_price_base = filter_by_branch(InvoiceLine.objects.filter(
             product_id=OuterRef('product__id'),
             invoice__invoice_type=Invoice.PURCHASE,
             invoice__status=Invoice.POSTED
-        ).order_by('-invoice__date', '-id').values('unit_price')[:1]
+        ), self.request, 'invoice__branch')
+        last_price_subquery = last_price_base.order_by('-invoice__date', '-id').values('unit_price')[:1]
             
         aggregated = qs.values(
             'product__id', 
@@ -1080,7 +1143,7 @@ class SupplierBalancesReportView(CustomPermissionRequiredMixin, View):
 # ---------------------------------------------------------
 # Unified Partners Report (تقرير الشركاء الشامل - عملاء وموردين)
 # ---------------------------------------------------------
-class PartnersReportView(CustomPermissionRequiredMixin, TemplateView):
+class PartnersReportView(BranchRestrictedDenyMixin, CustomPermissionRequiredMixin, TemplateView):
     """
     تقرير الشركاء الشامل (عملاء وموردين):
     يعرض جميع الشركاء وأرصدتهم التفصيلية من مبيعات ومشتريات وسندات
@@ -1137,7 +1200,7 @@ class PartnersReportView(CustomPermissionRequiredMixin, TemplateView):
 # ---------------------------------------------------------
 # Supplier Debts Report (مستحقات الموردين الإجمالي)
 # ---------------------------------------------------------
-class SupplierDebtsReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView):
+class SupplierDebtsReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomPermissionRequiredMixin, ListView):
     permission_required = 'core.view_sales_reports'
     template_name = 'reports/supplier_debts.html'
     context_object_name = 'suppliers'
@@ -1214,9 +1277,10 @@ class UserPurchasesReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
             invoice_type__in=[Invoice.PURCHASE, Invoice.RETURN_PURCHASE],
             status=Invoice.POSTED
         )
+        qs = filter_by_branch(qs, self.request)
         
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         
         if start_date:
             qs = qs.filter(date__gte=start_date)
@@ -1279,9 +1343,10 @@ class PurchaseReturnsReportView(CsvExportMixin, CustomPermissionRequiredMixin, L
             invoice_type=Invoice.RETURN_PURCHASE,
             status=Invoice.POSTED
         ).select_related('partner', 'cashier')
+        qs = filter_by_branch(qs, self.request)
         
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         search_query = self.request.GET.get('search_query')
         
         if start_date:
@@ -1342,9 +1407,9 @@ class LowStockReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListView
         from django.db.models import OuterRef, Subquery, Value, DecimalField
         from django.db.models.functions import Coalesce
 
-        stock_subquery = InventoryBatch.objects.filter(
+        stock_subquery = filter_by_branch(InventoryBatch.objects.filter(
             product_id=OuterRef('pk')
-        ).values('product_id').annotate(
+        ), self.request, 'warehouse__branch').values('product_id').annotate(
             total=Sum('quantity_remaining')
         ).values('total')
 
@@ -1395,16 +1460,16 @@ class OverstockReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVie
         from django.db.models.functions import Coalesce
         from apps.tenant.inventory.models import SerialItem
 
-        stock_subquery = InventoryBatch.objects.filter(
+        stock_subquery = filter_by_branch(InventoryBatch.objects.filter(
             product_id=OuterRef('pk')
-        ).values('product_id').annotate(
+        ), self.request, 'warehouse__branch').values('product_id').annotate(
             total=Sum('quantity_remaining')
         ).values('total')
 
-        serial_subquery = SerialItem.objects.filter(
+        serial_subquery = filter_by_branch(SerialItem.objects.filter(
             product_id=OuterRef('pk'),
             is_sold=False
-        ).values('product_id').annotate(
+        ), self.request, 'warehouse__branch').values('product_id').annotate(
             total=Count('id')
         ).values('total')
 
@@ -1476,6 +1541,7 @@ class ProductExpiryReportView(CsvExportMixin, CustomPermissionRequiredMixin, Lis
             quantity_remaining__gt=0,
             expiry_date__isnull=False
         ).select_related('product', 'warehouse')
+        qs = filter_by_branch(qs, self.request, 'warehouse__branch')
 
         # Filter by days to expire
         days = self.request.GET.get('days', '30')
@@ -1531,17 +1597,17 @@ class InventoryValuationReportView(CsvExportMixin, CustomPermissionRequiredMixin
         from django.db.models.functions import Coalesce
 
         # 1. Total stock
-        stock_subquery = InventoryBatch.objects.filter(
+        stock_subquery = filter_by_branch(InventoryBatch.objects.filter(
             product_id=OuterRef('pk')
-        ).values('product_id').annotate(
+        ), self.request, 'warehouse__branch').values('product_id').annotate(
             total=Sum('quantity_remaining')
         ).values('total')
 
         # 2. Total cost value (sum of quantity_remaining * unit_cost)
         # Using ExpressionWrapper to calculate the sum properly
-        cost_subquery = InventoryBatch.objects.filter(
+        cost_subquery = filter_by_branch(InventoryBatch.objects.filter(
             product_id=OuterRef('pk')
-        ).values('product_id').annotate(
+        ), self.request, 'warehouse__branch').values('product_id').annotate(
             total_cost_val=Sum(ExpressionWrapper(F('quantity_remaining') * F('unit_cost'), output_field=DecimalField()))
         ).values('total_cost_val')
 
@@ -1608,13 +1674,15 @@ class WarehouseStockReportView(CsvExportMixin, CustomPermissionRequiredMixin, Li
     def get_queryset(self):
         from django.db.models import Sum, F, DecimalField, ExpressionWrapper
         qs = InventoryBatch.objects.filter(quantity_remaining__gt=0)
+        qs = filter_by_branch(qs, self.request, 'warehouse__branch')
         
         search_query = self.request.GET.get('search_query')
         if search_query:
             qs = qs.filter(Q(product__name__icontains=search_query) | Q(product__barcode__icontains=search_query))
             
         warehouse_id = self.request.GET.get('warehouse')
-        if warehouse_id:
+        if warehouse_id and str(warehouse_id).isdigit():
+            # Branch scope above still applies: a pinned user cannot escape it.
             qs = qs.filter(warehouse_id=warehouse_id)
             
         qs = qs.values(
@@ -1632,7 +1700,7 @@ class WarehouseStockReportView(CsvExportMixin, CustomPermissionRequiredMixin, Li
         context['search_query'] = self.request.GET.get('search_query', '')
         
         from apps.tenant.inventory.models import Warehouse
-        context['warehouses'] = Warehouse.objects.filter(is_active=True)
+        context['warehouses'] = filter_by_branch(Warehouse.objects.filter(is_active=True), self.request)
         context['selected_warehouse'] = self.request.GET.get('warehouse', '')
         
         return context
@@ -1671,10 +1739,11 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
         from datetime import datetime, timedelta
         
         qs = StockMovement.objects.all().select_related('product', 'warehouse')
+        qs = filter_by_branch(qs, self.request, 'warehouse__branch')
         
         # Date filters
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
         
         if date_from:
             qs = qs.filter(created_at__gte=date_from)
@@ -1686,7 +1755,7 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
                 pass
                 
         product_id = self.request.GET.get('product_id')
-        if product_id:
+        if product_id and str(product_id).isdigit():
             qs = qs.filter(product_id=product_id)
             
         movement_type = self.request.GET.get('movement_type')
@@ -1694,7 +1763,7 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
             qs = qs.filter(movement_type=movement_type)
             
         warehouse_id = self.request.GET.get('warehouse_id')
-        if warehouse_id:
+        if warehouse_id and str(warehouse_id).isdigit():
             qs = qs.filter(warehouse_id=warehouse_id)
             
         return qs.order_by('-created_at', '-id')
@@ -1709,18 +1778,18 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
         
         product_id = self.request.GET.get('product_id')
         warehouse_id = self.request.GET.get('warehouse_id')
-        date_from = self.request.GET.get('date_from')
+        date_from = _date_param(self.request, 'date_from')
         context['date_from'] = date_from or ''
         context['date_to'] = self.request.GET.get('date_to', '')
         context['selected_product'] = product_id or ''
         context['selected_warehouse'] = warehouse_id or ''
         context['selected_type'] = self.request.GET.get('movement_type', '')
         
-        if product_id:
+        if product_id and str(product_id).isdigit():
             context['products'] = Product.objects.filter(id=product_id).only('id', 'name', 'barcode')
         else:
             context['products'] = Product.objects.filter(is_active=True).only('id', 'name', 'barcode').order_by('name')[:30]
-        context['warehouses'] = Warehouse.objects.all()
+        context['warehouses'] = filter_by_branch(Warehouse.objects.all(), self.request)
         context['movement_types'] = StockMovement.MOVEMENT_TYPES
         
         opening_balance = Decimal('0')
@@ -1730,9 +1799,9 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
         if object_list:
             from apps.tenant.invoicing.models import InvoiceLine
             references = [obj.reference for obj in object_list if obj.reference]
-            inv_lines = InvoiceLine.objects.filter(
+            inv_lines = filter_by_branch(InvoiceLine.objects.filter(
                 invoice__invoice_number__in=references
-            ).select_related('invoice') if references else []
+            ), self.request, 'invoice__branch').select_related('invoice') if references else []
             
             inv_line_map = {}
             for il in inv_lines:
@@ -1756,9 +1825,13 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
                     obj.selling_price = getattr(obj.product, 'sale_price', Decimal('0')) or Decimal('0')
         
         if product_id:
-            product_id = int(product_id)
+            try:
+                product_id = int(product_id)
+            except (TypeError, ValueError):
+                product_id = 0
             prev_qs = StockMovement.objects.filter(product_id=product_id)
-            if warehouse_id:
+            prev_qs = filter_by_branch(prev_qs, self.request, 'warehouse__branch')
+            if warehouse_id and str(warehouse_id).isdigit():
                 prev_qs = prev_qs.filter(warehouse_id=warehouse_id)
             if date_from:
                 prev_qs = prev_qs.filter(created_at__lt=date_from)
@@ -1841,21 +1914,25 @@ class SlowMovingReportView(CsvExportMixin, CustomPermissionRequiredMixin, ListVi
         from django.utils import timezone
         import datetime
 
-        days_inactive = int(self.request.GET.get('days', 30))
+        try:
+            days_inactive = int(self.request.GET.get('days', 30))
+        except (TypeError, ValueError):
+            days_inactive = 30
+        days_inactive = max(0, min(days_inactive, 3650))
         threshold_date = timezone.now().date() - datetime.timedelta(days=days_inactive)
 
         # Current stock subquery
-        stock_subquery = InventoryBatch.objects.filter(
+        stock_subquery = filter_by_branch(InventoryBatch.objects.filter(
             product_id=OuterRef('pk')
-        ).values('product_id').annotate(
+        ), self.request, 'warehouse__branch').values('product_id').annotate(
             total=Sum('quantity_remaining')
         ).values('total')
 
         # Last sale subquery
-        last_sale_subquery = StockMovement.objects.filter(
+        last_sale_subquery = filter_by_branch(StockMovement.objects.filter(
             product_id=OuterRef('pk'),
             movement_type='OUT'  # OUT is typically a sale
-        ).values('product_id').annotate(
+        ), self.request, 'warehouse__branch').values('product_id').annotate(
             latest=Max('created_at')
         ).values('latest')
 
@@ -1921,7 +1998,7 @@ def _get_operating_expense_account_ids():
     return expense_account_ids - cogs_account_ids
 
 
-class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
+class IncomeStatementReportView(BranchRestrictedDenyMixin, CustomPermissionRequiredMixin, TemplateView):
     # Depending on your permissions, you can use something appropriate
     permission_required = 'core.view_accounting_reports'
     template_name = 'reports/accounting_income_statement.html'
@@ -1934,21 +2011,29 @@ class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
         from django.utils import timezone
         import datetime
 
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
         
         today = timezone.now().date()
+        if date_from:
+            try:
+                date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
+            except ValueError:
+                messages.warning(self.request, 'تاريخ البداية غير صالح، تم استخدام القيمة الافتراضية.')
+                date_from = None
         if not date_from:
             date_from_obj = today.replace(day=1)
             date_from = date_from_obj.strftime('%Y-%m-%d')
-        else:
-            date_from_obj = datetime.datetime.strptime(date_from, '%Y-%m-%d').date()
-            
+
+        if date_to:
+            try:
+                date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
+            except ValueError:
+                messages.warning(self.request, 'تاريخ النهاية غير صالح، تم استخدام القيمة الافتراضية.')
+                date_to = None
         if not date_to:
             date_to_obj = today
             date_to = date_to_obj.strftime('%Y-%m-%d')
-        else:
-            date_to_obj = datetime.datetime.strptime(date_to, '%Y-%m-%d').date()
 
         # 1. Sales Revenue
         sales_invoices = Invoice.objects.filter(
@@ -1956,6 +2041,7 @@ class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
             status=Invoice.POSTED,
             date__range=[date_from_obj, date_to_obj]
         )
+        sales_invoices = filter_by_branch(sales_invoices, self.request)
         sales_data = sales_invoices.aggregate(
             total_subtotal=Sum('subtotal'),
             total_discount=Sum('discount_amount')
@@ -1970,6 +2056,7 @@ class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
             status=Invoice.POSTED,
             date__range=[date_from_obj, date_to_obj]
         )
+        return_invoices = filter_by_branch(return_invoices, self.request)
         returns_data = return_invoices.aggregate(
             total_subtotal=Sum('subtotal'),
             total_discount=Sum('discount_amount')
@@ -1982,17 +2069,17 @@ class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
         net_revenue = net_sales - net_returns
 
         # 3. Cost of Goods Sold (COGS)
-        sales_cogs = InvoiceLine.objects.filter(
+        sales_cogs = filter_by_branch(InvoiceLine.objects.filter(
             invoice__invoice_type=Invoice.SALE,
             invoice__status=Invoice.POSTED,
             invoice__date__range=[date_from_obj, date_to_obj]
-        ).aggregate(total_cogs=Sum('cogs_amount'))['total_cogs'] or 0
+        ), self.request, 'invoice__branch').aggregate(total_cogs=Sum('cogs_amount'))['total_cogs'] or 0
         
-        returns_cogs = InvoiceLine.objects.filter(
+        returns_cogs = filter_by_branch(InvoiceLine.objects.filter(
             invoice__invoice_type=Invoice.RETURN_SALE,
             invoice__status=Invoice.POSTED,
             invoice__date__range=[date_from_obj, date_to_obj]
-        ).aggregate(total_cogs=Sum('cogs_amount'))['total_cogs'] or 0
+        ), self.request, 'invoice__branch').aggregate(total_cogs=Sum('cogs_amount'))['total_cogs'] or 0
         
         net_cogs = sales_cogs - returns_cogs
 
@@ -2041,7 +2128,7 @@ class IncomeStatementReportView(CustomPermissionRequiredMixin, TemplateView):
         return context
 
 
-class IncomeStatementDetailView(CustomPermissionRequiredMixin, TemplateView):
+class IncomeStatementDetailView(BranchRestrictedDenyMixin, CustomPermissionRequiredMixin, TemplateView):
     """
     تقرير تفصيلي لحركات وبنود قائمة الدخل (Drill-Down):
     يعرض الفواتير والقيود والعمليات المكونة لأي رقم في قائمة الدخل.
@@ -2063,8 +2150,8 @@ class IncomeStatementDetailView(CustomPermissionRequiredMixin, TemplateView):
 
         detail_type = self.request.GET.get('type', 'gross_sales')
         account_code = self.request.GET.get('account')
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
 
         today = timezone.now().date()
         if not date_from:
@@ -2109,6 +2196,7 @@ class IncomeStatementDetailView(CustomPermissionRequiredMixin, TemplateView):
                 status=Invoice.POSTED,
                 date__range=[date_from_obj, date_to_obj]
             ).select_related('partner', 'branch').order_by('-date', '-id')
+            qs = filter_by_branch(qs, self.request)
 
             if detail_type == 'sales_discount':
                 title = "تفاصيل خصومات المبيعات"
@@ -2134,6 +2222,7 @@ class IncomeStatementDetailView(CustomPermissionRequiredMixin, TemplateView):
                 status=Invoice.POSTED,
                 date__range=[date_from_obj, date_to_obj]
             ).select_related('partner', 'branch').order_by('-date', '-id')
+            qs = filter_by_branch(qs, self.request)
             total_amount = qs.aggregate(
                 t=Coalesce(Sum(F('subtotal') - Coalesce(F('discount_amount'), Value(0), output_field=DecimalField())), Value(0), output_field=DecimalField())
             )['t']
@@ -2146,6 +2235,7 @@ class IncomeStatementDetailView(CustomPermissionRequiredMixin, TemplateView):
                 status=Invoice.POSTED,
                 date__range=[date_from_obj, date_to_obj]
             ).select_related('partner', 'branch').order_by('-date', '-id')
+            qs = filter_by_branch(qs, self.request)
             net_expr = F('subtotal') - Coalesce(F('discount_amount'), Value(0), output_field=DecimalField())
             total_amount = qs.aggregate(
                 t=Coalesce(Sum(Case(When(invoice_type=Invoice.RETURN_SALE, then=-net_expr), default=net_expr, output_field=DecimalField())), Value(0), output_field=DecimalField())
@@ -2159,6 +2249,7 @@ class IncomeStatementDetailView(CustomPermissionRequiredMixin, TemplateView):
                 invoice__status=Invoice.POSTED,
                 invoice__date__range=[date_from_obj, date_to_obj]
             ).select_related('invoice', 'product', 'invoice__partner', 'invoice__branch').order_by('-invoice__date', '-id')
+            qs = filter_by_branch(qs, self.request, 'invoice__branch')
             total_amount = qs.aggregate(
                 t=Coalesce(Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then=-Coalesce(F('cogs_amount'), Value(0), output_field=DecimalField())), default=Coalesce(F('cogs_amount'), Value(0), output_field=DecimalField()), output_field=DecimalField())), Value(0), output_field=DecimalField())
             )['t']
@@ -2281,7 +2372,7 @@ class IncomeStatementDetailView(CustomPermissionRequiredMixin, TemplateView):
 
 
 
-class ExpenseReportView(CustomPermissionRequiredMixin, TemplateView):
+class ExpenseReportView(BranchRestrictedDenyMixin, CustomPermissionRequiredMixin, TemplateView):
     permission_required = 'core.view_accounting_reports'
     template_name = 'reports/accounting_expenses.html'
 
@@ -2292,8 +2383,8 @@ class ExpenseReportView(CustomPermissionRequiredMixin, TemplateView):
         import datetime
         from decimal import Decimal
 
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
         
         today = timezone.now().date()
         if not date_from:
@@ -2377,13 +2468,13 @@ class ExpenseReportView(CustomPermissionRequiredMixin, TemplateView):
             })
 
         # Total Expense & Grouping calculated in database via SQL aggregation
-        total_expenses = queryset.aggregate(
+        total_expenses = expense_items.aggregate(
             total=Coalesce(Sum(F('debit') - F('credit')), Decimal('0.00'))
         )['total']
 
         expenses_by_account = [
             {'expense_account__code': row['account__code'], 'expense_account__name': row['account__name'], 'total_amount': row['total_amount']}
-            for row in queryset.values('account__code', 'account__name').annotate(
+            for row in expense_items.order_by().values('account__code', 'account__name').annotate(
                 total_amount=Coalesce(Sum(F('debit') - F('credit')), Decimal('0.00'))
             ).filter(total_amount__gt=0).order_by('-total_amount')
         ]
@@ -2412,9 +2503,14 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
         import datetime
         from decimal import Decimal
 
-        treasuries = list(Treasury.objects.all().select_related('branch'))
-        bank_accounts = list(BankAccount.objects.all())
-        ewallets = list(EWallet.objects.all())
+        treasuries = list(_scope_treasuries(Treasury.objects.all(), self.request).select_related('branch'))
+        if is_branch_restricted(self.request):
+            # Bank accounts / e-wallets are company-level (no branch): hidden from branch staff.
+            bank_accounts = []
+            ewallets = []
+        else:
+            bank_accounts = list(BankAccount.objects.all())
+            ewallets = list(EWallet.objects.all())
 
         # Auto-healing ensuring GL accounts exist
         for t in treasuries:
@@ -2426,8 +2522,8 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
 
         selected_account_val = self.request.GET.get('account') or self.request.GET.get('treasury')
         
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
         
         today = timezone.now().date()
         if not date_from:
@@ -2569,9 +2665,14 @@ class LiquidityPositionReportView(CustomPermissionRequiredMixin, TemplateView):
         from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
         from decimal import Decimal
 
-        treasuries = list(Treasury.objects.all().select_related('branch'))
-        bank_accounts = list(BankAccount.objects.all())
-        ewallets = list(EWallet.objects.all())
+        treasuries = list(_scope_treasuries(Treasury.objects.all(), self.request).select_related('branch'))
+        if is_branch_restricted(self.request):
+            # Bank accounts / e-wallets are company-level (no branch): hidden from branch staff.
+            bank_accounts = []
+            ewallets = []
+        else:
+            bank_accounts = list(BankAccount.objects.all())
+            ewallets = list(EWallet.objects.all())
 
         for t in treasuries:
             t.ensure_account()
@@ -2645,8 +2746,8 @@ class CashVouchersReportView(CustomPermissionRequiredMixin, TemplateView):
         import datetime
         from decimal import Decimal
 
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
         voucher_type = self.request.GET.get('voucher_type')
         payment_method = self.request.GET.get('payment_method')
         account_filter = self.request.GET.get('account')
@@ -2675,6 +2776,12 @@ class CashVouchersReportView(CustomPermissionRequiredMixin, TemplateView):
         queryset = Voucher.objects.filter(
             date__range=[date_from_obj, date_to_obj]
         ).select_related('partner', 'account', 'treasury', 'bank_account', 'ewallet').order_by('-date', '-id')
+        _branch = get_branch_scope(self.request)
+        if _branch is not None:
+            # Voucher.branch may be unset on legacy rows: fall back to the treasury's branch.
+            queryset = queryset.filter(
+                models.Q(branch=_branch) | models.Q(branch__isnull=True, treasury__branch=_branch)
+            )
 
         if voucher_type:
             queryset = queryset.filter(voucher_type=voucher_type)
@@ -2703,9 +2810,13 @@ class CashVouchersReportView(CustomPermissionRequiredMixin, TemplateView):
 
         vouchers = list(queryset)
 
-        treasuries = Treasury.objects.all()
-        bank_accounts = BankAccount.objects.all()
-        ewallets = EWallet.objects.all()
+        treasuries = _scope_treasuries(Treasury.objects.all(), self.request)
+        if is_branch_restricted(self.request):
+            bank_accounts = BankAccount.objects.none()
+            ewallets = EWallet.objects.none()
+        else:
+            bank_accounts = BankAccount.objects.all()
+            ewallets = EWallet.objects.all()
 
         context.update({
             'title': 'تقرير المقبوضات والمدفوعات (سندات النقدية)',
@@ -2740,8 +2851,8 @@ class InternalTransfersReportView(CustomPermissionRequiredMixin, TemplateView):
         import datetime
         from decimal import Decimal
 
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
         status = self.request.GET.get('status')
 
         today = timezone.now().date()
@@ -2772,6 +2883,10 @@ class InternalTransfersReportView(CustomPermissionRequiredMixin, TemplateView):
             'to_treasury', 'to_bank_account', 'to_ewallet',
             'created_by'
         ).order_by('-date', '-id')
+
+        _branch = get_branch_scope(self.request)
+        if _branch is not None:
+            queryset = queryset.filter(models.Q(from_treasury__branch=_branch) | models.Q(to_treasury__branch=_branch))
 
         if status:
             queryset = queryset.filter(status=status)
@@ -2980,57 +3095,100 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
     permission_required = 'core.view_sales_reports'
     template_name = 'reports/sales_shifts.html'
 
+    DEFAULT_RANGE_DAYS = 31
+    MAX_RANGE_DAYS = 92
+    SESSIONS_PER_PAGE = 50
+    EXPORT_MAX_SESSIONS = 500
+
+    def _parse_date(self, value, label):
+        import datetime
+        if not value:
+            return None
+        try:
+            return datetime.datetime.strptime(value, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            messages.warning(self.request, f'{label} غير صالح، تم استخدام القيمة الافتراضية.')
+            return None
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         from apps.tenant.invoicing.models import POSSession
         from django.contrib.auth import get_user_model
+        from django.core.paginator import Paginator
         from django.db.models import Q
         from django.utils import timezone
         import datetime
         from decimal import Decimal
 
         User = get_user_model()
-        users = User.objects.all()
+        # auth_user is global across tenants: only list users that belong to
+        # this tenant (have an Employee profile), and only the branch's staff
+        # for branch-scoped viewers.
+        users = User.objects.filter(employee_profile__isnull=False)
+        branch = get_branch_scope(self.request)
+        if branch is not None:
+            users = users.filter(employee_profile__branch=branch)
+        users = users.order_by('first_name', 'username')
 
-        date_from_param = self.request.GET.get('date_from')
-        date_to_param = self.request.GET.get('date_to')
-        selected_user_id = self.request.GET.get('user')
+        selected_user_id = self.request.GET.get('user') or ''
+        if selected_user_id and not str(selected_user_id).isdigit():
+            selected_user_id = ''
 
         today = timezone.now().date()
-        if not date_from_param:
-            date_from_obj = today - datetime.timedelta(days=90)
-            date_from = date_from_obj.strftime('%Y-%m-%d')
-        else:
-            date_from_obj = datetime.datetime.strptime(date_from_param, '%Y-%m-%d').date()
-            date_from = date_from_param
-
-        if not date_to_param:
-            date_to_obj = today
-            date_to = date_to_obj.strftime('%Y-%m-%d')
-        else:
-            date_to_obj = datetime.datetime.strptime(date_to_param, '%Y-%m-%d').date()
-            date_to = date_to_param
+        date_to_obj = self._parse_date(self.request.GET.get('date_to'), 'تاريخ النهاية') or today
+        date_from_obj = self._parse_date(self.request.GET.get('date_from'), 'تاريخ البداية')             or (date_to_obj - datetime.timedelta(days=self.DEFAULT_RANGE_DAYS))
+        if date_from_obj > date_to_obj:
+            date_from_obj, date_to_obj = date_to_obj, date_from_obj
+        if (date_to_obj - date_from_obj).days > self.MAX_RANGE_DAYS:
+            date_from_obj = date_to_obj - datetime.timedelta(days=self.MAX_RANGE_DAYS)
+            messages.warning(
+                self.request,
+                f'أقصى مدة مسموح بها للتقرير هي {self.MAX_RANGE_DAYS} يوماً، تم ضبط تاريخ البداية تلقائياً.'
+            )
+        date_from = date_from_obj.strftime('%Y-%m-%d')
+        date_to = date_to_obj.strftime('%Y-%m-%d')
 
         sessions_qs = POSSession.objects.filter(
             Q(start_time__date__gte=date_from_obj, start_time__date__lte=date_to_obj) |
             Q(end_time__date__gte=date_from_obj, end_time__date__lte=date_to_obj) |
             Q(status=POSSession.OPEN)
         ).select_related('user', 'branch', 'treasury').order_by('-start_time').distinct()
+        sessions_qs = filter_by_branch(sessions_qs, self.request)
 
         if selected_user_id:
             sessions_qs = sessions_qs.filter(user_id=selected_user_id)
 
-        sessions_data = []
+        exporting = self.request.GET.get('export') == 'excel'
+        if exporting:
+            page_obj = None
+            page_sessions = list(sessions_qs[:self.EXPORT_MAX_SESSIONS])
+        else:
+            paginator = Paginator(sessions_qs, self.SESSIONS_PER_PAGE)
+            page_obj = paginator.get_page(self.request.GET.get('page', 1))
+            page_sessions = list(page_obj.object_list)
+
+        sessions_data = [get_pos_session_details(session) for session in page_sessions]
+
+        # Grand totals over the whole filtered range (not just the current page).
+        # Closed shifts use the figures stored when the shift was closed (one
+        # aggregate query); open shifts (few) are computed live.
         total_expected = Decimal('0')
         total_actual = Decimal('0')
         total_diff = Decimal('0')
-
-        for session in sessions_qs:
-            dt = get_pos_session_details(session)
+        closed_agg = sessions_qs.filter(status=POSSession.CLOSED).order_by().aggregate(
+            exp=Coalesce(Sum('closing_balance_expected'), Decimal('0')),
+            act=Coalesce(Sum('closing_balance_actual'), Decimal('0')),
+            diff=Coalesce(Sum('difference'), Decimal('0')),
+        )
+        total_expected += closed_agg['exp']
+        total_actual += closed_agg['act']
+        total_diff += closed_agg['diff']
+        computed = {dt['session'].id: dt for dt in sessions_data}
+        for session in sessions_qs.filter(status=POSSession.OPEN):
+            dt = computed.get(session.id) or get_pos_session_details(session)
             total_expected += dt['expected_balance']
             total_actual += dt['actual_balance']
             total_diff += dt['difference']
-            sessions_data.append(dt)
 
         context.update({
             'date_from': date_from,
@@ -3038,6 +3196,8 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
             'users': users,
             'selected_user_id': selected_user_id,
             'sessions_data': sessions_data,
+            'page_obj': page_obj,
+            'is_paginated': bool(page_obj and page_obj.has_other_pages()),
             'total_expected': total_expected,
             'total_actual': total_actual,
             'total_diff': total_diff,
@@ -3175,6 +3335,10 @@ class ShiftDetailView(CustomPermissionRequiredMixin, DetailView):
     template_name = 'reports/pos_session_detail.html'
     context_object_name = 'session_obj'
 
+    def get_queryset(self):
+        # Non-admins may only open shifts of their own branch (others -> 404).
+        return filter_by_branch(POSSession.objects.all(), self.request)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         details = get_pos_session_details(self.object)
@@ -3193,7 +3357,7 @@ def shift_detail_api(request, pk):
     from django.shortcuts import get_object_or_404
     from apps.tenant.invoicing.models import POSSession
 
-    session = get_object_or_404(POSSession, pk=pk)
+    session = get_object_or_404(filter_by_branch(POSSession.objects.all(), request), pk=pk)
     dt = get_pos_session_details(session)
 
     invoices_json = [
@@ -3254,7 +3418,7 @@ def shift_detail_api(request, pk):
     }
     return JsonResponse(data)
 
-class TrialBalanceReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
+class TrialBalanceReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
     permission_required = 'core.view_accounting_reports'
     template_name = 'reports/trial_balance.html'
     csv_filename = "trial_balance_report.csv"
@@ -3275,8 +3439,8 @@ class TrialBalanceReportView(CsvExportMixin, CustomPermissionRequiredMixin, Temp
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
 
         from apps.tenant.accounting.models import Account, JournalItem
         from django.db.models import Sum
@@ -3338,7 +3502,7 @@ class TrialBalanceReportView(CsvExportMixin, CustomPermissionRequiredMixin, Temp
 
         return context
 
-class GeneralLedgerReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
+class GeneralLedgerReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
     permission_required = 'core.view_accounting_reports'
     template_name = 'reports/general_ledger.html'
     csv_filename = "general_ledger_report.csv"
@@ -3363,8 +3527,8 @@ class GeneralLedgerReportView(CsvExportMixin, CustomPermissionRequiredMixin, Tem
         from django.db.models import Sum
 
         account_id = self.request.GET.get('account_id')
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
 
         context['accounts_list'] = Account.objects.all().order_by('code')
         context['start_date'] = start_date
@@ -3446,8 +3610,8 @@ class TaxReportView(CustomPermissionRequiredMixin, TemplateView):
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
 
         from apps.tenant.invoicing.models import Invoice
         from apps.tenant.accounting.models import Expense
@@ -3459,6 +3623,11 @@ class TaxReportView(CustomPermissionRequiredMixin, TemplateView):
         purchases = Invoice.objects.filter(invoice_type=Invoice.PURCHASE, status=Invoice.POSTED)
         returns_purchases = Invoice.objects.filter(invoice_type=Invoice.RETURN_PURCHASE, status=Invoice.POSTED)
         expenses = Expense.objects.filter(status=Expense.POSTED)
+        sales = filter_by_branch(sales, self.request)
+        returns_sales = filter_by_branch(returns_sales, self.request)
+        purchases = filter_by_branch(purchases, self.request)
+        returns_purchases = filter_by_branch(returns_purchases, self.request)
+        expenses = filter_by_branch(expenses, self.request)
 
         if start_date:
             sales = sales.filter(date__gte=start_date)
@@ -3536,10 +3705,11 @@ class EInvoicingReportView(CustomPermissionRequiredMixin, TemplateView):
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        start_date = self.request.GET.get('start_date')
-        end_date = self.request.GET.get('end_date')
+        start_date = _date_param(self.request, 'start_date')
+        end_date = _date_param(self.request, 'end_date')
         
         logs = EInvoiceLog.objects.filter(status='VALID').select_related('invoice')
+        logs = filter_by_branch(logs, self.request, 'invoice__branch')
         
         if start_date:
             logs = logs.filter(invoice__date__gte=start_date)
@@ -3584,7 +3754,7 @@ def export_shift_detail_excel(request, pk):
     from django.shortcuts import get_object_or_404
     from apps.tenant.invoicing.models import POSSession
 
-    session = get_object_or_404(POSSession, pk=pk)
+    session = get_object_or_404(filter_by_branch(POSSession.objects.all(), request), pk=pk)
     dt = get_pos_session_details(session)
 
     wb = openpyxl.Workbook()
@@ -3952,11 +4122,12 @@ class FixedAssetReportView(CsvExportMixin, CustomPermissionRequiredMixin, Templa
         from decimal import Decimal
 
         qs = FixedAsset.objects.all().select_related('branch', 'asset_account').order_by('-purchase_date', '-id')
+        qs = filter_by_branch(qs, self.request)
 
         category = self.request.GET.get('category')
         status = self.request.GET.get('status')
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
         q = self.request.GET.get('q')
 
         if category:
@@ -4089,11 +4260,12 @@ class LoanReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView
         from decimal import Decimal
 
         qs = Loan.objects.all().select_related('loan_account', 'interest_expense_account').order_by('-start_date', '-id')
+        qs = filter_by_branch(qs, self.request)
 
         loan_type = self.request.GET.get('loan_type')
         status = self.request.GET.get('status')
-        date_from = self.request.GET.get('date_from')
-        date_to = self.request.GET.get('date_to')
+        date_from = _date_param(self.request, 'date_from')
+        date_to = _date_param(self.request, 'date_to')
         q = self.request.GET.get('q')
 
         if loan_type:

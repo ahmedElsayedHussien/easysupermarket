@@ -79,7 +79,7 @@ def confirm_invoice(invoice_id: int):
         )
 
     # --- Validate lines exist ---
-    lines = list(invoice.lines.select_related('product').all())
+    lines = list(invoice.lines.select_related('product', 'uom', 'original_line', 'original_line__uom').all())
     if not lines:
         raise ValueError(
             f'الفاتورة "{invoice.invoice_number}" لا تحتوي على بنود.'
@@ -115,7 +115,10 @@ def _process_sale_invoice(invoice, lines):
     from apps.tenant.services.journal_service import post_sale_invoice
     from apps.tenant.invoicing.models import Invoice
 
+    from apps.tenant.inventory.models import SerialItem
+
     total_cogs = Decimal('0')
+    used_serials = set()
 
     from apps.tenant.core.models import SystemSetting
     system_setting = SystemSetting.get_settings()
@@ -143,18 +146,36 @@ def _process_sale_invoice(invoice, lines):
             continue
 
         if line.product.product_type == 'SERIALIZED':
-            if not line.serial_item:
+            if not line.serial_item_id:
                 raise ValueError(f'يجب تحديد السيريال للمنتج "{line.product.name}"')
-            
+            # Lock and validate: same product, still in stock, in this invoice's warehouse
+            serial = SerialItem.objects.select_for_update().filter(id=line.serial_item_id).first()
+            if (
+                serial is None
+                or serial.product_id != line.product_id
+                or serial.is_sold
+                or serial.warehouse_id != invoice.warehouse_id
+            ):
+                raise ValueError(
+                    f'السيريال المحدد للمنتج "{line.product.name}" غير متاح في المستودع '
+                    f'"{invoice.warehouse.name}" (مباع مسبقاً أو يخص منتجاً/مستودعاً آخر).'
+                )
+            if line.quantity != 1:
+                raise ValueError(f'المنتج "{line.product.name}" مسلسل؛ كمية السطر يجب أن تكون 1.')
+            if serial.id in used_serials:
+                raise ValueError(f'السيريال نفسه مكرر في الفاتورة للمنتج "{line.product.name}".')
+            used_serials.add(serial.id)
+
             if invoice.invoice_type == Invoice.RETURN_PURCHASE:
-                line.serial_item.is_returned = True
-                line.serial_item.warehouse = None
+                serial.is_returned = True
+                serial.warehouse = None
             else:
-                line.serial_item.is_sold = True
-                line.serial_item.warehouse = None
-                
-            line.serial_item.save()
-            line.cogs_amount = line.serial_item.actual_cost
+                serial.is_sold = True
+                serial.warehouse = None
+
+            serial.save()
+            line.serial_item = serial
+            line.cogs_amount = serial.actual_cost
             line.save(update_fields=['cogs_amount'])
             total_cogs += line.cogs_amount
             continue
@@ -163,14 +184,22 @@ def _process_sale_invoice(invoice, lines):
         is_return_purchase = (invoice.invoice_type == Invoice.RETURN_PURCHASE)
         notes_text = f'مرتجع مشتريات - فاتورة {invoice.invoice_number}' if is_return_purchase else f'بيع - فاتورة {invoice.invoice_number}'
         m_type = 'RETURN_OUT' if is_return_purchase else 'OUT'
-        consumptions = consume_fifo_batches(
-            product=line.product,
-            warehouse=invoice.warehouse,
-            quantity_needed=base_quantity,
-            reference=invoice.invoice_number,
-            notes=notes_text,
-            movement_type=m_type,
-        )
+        consumptions = []
+        if is_return_purchase and getattr(line, 'original_line_id', None):
+            # Return the goods from the batch(es) received by the original purchase line first
+            consumptions, base_quantity = _consume_from_source_batches(
+                line.product, invoice.warehouse, line.original_line, base_quantity,
+                reference=invoice.invoice_number, notes=notes_text, movement_type=m_type,
+            )
+        if base_quantity > Decimal('0'):
+            consumptions += consume_fifo_batches(
+                product=line.product,
+                warehouse=invoice.warehouse,
+                quantity_needed=base_quantity,
+                reference=invoice.invoice_number,
+                notes=notes_text,
+                movement_type=m_type,
+            )
 
         # Sum COGS from all consumed batches for this line
         line_cogs = sum(c['total_cost'] for c in consumptions)
@@ -194,6 +223,49 @@ def _process_sale_invoice(invoice, lines):
     invoice.save(update_fields=['journal_entry', 'status', 'updated_at'])
 
 
+def _consume_from_source_batches(product, warehouse, original_line, quantity, reference='', notes='', movement_type='RETURN_OUT'):
+    """
+    Consumes up to `quantity` from the batches created by `original_line` (the purchase
+    line being returned). Returns (consumptions, quantity_still_needed).
+    """
+    from apps.tenant.inventory.models import InventoryBatch, StockMovement
+
+    batches = list(
+        InventoryBatch.objects.select_for_update().filter(
+            source_invoice_line=original_line,
+            product=product,
+            warehouse=warehouse,
+            quantity_remaining__gt=Decimal('0'),
+        ).order_by('created_at', 'id')
+    )
+    consumptions = []
+    remaining = quantity
+    for b in batches:
+        if remaining <= Decimal('0'):
+            break
+        take = min(b.quantity_remaining, remaining)
+        b.quantity_remaining -= take
+        b.save(update_fields=['quantity_remaining', 'updated_at'])
+        StockMovement.objects.create(
+            product=product,
+            warehouse=warehouse,
+            batch=b,
+            movement_type=movement_type,
+            quantity=take,
+            unit_cost=b.unit_cost,
+            reference=reference,
+            notes=notes or f'مرتجع من الدفعة الأصلية #{b.id}',
+        )
+        consumptions.append({
+            'batch': b,
+            'quantity_consumed': take,
+            'unit_cost': b.unit_cost,
+            'total_cost': (take * b.unit_cost).quantize(Decimal('0.0001')),
+        })
+        remaining -= take
+    return consumptions, remaining
+
+
 def _process_purchase_invoice(invoice, lines):
     """
     Internal handler for PURCHASE invoice confirmation.
@@ -215,24 +287,26 @@ def _process_purchase_invoice(invoice, lines):
                 line.serial_item.is_sold = False
                 line.serial_item.save()
             continue
-            
+
         conversion_factor = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
         base_quantity = line.quantity * conversion_factor
         is_return_sale = (invoice.invoice_type == Invoice.RETURN_SALE)
         m_type = 'RETURN_IN' if is_return_sale else 'IN'
-        
+
         # For RETURN_SALE, use the exact original line's unit COGS if available from parent invoice, else fallback to average_cost / last_purchase_price
         if is_return_sale:
             unit_cost = line.product.get_average_cost(invoice.warehouse) or line.product.last_purchase_price
             if getattr(invoice, 'parent_invoice', None):
-                orig_line = invoice.parent_invoice.lines.filter(product=line.product).first()
+                orig_line = line.original_line if getattr(line, 'original_line_id', None) else None
+                if orig_line is None:
+                    orig_line = invoice.parent_invoice.lines.filter(product=line.product).first()
                 if orig_line and orig_line.quantity > 0 and orig_line.cogs_amount > 0:
                     orig_conv = orig_line.uom.conversion_factor if getattr(orig_line, 'uom', None) else Decimal('1')
                     orig_base_qty = orig_line.quantity * orig_conv
                     unit_cost = (orig_line.cogs_amount / orig_base_qty).quantize(Decimal('0.0001'))
         else:
             unit_cost = (line.subtotal / base_quantity).quantize(Decimal('0.0001')) if base_quantity > 0 else (line.unit_price / conversion_factor)
-            
+
         add_inventory_batch(
             product=line.product,
             warehouse=invoice.warehouse,
@@ -241,6 +315,8 @@ def _process_purchase_invoice(invoice, lines):
             invoice_line=line,
             reference=invoice.invoice_number,
             movement_type=m_type,
+            # Only a real purchase updates last_purchase_price (not a customer return)
+            update_last_purchase_price=not is_return_sale,
         )
 
         if invoice.invoice_type == Invoice.RETURN_SALE:
@@ -356,7 +432,7 @@ def update_invoice_payment_method(
             old_je.delete()
             invoice.journal_entry = None
             invoice.save(update_fields=['journal_entry'])
-            
+
         from apps.tenant.services.journal_service import post_sale_invoice, post_purchase_invoice
         if invoice.invoice_type in (Invoice.SALE, Invoice.RETURN_SALE):
             je = post_sale_invoice(invoice)
@@ -444,7 +520,9 @@ def cancel_invoice(invoice_id: int):
                     quantity=base_qty,
                     unit_cost=unit_cost,
                     invoice_line=line,
-                    reference=f'إلغاء فاتورة مبيعات {invoice.invoice_number}'
+                    reference=f'إلغاء فاتورة مبيعات {invoice.invoice_number}',
+                    movement_type='RETURN_IN',
+                    update_last_purchase_price=False,
                 )
 
         elif invoice.invoice_type == Invoice.PURCHASE:
@@ -520,6 +598,18 @@ def cancel_invoice(invoice_id: int):
                 if line.product.product_type == 'SERVICE':
                     continue
 
+                if line.product.product_type == 'SERIALIZED' and line.serial_item:
+                    from apps.tenant.inventory.models import SerialItem
+                    serial = SerialItem.objects.select_for_update().get(pk=line.serial_item_id)
+                    if serial.is_sold or serial.warehouse_id != invoice.warehouse_id:
+                        raise ValueError(
+                            f'لا يمكن إلغاء المرتجع: السيريال الخاص بالمنتج "{line.product.name}" لم يعد في المستودع.'
+                        )
+                    serial.is_sold = True
+                    serial.warehouse = None
+                    serial.save(update_fields=['is_sold', 'warehouse', 'updated_at'])
+                    continue
+
                 conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
                 base_qty = line.quantity * conv
                 consume_fifo_batches(
@@ -534,6 +624,13 @@ def cancel_invoice(invoice_id: int):
                 if line.product.product_type == 'SERVICE':
                     continue
 
+                if line.product.product_type == 'SERIALIZED' and line.serial_item:
+                    line.serial_item.is_returned = False
+                    line.serial_item.is_sold = False
+                    line.serial_item.warehouse = invoice.warehouse
+                    line.serial_item.save(update_fields=['is_returned', 'is_sold', 'warehouse', 'updated_at'])
+                    continue
+
                 conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
                 base_qty = line.quantity * conv
                 unit_cost = line.product.get_average_cost(invoice.warehouse) or line.product.last_purchase_price
@@ -543,13 +640,23 @@ def cancel_invoice(invoice_id: int):
                     quantity=base_qty,
                     unit_cost=unit_cost,
                     invoice_line=line,
-                    reference=f'إلغاء مرتجع مشتريات {invoice.invoice_number}'
+                    reference=f'إلغاء مرتجع مشتريات {invoice.invoice_number}',
+                    movement_type='RETURN_IN',
+                    update_last_purchase_price=False,
                 )
 
     # Restore returned_quantity on parent invoice lines if this was a return invoice
     if invoice.parent_invoice and invoice.invoice_type in (Invoice.RETURN_SALE, Invoice.RETURN_PURCHASE):
+        from apps.tenant.invoicing.models import InvoiceLine
         for rline in invoice.lines.all():
-            pline = invoice.parent_invoice.lines.filter(product=rline.product).first()
+            pline = None
+            if rline.original_line_id:
+                pline = InvoiceLine.objects.select_for_update().filter(
+                    id=rline.original_line_id, invoice=invoice.parent_invoice
+                ).first()
+            if pline is None:
+                # Legacy return lines (created before original_line existed): old behaviour
+                pline = invoice.parent_invoice.lines.filter(product=rline.product).first()
             if pline:
                 pline.returned_quantity = max(Decimal('0'), pline.returned_quantity - rline.quantity)
                 pline.save(update_fields=['returned_quantity'])

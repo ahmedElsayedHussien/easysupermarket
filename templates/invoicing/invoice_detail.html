@@ -11,13 +11,13 @@
         <button class="btn btn-neon-red" onclick="confirmInvoice({{ invoice.id }})">ترحيل الفاتورة</button>
         {% endif %}
         {% if invoice.status != 'CANCELLED' and not is_fully_returned and not has_returns %}
-            {% if request.user.is_superuser or request.user.is_staff or request.user.employee_profile.is_admin %}
+            {% if is_admin %}
             <button class="btn" onclick="openEditPaymentModal()" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; font-weight: bold; border: none; box-shadow: 0 4px 10px rgba(255, 115, 0, 0.3); border-radius: 8px;">💳 تعديل طريقة السداد</button>
             <button class="btn btn-neon-red" onclick="cancelInvoice({{ invoice.id }})" style="border-radius: 8px; font-weight: bold;">❌ إلغاء الفاتورة</button>
             {% endif %}
         {% endif %}
         {% if invoice.status == 'POSTED' %}
-            {% if request.user.is_superuser or request.user.is_staff or request.user.employee_profile.is_admin %}
+            {% if is_admin %}
                 {% if invoice.invoice_type == 'SALE' or invoice.invoice_type == 'PURCHASE' %}
                     {% if is_fully_returned %}
                     <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; padding: 8px 16px; font-size: 1rem; border-radius: 8px; font-weight: bold; border: 1px solid rgba(239, 68, 68, 0.4); display: flex; align-items: center; justify-content: center; gap: 8px;">

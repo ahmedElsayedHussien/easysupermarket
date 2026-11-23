@@ -121,13 +121,10 @@ class EmployeeUserCreationForm(UserCreationForm):
         user.last_name = self.cleaned_data.get('last_name')
         user.email = self.cleaned_data.get('email')
         role = self.cleaned_data.get('role')
-        if role == Role.ADMIN:
-            user.is_superuser = True
-            user.is_staff = True
-        else:
-            user.is_superuser = False
-            user.is_staff = False
-        
+        # SECURITY: tenant roles never grant the global is_superuser/is_staff
+        # flags (auth_user is shared by all tenants). Platform superusers keep
+        # their flag untouched.
+
         if commit:
             user.save()
             # Create the employee profile
@@ -229,13 +226,10 @@ class EmployeeUserUpdateForm(forms.ModelForm):
     def save(self, commit=True):
         user = super().save(commit=False)
         role = self.cleaned_data.get('role')
-        if role == Role.ADMIN:
-            user.is_superuser = True
-            user.is_staff = True
-        else:
-            user.is_superuser = False
-            user.is_staff = False
-            
+        # SECURITY: tenant roles never grant the global is_superuser/is_staff
+        # flags (auth_user is shared by all tenants). Platform superusers keep
+        # their flag untouched.
+
         new_pass = self.cleaned_data.get('new_password')
         if new_pass:
             user.set_password(new_pass)
@@ -261,3 +255,25 @@ class EmployeeUserUpdateForm(forms.ModelForm):
                 user.user_permissions.set(self.cleaned_data.get('user_permissions', []))
         return user
 
+
+
+from django.contrib.auth.forms import AuthenticationForm
+
+
+class TenantAuthenticationForm(AuthenticationForm):
+    """
+    Login form for tenant sites. auth_user is shared by all tenants, so valid
+    credentials alone are not enough: the user must have an Employee profile in
+    the current tenant schema (platform superusers excepted). The same generic
+    "invalid login" error is shown to avoid account enumeration.
+    """
+
+    def confirm_login_allowed(self, user):
+        super().confirm_login_allowed(user)
+        from apps.tenant.core.access import is_tenant_member
+        if not is_tenant_member(user):
+            raise forms.ValidationError(
+                self.error_messages['invalid_login'],
+                code='invalid_login',
+                params={'username': self.username_field.verbose_name},
+            )

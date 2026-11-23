@@ -95,6 +95,7 @@
 
         <form method="post" class="needs-validation" novalidate id="closeShiftForm">
             {% csrf_token %}
+            <input type="hidden" name="session_id" value="{{ session.id }}">
             <div class="mb-4">
                 <label class="form-label text-white fw-bold" for="actual_balance">النقدية الفعلية (بعد الجرد) <span class="text-danger">*</span></label>
                 <div class="input-group input-group-lg">

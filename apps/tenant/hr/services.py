@@ -10,8 +10,15 @@ def post_payroll(payroll):
     Debits '5210' (Salaries Expense).
     Credits '2160' (Accrued Salaries Liability).
     """
-    if payroll.journal_entry:
-        return payroll.journal_entry
+    from apps.tenant.hr.models import Payroll
+
+    # Lock the payroll row and re-check so concurrent confirms cannot post twice
+    locked = Payroll.objects.select_for_update().select_related('employee__user').get(pk=payroll.pk)
+    if locked.journal_entry_id:
+        payroll.journal_entry = locked.journal_entry
+        return locked.journal_entry
+    payroll_obj = payroll
+    payroll = locked
 
     if payroll.net_salary <= 0:
         return None
@@ -45,6 +52,7 @@ def post_payroll(payroll):
     )
 
     payroll.journal_entry = entry
-    payroll.save()
+    payroll.save(update_fields=['journal_entry'])
+    payroll_obj.journal_entry = entry  # keep the caller's instance in sync
 
     return entry

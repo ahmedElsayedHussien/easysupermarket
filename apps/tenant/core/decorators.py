@@ -6,31 +6,20 @@ from functools import wraps
 
 def is_admin_user(user):
     """
-    Check if a user is considered an Administrator with full permissions.
-    An admin can be:
-    - Superuser (Django is_superuser)
-    - Staff (Django is_staff)
-    - Has an Employee profile with Role.ADMIN or is_admin() returning True
-    - Belonging to an admin group or username contains admin
+    Check if a user is an Administrator of the CURRENT tenant.
+    An admin is:
+    - a platform superuser (Django is_superuser), or
+    - a user whose Employee profile in the current schema has role ADMIN.
+
+    is_staff, group names and usernames are deliberately NOT considered:
+    auth_user is shared by all tenants, so only the per-schema Employee row
+    can express tenant-level rights.
     """
-    if not user or not user.is_authenticated:
-        return False
-    if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
-        return True
-    if hasattr(user, 'employee_profile') and user.employee_profile:
-        if getattr(user.employee_profile, 'role', '') == 'ADMIN' or user.employee_profile.is_admin():
-            return True
-    try:
-        if user.groups.filter(name__iregex=r'(admin|مدير)').exists():
-            return True
-    except Exception:
-        pass
-    if 'admin' in user.username.lower():
-        return True
-    return False
+    from apps.tenant.core.access import is_tenant_admin
+    return is_tenant_admin(user)
 
 
-def custom_permission_required(perm, login_url='core:login', redirect_url='core:branch_list'):
+def custom_permission_required(perm, login_url='login', redirect_url='core:branch_list'):
     """
     Decorator for views that checks whether a user has a particular permission
     enabled, redirecting to the log-in page if necessary.

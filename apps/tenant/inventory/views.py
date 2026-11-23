@@ -635,113 +635,135 @@ def product_bulk_import(request):
                         clean_u = str(raw_unit).strip().lower()
                         unit_code = UNIT_MAP.get(clean_u, 'PIECE')
     
+                    # Per-row savepoint: a failing row is rolled back on its own and
+                    # counters / caches / opening total only include committed rows.
+                    row_created = 0
+                    row_updated = 0
+                    row_skipped = 0
+                    row_cost = Decimal('0')
+                    cache_updates = []  # (dict, key, product) applied only after commit
+                    sheet_marks = []    # (set, key)
                     try:
-                        # مطابقة الصنف: أولاً بالباركود، وثانياً باسم الصنف المطابق
-                        existing_product = None
-                        if barcode and barcode in existing_products_by_barcode:
-                            existing_product = existing_products_by_barcode[barcode]
-                        if not existing_product and norm_name in existing_products_by_name:
-                            existing_product = existing_products_by_name[norm_name]
-    
-                        if existing_product:
-                            if duplicate_action == 'update':
-                                update_fields = ['updated_at']
-                                if sale_price > Decimal('0'):
-                                    existing_product.sale_price = sale_price
-                                    update_fields.append('sale_price')
-                                if cost_price > Decimal('0'):
-                                    existing_product.last_purchase_price = cost_price
-                                    update_fields.append('last_purchase_price')
-                                if min_stock > Decimal('0'):
-                                    existing_product.min_stock_level = min_stock
-                                    update_fields.append('min_stock_level')
-                                if barcode and not existing_product.barcode:
-                                    existing_product.barcode = barcode
-                                    update_fields.append('barcode')
-                                    existing_products_by_barcode[barcode] = existing_product
-                                if category and not existing_product.category:
-                                    existing_product.category = category
-                                    update_fields.append('category')
-                                if unit_code and not existing_product.unit:
-                                    existing_product.unit = unit_code
-                                    update_fields.append('unit')
-                                existing_product.save(update_fields=list(set(update_fields)))
-    
-                                if quantity > Decimal('0') and warehouse:
-                                    add_inventory_batch(
-                                        product=existing_product,
-                                        warehouse=warehouse,
-                                        quantity=quantity,
-                                        unit_cost=cost_price if cost_price > 0 else (existing_product.get_average_cost(warehouse) or Decimal('0')),
-                                        batch_number=f'رصيد {datetime.date.today().strftime("%Y%m%d")}',
-                                        reference='رصيد افتتاحي (استيراد إكسيل)',
-                                        movement_type='OPENING_BALANCE'
-                                    )
-                                    total_opening_cost += (quantity * cost_price)
-    
-                                updated_count += 1
-                            else:
-                                skipped_count += 1
-                        else:
-                            # التحقق من عدم التكرار داخل نفس ملف الإكسيل المرفوع
-                            if (barcode and barcode in seen_barcodes_in_sheet) or (norm_name in seen_names_in_sheet):
-                                if duplicate_action == 'skip':
-                                    skipped_count += 1
-                                    continue
-                                # في حالة التحديث: الصنف تم إنشاؤه في صف سابق من نفس الشيت، فلنحدّثه
-                                in_sheet_prod = existing_products_by_barcode.get(barcode) if barcode else existing_products_by_name.get(norm_name)
-                                if in_sheet_prod:
+                        with transaction.atomic():
+                            # مطابقة الصنف: أولاً بالباركود، وثانياً باسم الصنف المطابق
+                            existing_product = None
+                            if barcode and barcode in existing_products_by_barcode:
+                                existing_product = existing_products_by_barcode[barcode]
+                            if not existing_product and norm_name in existing_products_by_name:
+                                existing_product = existing_products_by_name[norm_name]
+
+                            if existing_product:
+                                if duplicate_action == 'update':
+                                    update_fields = ['updated_at']
                                     if sale_price > Decimal('0'):
-                                        in_sheet_prod.sale_price = sale_price
+                                        existing_product.sale_price = sale_price
+                                        update_fields.append('sale_price')
+                                    if cost_price > Decimal('0'):
+                                        existing_product.last_purchase_price = cost_price
+                                        update_fields.append('last_purchase_price')
+                                    if min_stock > Decimal('0'):
+                                        existing_product.min_stock_level = min_stock
+                                        update_fields.append('min_stock_level')
+                                    if barcode and not existing_product.barcode:
+                                        existing_product.barcode = barcode
+                                        update_fields.append('barcode')
+                                        cache_updates.append((existing_products_by_barcode, barcode, existing_product))
+                                    if category and not existing_product.category:
+                                        existing_product.category = category
+                                        update_fields.append('category')
+                                    if unit_code and not existing_product.unit:
+                                        existing_product.unit = unit_code
+                                        update_fields.append('unit')
+                                    existing_product.save(update_fields=list(set(update_fields)))
+
                                     if quantity > Decimal('0') and warehouse:
+                                        unit_cost_used = cost_price if cost_price > 0 else (existing_product.get_average_cost(warehouse) or Decimal('0'))
                                         add_inventory_batch(
-                                            product=in_sheet_prod,
+                                            product=existing_product,
                                             warehouse=warehouse,
                                             quantity=quantity,
-                                            unit_cost=cost_price if cost_price > 0 else (in_sheet_prod.get_average_cost(warehouse) or Decimal('0')),
+                                            unit_cost=unit_cost_used,
                                             batch_number=f'رصيد {datetime.date.today().strftime("%Y%m%d")}',
                                             reference='رصيد افتتاحي (استيراد إكسيل)',
                                             movement_type='OPENING_BALANCE'
                                         )
-                                        total_opening_cost += (quantity * cost_price)
-                                    updated_count += 1
-                                    continue
-    
-                            new_prod = Product.objects.create(
-                                name=name,
-                                barcode=barcode,
-                                sale_price=sale_price,
-                                last_purchase_price=cost_price,
-                                category=category,
-                                unit=unit_code,
-                                min_stock_level=min_stock,
-                                is_active=True,
-                                product_type='PRODUCT'
-                            )
-    
-                            if barcode:
-                                existing_products_by_barcode[barcode] = new_prod
-                                seen_barcodes_in_sheet.add(barcode)
-                            existing_products_by_name[norm_name] = new_prod
-                            seen_names_in_sheet.add(norm_name)
-    
-                            if quantity > Decimal('0') and warehouse:
-                                add_inventory_batch(
-                                    product=new_prod,
-                                    warehouse=warehouse,
-                                    quantity=quantity,
-                                    unit_cost=cost_price,
-                                    batch_number=f'رصيد {datetime.date.today().strftime("%Y%m%d")}',
-                                    reference='رصيد افتتاحي (استيراد إكسيل)',
-                                    movement_type='OPENING_BALANCE'
-                                )
-                                total_opening_cost += (quantity * cost_price)
-    
-                            created_count += 1
-    
+                                        row_cost += (quantity * unit_cost_used)
+
+                                    row_updated = 1
+                                else:
+                                    row_skipped = 1
+                            else:
+                                in_sheet_dup = (barcode and barcode in seen_barcodes_in_sheet) or (norm_name in seen_names_in_sheet)
+                                in_sheet_prod = None
+                                if in_sheet_dup:
+                                    if duplicate_action == 'skip':
+                                        row_skipped = 1
+                                    else:
+                                        # في حالة التحديث: الصنف تم إنشاؤه في صف سابق من نفس الشيت، فلنحدّثه
+                                        in_sheet_prod = existing_products_by_barcode.get(barcode) if barcode else existing_products_by_name.get(norm_name)
+                                if in_sheet_dup and in_sheet_prod:
+                                    if sale_price > Decimal('0'):
+                                        in_sheet_prod.sale_price = sale_price
+                                        in_sheet_prod.save(update_fields=['sale_price', 'updated_at'])
+                                    if quantity > Decimal('0') and warehouse:
+                                        unit_cost_used = cost_price if cost_price > 0 else (in_sheet_prod.get_average_cost(warehouse) or Decimal('0'))
+                                        add_inventory_batch(
+                                            product=in_sheet_prod,
+                                            warehouse=warehouse,
+                                            quantity=quantity,
+                                            unit_cost=unit_cost_used,
+                                            batch_number=f'رصيد {datetime.date.today().strftime("%Y%m%d")}',
+                                            reference='رصيد افتتاحي (استيراد إكسيل)',
+                                            movement_type='OPENING_BALANCE'
+                                        )
+                                        row_cost += (quantity * unit_cost_used)
+                                    row_updated = 1
+                                elif not in_sheet_dup or duplicate_action != 'skip':
+                                    new_prod = Product.objects.create(
+                                        name=name,
+                                        barcode=barcode,
+                                        sale_price=sale_price,
+                                        last_purchase_price=cost_price,
+                                        category=category,
+                                        unit=unit_code,
+                                        min_stock_level=min_stock,
+                                        is_active=True,
+                                        product_type='PRODUCT'
+                                    )
+
+                                    if barcode:
+                                        cache_updates.append((existing_products_by_barcode, barcode, new_prod))
+                                        sheet_marks.append((seen_barcodes_in_sheet, barcode))
+                                    cache_updates.append((existing_products_by_name, norm_name, new_prod))
+                                    sheet_marks.append((seen_names_in_sheet, norm_name))
+
+                                    if quantity > Decimal('0') and warehouse:
+                                        add_inventory_batch(
+                                            product=new_prod,
+                                            warehouse=warehouse,
+                                            quantity=quantity,
+                                            unit_cost=cost_price,
+                                            batch_number=f'رصيد {datetime.date.today().strftime("%Y%m%d")}',
+                                            reference='رصيد افتتاحي (استيراد إكسيل)',
+                                            movement_type='OPENING_BALANCE'
+                                        )
+                                        row_cost += (quantity * cost_price)
+
+                                    row_created = 1
                     except Exception as row_err:
                         errors.append(f'الصف {row_num} ({name}): خطأ أثناء الحفظ - {str(row_err)}')
-    
+                        continue
+
+                    # Row committed (to its savepoint): apply counters and caches
+                    created_count += row_created
+                    updated_count += row_updated
+                    skipped_count += row_skipped
+                    total_opening_cost += row_cost
+                    for cache, key, prod in cache_updates:
+                        cache[key] = prod
+                    for seen, key in sheet_marks:
+                        seen.add(key)
+
         # إنشاء قيد افتتاحي متوازن إذا كانت هناك كميات وتكلفة
         if total_opening_cost > Decimal('0') and warehouse:
             try:
@@ -1053,202 +1075,216 @@ def adjustment_create(request):
         'title': 'إضافة تسوية مخزون جديدة'
     })
 
+class _AdjustmentAbort(Exception):
+    """Raised inside adjustment_confirm's atomic block so every partial write is rolled back."""
+
+
+def _locked_stock(product, warehouse):
+    """Current on-hand base quantity, computed from batch rows locked FOR UPDATE."""
+    if product.product_type == 'SERIALIZED':
+        from .models import SerialItem
+        return Decimal(len(list(
+            SerialItem.objects.select_for_update().filter(product=product, warehouse=warehouse, is_sold=False)
+        )))
+    rows = list(InventoryBatch.objects.select_for_update().filter(product=product, warehouse=warehouse))
+    return sum((b.quantity_remaining for b in rows), Decimal('0'))
+
+
+def _post_adjustment_journal(adj, user, reference, description, items):
+    """items: list of (account, debit, credit, description)."""
+    je = JournalEntry.objects.create(
+        date=adj.date,
+        reference=reference,
+        description=description,
+        status=JournalEntry.DRAFT,
+        created_by=user,
+        content_type=ContentType.objects.get_for_model(StockAdjustment),
+        object_id=adj.id
+    )
+    for acc, debit, credit, desc in items:
+        JournalItem.objects.create(entry=je, account=acc, debit=debit, credit=credit, description=desc)
+    try:
+        je.post()
+    except ValidationError as e:
+        raise _AdjustmentAbort(
+            f'حدث خطأ محاسبي أثناء ترحيل القيد: {e.message if hasattr(e, "message") else str(e)}'
+        )
+    return je
+
+
 @login_required
 @custom_permission_required('inventory.change_stockadjustment', redirect_url='core:main_screen')
-@transaction.atomic
 def adjustment_confirm(request, pk):
-    adj = get_object_or_404(StockAdjustment, pk=pk, status='DRAFT')
-    
-    if request.method == 'POST':
-        if not adj.lines.exists():
-            messages.error(request, 'لا يمكن ترحيل تسوية لا تحتوي على أي أصناف!')
-            return redirect('inventory:adjustment_list')
-        from apps.tenant.services.fifo_engine import consume_fifo_batches, add_inventory_batch
-        from apps.tenant.services.journal_service import _get_system_account
+    get_object_or_404(StockAdjustment, pk=pk)
 
-        total_cost = Decimal('0')
-        total_gain_cost = Decimal('0')
-        total_loss_cost = Decimal('0')
+    if request.method != 'POST':
+        return redirect('inventory:adjustment_list')
 
-        if adj.adjustment_type == 'STOCKTAKE':
-            for line in adj.lines.select_related('product', 'uom'):
-                factor = line.factor
-                base_variance = line.quantity * factor  # physical_quantity - system_quantity in base units
-                cost_per_base_unit = (line.unit_cost / factor) if (line.unit_cost > Decimal('0') and factor > Decimal('0')) else (
-                    line.product.get_average_cost(adj.warehouse) or line.product.last_purchase_price or Decimal('0')
-                )
+    from apps.tenant.services.fifo_engine import consume_fifo_batches, add_inventory_batch
+    from apps.tenant.services.journal_service import _get_system_account
 
-                if base_variance > Decimal('0'):
-                    # تسوية زيادة: محرك الـ FIFO يقوم بإغلاق أي عجز سالب سابق وترصيد الباقي
-                    add_inventory_batch(
-                        product=line.product,
-                        warehouse=adj.warehouse,
-                        quantity=base_variance,
-                        unit_cost=cost_per_base_unit,
-                        batch_number=f'تسوية {adj.id}',
-                        reference=f'تسوية {adj.id}'
+    try:
+        with transaction.atomic():
+            # Lock the draft: a second concurrent confirm waits here and then sees POSTED.
+            adj = StockAdjustment.objects.select_for_update().filter(pk=pk, status='DRAFT').first()
+            if adj is None:
+                raise _AdjustmentAbort('هذه التسوية تم ترحيلها بالفعل أو لم تعد مسودة.')
+            if not adj.lines.exists():
+                raise _AdjustmentAbort('لا يمكن ترحيل تسوية لا تحتوي على أي أصناف!')
+
+            ref = f'تسوية {adj.id}'
+            total_cost = Decimal('0')
+            total_gain_cost = Decimal('0')
+            total_loss_cost = Decimal('0')
+
+            def _base_cost(line, factor):
+                if line.unit_cost > Decimal('0') and factor > Decimal('0'):
+                    return (line.unit_cost / factor)
+                return line.product.get_average_cost(adj.warehouse) or line.product.last_purchase_price or Decimal('0')
+
+            if adj.adjustment_type == 'STOCKTAKE':
+                for line in adj.lines.select_related('product', 'uom'):
+                    factor = line.factor
+                    if line.product.product_type == 'SERVICE':
+                        continue
+                    if line.physical_quantity is not None and factor > Decimal('0'):
+                        # Never trust the system quantity captured by the browser / at draft time:
+                        # recompute it now, on locked rows, and derive the variance from it.
+                        system_base = _locked_stock(line.product, adj.warehouse)
+                        physical_base = line.physical_quantity * factor
+                        base_variance = physical_base - system_base
+                        line.system_quantity = (system_base / factor).quantize(Decimal('0.0001'))
+                        line.quantity = (base_variance / factor).quantize(Decimal('0.0001'))
+                        line.save(update_fields=['system_quantity', 'quantity'])
+                    else:
+                        base_variance = line.quantity * factor
+
+                    if line.product.product_type == 'SERIALIZED' and base_variance != 0:
+                        raise _AdjustmentAbort(
+                            f'لا يمكن تسوية الصنف المسلسل "{line.product.name}" بالجرد الكمي؛ '
+                            'يرجى تسوية السيريالات يدوياً.'
+                        )
+
+                    cost_per_base_unit = _base_cost(line, factor)
+
+                    if base_variance > Decimal('0'):
+                        # تسوية زيادة: محرك الـ FIFO يغلق أي عجز سالب سابق ويرصد الباقي
+                        add_inventory_batch(
+                            product=line.product,
+                            warehouse=adj.warehouse,
+                            quantity=base_variance,
+                            unit_cost=cost_per_base_unit,
+                            batch_number=ref,
+                            reference=ref,
+                            movement_type='ADJUSTMENT_IN',
+                            update_last_purchase_price=False,
+                            notes=adj.reason,
+                        )
+                        total_gain_cost += (base_variance * cost_per_base_unit)
+
+                    elif base_variance < Decimal('0'):
+                        try:
+                            consumptions = consume_fifo_batches(
+                                product=line.product,
+                                warehouse=adj.warehouse,
+                                quantity_needed=abs(base_variance),
+                                reference=ref,
+                                notes=adj.reason,
+                                movement_type='ADJUSTMENT_OUT',
+                            )
+                        except ValueError as e:
+                            raise _AdjustmentAbort(str(e))
+                        total_loss_cost += sum((c['total_cost'] for c in consumptions), Decimal('0'))
+
+                if total_gain_cost > Decimal('0') or total_loss_cost > Decimal('0'):
+                    inventory_acc = _get_system_account('1140')
+                    gain_acc = _get_system_account('4999')
+                    loss_acc = _get_system_account('5250')
+                    items = []
+                    if total_gain_cost > Decimal('0'):
+                        items += [
+                            (inventory_acc, total_gain_cost, Decimal('0'), f'زيادة جرد فعلي تسوية #{adj.id}'),
+                            (gain_acc, Decimal('0'), total_gain_cost, f'إيرادات فروق جرد تسوية #{adj.id}'),
+                        ]
+                    if total_loss_cost > Decimal('0'):
+                        items += [
+                            (loss_acc, total_loss_cost, Decimal('0'), f'مصروف عجز جرد تسوية #{adj.id}'),
+                            (inventory_acc, Decimal('0'), total_loss_cost, f'عجز بضاعة جرد تسوية #{adj.id}'),
+                        ]
+                    _post_adjustment_journal(
+                        adj, request.user, f'STK-{adj.id}', f'تسوية جرد فعلي رقم {adj.id}: {adj.reason}', items
                     )
-                    StockMovement.objects.filter(
-                        reference=f'تسوية {adj.id}',
-                        product=line.product,
-                        warehouse=adj.warehouse,
-                        movement_type='IN'
-                    ).update(movement_type='ADJUSTMENT_IN', notes=adj.reason)
-                    total_gain_cost += (base_variance * cost_per_base_unit)
 
-                elif base_variance < Decimal('0'):
-                    # تسوية عجز: استهلاك بالـ FIFO
-                    qty_to_deduct = abs(base_variance)
+            elif adj.adjustment_type == 'OUT':
+                for line in adj.lines.select_related('product', 'uom'):
+                    base_qty = line.quantity * line.factor
                     try:
                         consumptions = consume_fifo_batches(
                             product=line.product,
                             warehouse=adj.warehouse,
-                            quantity_needed=qty_to_deduct,
-                            reference=f'تسوية {adj.id}',
-                            notes=adj.reason
+                            quantity_needed=base_qty,
+                            reference=ref,
+                            notes=adj.reason,
+                            movement_type='ADJUSTMENT_OUT',
                         )
-                        line_total = sum(c['total_cost'] for c in consumptions)
-                        total_loss_cost += line_total
                     except ValueError as e:
-                        messages.error(request, str(e))
-                        return redirect('inventory:adjustment_list')
+                        raise _AdjustmentAbort(str(e))
+                    total_cost += sum((c['total_cost'] for c in consumptions), Decimal('0'))
 
-                    StockMovement.objects.filter(
-                        reference=f'تسوية {adj.id}',
+                if total_cost > Decimal('0'):
+                    exp_acc = _get_system_account('5250')
+                    inv_acc = _get_system_account('1140')
+                    _post_adjustment_journal(
+                        adj, request.user, f'ADJ-{adj.id}', f'تسوية عجز/إعدام مخزون #{adj.id}: {adj.reason}',
+                        [
+                            (exp_acc, total_cost, Decimal('0'), f'عجز بضاعة تسوية {adj.id}'),
+                            (inv_acc, Decimal('0'), total_cost, f'عجز بضاعة تسوية {adj.id}'),
+                        ],
+                    )
+
+            else:
+                # IN or OPENING: add_inventory_batch offsets any prior deficit batches
+                m_type = 'ADJUSTMENT_IN' if adj.adjustment_type == 'IN' else 'OPENING_BALANCE'
+                for line in adj.lines.select_related('product', 'uom'):
+                    factor = line.factor
+                    base_qty = line.quantity * factor
+                    cost_per_base_unit = _base_cost(line, factor)
+                    add_inventory_batch(
                         product=line.product,
                         warehouse=adj.warehouse,
-                        movement_type='OUT'
-                    ).update(movement_type='ADJUSTMENT_OUT')
-
-            # قيد اليومية الخاص بالجرد الفعلي (مركب ومتوازن)
-            if total_gain_cost > Decimal('0') or total_loss_cost > Decimal('0'):
-                inventory_acc = _get_system_account('1140')
-                gain_acc = _get_system_account('4999')
-                loss_acc = _get_system_account('5250')
-
-                je = JournalEntry.objects.create(
-                    date=adj.date,
-                    reference=f'STK-{adj.id}',
-                    description=f'تسوية جرد فعلي رقم {adj.id}: {adj.reason}',
-                    status=JournalEntry.DRAFT,
-                    created_by=request.user,
-                    content_type=ContentType.objects.get_for_model(StockAdjustment),
-                    object_id=adj.id
-                )
-
-                if total_gain_cost > Decimal('0'):
-                    JournalItem.objects.create(
-                        entry=je, account=inventory_acc, debit=total_gain_cost, credit=Decimal('0'),
-                        description=f'زيادة جرد فعلي تسوية #{adj.id}'
+                        quantity=base_qty,
+                        unit_cost=cost_per_base_unit,
+                        batch_number=ref,
+                        reference=ref,
+                        movement_type=m_type,
+                        update_last_purchase_price=False,
+                        notes=adj.reason,
                     )
-                    JournalItem.objects.create(
-                        entry=je, account=gain_acc, debit=Decimal('0'), credit=total_gain_cost,
-                        description=f'إيرادات فروق جرد تسوية #{adj.id}'
+                    total_cost += (base_qty * cost_per_base_unit)
+
+                if total_cost > Decimal('0'):
+                    inv_acc = _get_system_account('1140')
+                    offset_code = '4999' if adj.adjustment_type == 'IN' else '3999'
+                    offset_acc = _get_system_account(offset_code)
+                    desc = f'زيادة بضاعة تسوية {adj.id}' if adj.adjustment_type == 'IN' else f'رصيد افتتاحي بضاعة تسوية {adj.id}'
+                    _post_adjustment_journal(
+                        adj, request.user, f'ADJ-{adj.id}', f'تسوية مخزون رقم {adj.id}: {adj.reason}',
+                        [
+                            (inv_acc, total_cost, Decimal('0'), desc),
+                            (offset_acc, Decimal('0'), total_cost, desc),
+                        ],
                     )
 
-                if total_loss_cost > Decimal('0'):
-                    JournalItem.objects.create(
-                        entry=je, account=loss_acc, debit=total_loss_cost, credit=Decimal('0'),
-                        description=f'مصروف عجز جرد تسوية #{adj.id}'
-                    )
-                    JournalItem.objects.create(
-                        entry=je, account=inventory_acc, debit=Decimal('0'), credit=total_loss_cost,
-                        description=f'عجز بضاعة جرد تسوية #{adj.id}'
-                    )
+            adj.status = 'POSTED'
+            adj.save()
+    except _AdjustmentAbort as e:
+        messages.error(request, str(e))
+        return redirect('inventory:adjustment_list')
+    except ValueError as e:
+        messages.error(request, str(e))
+        return redirect('inventory:adjustment_list')
 
-                try:
-                    je.post()
-                except ValidationError as e:
-                    messages.error(request, f'حدث خطأ محاسبي أثناء ترحيل قيد الجرد: {e.message if hasattr(e, "message") else str(e)}')
-                    return redirect('inventory:adjustment_list')
-
-        elif adj.adjustment_type == 'OUT':
-            for line in adj.lines.select_related('product', 'uom'):
-                factor = line.factor
-                base_qty = line.quantity * factor
-                try:
-                    consumptions = consume_fifo_batches(
-                        product=line.product,
-                        warehouse=adj.warehouse,
-                        quantity_needed=base_qty,
-                        reference=f'تسوية {adj.id}',
-                        notes=adj.reason
-                    )
-                    line_total = sum(c['total_cost'] for c in consumptions)
-                    total_cost += line_total
-                except ValueError as e:
-                    messages.error(request, str(e))
-                    return redirect('inventory:adjustment_list')
-
-            StockMovement.objects.filter(
-                reference=f'تسوية {adj.id}',
-                movement_type='OUT'
-            ).update(movement_type='ADJUSTMENT_OUT')
-
-            if total_cost > Decimal('0'):
-                exp_acc = _get_system_account('5250')
-                inv_acc = _get_system_account('1140')
-                je = JournalEntry.objects.create(
-                    date=adj.date,
-                    reference=f'ADJ-{adj.id}',
-                    description=f'تسوية عجز/إعدام مخزون #{adj.id}: {adj.reason}',
-                    status=JournalEntry.DRAFT,
-                    created_by=request.user,
-                    content_type=ContentType.objects.get_for_model(StockAdjustment),
-                    object_id=adj.id
-                )
-                JournalItem.objects.create(entry=je, account=exp_acc, debit=total_cost, credit=Decimal('0'), description=f'عجز بضاعة تسوية {adj.id}')
-                JournalItem.objects.create(entry=je, account=inv_acc, debit=Decimal('0'), credit=total_cost, description=f'عجز بضاعة تسوية {adj.id}')
-                je.post()
-
-        else:
-            # IN or OPENING: Use add_inventory_batch to offset any prior deficit batches
-            m_type = 'ADJUSTMENT_IN' if adj.adjustment_type == 'IN' else 'OPENING_BALANCE'
-            for line in adj.lines.select_related('product', 'uom'):
-                factor = line.factor
-                base_qty = line.quantity * factor
-                cost_per_base_unit = (line.unit_cost / factor) if (line.unit_cost > Decimal('0') and factor > Decimal('0')) else (
-                    line.product.get_average_cost(adj.warehouse) or line.product.last_purchase_price or Decimal('0')
-                )
-                add_inventory_batch(
-                    product=line.product,
-                    warehouse=adj.warehouse,
-                    quantity=base_qty,
-                    unit_cost=cost_per_base_unit,
-                    batch_number=f'تسوية {adj.id}',
-                    reference=f'تسوية {adj.id}'
-                )
-                StockMovement.objects.filter(
-                    reference=f'تسوية {adj.id}',
-                    product=line.product,
-                    warehouse=adj.warehouse,
-                    movement_type='IN'
-                ).update(movement_type=m_type, notes=adj.reason)
-                total_cost += (base_qty * cost_per_base_unit)
-
-            if total_cost > Decimal('0'):
-                inv_acc = _get_system_account('1140')
-                offset_code = '4999' if adj.adjustment_type == 'IN' else '3999'
-                offset_acc = _get_system_account(offset_code)
-                desc = f'زيادة بضاعة تسوية {adj.id}' if adj.adjustment_type == 'IN' else f'رصيد افتتاحي بضاعة تسوية {adj.id}'
-
-                je = JournalEntry.objects.create(
-                    date=adj.date,
-                    reference=f'ADJ-{adj.id}',
-                    description=f'تسوية مخزون رقم {adj.id}: {adj.reason}',
-                    status=JournalEntry.DRAFT,
-                    created_by=request.user,
-                    content_type=ContentType.objects.get_for_model(StockAdjustment),
-                    object_id=adj.id
-                )
-                JournalItem.objects.create(entry=je, account=inv_acc, debit=total_cost, credit=Decimal('0'), description=desc)
-                JournalItem.objects.create(entry=je, account=offset_acc, debit=Decimal('0'), credit=total_cost, description=desc)
-                je.post()
-
-        adj.status = 'POSTED'
-        adj.save()
-        messages.success(request, 'تم ترحيل التسوية بنجاح وتحديث المخزون والحسابات العامة.')
-
+    messages.success(request, 'تم ترحيل التسوية بنجاح وتحديث المخزون والحسابات العامة.')
     return redirect('inventory:adjustment_list')
 
 
@@ -1270,12 +1306,43 @@ def stocktake_create(request):
         if warehouse_id:
             try:
                 wh = Warehouse.objects.get(id=warehouse_id)
-                products = Product.objects.filter(is_active=True).values('id', 'name', 'barcode', 'sku')
+                from django.db.models import Sum, Count, F, DecimalField, ExpressionWrapper
+                from .models import SerialItem
+                products = list(
+                    Product.objects.filter(is_active=True)
+                    .values('id', 'name', 'barcode', 'sku', 'product_type', 'last_purchase_price')
+                )
+                # All batch quantities for this warehouse in one query (incl. negative deficits)
+                stock_map = dict(
+                    InventoryBatch.objects.filter(warehouse=wh)
+                    .values('product_id').annotate(t=Sum('quantity_remaining'))
+                    .values_list('product_id', 't')
+                )
+                # Weighted average cost over positive batches, one query
+                cost_rows = (
+                    InventoryBatch.objects.filter(warehouse=wh, quantity_remaining__gt=0)
+                    .values('product_id')
+                    .annotate(
+                        q=Sum('quantity_remaining'),
+                        v=Sum(ExpressionWrapper(F('quantity_remaining') * F('unit_cost'),
+                                                output_field=DecimalField(max_digits=30, decimal_places=8))),
+                    )
+                )
+                cost_map = {r['product_id']: (r['v'] / r['q']) for r in cost_rows if r['q']}
+                serial_map = dict(
+                    SerialItem.objects.filter(warehouse=wh, is_sold=False)
+                    .values('product_id').annotate(c=Count('id'))
+                    .values_list('product_id', 'c')
+                )
                 data = []
                 for p in products:
-                    prod_obj = Product(id=p['id'])
-                    stock = prod_obj.get_stock(warehouse=wh)
-                    avg_cost = prod_obj.get_average_cost(warehouse=wh) or prod_obj.last_purchase_price or Decimal('0')
+                    if p['product_type'] == 'SERVICE':
+                        continue
+                    if p['product_type'] == 'SERIALIZED':
+                        stock = Decimal(serial_map.get(p['id'], 0))
+                    else:
+                        stock = stock_map.get(p['id']) or Decimal('0')
+                    avg_cost = cost_map.get(p['id']) or p['last_purchase_price'] or Decimal('0')
                     data.append({
                         'id': p['id'],
                         'name': p['name'],
@@ -1458,9 +1525,18 @@ def api_products(request):
         stock_map = {}
         cost_map = {}
 
+    # Branch prices for all listed products in one query (instead of one per product)
+    branch_price_map = {}
+    if current_branch and p_ids:
+        from .models import ProductBranch
+        branch_price_map = dict(
+            ProductBranch.objects.filter(product_id__in=p_ids, branch=current_branch)
+            .values_list('product_id', 'sale_price')
+        )
+
     products_data = []
     for p in products_list:
-        sp = p.get_price_for_branch(current_branch)
+        sp = branch_price_map.get(p.id, p.sale_price)
         avail_stock = stock_map.get(p.id, Decimal('0'))
         avg_cost = cost_map.get(p.id, p.last_purchase_price or Decimal('0'))
         lp = p.last_purchase_price if p.last_purchase_price else avg_cost
@@ -1481,7 +1557,7 @@ def api_products(request):
             'tax_rate': float(p.tax_rate) if hasattr(p, 'tax_rate') and p.tax_rate else (float(p.category.tax_rate) if p.category and hasattr(p.category, 'tax_rate') and p.category.tax_rate else 14),
             'withholding_tax_rate': float(p.withholding_tax_rate) if hasattr(p, 'withholding_tax_rate') and p.withholding_tax_rate else 0,
             'image': p.image.url if p.image else None,
-            'uoms': [{'id': 'base', 'name': p.pos_unit_name, 'factor': 1.0}] + [{'id': pu.id, 'name': pu.uom.name, 'factor': float(pu.conversion_factor)} for pu in p.uoms.all() if not pu.is_base]
+            'uoms': [{'id': 'base', 'name': p.pos_unit_name, 'factor': 1.0}] + [{'id': pu.id, 'unit_id': pu.uom_id, 'name': pu.uom.name, 'factor': float(pu.conversion_factor)} for pu in p.uoms.all() if not pu.is_base]
         })
 
     return JsonResponse({'products': products_data})

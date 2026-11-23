@@ -16,10 +16,11 @@
     <nav class="pos-navbar">
         <div class="pos-nav-left">
             <div class="pos-brand">
-                <img src="{% static 'img/logo.png' %}" alt="مسار" class="pos-brand-logo">
-                <span class="pos-brand-name">مسار</span>
+                <a href="/" title="{% trans 'الرئيسية' %}" style="display:flex; align-items:center; text-decoration:none;">
+                    <img src="{% static 'img/logo.png' %}" alt="مسار" class="pos-brand-logo" style="height:38px; max-width:140px; object-fit:contain;">
+                </a>
             </div>
-            {% if request.user.is_superuser or request.user.is_staff %}
+            {% if is_admin %}
             <a href="/" class="pos-top-btn pos-top-btn-home" title="{% trans 'الصفحة الرئيسية' %}">🏠 <span class="nav-btn-text">{% trans 'الرئيسية' %}</span></a>
             {% endif %}
             <a href="{% url 'invoicing:sales_invoice_list' %}" target="_blank" class="pos-top-btn pos-top-btn-orange" title="{% trans 'عرض وتصفح فواتير نقطة البيع والمبيعات' %}">📄 <span class="nav-btn-text">{% trans 'الفواتير' %}</span></a>
@@ -217,7 +218,7 @@
                             data-allow-negative-stock="{{ product.allow_negative_stock|yesno:'true,false' }}"
                             data-tax-rate="{{ product.tax_rate|stringformat:'f' }}"
                             data-wht-rate="{{ product.withholding_tax_rate|default:0|stringformat:'f' }}"
-                            data-uoms='[{"id":"base", "name":"{{ product.pos_unit_name|escapejs }}", "factor": 1.0}{% for puom in product.uoms.all %}{% if not puom.is_base %}, {"id":{{ puom.id }}, "name":"{{ puom.uom.name|escapejs }}", "factor": {{ puom.conversion_factor|stringformat:"f" }}}{% endif %}{% endfor %}]'
+                            data-uoms='[{"id":"base", "name":"{{ product.pos_unit_name|escapejs }}", "factor": 1.0}{% for puom in product.uoms.all %}{% if not puom.is_base %}, {"id":{{ puom.id }}, "unit_id":{{ puom.uom_id }}, "name":"{{ puom.uom.name|escapejs }}", "factor": {{ puom.conversion_factor|stringformat:"f" }}}{% endif %}{% endfor %}]'
                             data-avg-cost="{{ product.pos_avg_cost|stringformat:'f' }}">
                             <td class="td-product">
                                 <div style="display:inline-flex; align-items:center; gap:10px;">

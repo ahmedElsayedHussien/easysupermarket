@@ -5,7 +5,6 @@ Called from the commission report view.
 """
 from decimal import Decimal
 from datetime import date, timedelta
-from django.db.models import Sum, F
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -55,46 +54,65 @@ def calculate_commissions(period: str, target_date: date, branch=None):
     if not rules:
         return [], start_date, end_date
 
-    # Get all POSTED sale invoices in the period
+    # Get all POSTED sale invoices and sale returns in the period.
+    # Sales are measured at NET line value (InvoiceLine.subtotal = after line discount, before tax),
+    # pro-rated by any extra invoice-level discount, and returns are subtracted.
     qs = Invoice.objects.filter(
-        invoice_type=Invoice.SALE,
+        invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE],
         status=Invoice.POSTED,
         date__gte=start_date,
         date__lte=end_date,
-        cashier__isnull=False,
     )
-    
+
     if branch:
         qs = qs.filter(branch=branch)
-        
-    invoices = qs.values_list('id', 'cashier_id')
 
-    # Map invoice_id → cashier_id
-    invoice_cashier = {inv_id: cashier_id for inv_id, cashier_id in invoices}
-    invoice_ids = list(invoice_cashier.keys())
-
-    if not invoice_ids:
+    invoices = list(qs.values_list('id', 'invoice_type', 'cashier_id', 'parent_invoice__cashier_id', 'subtotal'))
+    if not invoices:
         return [], start_date, end_date
 
-    # Aggregate sales per (cashier, category)
-    lines_agg = (
+    invoice_info = {}
+    for inv_id, inv_type, cashier_id, parent_cashier_id, inv_subtotal in invoices:
+        if inv_type == Invoice.RETURN_SALE:
+            # Charge the return back to the cashier who made the original sale when known
+            owner = parent_cashier_id or cashier_id
+            sign = Decimal('-1')
+        else:
+            owner = cashier_id
+            sign = Decimal('1')
+        if owner:
+            invoice_info[inv_id] = (owner, sign, inv_subtotal or Decimal('0'))
+
+    if not invoice_info:
+        return [], start_date, end_date
+
+    from collections import defaultdict
+    line_rows = list(
         InvoiceLine.objects
-        .filter(invoice_id__in=invoice_ids)
-        .select_related('product__category')
-        .values('invoice__cashier_id', 'product__category_id')
-        .annotate(sales_total=Sum(F('quantity') * F('unit_price')))
+        .filter(invoice_id__in=list(invoice_info.keys()))
+        .values_list('invoice_id', 'product__category_id', 'subtotal')
     )
+    lines_sum = defaultdict(Decimal)
+    for inv_id, _cat, sub in line_rows:
+        lines_sum[inv_id] += sub or Decimal('0')
+
+    totals = defaultdict(Decimal)  # (cashier_id, category_id) -> net sales
+    for inv_id, category_id, sub in line_rows:
+        if category_id not in rules:
+            continue
+        owner, sign, inv_subtotal = invoice_info[inv_id]
+        net = sub or Decimal('0')
+        ls = lines_sum[inv_id]
+        # Extra invoice-level discount (invoice subtotal lower than the sum of its lines)
+        if ls > 0 and Decimal('0') <= inv_subtotal < ls:
+            net = net * inv_subtotal / ls
+        totals[(owner, category_id)] += sign * net
 
     # Group by cashier
-    from collections import defaultdict
     cashier_data = defaultdict(list)  # cashier_id → [(category_id, sales_total)]
-
-    for row in lines_agg:
-        cashier_id  = row['invoice__cashier_id']
-        category_id = row['product__category_id']
-        sales       = row['sales_total'] or Decimal('0')
-        if category_id in rules:
-            cashier_data[cashier_id].append((category_id, sales))
+    for (cashier_id, category_id), sales in totals.items():
+        sales = max(Decimal('0'), sales).quantize(Decimal('0.01'))
+        cashier_data[cashier_id].append((category_id, sales))
 
     # Build report
     report = []

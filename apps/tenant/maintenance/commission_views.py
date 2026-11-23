@@ -1,4 +1,6 @@
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST
+from apps.tenant.core.decorators import custom_permission_required, is_admin_user
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
 from django.contrib import messages
@@ -14,16 +16,31 @@ from apps.tenant.inventory.models import Category
 # Commission Rules Management
 # ---------------------------------------------------------------------------
 @login_required
+@custom_permission_required('maintenance.view_commissionrule', redirect_url='core:main_screen')
 def commission_rules(request):
     categories = Category.objects.filter(is_active=True)
     rules = CommissionRule.objects.select_related('category').order_by('category__name')
 
     if request.method == 'POST':
+        if not (is_admin_user(request.user) or (
+                request.user.has_perm('maintenance.add_commissionrule')
+                and request.user.has_perm('maintenance.change_commissionrule'))):
+            messages.error(request, 'عفواً، لا تملك صلاحية إضافة/تعديل قواعد العمولات.')
+            return redirect('maintenance:commission_rules')
         category_id    = request.POST.get('category_id')
         sales_milestone = request.POST.get('sales_milestone')
         commission_amount = request.POST.get('commission_amount')
         is_active = request.POST.get('is_active') == 'on'
         try:
+            from decimal import Decimal, InvalidOperation
+            try:
+                milestone_val = Decimal(str(sales_milestone or ''))
+                amount_val = Decimal(str(commission_amount or ''))
+            except InvalidOperation:
+                raise ValueError('قيم غير صالحة لشريحة المبيعات أو مبلغ العمولة.')
+            if milestone_val <= 0 or amount_val < 0:
+                raise ValueError('شريحة المبيعات يجب أن تكون أكبر من صفر ومبلغ العمولة لا يكون سالباً.')
+            sales_milestone, commission_amount = milestone_val, amount_val
             category = Category.objects.get(id=category_id)
             CommissionRule.objects.update_or_create(
                 category=category,
@@ -47,6 +64,8 @@ def commission_rules(request):
 
 
 @login_required
+@require_POST
+@custom_permission_required('maintenance.delete_commissionrule', redirect_url='core:main_screen')
 def commission_rule_delete(request, pk):
     rule = get_object_or_404(CommissionRule, pk=pk)
     rule.delete()
@@ -58,6 +77,7 @@ def commission_rule_delete(request, pk):
 # Commission Report
 # ---------------------------------------------------------------------------
 @login_required
+@custom_permission_required('maintenance.view_commissionrecord', redirect_url='core:main_screen')
 def commission_report(request):
     period      = request.GET.get('period', 'MONTHLY')
     date_str    = request.GET.get('date', '')

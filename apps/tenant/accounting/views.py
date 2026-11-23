@@ -7,8 +7,11 @@ from apps.tenant.core.mixins import CustomPermissionRequiredMixin
 from apps.tenant.core.decorators import custom_permission_required, is_admin_user
 
 import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
+from django.db.models import Q
+from django.db import IntegrityError
+from django.utils import timezone
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, View
 from .models import (
     JournalEntry, JournalItem, Account, PaymentMethod, Treasury, BankAccount, EWallet, Expense, Voucher, InternalTransfer,
@@ -23,6 +26,61 @@ from .forms import (
 )
 from django.db import transaction
 from django.core.exceptions import ValidationError
+
+
+# ---------------------------------------------------------------------------
+# Branch scoping helpers (non-admin users only see / act on their own branch)
+# ---------------------------------------------------------------------------
+
+def _user_branch(user):
+    emp = getattr(user, 'employee_profile', None)
+    return getattr(emp, 'branch', None) if emp else None
+
+
+def _branch_scoped(qs, user, make_q):
+    """Admins see everything; other users only rows matching make_q(branch) (none without a branch)."""
+    if is_admin_user(user):
+        return qs
+    branch = _user_branch(user)
+    if branch is None:
+        return qs.none()
+    return qs.filter(make_q(branch)).distinct()
+
+
+def scope_expenses(qs, user):
+    return _branch_scoped(qs, user, lambda b: Q(branch=b))
+
+
+def scope_vouchers(qs, user):
+    return _branch_scoped(qs, user, lambda b: Q(branch=b) | Q(treasury__branch=b) | Q(pos_session__branch=b))
+
+
+def scope_transfers(qs, user):
+    return _branch_scoped(
+        qs, user,
+        lambda b: Q(from_treasury__branch=b) | Q(to_treasury__branch=b) | Q(created_by=user)
+    )
+
+
+def scope_treasuries(qs, user):
+    return _branch_scoped(qs, user, lambda b: Q(branch=b))
+
+
+def _error_text(exc):
+    if isinstance(exc, ValidationError):
+        return ' '.join(exc.messages)
+    return str(exc)
+
+
+def _unique_reference(base):
+    """base, base-2, base-3 ... (first one not used by an existing journal entry)."""
+    ref = base
+    n = 2
+    while JournalEntry.objects.filter(reference=ref).exists():
+        ref = f"{base}-{n}"
+        n += 1
+    return ref
+
 
 class JournalEntryListView(CustomPermissionRequiredMixin, ListView):
     permission_required = 'accounting.view_journalentry'
@@ -388,12 +446,53 @@ def setup_default_accounts(request):
         
     return redirect('accounting:chart_of_accounts')
 
+
+def _report_accounts(qs):
+    """
+    Loads accounts with their *own* (direct) posted balances in a single aggregate query.
+    Every account is included — leaf or parent — so amounts posted directly on a parent
+    account (e.g. 1110/1120/1130/1160 fallbacks in journal_service) are reported, while
+    descendants are never added on top of their parent (no double counting).
+    """
+    from apps.tenant.services.journal_service import batch_get_own_balances
+    accounts = list(qs)
+    batch_get_own_balances(account_qs=accounts)
+    for acc in accounts:
+        acc.report_name = acc.name if acc.is_leaf else f'{acc.name} (مرحّل مباشرة على الحساب الرئيسي)'
+    return accounts
+
+
 @login_required
 @custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def trial_balance(request):
-    accounts = Account.objects.all()
-    # Logic to calculate trial balance
-    context = {'accounts': accounts, 'title': 'ميزان المراجعة'}
+    """
+    ميزان المراجعة — رصيد كل حساب من قيوده المباشرة فقط (حسابات طرفية + أي مبالغ مرحلة على
+    الحسابات الرئيسية) بحيث لا يتكرر أي مبلغ، مع إجمالي مدين = إجمالي دائن.
+    استعلامان فقط بغض النظر عن عدد الحسابات.
+    """
+    accounts = _report_accounts(Account.objects.all().order_by('tree_id', 'lft'))
+
+    rows = []
+    total_debit = Decimal('0.00')
+    total_credit = Decimal('0.00')
+    for acc in accounts:
+        net = (acc.own_debit - acc.own_credit).quantize(Decimal('0.01'))
+        if net == 0:
+            continue
+        acc.tb_debit = net if net > 0 else Decimal('0.00')
+        acc.tb_credit = -net if net < 0 else Decimal('0.00')
+        total_debit += acc.tb_debit
+        total_credit += acc.tb_credit
+        rows.append(acc)
+
+    context = {
+        'accounts': rows,
+        'total_debit': total_debit,
+        'total_credit': total_credit,
+        'is_balanced': total_debit == total_credit,
+        'difference': total_debit - total_credit,
+        'title': 'ميزان المراجعة',
+    }
     return render(request, 'accounting/trial_balance.html', context)
 
 @login_required
@@ -402,42 +501,39 @@ def income_statement(request):
     """
     قائمة الدخل — ديناميكية تماماً، تعتمد على نوع الحساب والأعلام فقط.
     أي حساب مصروف أو إيراد جديد يُضاف لشجرة الحسابات سيظهر هنا تلقائياً.
+
+    الإيرادات المعاكسة (مرتجعات/خصومات، is_contra_revenue) حسابات من نوع REVENUE رصيدها
+    مدين، أي أن current/own balance لها سالب. نعرضها كمبلغ موجب (contra_amount) ونطرحها:
+        صافي المبيعات = المبيعات − |المرتجعات والخصومات|
+    وهو نفس ما تفعله الميزانية العمومية (جمع الأرصدة الموقّعة لكل حسابات الإيرادات).
     """
-    from django.db.models import Sum
-    from decimal import Decimal
-    from apps.tenant.services.journal_service import batch_get_account_balances
-
-    # ── تصفية الحسابات بالنوع واستبعاد الحسابات الرئيسية من قاعدة البيانات
-    revenue_leaf_accounts = list(Account.objects.filter(
-        account_type=Account.REVENUE, is_active=True
-    ).exclude(children__isnull=False))
-
-    expense_leaf_accounts = list(Account.objects.filter(
-        account_type=Account.EXPENSE, is_active=True
-    ).exclude(children__isnull=False))
-
-    # احتساب كافة الأرصدة دفعة واحدة في استعلام تجميعي واحد بقاعدة البيانات (منع N+1)
-    batch_get_account_balances(account_qs=revenue_leaf_accounts + expense_leaf_accounts)
+    accounts = _report_accounts(
+        Account.objects.filter(account_type__in=[Account.REVENUE, Account.EXPENSE]).order_by('code')
+    )
+    revenue_accounts = [acc for acc in accounts if acc.account_type == Account.REVENUE and acc.own_balance != 0]
+    expense_accounts = [acc for acc in accounts if acc.account_type == Account.EXPENSE and acc.own_balance != 0]
 
     # ── إيرادات المبيعات الأساسية (REVENUE وليس معاكساً)
-    sales_accounts = [acc for acc in revenue_leaf_accounts if not acc.is_contra_revenue]
-    total_sales = sum(acc.current_balance for acc in sales_accounts)
+    sales_accounts = [acc for acc in revenue_accounts if not acc.is_contra_revenue]
+    total_sales = sum((acc.own_balance for acc in sales_accounts), Decimal('0.00'))
 
-    # ── الإيرادات المعاكسة (مرتجعات، خصومات)
-    contra_revenue_accounts = [acc for acc in revenue_leaf_accounts if acc.is_contra_revenue]
-    total_contra_revenue = sum(acc.current_balance for acc in contra_revenue_accounts)
+    # ── الإيرادات المعاكسة (مرتجعات، خصومات) — كمبلغ موجب يُطرح
+    contra_revenue_accounts = [acc for acc in revenue_accounts if acc.is_contra_revenue]
+    for acc in contra_revenue_accounts:
+        acc.contra_amount = -acc.own_balance
+    total_contra_revenue = sum((acc.contra_amount for acc in contra_revenue_accounts), Decimal('0.00'))
 
     net_sales = total_sales - total_contra_revenue
 
     # ── تكلفة البضاعة المباعة COGS
-    cogs_accounts = [acc for acc in expense_leaf_accounts if acc.is_cogs]
-    total_cogs = sum(acc.current_balance for acc in cogs_accounts)
+    cogs_accounts = [acc for acc in expense_accounts if acc.is_cogs]
+    total_cogs = sum((acc.own_balance for acc in cogs_accounts), Decimal('0.00'))
 
     gross_profit = net_sales - total_cogs
 
     # ── مصروفات التشغيل (كل مصروف ليس COGS)
-    op_expense_accounts = [acc for acc in expense_leaf_accounts if not acc.is_cogs]
-    total_op_expense = sum(acc.current_balance for acc in op_expense_accounts)
+    op_expense_accounts = [acc for acc in expense_accounts if not acc.is_cogs]
+    total_op_expense = sum((acc.own_balance for acc in op_expense_accounts), Decimal('0.00'))
 
     total_expense = total_cogs + total_op_expense
     net_income = net_sales - total_expense
@@ -463,19 +559,15 @@ def income_statement(request):
 @custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def balance_sheet(request):
     """
-    الميزانية العمومية — تجميع حسابات سريع عبر قاعدة البيانات مباشرة.
+    الميزانية العمومية — أرصدة مباشرة لكل الحسابات (طرفية ورئيسية) في استعلامين فقط.
     """
-    from apps.tenant.services.journal_service import batch_get_account_balances
+    accounts = [acc for acc in _report_accounts(Account.objects.all().order_by('code')) if acc.own_balance != 0]
 
-    # ── جلب الحسابات الطرفية (leaf) فقط في استعلام واحد واستبعاد الآباء بقاعدة البيانات
-    leaf_accounts = list(Account.objects.filter(is_active=True).exclude(children__isnull=False))
-    batch_get_account_balances(account_qs=leaf_accounts)
-
-    asset_accounts     = [acc for acc in leaf_accounts if acc.account_type == Account.ASSET]
-    liability_accounts = [acc for acc in leaf_accounts if acc.account_type == Account.LIABILITY]
-    equity_accounts    = [acc for acc in leaf_accounts if acc.account_type == Account.EQUITY]
-    revenue_accounts   = [acc for acc in leaf_accounts if acc.account_type == Account.REVENUE]
-    expense_accounts   = [acc for acc in leaf_accounts if acc.account_type == Account.EXPENSE]
+    asset_accounts     = [acc for acc in accounts if acc.account_type == Account.ASSET]
+    liability_accounts = [acc for acc in accounts if acc.account_type == Account.LIABILITY]
+    equity_accounts    = [acc for acc in accounts if acc.account_type == Account.EQUITY]
+    revenue_accounts   = [acc for acc in accounts if acc.account_type == Account.REVENUE]
+    expense_accounts   = [acc for acc in accounts if acc.account_type == Account.EXPENSE]
 
     # ── تصنيف الأصول بالكود (11xx = متداولة، 12xx = ثابتة، غيرهم = أخرى)
     current_assets      = [acc for acc in asset_accounts if acc.code.startswith('11')]
@@ -487,14 +579,14 @@ def balance_sheet(request):
     long_term_liabilities    = [acc for acc in liability_accounts if acc.code.startswith('22')]
     other_liabilities        = [acc for acc in liability_accounts if not acc.code.startswith('21') and not acc.code.startswith('22')]
 
-    total_assets      = sum(acc.current_balance for acc in asset_accounts)
-    total_liabilities = sum(acc.current_balance for acc in liability_accounts)
-    total_equity      = sum(acc.current_balance for acc in equity_accounts)
+    total_assets      = sum((acc.own_balance for acc in asset_accounts), Decimal('0.00'))
+    total_liabilities = sum((acc.own_balance for acc in liability_accounts), Decimal('0.00'))
+    total_equity      = sum((acc.own_balance for acc in equity_accounts), Decimal('0.00'))
 
-    # ── صافي الدخل يُضاف لحقوق الملكية
+    # ── صافي الدخل يُضاف لحقوق الملكية (المرتجعات المعاكسة رصيدها سالب فتُطرح تلقائياً)
     net_income = (
-        sum(acc.current_balance for acc in revenue_accounts) -
-        sum(acc.current_balance for acc in expense_accounts)
+        sum((acc.own_balance for acc in revenue_accounts), Decimal('0.00')) -
+        sum((acc.own_balance for acc in expense_accounts), Decimal('0.00'))
     )
 
     total_liabilities_and_equity = total_liabilities + total_equity + net_income
@@ -503,6 +595,7 @@ def balance_sheet(request):
         'current_assets': current_assets,
         'fixed_assets': fixed_assets,
         'other_assets': other_assets,
+        'liability_accounts': liability_accounts,
         'current_liabilities': current_liabilities,
         'long_term_liabilities': long_term_liabilities,
         'other_liabilities': other_liabilities,
@@ -531,7 +624,7 @@ class ExpenseListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 10
     
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = scope_expenses(super().get_queryset(), self.request.user)
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
         search_query = self.request.GET.get('search_query')
@@ -559,6 +652,9 @@ class ExpenseDetailView(CustomPermissionRequiredMixin, DetailView):
     model = Expense
     template_name = 'accounting/expense_detail.html'
     context_object_name = 'expense'
+
+    def get_queryset(self):
+        return scope_expenses(Expense.objects.all(), self.request.user)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -601,8 +697,12 @@ class ExpenseCreateView(CustomPermissionRequiredMixin, CreateView):
             for item_form in items_formset:
                 if item_form.cleaned_data and not item_form.cleaned_data.get('DELETE', False):
                     amount = item_form.cleaned_data.get('amount', 0)
-                    total_amount += amount
-            
+                    total_amount += amount or 0
+
+            if total_amount <= 0:
+                form.add_error(None, 'يجب إدخال بند مصروف واحد على الأقل بمبلغ أكبر من صفر.')
+                return self.render_to_response(self.get_context_data(form=form))
+
             self.object.amount = total_amount
             self.object.save()
             
@@ -621,7 +721,7 @@ class ExpenseConfirmView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.change_expense'
 
     def post(self, request, pk):
-        expense = get_object_or_404(Expense, pk=pk)
+        expense = get_object_or_404(scope_expenses(Expense.objects.all(), request.user), pk=pk)
         if expense.status == Expense.DRAFT:
             try:
                 expense.confirm_expense()
@@ -634,7 +734,7 @@ class ExpenseDeleteView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.delete_expense'
 
     def post(self, request, pk):
-        expense = get_object_or_404(Expense, pk=pk)
+        expense = get_object_or_404(scope_expenses(Expense.objects.all(), request.user), pk=pk)
         if expense.status == Expense.DRAFT:
             expense.delete()
             messages.success(request, 'تم حذف المصروف بنجاح.')
@@ -655,7 +755,7 @@ class ReceiptListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
-        return Voucher.objects.filter(voucher_type=Voucher.RECEIPT).order_by('-date', '-created_at')
+        return scope_vouchers(Voucher.objects.all(), self.request.user).filter(voucher_type=Voucher.RECEIPT).order_by('-date', '-created_at')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -673,7 +773,7 @@ class PaymentListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
-        return Voucher.objects.filter(voucher_type=Voucher.PAYMENT).order_by('-date', '-created_at')
+        return scope_vouchers(Voucher.objects.all(), self.request.user).filter(voucher_type=Voucher.PAYMENT).order_by('-date', '-created_at')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -787,6 +887,16 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
                 elif BankAccount.objects.count() == 1:
                     form.instance.transfer_bank_account = BankAccount.objects.first()
 
+        # Branch scoping: non-admins may only use their own branch's treasuries (the defaults above
+        # may point to another branch's treasury) and the voucher is attributed to their branch.
+        if not is_admin_user(self.request.user):
+            user_branch = _user_branch(self.request.user)
+            if form.instance.treasury_id and (user_branch is None or form.instance.treasury.branch_id != user_branch.id):
+                form.add_error('treasury', 'لا يمكن استخدام خزينة تابعة لفرع آخر.')
+                return self.form_invalid(form)
+            if not form.instance.branch_id and user_branch is not None:
+                form.instance.branch = user_branch
+
         response = super().form_valid(form)
 
         # Auto-confirm and post the voucher if valid so it immediately reflects in the shift
@@ -811,6 +921,9 @@ class VoucherDetailView(CustomPermissionRequiredMixin, DetailView):
     template_name = 'accounting/voucher_detail.html'
     context_object_name = 'voucher'
 
+    def get_queryset(self):
+        return scope_vouchers(Voucher.objects.all(), self.request.user)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         v_type = self.object.voucher_type
@@ -831,7 +944,7 @@ class VoucherConfirmView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.change_voucher'
 
     def post(self, request, pk):
-        voucher = get_object_or_404(Voucher, pk=pk)
+        voucher = get_object_or_404(scope_vouchers(Voucher.objects.all(), request.user), pk=pk)
         if voucher.status == Voucher.DRAFT:
             try:
                 from apps.tenant.core.models import SystemSetting
@@ -950,6 +1063,9 @@ class VoucherUpdateView(CustomPermissionRequiredMixin, UpdateView):
     form_class = VoucherForm
     template_name = 'accounting/voucher_form.html'
 
+    def get_queryset(self):
+        return scope_vouchers(Voucher.objects.all(), self.request.user)
+
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['user'] = self.request.user
@@ -968,24 +1084,39 @@ class VoucherUpdateView(CustomPermissionRequiredMixin, UpdateView):
         return context
 
     def form_valid(self, form):
-        was_posted = (self.object.status == Voucher.POSTED)
-        if was_posted and self.object.journal_entry:
-            self.object.journal_entry.delete()
-            self.object.journal_entry = None
-            self.object.status = Voucher.DRAFT
+        """
+        Editing a posted voucher = remove its entry + save + repost, all in ONE transaction:
+        if reposting fails nothing is changed (the old posted entry is kept) and the error is shown.
+        """
+        from .models import _ensure_pos_session_open
+        try:
+            with transaction.atomic():
+                locked = Voucher.objects.select_for_update().select_related('pos_session').get(pk=self.object.pk)
+                if locked.status == Voucher.CANCELLED:
+                    raise ValidationError('لا يمكن تعديل سند ملغي.')
+                was_posted = (locked.status == Voucher.POSTED)
+                if was_posted:
+                    _ensure_pos_session_open(locked.pos_session, 'تعديل')
+                    if locked.journal_entry_id:
+                        JournalEntry.objects.filter(pk=locked.journal_entry_id).delete()
+                    form.instance.journal_entry = None
+                    form.instance.status = Voucher.DRAFT
 
-        response = super().form_valid(form)
+                self.object = form.save()
+
+                if was_posted:
+                    self.object.confirm_voucher()  # raises -> whole edit is rolled back
+        except (ValidationError, ValueError) as e:
+            form.add_error(None, f'تعذر حفظ التعديل: {_error_text(e)}')
+            # restore in-memory state of the instance after rollback
+            self.object.refresh_from_db()
+            return self.form_invalid(form)
 
         if was_posted:
-            try:
-                self.object.confirm_voucher()
-                messages.success(self.request, 'تم تعديل السند وإعادة ترحيل القيد المحاسبي المربوط بنجاح.')
-            except Exception as e:
-                messages.warning(self.request, f'تم حفظ التعديلات ولكن فشل ترحيل القيد تلقائياً: {str(e)}')
+            messages.success(self.request, 'تم تعديل السند وإعادة ترحيل القيد المحاسبي المربوط بنجاح.')
         else:
             messages.success(self.request, 'تم تعديل السند بنجاح.')
-
-        return response
+        return redirect(self.get_success_url())
 
     def get_success_url(self):
         return reverse_lazy('accounting:voucher_detail', kwargs={'pk': self.object.pk})
@@ -994,7 +1125,7 @@ class VoucherCancelView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.change_voucher'
 
     def post(self, request, pk):
-        voucher = get_object_or_404(Voucher, pk=pk)
+        voucher = get_object_or_404(scope_vouchers(Voucher.objects.all(), request.user), pk=pk)
         try:
             voucher.cancel_voucher()
             messages.success(request, 'تم إلغاء السند وحذف القيد المحاسبي المربوط به بنجاح.')
@@ -1084,52 +1215,85 @@ def pos_machine_detail(request, pk):
 def eservice_center(request):
     """Main e-service center for handling recharge/withdrawal/transfer operations."""
     from .models import POSMachine, EWallet, Treasury, EServiceTransaction
-    from apps.tenant.core.models import Branch
 
     machines = POSMachine.objects.filter(is_active=True).select_related('branch')
+    if not is_admin_user(request.user):
+        user_branch = _user_branch(request.user)
+        machines = machines.filter(branch=user_branch) if user_branch else machines.none()
     ewallets = EWallet.objects.all()
-    treasuries = Treasury.objects.all()
+    treasuries = scope_treasuries(Treasury.objects.all(), request.user)
 
     if request.method == 'POST':
+        # Posting cash movements requires the add permission (viewing the screen only needs view)
+        if not (is_admin_user(request.user) or request.user.has_perm('accounting.add_eservicetransaction')):
+            messages.error(request, 'عفواً، لا تملك صلاحية تنفيذ عمليات خدمات الدفع.')
+            return redirect('accounting:eservice_center')
+
         transaction_type = request.POST.get('transaction_type')
         source_type = request.POST.get('source_type', 'MACHINE')
         pos_machine_id = request.POST.get('pos_machine_id') or None
         ewallet_id = request.POST.get('ewallet_id') or None
         treasury_id = request.POST.get('treasury_id')
-        principal_amount = request.POST.get('principal_amount', '0')
-        commission_revenue = request.POST.get('commission_revenue', '0') or '0'
-        commission_expense = request.POST.get('commission_expense', '0') or '0'
         description = request.POST.get('description', '')
 
-        if not treasury_id:
-            messages.error(request, 'برجاء اختيار الخزينة / الدرج.')
-        elif not principal_amount or Decimal(principal_amount) <= 0:
-            messages.error(request, 'برجاء إدخال مبلغ صحيح.')
-        elif source_type == 'MACHINE' and not pos_machine_id:
-            messages.error(request, 'برجاء اختيار الماكينة.')
-        elif source_type == 'EWALLET' and not ewallet_id:
-            messages.error(request, 'برجاء اختيار المحفظة الإلكترونية.')
+        error = None
+        principal = commission_rev = commission_exp = None
+        try:
+            principal = Decimal(request.POST.get('principal_amount', '0') or '0')
+            commission_rev = Decimal(request.POST.get('commission_revenue', '0') or '0')
+            commission_exp = Decimal(request.POST.get('commission_expense', '0') or '0')
+            if not all(x.is_finite() for x in (principal, commission_rev, commission_exp)):
+                raise InvalidOperation
+        except (InvalidOperation, ValueError, TypeError):
+            error = 'برجاء إدخال مبالغ رقمية صحيحة.'
+
+        valid_types = {t for t, _ in EServiceTransaction.TRANSACTION_TYPE_CHOICES}
+        if error is None:
+            if transaction_type not in valid_types:
+                error = 'نوع العملية غير صحيح.'
+            elif source_type not in ('MACHINE', 'EWALLET'):
+                error = 'مصدر العملية غير صحيح.'
+            elif not treasury_id:
+                error = 'برجاء اختيار الخزينة / الدرج.'
+            elif principal <= 0:
+                error = 'برجاء إدخال مبلغ صحيح.'
+            elif commission_rev < 0 or commission_exp < 0:
+                error = 'العمولات لا يمكن أن تكون سالبة.'
+            elif commission_rev > principal or commission_exp > principal:
+                error = 'العمولة لا يمكن أن تتجاوز المبلغ الأصلي.'
+            elif source_type == 'MACHINE' and not pos_machine_id:
+                error = 'برجاء اختيار الماكينة.'
+            elif source_type == 'EWALLET' and not ewallet_id:
+                error = 'برجاء اختيار المحفظة الإلكترونية.'
+
+        if error:
+            messages.error(request, error)
         else:
             try:
-                treasury = Treasury.objects.get(id=treasury_id)
-                txn = EServiceTransaction(
-                    transaction_type=transaction_type,
-                    source_type=source_type,
-                    treasury=treasury,
-                    principal_amount=Decimal(principal_amount),
-                    commission_revenue=Decimal(commission_revenue),
-                    commission_expense=Decimal(commission_expense),
-                    description=description,
-                    created_by=request.user,
-                )
-                if source_type == 'MACHINE' and pos_machine_id:
-                    txn.pos_machine = POSMachine.objects.get(id=pos_machine_id)
-                if source_type == 'EWALLET' and ewallet_id:
-                    txn.ewallet = EWallet.objects.get(id=ewallet_id)
-                txn.save()
-                txn.post_transaction()
+                treasury = treasuries.get(id=treasury_id)
+                with transaction.atomic():
+                    txn = EServiceTransaction(
+                        transaction_type=transaction_type,
+                        source_type=source_type,
+                        treasury=treasury,
+                        principal_amount=principal,
+                        commission_revenue=commission_rev,
+                        commission_expense=commission_exp,
+                        description=description,
+                        created_by=request.user,
+                    )
+                    if source_type == 'MACHINE':
+                        txn.pos_machine = machines.get(id=pos_machine_id)
+                    else:
+                        txn.ewallet = EWallet.objects.get(id=ewallet_id)
+                    txn.save()
+                    txn.post_transaction()
                 messages.success(request, f'✅ تم تنفيذ العملية {txn.transaction_number} بنجاح وتم إنشاء القيد المحاسبي.')
                 return redirect('accounting:eservice_center')
+            except (Treasury.DoesNotExist, POSMachine.DoesNotExist, EWallet.DoesNotExist, ValueError):
+                messages.error(request, 'الخزينة أو الماكينة أو المحفظة المحددة غير متاحة.')
+            except ValidationError as e:
+                messages.error(request, _error_text(e))
             except Exception as e:
                 messages.error(request, f'حدث خطأ: {str(e)}')
 
@@ -1251,7 +1415,7 @@ class InternalTransferListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
-        return InternalTransfer.objects.all().order_by('-date', '-created_at')
+        return scope_transfers(InternalTransfer.objects.all(), self.request.user).order_by('-date', '-created_at')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1287,12 +1451,12 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
             w.ensure_account()
 
         accounts_data = {
-            'TREASURY': {str(t.id): {'name': t.name, 'balance': float(t.current_balance)} for t in Treasury.objects.all()},
+            'TREASURY': {str(t.id): {'name': t.name, 'balance': float(t.current_balance)} for t in scope_treasuries(Treasury.objects.all(), self.request.user)},
             'BANK': {str(b.id): {'name': b.name, 'balance': float(b.current_balance)} for b in BankAccount.objects.all()},
             'EWALLET': {str(w.id): {'name': w.name, 'balance': float(w.current_balance)} for w in EWallet.objects.all()},
         }
         context['accounts_data_json'] = json.dumps(accounts_data, ensure_ascii=False)
-        context['treasuries_list'] = Treasury.objects.all()
+        context['treasuries_list'] = scope_treasuries(Treasury.objects.all(), self.request.user)
         context['banks_list'] = BankAccount.objects.all()
         context['ewallets_list'] = EWallet.objects.all()
         return context
@@ -1318,6 +1482,9 @@ class InternalTransferDetailView(CustomPermissionRequiredMixin, DetailView):
     template_name = 'accounting/internal_transfer_detail.html'
     context_object_name = 'transfer'
 
+    def get_queryset(self):
+        return scope_transfers(InternalTransfer.objects.all(), self.request.user)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = f"تفاصيل التحويل المالي #{self.object.transfer_number}"
@@ -1328,7 +1495,7 @@ class InternalTransferConfirmView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.change_internaltransfer'
 
     def post(self, request, pk):
-        transfer = get_object_or_404(InternalTransfer, pk=pk)
+        transfer = get_object_or_404(scope_transfers(InternalTransfer.objects.all(), request.user), pk=pk)
         if transfer.status == InternalTransfer.DRAFT:
             try:
                 transfer.confirm_transfer()
@@ -1342,7 +1509,7 @@ class InternalTransferCancelView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.change_internaltransfer'
 
     def post(self, request, pk):
-        transfer = get_object_or_404(InternalTransfer, pk=pk)
+        transfer = get_object_or_404(scope_transfers(InternalTransfer.objects.all(), request.user), pk=pk)
         try:
             transfer.cancel_transfer()
             messages.success(request, 'تم إلغاء التحويل وحذف القيد المحاسبي المربوط بنجاح.')
@@ -1674,16 +1841,15 @@ class FixedAssetListView(CustomPermissionRequiredMixin, ListView):
         context = super().get_context_data(**kwargs)
         from django.db.models import Sum, Count
         from django.db.models.functions import Coalesce
-        from .models import FixedAssetDepreciationLog
-
         active_assets = FixedAsset.objects.exclude(status=FixedAsset.AssetStatus.DISPOSED)
         asset_agg = active_assets.aggregate(
             total_cost=Coalesce(Sum('purchase_cost'), Decimal('0.00')),
+            opening_dep=Coalesce(Sum('opening_accumulated_depreciation'), Decimal('0.00')),
             active_count=Count('id', filter=Q(status=FixedAsset.AssetStatus.ACTIVE)),
         )
-        total_acc_dep = FixedAssetDepreciationLog.objects.filter(
+        total_acc_dep = AssetDepreciationLog.objects.filter(
             asset__in=active_assets
-        ).aggregate(dep=Coalesce(Sum('amount'), Decimal('0.00')))['dep']
+        ).aggregate(dep=Coalesce(Sum('amount'), Decimal('0.00')))['dep'] + asset_agg['opening_dep']
 
         total_cost = asset_agg['total_cost']
         total_book_value = total_cost - total_acc_dep
@@ -1733,9 +1899,7 @@ class FixedAssetCreateView(CustomPermissionRequiredMixin, CreateView):
 
             # إثبات قيد الشراء في حال الشراء الجديد
             if not asset.is_opening_balance and pay_type != 'OPENING':
-                ref = f"AST-PUR-{asset.purchase_date.year}-{asset.id:04d}"
-                if JournalEntry.objects.filter(reference=ref).exists():
-                    ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+                ref = _unique_reference(f"AST-PUR-{asset.purchase_date.year}-{asset.id:04d}")
 
                 credit_acc = None
                 desc_suffix = ""
@@ -1836,6 +2000,12 @@ class FixedAssetDisposalView(CustomPermissionRequiredMixin, View):
         notes = form.cleaned_data.get('disposal_notes') or ''
 
         with transaction.atomic():
+            # Re-fetch under a row lock and re-check: two concurrent submits can't both dispose
+            asset = FixedAsset.objects.select_for_update().get(pk=asset.pk)
+            if asset.status == FixedAsset.AssetStatus.DISPOSED or asset.disposal_entry_id:
+                messages.error(request, 'هذا الأصل تم استبعاده دفترياً بالفعل مسبقاً.')
+                return redirect('accounting:fixed_asset_detail', pk=asset.pk)
+
             asset_acc = asset.asset_account
             acc_dep_acc = asset.accumulated_depreciation_account
 
@@ -1852,9 +2022,11 @@ class FixedAssetDisposalView(CustomPermissionRequiredMixin, View):
             # Net gain or loss
             gain_or_loss = disposal_amount - net_book_val
 
+            # one disposal per asset -> the reference is unique by construction (no time-suffix hack)
             ref = f"AST-DISP-{disposal_date.year}-{asset.id:04d}"
             if JournalEntry.objects.filter(reference=ref).exists():
-                ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+                messages.error(request, f'يوجد قيد استبعاد سابق بالمرجع {ref} لهذا الأصل. برجاء مراجعته قبل إعادة الاستبعاد.')
+                return redirect('accounting:fixed_asset_detail', pk=asset.pk)
 
             entry = JournalEntry.objects.create(
                 date=disposal_date,
@@ -2009,57 +2181,62 @@ class FixedAssetDepreciationRunView(CustomPermissionRequiredMixin, View):
             messages.warning(request, f"لا توجد أي أصول مستحقة للإهلاك عن شهر {month:02d}/{year}.")
             return redirect(f"{reverse_lazy('accounting:fixed_asset_depreciation_run')}?year={year}&month={month}")
 
-        with transaction.atomic():
-            ref = f"AST-DEP-{year}-{month:02d}"
-            if JournalEntry.objects.filter(reference=ref).exists():
-                ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+        try:
+            with transaction.atomic():
+                # a 2nd run in the same month (only for assets not yet depreciated) gets -2, -3 ...
+                ref = _unique_reference(f"AST-DEP-{year}-{month:02d}")
 
-            entry = JournalEntry.objects.create(
-                date=run_date,
-                reference=ref,
-                description=f"{notes} - لعدد {len(assets_to_depreciate)} أصل",
-                status=JournalEntry.POSTED
-            )
-
-            debit_by_account = {}
-            credit_by_account = {}
-
-            for asset, amt in assets_to_depreciate:
-                exp_acc = asset.depreciation_expense_account
-                acc_dep_acc = asset.accumulated_depreciation_account
-
-                debit_by_account[exp_acc] = debit_by_account.get(exp_acc, Decimal('0.00')) + amt
-                credit_by_account[acc_dep_acc] = credit_by_account.get(acc_dep_acc, Decimal('0.00')) + amt
-
-                new_book_val = max(asset.current_book_value - amt, asset.salvage_value or Decimal('0.00'))
-                AssetDepreciationLog.objects.create(
-                    asset=asset,
-                    year=year,
-                    month=month,
+                entry = JournalEntry.objects.create(
                     date=run_date,
-                    amount=amt,
-                    book_value_after=new_book_val,
-                    entry=entry,
-                    notes=notes,
-                    created_by=request.user
+                    reference=ref,
+                    description=f"{notes} - لعدد {len(assets_to_depreciate)} أصل",
+                    status=JournalEntry.POSTED
                 )
 
-                if (asset.total_accumulated_depreciation + amt) >= asset.depreciable_base:
-                    asset.status = FixedAsset.AssetStatus.FULLY_DEPRECIATED
-                    asset.save()
+                debit_by_account = {}
+                credit_by_account = {}
 
-            for acc, total_debit in debit_by_account.items():
-                JournalItem.objects.create(
-                    entry=entry, account=acc, debit=total_debit, credit=Decimal('0.00'),
-                    description=f"إهلاك أصول شهر {month:02d}/{year}"
-                )
-            for acc, total_credit in credit_by_account.items():
-                JournalItem.objects.create(
-                    entry=entry, account=acc, debit=Decimal('0.00'), credit=total_credit,
-                    description=f"مجمع إهلاك أصول شهر {month:02d}/{year}"
-                )
+                for asset, amt in assets_to_depreciate:
+                    exp_acc = asset.depreciation_expense_account
+                    acc_dep_acc = asset.accumulated_depreciation_account
 
-            entry.post()
+                    debit_by_account[exp_acc] = debit_by_account.get(exp_acc, Decimal('0.00')) + amt
+                    credit_by_account[acc_dep_acc] = credit_by_account.get(acc_dep_acc, Decimal('0.00')) + amt
+
+                    # computed BEFORE the log is created (total_accumulated_depreciation reads the logs)
+                    accumulated_after = asset.total_accumulated_depreciation + amt
+                    new_book_val = max(asset.current_book_value - amt, asset.salvage_value or Decimal('0.00'))
+                    AssetDepreciationLog.objects.create(
+                        asset=asset,
+                        year=year,
+                        month=month,
+                        date=run_date,
+                        amount=amt,
+                        book_value_after=new_book_val,
+                        entry=entry,
+                        notes=notes,
+                        created_by=request.user
+                    )
+
+                    if accumulated_after >= asset.depreciable_base:
+                        asset.status = FixedAsset.AssetStatus.FULLY_DEPRECIATED
+                        asset.save(update_fields=['status', 'updated_at'])
+
+                for acc, total_debit in debit_by_account.items():
+                    JournalItem.objects.create(
+                        entry=entry, account=acc, debit=total_debit, credit=Decimal('0.00'),
+                        description=f"إهلاك أصول شهر {month:02d}/{year}"
+                    )
+                for acc, total_credit in credit_by_account.items():
+                    JournalItem.objects.create(
+                        entry=entry, account=acc, debit=Decimal('0.00'), credit=total_credit,
+                        description=f"مجمع إهلاك أصول شهر {month:02d}/{year}"
+                    )
+
+                entry.post()
+        except IntegrityError:
+            messages.error(request, f"تم احتساب إهلاك بعض هذه الأصول عن شهر {month:02d}/{year} بالتزامن من مستخدم آخر. برجاء مراجعة الشاشة وإعادة المحاولة.")
+            return redirect(f"{reverse_lazy('accounting:fixed_asset_depreciation_run')}?year={year}&month={month}")
 
         messages.success(request, f"تم بنجاح احتساب وترحيل إهلاك {len(assets_to_depreciate)} أصل بالقيد {ref}.")
         return redirect('accounting:fixed_asset_list')
@@ -2166,9 +2343,7 @@ class LoanCreateView(CustomPermissionRequiredMixin, CreateView):
 
             # توليد قيد استلام وصرف مبلغ القرض في البنك أو الخزينة
             if dest != 'OPENING':
-                ref = f"LOAN-REC-{loan.start_date.year}-{loan.id:04d}"
-                if JournalEntry.objects.filter(reference=ref).exists():
-                    ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+                ref = _unique_reference(f"LOAN-REC-{loan.start_date.year}-{loan.id:04d}")
 
                 receiving_acc = None
                 dest_name = ""
@@ -2194,7 +2369,7 @@ class LoanCreateView(CustomPermissionRequiredMixin, CreateView):
                     )
 
                     if bank_fee > Decimal('0.00'):
-                        fee_acc = _get_system_account('5300')
+                        fee_acc = Cheque.get_bank_expense_account()  # 5305 bank commissions
                         JournalItem.objects.create(
                             entry=entry, account=fee_acc, debit=bank_fee, credit=Decimal('0.00'),
                             description=f"مصاريف إدارية بنكية لقرض {loan.name}"
@@ -2256,9 +2431,14 @@ class LoanInstallmentPayView(CustomPermissionRequiredMixin, View):
         treasury = form.cleaned_data.get('treasury')
         notes = form.cleaned_data.get('payment_notes') or ''
 
-        from django.utils import timezone
-
         with transaction.atomic():
+            # Re-fetch under a row lock and re-check: a double submit can't pay the installment twice
+            installment = LoanInstallment.objects.select_for_update().select_related('loan').get(pk=installment.pk)
+            loan = installment.loan
+            if installment.is_paid or installment.payment_entry_id:
+                messages.warning(request, f"القسط #{installment.installment_number} مسدد بالفعل مسبقاً.")
+                return redirect('accounting:loan_detail', pk=loan.pk)
+
             payment_account = None
             dest_name = ""
             if dest == 'BANK' and bank_acc:
@@ -2270,9 +2450,15 @@ class LoanInstallmentPayView(CustomPermissionRequiredMixin, View):
                 dest_name = f"خزينة {treasury.name}"
                 installment.paid_treasury = treasury
 
+            if payment_account is None:
+                messages.error(request, 'برجاء تحديد البنك أو الخزينة المسدد منها القسط.')
+                return redirect('accounting:loan_detail', pk=loan.pk)
+
+            # one payment per installment -> unique by construction (no time-suffix hack)
             ref = f"LOAN-PAY-{pay_date.year}-{loan.id:04d}-{installment.installment_number:02d}"
             if JournalEntry.objects.filter(reference=ref).exists():
-                ref = f"{ref}-{timezone.now().strftime('%H%M%S')}"
+                messages.error(request, f'يوجد قيد سداد سابق بالمرجع {ref} لهذا القسط. برجاء مراجعته.')
+                return redirect('accounting:loan_detail', pk=loan.pk)
 
             entry = JournalEntry.objects.create(
                 date=pay_date,

@@ -145,6 +145,18 @@
     }
 </style>
 
+{{ chart_data_revenue|json_script:"chart-data-revenue" }}
+{{ chart_labels|json_script:"chart-labels" }}
+<script>
+function readJsonData(id) {
+    var el = document.getElementById(id);
+    if (!el) return [];
+    try {
+        var v = JSON.parse(el.textContent);
+        return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
+}
+</script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const ctx = document.getElementById('productChart').getContext('2d');
@@ -156,10 +168,10 @@ document.addEventListener('DOMContentLoaded', function() {
     new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: {{ chart_labels|safe }},
+            labels: readJsonData('chart-labels'),
             datasets: [{
                 label: 'الإيرادات',
-                data: {{ chart_data_revenue|safe }},
+                data: readJsonData('chart-data-revenue'),
                 backgroundColor: 'rgba(56, 189, 248, 0.6)',
                 borderColor: 'rgba(56, 189, 248, 1)',
                 borderWidth: 1,

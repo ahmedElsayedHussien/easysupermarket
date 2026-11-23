@@ -4,7 +4,7 @@ Partners models: Partner (Customer/Supplier) and Payment.
 Partner is a unified model for both customers and suppliers.
 Payment tracks cash/card/bank transactions and links to the journal.
 """
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Sum
 from decimal import Decimal
 import datetime
@@ -254,6 +254,14 @@ class Partner(models.Model):
         else:
             partner_acc = self.payable_account or self.account
 
+        with transaction.atomic():
+            self._sync_opening_journal_entry_locked(partner_acc)
+
+    def _sync_opening_journal_entry_locked(self, partner_acc):
+        from apps.tenant.accounting.models import JournalEntry, JournalItem
+        from apps.tenant.services.journal_service import _get_system_account
+        from django.utils import timezone
+
         if not self.opening_balance or self.opening_balance <= Decimal('0') or not partner_acc:
             if self.opening_journal_entry:
                 old_entry = self.opening_journal_entry
@@ -308,19 +316,14 @@ class Partner(models.Model):
 
 def _generate_payment_reference():
     """
-    Generates a unique payment reference like PAY-2024-00001.
+    Generates a unique payment reference like PAY-2024-00001 (race-safe).
+    Must be called inside the transaction that saves the Payment (see Payment.save).
     """
+    from apps.tenant.core.sequences import next_sequence, max_numeric_suffix
     year = datetime.date.today().year
     prefix = f'PAY-{year}-'
-    last = Payment.objects.filter(reference__startswith=prefix).order_by('-reference').first()
-    if last:
-        try:
-            last_num = int(last.reference.split('-')[-1])
-        except (ValueError, IndexError):
-            last_num = 0
-    else:
-        last_num = 0
-    return f'{prefix}{last_num + 1:05d}'
+    num = next_sequence(f'partner_payment:{prefix}', seed=lambda: max_numeric_suffix(Payment.objects.all(), 'reference', prefix))
+    return f'{prefix}{num:05d}'
 
 
 class Payment(models.Model):
@@ -408,7 +411,11 @@ class Payment(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.reference:
-            self.reference = _generate_payment_reference()
+            from django.db import transaction
+            with transaction.atomic():
+                self.reference = _generate_payment_reference()
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     def clean(self):
@@ -506,6 +513,7 @@ def create_partner_account(sender, instance, created, **kwargs):
 
     try:
         instance.sync_opening_journal_entry()
-    except Exception as e:
-        partner_logger.error(f"Error syncing opening journal entry for {instance.name}: {e}")
+    except Exception:
+        # sync_opening_journal_entry is atomic: on failure nothing is left half-written
+        partner_logger.exception('Error syncing opening journal entry for partner %s (%s)', instance.pk, instance.name)
 

@@ -3,6 +3,42 @@ from apps.tenant.partners.models import Partner
 from apps.tenant.accounting.models import Treasury, EWallet, JournalEntry
 import datetime
 
+def _get_or_create_account(code, name, account_type, parent_code=None):
+    """
+    Return the account with this code, seeding the standard chart first (via
+    _get_system_account) and creating it under parent_code as a last resort.
+    """
+    from apps.tenant.accounting.models import Account
+    acc = Account.objects.filter(code=code).first()
+    if acc:
+        return acc
+    try:
+        from django.db import transaction
+        from apps.tenant.services.journal_service import _get_system_account
+        with transaction.atomic():  # savepoint: a failing seed must not abort the outer transaction
+            acc = _get_system_account(code)
+        if acc:
+            return acc
+    except Exception:
+        pass
+    parent = None
+    if parent_code:
+        parent = Account.objects.filter(code=parent_code).first()
+        if parent is None:
+            try:
+                from django.db import transaction
+                from apps.tenant.services.journal_service import _get_system_account
+                with transaction.atomic():
+                    parent = _get_system_account(parent_code)
+            except Exception:
+                parent = None
+    acc, _ = Account.objects.get_or_create(
+        code=code,
+        defaults={'name': name, 'account_type': account_type, 'parent': parent, 'is_active': True},
+    )
+    return acc
+
+
 class Equipment(models.Model):
     STATUS_AVAILABLE = 'AVAILABLE'
     STATUS_RENTED = 'RENTED'
@@ -64,13 +100,8 @@ class Equipment(models.Model):
                 asset_account = Account.objects.filter(account_type=Account.ASSET).first()
 
             # 2. Get Opening Balance Equity Account
-            equity_account = None
-            try:
-                equity_account = _get_system_account('3120') # Usually Retained Earnings or Opening Balances
-            except Exception:
-                equity_account = Account.objects.filter(account_type=Account.EQUITY, name__icontains='افتتاحي').first()
-                if not equity_account:
-                    equity_account = Account.objects.filter(account_type=Account.EQUITY).first()
+            # 3999 = Opening balances & capital adjustments (standard chart)
+            equity_account = _get_or_create_account('3999', 'أرصدة افتتاحية وتسويات رأس المال', Account.EQUITY, '3000')
 
             if not asset_account or not equity_account:
                 return # Can't post
@@ -151,31 +182,8 @@ class Rental(models.Model):
         if acc:
             return acc
             
-        # If not, create it under "إيرادات تشغيلية أخرى"
-        parent = Account.objects.filter(name__icontains='إيرادات تشغيلية أخرى').first()
-        if not parent:
-            parent = Account.objects.filter(account_type=Account.REVENUE).first() # Fallback
-            
-        if parent:
-            # Generate a code
-            last_child = parent.get_children().order_by('-code').first()
-            if last_child:
-                try:
-                    new_code = str(int(last_child.code) + 1)
-                except ValueError:
-                    new_code = f"{parent.code}99"
-            else:
-                new_code = f"{parent.code}1"
-            
-            acc = Account.objects.create(
-                name='إيراد إيجار معدات',
-                code=new_code,
-                account_type=Account.REVENUE,
-                parent=parent,
-                is_active=True
-            )
-            return acc
-        return None
+        # Fixed code 4140 under revenue root 4000
+        return _get_or_create_account('4140', 'إيرادات تأجير المعدات', Account.REVENUE, '4000')
 
     def post_rental(self):
         from apps.tenant.accounting.models import JournalItem, JournalEntry
@@ -237,17 +245,43 @@ class Rental(models.Model):
         from decimal import Decimal
         import datetime
         
+        from decimal import InvalidOperation
+
         if self.status == self.STATUS_RETURNED:
             raise ValidationError('هذه المعدة تم إرجاعها مسبقاً.')
-        
+
+        try:
+            refund_amount = Decimal(str(refund_amount if refund_amount not in (None, '') else 0))
+            penalty_amount = Decimal(str(penalty_amount if penalty_amount not in (None, '') else 0))
+        except (InvalidOperation, ValueError, TypeError):
+            raise ValidationError('قيمة المرتجع أو الغرامة غير صالحة.')
+        if not refund_amount.is_finite() or not penalty_amount.is_finite():
+            raise ValidationError('قيمة المرتجع أو الغرامة غير صالحة.')
+        if penalty_amount < 0:
+            raise ValidationError('مبلغ الغرامة لا يمكن أن يكون سالباً.')
+        if refund_amount < 0:
+            raise ValidationError('مبلغ المرتجع لا يمكن أن يكون سالباً.')
+        if refund_method not in ('none', 'cash', 'account_balance'):
+            raise ValidationError('طريقة التسوية غير صالحة.')
+
         with db_transaction.atomic():
+            # Lock the contract row and re-check status to avoid double posting on double submit
+            locked = type(self).objects.select_for_update().get(pk=self.pk)
+            if locked.status != self.STATUS_ACTIVE:
+                raise ValidationError('هذه المعدة تم إرجاعها مسبقاً.')
+            self.status = locked.status
+            self.refund_journal_entry_id = locked.refund_journal_entry_id
+            self.penalty_journal_entry_id = locked.penalty_journal_entry_id
+            self.settlement_journal_entry_id = locked.settlement_journal_entry_id
+
+            total_amount = Decimal(str(locked.total_amount or 0))
+            if refund_amount > total_amount:
+                raise ValidationError(f'مبلغ المرتجع ({refund_amount}) لا يمكن أن يتجاوز إجمالي العقد ({total_amount}).')
+
             self.status = self.STATUS_RETURNED
             self.equipment.status = Equipment.STATUS_AVAILABLE
             self.equipment.save()
-            
-            refund_amount = Decimal(str(refund_amount))
-            penalty_amount = Decimal(str(penalty_amount))
-            
+
             self.refund_amount = refund_amount
             self.penalty_amount = penalty_amount
             
@@ -256,10 +290,7 @@ class Rental(models.Model):
             
             # --- 1. Penalty Entry (if any) ---
             if penalty_amount > 0:
-                penalty_revenue_acc, _ = Account.objects.get_or_create(
-                    code='4201',
-                    defaults={'name': 'إيرادات غرامات إيجار', 'account_type': Account.REVENUE, 'is_active': True}
-                )
+                penalty_revenue_acc = _get_or_create_account('4220', 'إيرادات غرامات وتأخيرات', Account.REVENUE, '4000')
                 penalty_entry = JournalEntry.objects.create(
                     date=datetime.date.today(),
                     description=f'غرامة تأخير/تلف معدة ({self.equipment.name}) على العميل {self.customer.name} | مبلغ الغرامة: {penalty_amount} ج.م',

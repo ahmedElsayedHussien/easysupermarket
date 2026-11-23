@@ -128,7 +128,9 @@
               <label class="form-label text-muted">الحالة</label>
               <select id="statusSelect" class="form-select bg-dark-glass text-white">
                 {% for val, label in status_choices %}
+                {% if val != 'DELIVERED' %}
                 <option value="{{ val }}" {% if ticket.status == val %}selected{% endif %}>{{ label }}</option>
+                {% endif %}
                 {% endfor %}
               </select>
             </div>
@@ -443,13 +445,18 @@ async function saveEdit() {
     { field: 'technician_id',value: document.getElementById('technicianSelect').value },
     { field: 'notes',        value: document.getElementById('notesInput').value },
   ];
+  const errors = [];
   for (const f of fields) {
-    await fetch(`/maintenance/${TICKET_ID}/edit/`, {
+    const resp = await fetch(`/maintenance/${TICKET_ID}/edit/`, {
       method: 'POST',
       headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRFToken': getCsrfToken()},
       body: new URLSearchParams(f)
     });
+    if (!resp.ok) {
+      try { const d = await resp.json(); errors.push(d.error || resp.status); } catch (e) { errors.push(resp.status); }
+    }
   }
+  if (errors.length) alert('خطأ: ' + errors.join('\n'));
   location.reload();
 }
 
@@ -591,7 +598,7 @@ async function addPartToTicket() {
 
 // ---- Delete Part ----
 async function deletePart(partId) {
-  if (!confirm('حذف هذه القطعة؟ (لن يُعاد المخزون)')) return;
+  if (!confirm('حذف هذه القطعة؟ (سيتم إعادة الكمية للمخزون)')) return;
   const resp = await fetch(`/maintenance/api/part/${partId}/delete/`, {
     method: 'POST',
     headers: {'X-CSRFToken': getCsrfToken()}

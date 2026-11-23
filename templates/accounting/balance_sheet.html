@@ -26,11 +26,11 @@
                     </thead>
                     <tbody>
                         {% for account in current_assets %}
-                        {% if not account.has_children and account.current_balance != 0 %}
+                        {% if account.own_balance != 0 %}
                         <tr>
                             <td class="en">{{ account.code }}</td>
-                            <td>{{ account.name }}</td>
-                            <td class="en">{{ account.current_balance }}</td>
+                            <td>{{ account.report_name }}</td>
+                            <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
                         </tr>
                         {% endif %}
                         {% empty %}
@@ -51,11 +51,11 @@
                     </thead>
                     <tbody>
                         {% for account in fixed_assets %}
-                        {% if not account.has_children and account.current_balance != 0 %}
+                        {% if account.own_balance != 0 %}
                         <tr>
                             <td class="en">{{ account.code }}</td>
-                            <td>{{ account.name }}</td>
-                            <td class="en {% if account.code == '1220' %}text-danger{% endif %}">{{ account.current_balance }}</td>
+                            <td>{{ account.report_name }}</td>
+                            <td class="en {% if account.code == '1220' %}text-danger{% endif %}">{{ account.own_balance|floatformat:"2u" }}</td>
                         </tr>
                         {% endif %}
                         {% empty %}
@@ -70,11 +70,11 @@
                 <table class="data-table mb-4">
                     <tbody>
                         {% for account in other_assets %}
-                        {% if not account.has_children and account.current_balance != 0 %}
+                        {% if account.own_balance != 0 %}
                         <tr>
                             <td class="en">{{ account.code }}</td>
-                            <td>{{ account.name }}</td>
-                            <td class="en">{{ account.current_balance }}</td>
+                            <td>{{ account.report_name }}</td>
+                            <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
                         </tr>
                         {% endif %}
                         {% endfor %}
@@ -84,7 +84,7 @@
 
                 <div class="d-flex justify-between align-center p-3 mt-auto" style="background-color: var(--color-surface-hover); border-radius: 8px;">
                     <h4 class="mb-0">إجمالي الأصول (صافي)</h4>
-                    <h4 class="en mb-0 text-neon-green">{{ total_assets }}</h4>
+                    <h4 class="en mb-0 text-neon-green">{{ total_assets|floatformat:"2u" }}</h4>
                 </div>
             </div>
         </div>
@@ -103,11 +103,11 @@
                     </thead>
                     <tbody>
                         {% for account in liability_accounts %}
-                        {% if not account.has_children and account.current_balance != 0 %}
+                        {% if account.own_balance != 0 %}
                         <tr>
                             <td class="en">{{ account.code }}</td>
-                            <td>{{ account.name }}</td>
-                            <td class="en">{{ account.current_balance }}</td>
+                            <td>{{ account.report_name }}</td>
+                            <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
                         </tr>
                         {% endif %}
                         {% endfor %}
@@ -115,7 +115,7 @@
                 </table>
                 <div class="d-flex justify-between align-center p-2 mb-4">
                     <span class="text-bold">إجمالي الخصوم</span>
-                    <span class="en text-bold text-neon-pink">{{ total_liabilities }}</span>
+                    <span class="en text-bold text-neon-pink">{{ total_liabilities|floatformat:"2u" }}</span>
                 </div>
 
                 <h3 class="text-neon-purple mb-3">حقوق الملكية (Equity)</h3>
@@ -129,24 +129,24 @@
                     </thead>
                     <tbody>
                         {% for account in equity_accounts %}
-                        {% if not account.has_children and account.current_balance != 0 %}
+                        {% if account.own_balance != 0 %}
                         <tr>
                             <td class="en">{{ account.code }}</td>
-                            <td>{{ account.name }}</td>
-                            <td class="en">{{ account.current_balance }}</td>
+                            <td>{{ account.report_name }}</td>
+                            <td class="en">{{ account.own_balance|floatformat:"2u" }}</td>
                         </tr>
                         {% endif %}
                         {% endfor %}
                         <tr>
                             <td class="en">-</td>
                             <td>صافي الدخل (الفترة الحالية)</td>
-                            <td class="en">{{ net_income }}</td>
+                            <td class="en">{{ net_income|floatformat:"2u" }}</td>
                         </tr>
                     </tbody>
                 </table>
                 <div class="d-flex justify-between align-center p-3 mt-auto" style="background-color: var(--color-surface-hover); border-radius: 8px;">
                     <h4 class="mb-0">إجمالي الخصوم وحقوق الملكية</h4>
-                    <h4 class="en mb-0 text-neon-purple">{{ total_liabilities_and_equity }}</h4>
+                    <h4 class="en mb-0 text-neon-purple">{{ total_liabilities_and_equity|floatformat:"2u" }}</h4>
                 </div>
             </div>
         </div>

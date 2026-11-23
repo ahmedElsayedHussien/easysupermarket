@@ -114,7 +114,7 @@
     <div class="module-grid module-grid-5">
 
         <!-- Branches - Lime (Admin Only) -->
-        {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
+        {% if is_admin %}
         <a href="{% url 'core:branch_list' %}" class="module-card card-lime">
             <div class="card-icon">
                 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -142,7 +142,7 @@
         </a>
 
         <!-- Finance - Gold (Admin Only) -->
-        {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
+        {% if is_admin %}
         <a href="{% url 'accounting:journal_list' %}" class="module-card card-gold">
             <div class="card-icon">
                 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -171,7 +171,7 @@
 
 
         <!-- Settings - Gray (Admin Only) -->
-        {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
+        {% if is_admin %}
         <a href="{% url 'core:settings_dashboard' %}" class="module-card card-gray">
             <div class="card-icon">
                 <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -188,7 +188,7 @@
     </div>
 
     <!-- E-Service Full-Width Card (Admin Only) -->
-    {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
+    {% if is_admin %}
     <div style="margin-top:1rem;">
         <div class="module-card" style="display:flex;flex-wrap:wrap;align-items:center;gap:1.5rem;padding:1.25rem 1.5rem;background:linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05));border:2px solid rgba(255,115,0,0.5);border-radius:12px;transition:all 0.2s;" onmouseover="this.style.borderColor='#ff7300';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.25),rgba(255,115,0,1))'" onmouseout="this.style.borderColor='rgba(255,115,0,0.5)';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05))'">
             <div style="font-size:2.5rem;flex-shrink:0;">💳</div>
@@ -209,7 +209,7 @@
     <!-- ============================================================
          QUICK STATS ROW (Admin Only)
          ============================================================ -->
-    {% if request.user.is_superuser or request.user.employee_profile.role == 'Admin' %}
+    {% if request.user.is_superuser %}
     <div class="grid-4" style="margin-top:1.5rem;">
         <div class="stat-card stat-green">
             <div class="stat-label">{% trans 'مبيعات اليوم' %}</div>

@@ -561,6 +561,11 @@ def api_resolve_price(request):
         'badge_color': result['badge_color'],
         'badge_text': result['badge_text'],
         'badge_class': result['badge_class'],
+        # explicit unit semantics (new keys)
+        'unit_price': str(result.get('unit_price', result['price'])),
+        'base_unit_price': str(result.get('base_unit_price', result['price'])),
+        'uom_factor': str(result.get('uom_factor', 1)),
+        'price_is_per_uom': bool(result.get('price_is_per_uom', False)),
     })
 
 
@@ -591,11 +596,15 @@ def api_customer_prices(request):
     if not branch:
         branch = getattr(request, 'branch', None)
 
+    tiers = PricingEngineService.get_customer_price_tiers(partner=partner, branch=branch)
     prices_map = PricingEngineService.get_customer_price_map(partner=partner, branch=branch)
     return JsonResponse({
         'success': True,
         'partner_id': partner.id,
         'partner_name': partner.name,
         'sector_name': partner.sector.name if getattr(partner, 'sector', None) else '',
-        'prices': prices_map
+        # 'prices': legacy map, price for qty 1 of the base unit
+        'prices': prices_map,
+        # 'tiers': product_id -> all quantity-break / unit-specific tiers (see PricingEngineService)
+        'tiers': tiers,
     })

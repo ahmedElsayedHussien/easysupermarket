@@ -160,6 +160,19 @@
     }
 </style>
 
+{{ chart_data_profit|json_script:"chart-data-profit" }}
+{{ chart_data_revenue|json_script:"chart-data-revenue" }}
+{{ chart_labels|json_script:"chart-labels" }}
+<script>
+function readJsonData(id) {
+    var el = document.getElementById(id);
+    if (!el) return [];
+    try {
+        var v = JSON.parse(el.textContent);
+        return Array.isArray(v) ? v : [];
+    } catch (e) { return []; }
+}
+</script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const ctx = document.getElementById('periodChart').getContext('2d');
@@ -171,11 +184,11 @@ document.addEventListener('DOMContentLoaded', function() {
     new Chart(ctx, {
         type: 'line',
         data: {
-            labels: {{ chart_labels|safe }},
+            labels: readJsonData('chart-labels'),
             datasets: [
                 {
                     label: 'الإيرادات',
-                    data: {{ chart_data_revenue|safe }},
+                    data: readJsonData('chart-data-revenue'),
                     borderColor: 'rgba(56, 189, 248, 1)',
                     backgroundColor: 'rgba(56, 189, 248, 0.1)',
                     borderWidth: 2,
@@ -184,7 +197,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 {
                     label: 'الأرباح',
-                    data: {{ chart_data_profit|safe }},
+                    data: readJsonData('chart-data-profit'),
                     borderColor: 'rgba(250, 204, 21, 1)',
                     backgroundColor: 'rgba(250, 204, 21, 0.1)',
                     borderWidth: 2,

@@ -160,7 +160,7 @@
                                 <div style="font-size:0.65rem;color:var(--text-muted);">{{ user.username }}</div>
                             </td>
                             <td>{{ user.branch.name|default:"-" }}</td>
-                            <td>{% if user.is_superuser %}مدير{% elif user.is_staff %}مشرف{% else %}كاشير{% endif %}</td>
+                            <td>{% if user.is_superuser or user.employee_profile.role == 'ADMIN' %}مدير{% else %}كاشير{% endif %}</td>
                             <td><span class="user-badge online">● متصل</span></td>
                         </tr>
                         {% empty %}

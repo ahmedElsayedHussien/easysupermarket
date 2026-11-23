@@ -25,7 +25,8 @@
 
                     <div class="form-group mb-3">
                         <label class="form-label text-light">كلمة السر (Client Secret)</label>
-                        <input type="password" name="client_secret" class="form-control" value="{{ form.client_secret.value|default_if_none:'' }}" required>
+                        <input type="password" name="client_secret" class="form-control" value="" autocomplete="new-password" {% if has_client_secret %}placeholder="•••••••• (محفوظة — اتركه فارغاً للإبقاء عليها)"{% else %}required{% endif %}>
+                        {% if form.client_secret.errors %}<small class="text-danger">{{ form.client_secret.errors|join:" " }}</small>{% endif %}
                     </div>
 
                     <div class="form-group mb-3">
@@ -71,5 +72,22 @@
             <button type="submit" class="btn btn-lg btn-orange px-5">حفظ إعدادات الضرائب</button>
         </div>
     </form>
+
+    <!-- مفتاح ربط برنامج التوقيع المحلي -->
+    <div class="card p-4 mt-4 border-neon-blue">
+        <h4 class="text-neon-blue mb-3">مفتاح ربط برنامج التوقيع (Local Signer API Token)</h4>
+        <p class="text-muted" style="font-size: 0.9rem;">
+            ضع هذا المفتاح في ملف <code>config.ini</code> الخاص ببرنامج التوقيع تحت القيمة <code>API_TOKEN</code>.
+            لا تشاركه مع أي جهة؛ أي شخص يملكه يستطيع قراءة الفواتير المعلّقة للتوقيع.
+        </p>
+        <div class="input-group mb-3">
+            <input type="text" class="form-control" value="{{ api_token }}" readonly onclick="this.select()" style="font-family: monospace;">
+        </div>
+        <form method="POST" onsubmit="return confirm('سيتوقف برنامج التوقيع عن العمل حتى تحديث المفتاح في config.ini. هل تريد المتابعة؟');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="regenerate_token">
+            <button type="submit" class="btn btn-ghost">توليد مفتاح جديد</button>
+        </form>
+    </div>
 </div>
 {% endblock %}

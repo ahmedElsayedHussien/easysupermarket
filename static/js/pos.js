@@ -466,8 +466,36 @@ const POS = {
         });
     },
 
+    /**
+     * Quantity-break / unit-specific customer pricing (mirrors server-side
+     * PricingEngineService): CUSTOMER tiers first, then SECTOR; within a tier prefer
+     * an item priced for the selected unit, else a base-unit item scaled by the unit
+     * factor; pick the highest min_quantity <= quantity. The server recalculates
+     * the final price on checkout — this only keeps the cart display in sync.
+     */
+    applyTierPrice(item) {
+        const tiers = this.currentCustomerTiers && this.currentCustomerTiers[String(item.id)];
+        if (!tiers || !tiers.length || item.is_open_price || item._manualPrice) return;
+        const selUom = item.uoms && item.uoms.find(u => String(u.id) === String(item.uom_id));
+        const factor = selUom ? parseFloat(selUom.factor) || 1.0 : 1.0;
+        const unitId = selUom && selUom.unit_id ? String(selUom.unit_id) : null;
+        const qty = parseFloat(item.quantity) || 0;
+        const pick = (list) => list
+            .filter(t => t.min_quantity <= qty)
+            .sort((a, b) => b.min_quantity - a.min_quantity)[0];
+        for (const tierName of ['CUSTOMER', 'SECTOR']) {
+            const inTier = tiers.filter(t => t.tier === tierName);
+            if (!inTier.length) continue;
+            const unitMatch = unitId ? pick(inTier.filter(t => t.uom_id !== null && String(t.uom_id) === unitId)) : null;
+            if (unitMatch) { item.price = parseFloat(unitMatch.price); return; }
+            const baseMatch = pick(inTier.filter(t => t.uom_id === null));
+            if (baseMatch) { item.price = parseFloat(baseMatch.price) * factor; return; }
+        }
+    },
+
     async applyCustomerPrices(customerId) {
         this.currentCustomerPrices = {};
+        this.currentCustomerTiers = {};
         const branchId = this.currentBranchId || '';
 
         if (customerId) {
@@ -478,6 +506,7 @@ const POS = {
                     if (data.success && data.prices) {
                         this.currentCustomerPrices = data.prices;
                     }
+                    this.currentCustomerTiers = (data.success && data.tiers) ? data.tiers : {};
                 }
             } catch(e) {
                 console.warn('[POS] Failed to fetch customer prices:', e);
@@ -956,6 +985,7 @@ const POS = {
         } else {
             item.price = 0;
         }
+        item._manualPrice = true;  // don't let quantity-break pricing overwrite a typed price
 
         // Update line total element in DOM directly without re-rendering cart
         const cartItemEl = inputEl.closest('.cart-item');
@@ -1140,6 +1170,7 @@ const POS = {
     // TOTALS CALCULATION
     // ============================================================
     calculateTotals() {
+        this.cart.forEach(item => this.applyTierPrice(item));
         let grossTotal = 0;
         let totalDiscount = 0;
         let totalTax = 0;
@@ -2400,6 +2431,14 @@ const POS = {
     // RETURN MODE
     // ============================================================
     toggleReturnMode(forceState = null) {
+        // POS checkout only creates SALE invoices now (server rejects RETURN_SALE for safety:
+        // returns must be priced/validated server-side). Send the cashier to the returns screen.
+        if (forceState === null && !this.isReturnMode) {
+            if (confirm('المرتجعات تتم الآن من شاشة المرتجعات (مرتبطة بفاتورة أو مرتجع مستقل).\n\nهل تريد فتح شاشة المرتجعات؟')) {
+                window.open('/invoicing/sales-returns/', '_blank');
+            }
+            return;
+        }
         if (forceState !== null) {
             this.isReturnMode = forceState;
         } else {

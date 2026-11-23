@@ -21,9 +21,15 @@ import datetime
 
 def _generate_invoice_number(invoice_type: str) -> str:
     """
-    Generates a sequential invoice number per type.
+    Generates a sequential invoice number per type and year.
     Format: SALE-2024-00001, PUR-2024-00001, etc.
+
+    Race-safe: uses the locked DocumentSequence counter (Invoice.save() calls this
+    inside the same transaction as the INSERT). Seeded from the highest numeric
+    suffix already used, so numbering keeps working past 99999 (no text sort).
     """
+    from apps.tenant.core.sequences import next_sequence, max_numeric_suffix
+
     prefix_map = {
         'SALE': 'SALE',
         'PURCHASE': 'PUR',
@@ -33,17 +39,11 @@ def _generate_invoice_number(invoice_type: str) -> str:
     prefix = prefix_map.get(invoice_type, 'INV')
     year = datetime.date.today().year
     full_prefix = f'{prefix}-{year}-'
-    last = Invoice.objects.filter(
-        invoice_number__startswith=full_prefix
-    ).order_by('-invoice_number').first()
-    if last:
-        try:
-            last_num = int(last.invoice_number.split('-')[-1])
-        except (ValueError, IndexError):
-            last_num = 0
-    else:
-        last_num = 0
-    return f'{full_prefix}{last_num + 1:05d}'
+    num = next_sequence(
+        f'INVOICE:{full_prefix}',
+        seed=lambda: max_numeric_suffix(Invoice.objects.all(), 'invoice_number', full_prefix),
+    )
+    return f'{full_prefix}{num:05d}'
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +328,13 @@ class Invoice(models.Model):
                 pass
 
         if not self.invoice_number:
-            self.invoice_number = _generate_invoice_number(self.invoice_type)
+            from django.db import transaction
+            # Allocate the number and INSERT in one transaction so the sequence
+            # row lock is held until the invoice is committed.
+            with transaction.atomic():
+                self.invoice_number = _generate_invoice_number(self.invoice_type)
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
@@ -399,7 +405,8 @@ class Invoice(models.Model):
             if self.invoice_type == self.SALE:
                 new_balance = self.partner.outstanding_balance + self.total_amount
                 if new_balance > self.partner.credit_limit:
-                    is_manager = self.cashier and (self.cashier.is_superuser or self.cashier.is_staff)
+                    from apps.tenant.core.decorators import is_admin_user
+                    is_manager = bool(self.cashier) and is_admin_user(self.cashier)
                     if not is_manager:
                         raise ValidationError(f'الفاتورة تتجاوز حد الائتمان للعميل. الحد: {self.partner.credit_limit}، الرصيد مع الفاتورة: {new_balance}')
 
@@ -444,6 +451,14 @@ class InvoiceLine(models.Model):
     returned_quantity = models.DecimalField(
         max_digits=15, decimal_places=4, default=Decimal('0'),
         verbose_name='الكمية المرتجعة مسبقاً'
+    )
+    original_line = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='return_lines',
+        verbose_name='سطر الفاتورة الأصلية (للمرتجعات)'
     )
     unit_price = models.DecimalField(
         max_digits=15, decimal_places=4, verbose_name='سعر الوحدة'
@@ -557,17 +572,25 @@ class InvoiceLine(models.Model):
                 if self.invoice.invoice_type in [Invoice.SALE, Invoice.RETURN_PURCHASE]:
                     from apps.tenant.core.models import SystemSetting
                     # Master Lock: Global setting strictly governs negative stock
-                    allow_negative = getattr(SystemSetting.get_settings(), 'allow_negative_stock', False)
+                    allow_negative = (
+                        getattr(SystemSetting.get_settings(), 'allow_negative_stock', False)
+                        or getattr(self.product, 'allow_negative_stock', False)
+                        or getattr(self.product, 'product_type', None) == 'SERVICE'
+                    )
                     if not allow_negative:
                         available = self.product.get_stock(self.invoice.warehouse)
                         if self.quantity > available:
-                            is_manager = self.invoice.cashier and (self.invoice.cashier.is_superuser or self.invoice.cashier.is_staff)
+                            from apps.tenant.core.decorators import is_admin_user
+                            is_manager = bool(self.invoice.cashier) and is_admin_user(self.invoice.cashier)
                             if not is_manager:
                                 raise ValidationError(f'الكمية المطلوبة ({self.quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {self.product.name} وغير مسموح بالسحب بالسالب.')
         except ValidationError:
             raise
-        except Exception:
-            pass
+        except (Invoice.DoesNotExist, AttributeError, TypeError) as exc:
+            # Related invoice/warehouse not resolvable yet; the FIFO engine re-validates
+            # stock on confirmation, so skipping here is safe.
+            import logging
+            logging.getLogger(__name__).debug('InvoiceLine.clean stock check skipped: %s', exc)
 
 
 # ---------------------------------------------------------------------------
@@ -576,22 +599,23 @@ class InvoiceLine(models.Model):
 
 def _generate_quotation_number() -> str:
     """
-    Generates a sequential quotation number.
+    Generates a sequential quotation number (race-safe, see core.sequences).
     Format: QUOTE-2026-00001
     """
+    from apps.tenant.core.sequences import next_sequence, max_numeric_suffix
+
     year = datetime.date.today().year
     full_prefix = f'QUOTE-{year}-'
-    last = Quotation.objects.filter(
-        quotation_number__startswith=full_prefix
-    ).order_by('-quotation_number').first()
-    if last:
-        try:
-            last_num = int(last.quotation_number.split('-')[-1])
-        except (ValueError, IndexError):
-            last_num = 0
-    else:
-        last_num = 0
-    return f'{full_prefix}{last_num + 1:05d}'
+    num = next_sequence(
+        f'QUOTATION:{full_prefix}',
+        seed=lambda: max_numeric_suffix(Quotation.objects.all(), 'quotation_number', full_prefix),
+    )
+    return f'{full_prefix}{num:05d}'
+
+
+# Notes prefix written by the legacy confirm_quotation() (which deducted stock on confirm)
+LEGACY_QUOTATION_OUT_NOTE = 'ترحيل عرض سعر رقم'
+LEGACY_QUOTATION_RESTORE_NOTE = 'استرجاع مخزون عرض سعر'
 
 
 class Quotation(models.Model):
@@ -701,7 +725,11 @@ class Quotation(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.quotation_number:
-            self.quotation_number = _generate_quotation_number()
+            from django.db import transaction
+            with transaction.atomic():
+                self.quotation_number = _generate_quotation_number()
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     def recalculate_totals(self):
@@ -723,83 +751,142 @@ class Quotation(models.Model):
 
     def confirm_quotation(self):
         """
-        Posts/Confirms the quotation.
-        Executes stock movements for STOCKABLE / SERIALIZED products only.
-        Service items (SERVICE) bypass stock deductions.
+        Confirms the quotation (DRAFT -> POSTED).
+
+        A quotation is a price offer only: confirming it does NOT move stock and
+        does NOT create any accounting entry. Stock is deducted (with COGS) only
+        when the quotation is converted into a SALE invoice and that invoice is posted.
         """
         if self.status == self.POSTED:
             return
-
-        from apps.tenant.services.fifo_engine import consume_fifo_batches
-
-        for line in self.lines.all():
-            product_type = getattr(line.product, 'product_type', 'PRODUCT')
-            if product_type != 'SERVICE':
-                conversion = line.uom.conversion_factor if line.uom and getattr(line.uom, 'conversion_factor', None) else Decimal('1')
-                base_qty = (line.quantity or Decimal('0')) * Decimal(str(conversion))
-                consume_fifo_batches(
-                    product=line.product,
-                    warehouse=self.warehouse,
-                    quantity_needed=base_qty,
-                    reference=self.quotation_number,
-                    notes=f'ترحيل عرض سعر رقم {self.quotation_number}'
-                )
-
+        if self.status != self.DRAFT:
+            raise ValidationError(
+                f'لا يمكن تأكيد عرض السعر لأنه في حالة "{self.get_status_display()}".'
+            )
+        if not self.lines.exists():
+            raise ValidationError('لا يمكن تأكيد عرض سعر بدون بنود.')
         self.status = self.POSTED
         self.save(update_fields=['status', 'updated_at'])
 
-    def convert_to_invoice(self, user=None):
-        """
-        Converts the quotation into a Sales Invoice seamlessly with full tax preservation.
-        """
-        if self.status == self.CONVERTED and self.converted_invoice:
-            return self.converted_invoice
-
-        # Create sales invoice
-        invoice = Invoice.objects.create(
-            invoice_type=Invoice.SALE,
-            partner=self.partner,
-            branch=self.branch,
-            warehouse=self.warehouse,
-            date=datetime.date.today(),
-            payment_type=Invoice.CREDIT,
-            status=Invoice.DRAFT,
-            cashier=user or self.created_by,
-            discount_percentage=self.discount_percentage,
-            discount_amount=self.discount_amount,
-            vat_percentage=self.vat_percentage,
-            tax_amount=self.tax_amount,
-            wht_percentage=self.wht_percentage,
-            wht_amount=self.wht_amount,
-            subtotal=self.subtotal,
-            total_amount=self.total_amount,
-            notes=f'تم إنشاء الفاتورة من عرض السعر رقم {self.quotation_number}\n{self.notes}'
+    # ------------------------------------------------------------------
+    # Legacy stock handling (quotations confirmed by the old logic deducted stock)
+    # ------------------------------------------------------------------
+    def legacy_stock_movements(self):
+        """OUT movements created by the old confirm_quotation() for this quotation."""
+        from apps.tenant.inventory.models import StockMovement
+        if not self.quotation_number:
+            return StockMovement.objects.none()
+        return StockMovement.objects.filter(
+            reference=self.quotation_number,
+            movement_type='OUT',
+            notes__startswith=LEGACY_QUOTATION_OUT_NOTE,
         )
 
-        # Copy lines
-        for qline in self.lines.all():
-            InvoiceLine.objects.create(
-                invoice=invoice,
-                product=qline.product,
-                quantity=qline.quantity,
-                unit_price=qline.unit_price,
-                discount_pct=qline.discount_pct,
-                discount_amount=qline.discount_amount,
-                uom=qline.uom,
-                subtotal=qline.subtotal,
-                tax_rate=qline.tax_rate,
-                tax_amount=qline.tax_amount,
-                wht_rate=qline.wht_rate,
-                wht_amount=qline.wht_amount,
-                total_amount=qline.total_amount
+    def has_unrestored_legacy_stock(self):
+        from apps.tenant.inventory.models import StockMovement
+        if not self.legacy_stock_movements().exists():
+            return False
+        return not StockMovement.objects.filter(
+            reference=self.quotation_number,
+            notes__startswith=LEGACY_QUOTATION_RESTORE_NOTE,
+        ).exists()
+
+    def restore_legacy_stock(self):
+        """
+        Puts back stock that the old confirm_quotation() deducted (same product,
+        warehouse, quantity and unit cost of every consumed batch). Idempotent.
+        Returns the list of (product, warehouse, qty, unit_cost) restored.
+        """
+        from django.db import transaction
+        from apps.tenant.services.fifo_engine import add_inventory_batch
+
+        restored = []
+        with transaction.atomic():
+            # Lock the quotation row so two restores cannot run concurrently
+            Quotation.objects.select_for_update().filter(pk=self.pk).first()
+            if not self.has_unrestored_legacy_stock():
+                return restored
+            for mv in self.legacy_stock_movements().select_related('product', 'warehouse', 'batch'):
+                if mv.quantity <= 0:
+                    continue
+                add_inventory_batch(
+                    product=mv.product,
+                    warehouse=mv.warehouse,
+                    quantity=mv.quantity,
+                    unit_cost=mv.unit_cost or Decimal('0'),
+                    expiry_date=getattr(mv.batch, 'expiry_date', None) if mv.batch_id else None,
+                    batch_number=f'QUOTE-RESTORE-{self.quotation_number}'[:100],
+                    reference=self.quotation_number,
+                    movement_type='RETURN_IN',
+                    update_last_purchase_price=False,
+                    notes=f'{LEGACY_QUOTATION_RESTORE_NOTE} {self.quotation_number}',
+                )
+                restored.append((mv.product, mv.warehouse, mv.quantity, mv.unit_cost))
+        return restored
+
+    def convert_to_invoice(self, user=None):
+        """
+        Converts the quotation into a DRAFT Sales Invoice with full tax preservation.
+        The caller posts it with confirm_invoice() (which consumes FIFO + COGS once).
+        """
+        from django.db import transaction
+
+        with transaction.atomic():
+            locked = Quotation.objects.select_for_update().get(pk=self.pk)
+            if locked.status == self.CONVERTED and locked.converted_invoice_id:
+                return locked.converted_invoice
+            if locked.status == self.CANCELLED:
+                raise ValidationError('لا يمكن تحويل عرض سعر ملغى.')
+
+            # Quotations confirmed under the old logic already deducted stock:
+            # put it back first so the SALE invoice deducts it exactly once (with COGS).
+            self.restore_legacy_stock()
+
+            invoice = Invoice.objects.create(
+                invoice_type=Invoice.SALE,
+                partner=self.partner,
+                branch=self.branch,
+                warehouse=self.warehouse,
+                date=datetime.date.today(),
+                payment_type=Invoice.CREDIT,
+                status=Invoice.DRAFT,
+                cashier=user or self.created_by,
+                discount_percentage=self.discount_percentage,
+                discount_amount=self.discount_amount,
+                vat_percentage=self.vat_percentage,
+                tax_amount=self.tax_amount,
+                wht_percentage=self.wht_percentage,
+                wht_amount=self.wht_amount,
+                subtotal=self.subtotal,
+                total_amount=self.total_amount,
+                notes=f'تم إنشاء الفاتورة من عرض السعر رقم {self.quotation_number}\n{self.notes}'
             )
 
-        invoice.recalculate_totals()
+            for qline in self.lines.all():
+                InvoiceLine.objects.create(
+                    invoice=invoice,
+                    product=qline.product,
+                    quantity=qline.quantity,
+                    unit_price=qline.unit_price,
+                    discount_pct=qline.discount_pct,
+                    discount_amount=qline.discount_amount,
+                    uom=qline.uom,
+                    subtotal=qline.subtotal,
+                    tax_rate=qline.tax_rate,
+                    tax_amount=qline.tax_amount,
+                    wht_rate=qline.wht_rate,
+                    wht_amount=qline.wht_amount,
+                    total_amount=qline.total_amount
+                )
 
-        self.status = self.CONVERTED
-        self.converted_invoice = invoice
-        self.save(update_fields=['status', 'converted_invoice', 'updated_at'])
-        return invoice
+            invoice.recalculate_totals()
+            invoice.paid_credit = invoice.total_amount
+            invoice.save(update_fields=['paid_credit', 'updated_at'])
+
+            self.status = self.CONVERTED
+            self.converted_invoice = invoice
+            self.save(update_fields=['status', 'converted_invoice', 'updated_at'])
+            return invoice
 
 
 class QuotationLine(models.Model):

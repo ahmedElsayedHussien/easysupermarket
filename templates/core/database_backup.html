@@ -95,7 +95,9 @@
                     {% endif %}
                 </div>
                 <div style="font-size: 0.92rem; color: #cbd5e1; line-height: 1.8;">
-                    {% if db_info.engine == 'postgresql' %}
+                    <div><strong>مساحة العمل:</strong> <code>{{ db_info.schema }}</code> — النسخ الاحتياطي يشمل بيانات مساحة العمل الحالية فقط.</div>
+                    {% if not request.user.is_superuser %}
+                    {% elif db_info.engine == 'postgresql' %}
                         <div><strong>اسم القاعدة:</strong> <code>{{ db_info.name }}</code> | <strong>المستخدم:</strong> <code>{{ db_info.user }}</code></div>
                         <div><strong>الخادم:</strong> <code>{{ db_info.host }}:{{ db_info.port }}</code></div>
                         {% if pg_dump_path %}
@@ -119,7 +121,7 @@
                     </button>
                 </form>
                 <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 0.5rem;">
-                    يتم أيضاً حفظ نسخة دائمة داخل مجلد <code>backups/</code>
+                    يتم أيضاً حفظ نسخة دائمة موقّعة داخل مجلد النسخ الخاص بمساحة العمل. يتم التنزيل كحزمة <code>.zip</code> (الملف + التوقيع).
                 </div>
             </div>
         </div>
@@ -132,7 +134,7 @@
                 <i class="fas fa-history" style="color: #ff7300;"></i> سجل النسخ الاحتياطية المحفوظة ({{ backups|length }})
             </h4>
             <div style="font-size: 0.85rem; color: #94a3b8;">
-                <i class="fas fa-folder-open"></i> مسار المجلد: <code>{{ backup_dir }}</code>
+                <i class="fas fa-folder-open"></i> مجلد مساحة العمل: <code>{{ backup_dir }}</code>
             </div>
         </div>
 
@@ -218,13 +220,13 @@
             <i class="fas fa-upload" style="color: #ff7300;"></i> استعادة قاعدة البيانات من ملف خارجي (Upload & Restore)
         </h4>
         <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 1.25rem;">
-            إذا كان لديك ملف نسخة احتياطية على فلاش ميموري أو جهازك وتريد استعادته (ملفات <code>.sql</code> لقاعدة PostgreSQL أو <code>.db / .sqlite3</code> لقاعدة SQLite):
+            ارفع حزمة <code>.zip</code> تم تنزيلها من هذه الصفحة لنفس مساحة العمل (الحد الأقصى {{ max_upload_mb }} MB). لأسباب أمنية يتم رفض أي ملف غير موقّع من النظام أو يخص مساحة عمل أخرى.
         </p>
 
         <form action="{% url 'core:database_backup_restore' %}" method="POST" enctype="multipart/form-data" class="row g-3 align-items-center" onsubmit="return confirm('⚠️ تنبيه أمان هام:\nاستعادة النسخة الاحتياطية ستقوم باستبدال كافة البيانات الحالية بالقاعدة المرفوعة.\nهل تود المتابعة؟');">
             {% csrf_token %}
             <div class="col-md-7">
-                <input type="file" name="backup_file" class="form-control" style="background: #1e293b; border-color: #334155; color: #f8fafc;" accept=".sql,.db,.sqlite3,.dump" required>
+                <input type="file" name="backup_file" class="form-control" style="background: #1e293b; border-color: #334155; color: #f8fafc;" accept=".zip" required>
             </div>
             <div class="col-md-5">
                 <button type="submit" class="btn btn-orange-glow w-100 py-2">

@@ -30,7 +30,9 @@ class Employee(models.Model):
     base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name=_('الراتب الأساسي (اختياري)'))
 
     def is_admin(self):
-        return self.role == Role.ADMIN or self.user.is_superuser or self.user.is_staff
+        # Tenant admin rights come only from the role in THIS schema; the global
+        # is_superuser flag is reserved for platform operators (auth_user is shared).
+        return self.role == Role.ADMIN or self.user.is_superuser
 
     def is_manager(self):
         return self.role == Role.MANAGER or self.is_admin()
@@ -45,16 +47,10 @@ class Employee(models.Model):
         return self.role == Role.INVENTORY or self.is_admin()
 
     def save(self, *args, **kwargs):
-        if self.role == Role.ADMIN and self.user_id:
-            try:
-                from django.contrib.auth.models import Permission
-                if not self.user.is_superuser or not self.user.is_staff:
-                    self.user.is_superuser = True
-                    self.user.is_staff = True
-                    self.user.save(update_fields=['is_superuser', 'is_staff'])
-                    self.user.user_permissions.set(Permission.objects.all())
-            except Exception:
-                pass
+        # SECURITY: never derive the global is_superuser/is_staff flags from a
+        # tenant role. auth_user is shared by all tenants, so doing so would
+        # make a tenant admin an admin of every tenant and of the public /admin/.
+        # Admin rights are granted via is_admin_user() (role == ADMIN here).
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -212,3 +208,19 @@ class SystemSetting(models.Model):
         obj, created = cls.objects.get_or_create(pk=1)
         return obj
 
+
+
+class DocumentSequence(models.Model):
+    """
+    Race-safe document number counter (one row per prefix, e.g. 'SALE-2026-').
+    Always use apps.tenant.core.sequences.next_sequence() — never edit directly.
+    """
+    key = models.CharField(max_length=100, unique=True)
+    last_value = models.BigIntegerField(default=0)
+
+    class Meta:
+        verbose_name = _('عداد ترقيم المستندات')
+        verbose_name_plural = _('عدادات ترقيم المستندات')
+
+    def __str__(self):
+        return f'{self.key}{self.last_value}'

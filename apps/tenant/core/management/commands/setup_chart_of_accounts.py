@@ -16,10 +16,15 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='1130', defaults={'name': 'ذمم مدينة - عملاء', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1135', defaults={'name': 'ذمم الموظفين والعهد', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1140', defaults={'name': 'المخزون', 'account_type': Account.ASSET, 'parent': curr_assets})
-    Account.objects.get_or_create(code='1150', defaults={'name': 'عهد نقدية ومصروفات مقدمة', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+    Account.objects.get_or_create(code='1145', defaults={'name': 'دفعات مقدمة للموردين', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+    Account.objects.get_or_create(code='1150', defaults={'name': 'عهد نقدية', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+    Account.objects.get_or_create(code='1152', defaults={'name': 'مصروفات مدفوعة مقدماً', 'account_type': Account.ASSET, 'parent': curr_assets})
+    Account.objects.get_or_create(code='1155', defaults={'name': 'ضريبة خصم من المنبع لنا (مدينة)', 'account_type': Account.ASSET, 'parent': curr_assets})
     Account.objects.get_or_create(code='1160', defaults={'name': 'المحافظ الإلكترونية', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1170', defaults={'name': 'ماكينات الدفع الإلكتروني (POS)', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
-    Account.objects.get_or_create(code='1180', defaults={'name': 'أوراق قبض (شيكات تحت التحصيل - حساب وسيط)', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+    Account.objects.get_or_create(code='1180', defaults={'name': 'أوراق قبض - حافظة الشيكات', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+    Account.objects.get_or_create(code='1185', defaults={'name': 'شيكات برسم التحصيل', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
+    Account.objects.get_or_create(code='1190', defaults={'name': 'ضريبة القيمة المضافة - مدخلات (مشتريات)', 'account_type': Account.ASSET, 'parent': curr_assets})
     
     fix_assets, _ = Account.objects.get_or_create(code='1200', defaults={'name': 'أصول ثابتة', 'account_type': Account.ASSET, 'parent': assets})
     Account.objects.get_or_create(code='1210', defaults={'name': 'الأصول الثابتة والآلات', 'account_type': Account.ASSET, 'parent': fix_assets})
@@ -30,10 +35,14 @@ def setup_chart_of_accounts_data():
     curr_liab, _ = Account.objects.get_or_create(code='2100', defaults={'name': 'خصوم متداولة', 'account_type': Account.LIABILITY, 'parent': liab})
     Account.objects.get_or_create(code='2110', defaults={'name': 'ذمم دائنة - موردون', 'account_type': Account.LIABILITY, 'parent': curr_liab, 'allow_reconcile': True})
     Account.objects.get_or_create(code='2120', defaults={'name': 'ضريبة الخصم والإضافة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
-    Account.objects.get_or_create(code='2130', defaults={'name': 'ضريبة القيمة المضافة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+    Account.objects.get_or_create(code='2130', defaults={'name': 'ضريبة القيمة المضافة - مخرجات (مبيعات)', 'account_type': Account.LIABILITY, 'parent': curr_liab})
     Account.objects.get_or_create(code='2140', defaults={'name': 'مصروفات مستحقة الدفع', 'account_type': Account.LIABILITY, 'parent': curr_liab})
     Account.objects.get_or_create(code='2150', defaults={'name': 'أرصدة دائنة أخرى وتأمينات', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+    Account.objects.get_or_create(code='2155', defaults={'name': 'دفعات مقدمة من العملاء', 'account_type': Account.LIABILITY, 'parent': curr_liab, 'allow_reconcile': True})
     Account.objects.get_or_create(code='2160', defaults={'name': 'الرواتب والأجور المستحقة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+    Account.objects.get_or_create(code='2165', defaults={'name': 'التأمينات الاجتماعية المستحقة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+    Account.objects.get_or_create(code='2166', defaults={'name': 'ضريبة كسب العمل المستحقة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+    Account.objects.get_or_create(code='2167', defaults={'name': 'عمولات موظفين مستحقة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
     Account.objects.get_or_create(code='2170', defaults={'name': 'أوراق دفع (شيكات برسم السداد)', 'account_type': Account.LIABILITY, 'parent': curr_liab, 'allow_reconcile': True})
     Account.objects.get_or_create(code='2180', defaults={'name': 'أقساط قروض قصيرة الأجل ومستحقة', 'account_type': Account.LIABILITY, 'parent': curr_liab, 'allow_reconcile': True})
 
@@ -55,6 +64,7 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='4110', defaults={'name': 'إيرادات المصنعيات والخدمات', 'account_type': Account.REVENUE, 'parent': rev})
     Account.objects.get_or_create(code='4120', defaults={'name': 'مردودات ومسموحات المبيعات', 'account_type': Account.REVENUE, 'parent': rev, 'is_contra_revenue': True})
     Account.objects.get_or_create(code='4130', defaults={'name': 'خصم مسموح به', 'account_type': Account.REVENUE, 'parent': rev, 'is_contra_revenue': True})
+    Account.objects.get_or_create(code='4140', defaults={'name': 'إيرادات تأجير المعدات', 'account_type': Account.REVENUE, 'parent': rev})
     Account.objects.get_or_create(code='4200', defaults={'name': 'إيرادات أخرى', 'account_type': Account.REVENUE, 'parent': rev})
     Account.objects.get_or_create(code='4210', defaults={'name': 'خصم مكتسب (موردين)', 'account_type': Account.REVENUE, 'parent': rev})
     Account.objects.get_or_create(code='4220', defaults={'name': 'إيرادات غرامات وتأخيرات', 'account_type': Account.REVENUE, 'parent': rev})
@@ -67,6 +77,7 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='5100', defaults={'name': 'تكلفة البضاعة المباعة', 'account_type': Account.EXPENSE, 'parent': exp, 'is_cogs': True, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5105', defaults={'name': 'تكلفة قطع الغيار المستهلكة في الصيانة', 'account_type': Account.EXPENSE, 'parent': exp, 'is_cogs': True, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5110', defaults={'name': 'مردودات ومسموحات المشتريات', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
+    Account.objects.get_or_create(code='5115', defaults={'name': 'فروق تقريب نقطة البيع', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
     
     op_exp, _ = Account.objects.get_or_create(code='5200', defaults={'name': 'مصاريف تشغيلية', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5210', defaults={'name': 'رواتب وأجور', 'account_type': Account.EXPENSE, 'parent': op_exp, 'allow_direct_payment': True})
@@ -79,6 +90,7 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='5250', defaults={'name': 'مصاريف تالف وهالك وعجز مخزون', 'account_type': Account.EXPENSE, 'parent': op_exp, 'allow_direct_payment': False})
     
     admin_exp, _ = Account.objects.get_or_create(code='5300', defaults={'name': 'مصاريف إدارية وعمولات بنكية', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
+    Account.objects.get_or_create(code='5305', defaults={'name': 'عمولات ماكينات الدفع والمحافظ والبنوك', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5310', defaults={'name': 'مصاريف صيانة ونظافة المقرات', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
     Account.objects.get_or_create(code='5320', defaults={'name': 'مصاريف دعاية وإعلان وتسويق', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
     Account.objects.get_or_create(code='5330', defaults={'name': 'مصاريف ضيافة ومستلزمات', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
@@ -86,7 +98,7 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='5332', defaults={'name': 'مصروف تغذية', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
     Account.objects.get_or_create(code='5340', defaults={'name': 'تبرعات وإعانات', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
     Account.objects.get_or_create(code='5350', defaults={'name': 'مصاريف انتقالات ومواصلات', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
-    Account.objects.get_or_create(code='5360', defaults={'name': 'مصاريف رسوم وااشتراكات حكومية وتراخيص', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
+    Account.objects.get_or_create(code='5360', defaults={'name': 'مصاريف رسوم واشتراكات حكومية وتراخيص', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
     Account.objects.get_or_create(code='5370', defaults={'name': 'خسائر بيع واستبعاد أصول ثابتة', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5400', defaults={'name': 'عجز وزيادة الخزينة (الورديات)', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5500', defaults={'name': 'مصاريف فوائد وتمويل بنكي', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
@@ -106,6 +118,9 @@ def setup_chart_of_accounts_data():
 
     if not Account.objects.filter(name__icontains='مسحوبات الشريك').exists():
         Account.objects.get_or_create(code='3410', defaults={'name': 'مسحوبات الشريك', 'account_type': Account.EQUITY, 'parent': equity, 'allow_reconcile': True, 'allow_direct_payment': True})
+
+    Account.objects.filter(code='5360', name__contains='وااشتراكات').update(name='مصاريف رسوم واشتراكات حكومية وتراخيص')
+    Account.objects.filter(code='2130', name='ضريبة القيمة المضافة').update(name='ضريبة القيمة المضافة - مخرجات (مبيعات)')
 
     Account.objects.rebuild()
 

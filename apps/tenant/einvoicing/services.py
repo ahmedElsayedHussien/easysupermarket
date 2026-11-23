@@ -144,11 +144,11 @@ def get_eta_access_token(settings_obj):
         'scope': 'InvoicingAPI'
     }
     
-    response = requests.post(auth_url, data=payload)
+    response = requests.post(auth_url, data=payload, timeout=(10, 30))
     if response.status_code == 200:
         return response.json().get('access_token')
     else:
-        raise Exception(f"فشل الحصول على مفتاح المرور: {response.text}")
+        raise Exception(f"فشل الحصول على مفتاح المرور (HTTP {response.status_code}): {response.text[:500]}")
 
 
 def submit_to_eta(signed_invoice_data, settings_obj):
@@ -162,5 +162,5 @@ def submit_to_eta(signed_invoice_data, settings_obj):
     base_url = "https://api.invoicing.eta.gov.eg" if settings_obj.is_production else "https://api.preprod.invoicing.eta.gov.eg"
     submission_url = f"{base_url}/api/v1.0/documentsubmissions"
     
-    eta_response = requests.post(submission_url, json=payload, headers=headers)
+    eta_response = requests.post(submission_url, json=payload, headers=headers, timeout=(10, 60))
     return eta_response

@@ -1,3 +1,5 @@
+import secrets
+
 from django.db import models
 from apps.tenant.invoicing.models import Invoice
 
@@ -9,10 +11,30 @@ class TaxIntegrationSettings(models.Model):
     is_production = models.BooleanField(default=False, verbose_name="العملية الفعلية (Production Mode)")
     company_id = models.CharField(max_length=50, blank=True, null=True, verbose_name="رقم التسجيل الضريبي (Issuer ID)")
     company_name = models.CharField(max_length=255, blank=True, null=True, verbose_name="اسم الشركة (Issuer Name)")
-    
+    # Shared secret used by the Local Signer: "Authorization: Bearer <api_token>".
+    api_token = models.CharField(max_length=128, blank=True, default='', editable=False,
+                                 verbose_name="مفتاح ربط برنامج التوقيع (API Token)")
+
     class Meta:
         verbose_name = "إعدادات الفاتورة الإلكترونية"
         verbose_name_plural = "إعدادات الفاتورة الإلكترونية"
+
+    @staticmethod
+    def generate_api_token():
+        return secrets.token_urlsafe(32)
+
+    def regenerate_api_token(self):
+        self.api_token = self.generate_api_token()
+        self.save(update_fields=['api_token'])
+        return self.api_token
+
+    def save(self, *args, **kwargs):
+        if not self.api_token:
+            self.api_token = self.generate_api_token()
+            update_fields = kwargs.get('update_fields')
+            if update_fields is not None and 'api_token' not in update_fields:
+                kwargs['update_fields'] = list(update_fields) + ['api_token']
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"إعدادات الضرائب - {'البيئة الفعلية' if self.is_production else 'البيئة التجريبية'}"

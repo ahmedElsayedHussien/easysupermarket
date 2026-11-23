@@ -34,7 +34,7 @@ if DB_ENGINE in ['postgresql', 'postgres', 'pgsql', 'pg']:
             'ENGINE': 'django_tenants.postgresql_backend',
             'NAME': config('DB_NAME', default='easysupermarket').strip(),
             'USER': config('DB_USER', default='postgres').strip(),
-            'PASSWORD': config('DB_PASSWORD', default='thesordd12').strip(),
+            'PASSWORD': config('DB_PASSWORD').strip(),
             'HOST': config('DB_HOST', default='localhost').strip(),
             'PORT': config('DB_PORT', default='5432').strip(),
             'OPTIONS': {

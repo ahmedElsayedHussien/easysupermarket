@@ -9,7 +9,7 @@
             <a href="{% url 'accounting:chart_of_accounts' %}" class="btn-action">
                 <i class="fas fa-list"></i> دليل الحسابات
             </a>
-            {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
+            {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
             <a href="{% url 'accounting:journal_create' %}" class="btn-action" style="margin-right: 0.5rem; background-color: var(--neon-cyan); color: #000 !important; font-weight: bold;">
                 <i class="fas fa-plus"></i> قيد يومية يدوي جديد
             </a>

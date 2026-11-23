@@ -16,6 +16,36 @@ from django.db.models import Sum, Q
 from mptt.models import MPTTModel, TreeForeignKey
 from decimal import Decimal
 import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _next_doc_number(namespace, model, field, prefix, width=5):
+    """
+    Race-safe "last number + 1" for document numbers.
+    The counter key is namespaced per model so two models sharing a textual prefix
+    (e.g. Voucher 'PAY-2026-' vs partners Payment 'PAY-2026-') never share a counter.
+    Must be called inside the transaction.atomic() block that saves the document.
+    """
+    from apps.tenant.core.sequences import next_sequence, max_numeric_suffix
+    num = next_sequence(
+        f'{namespace}:{prefix}',
+        seed=lambda: max_numeric_suffix(model.objects.all(), field, prefix),
+    )
+    return f'{prefix}{num:0{width}d}'
+
+
+def _ensure_pos_session_open(pos_session, action_label='تعديل'):
+    """Refuse changing posted money documents that belong to an already-closed cashier shift."""
+    if pos_session is None:
+        return
+    from apps.tenant.invoicing.models import POSSession
+    if pos_session.status == POSSession.CLOSED:
+        raise ValidationError(
+            f'لا يمكن {action_label} هذا المستند لأنه مرتبط بوردية كاشير مغلقة '
+            f'({pos_session}). يرجى عمل سند/قيد تسوية عكسي بدلاً من ذلك.'
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -188,15 +218,10 @@ class JournalEntry(models.Model):
         if not self.reference:
             year = self.date.year if self.date else datetime.date.today().year
             prefix = f"JE-MANUAL-{year}-"
-            last = JournalEntry.objects.filter(reference__startswith=prefix).order_by('-id').first()
-            if last:
-                try:
-                    last_num = int(last.reference.split('-')[-1])
-                except ValueError:
-                    last_num = 0
-            else:
-                last_num = 0
-            self.reference = f"{prefix}{last_num + 1:05d}"
+            with transaction.atomic():
+                self.reference = _next_doc_number('journal_entry', JournalEntry, 'reference', prefix)
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -478,6 +503,78 @@ class EWallet(models.Model):
             self.ensure_account()
 
 
+OPENING_REFERENCE_PREFIXES = {
+    'Treasury': 'OPENING-TR',
+    'BankAccount': 'OPENING-BK',
+    'EWallet': 'OPENING-EW',
+    'POSMachine': 'OPENING-PM',
+}
+
+
+def book_opening_balance(instance, ref_prefix=None):
+    """
+    Posts the opening-balance entry of a Treasury / BankAccount / EWallet / POSMachine:
+        Dr  <instance ledger account>   opening_balance
+        Cr  3100 رأس المال              opening_balance
+
+    Atomic and idempotent (keyed by reference '<PREFIX>-<pk>'):
+      - a POSTED entry that already has items is returned untouched;
+      - an empty / DRAFT header left behind by the old broken signal is repaired in place.
+    Returns the posted JournalEntry, or None when there is nothing to book.
+    """
+    from apps.tenant.services.journal_service import _get_system_account
+
+    amount = Decimal(str(instance.opening_balance or 0))
+    if amount <= 0 or not instance.pk:
+        return None
+    account = instance.account
+    if account is None:
+        return None
+    ref_prefix = ref_prefix or OPENING_REFERENCE_PREFIXES[type(instance).__name__]
+    ref = f"{ref_prefix}-{instance.pk}"
+
+    with transaction.atomic():
+        entry = JournalEntry.objects.select_for_update().filter(reference=ref).first()
+        if entry is not None and entry.status == JournalEntry.POSTED and entry.items.exists():
+            return entry
+
+        capital_acc = _get_system_account('3100')
+        if entry is None:
+            entry = JournalEntry.objects.create(
+                date=datetime.date.today(),
+                reference=ref,
+                description=f"رصيد افتتاحي - {instance.name}",
+                status=JournalEntry.DRAFT,
+            )
+        else:
+            entry.items.all().delete()
+            if entry.status != JournalEntry.DRAFT:
+                entry.status = JournalEntry.DRAFT
+                entry.save(update_fields=['status', 'updated_at'])
+
+        entry.content_type = ContentType.objects.get_for_model(instance)
+        entry.object_id = instance.pk
+        entry.save(update_fields=['content_type', 'object_id'])
+
+        JournalItem.objects.create(entry=entry, account=account, debit=amount, credit=0,
+                                   description=f"رصيد افتتاحي - {instance.name}")
+        JournalItem.objects.create(entry=entry, account=capital_acc, debit=0, credit=amount,
+                                   description=f"رصيد افتتاحي - {instance.name}")
+        entry.post()
+        return entry
+
+
+def _book_opening_balance_safely(instance):
+    """Called from post_save: never breaks the save of the treasury/bank/wallet itself."""
+    try:
+        book_opening_balance(instance)
+    except Exception:
+        logger.exception(
+            "Error booking opening balance for %s #%s (run 'manage.py repair_opening_balances' to retry)",
+            type(instance).__name__, instance.pk,
+        )
+
+
 @receiver(post_save, sender=Treasury)
 def create_treasury_account(sender, instance, created, **kwargs):
     updated = False
@@ -509,22 +606,7 @@ def create_treasury_account(sender, instance, created, **kwargs):
         Treasury.objects.filter(id=instance.id).update(account=instance.account)
 
     if created and instance.opening_balance > 0 and instance.account:
-        from apps.tenant.services.journal_service import _get_system_account
-        from django.utils import timezone
-        try:
-            capital_acc = _get_system_account('3100')
-            if capital_acc:
-                entry = JournalEntry.objects.create(
-                    date=timezone.now().date(),
-                    reference=f"OPENING-TR-{instance.id}",
-                    description=f"رصيد افتتاحي - {instance.name}"
-                )
-                from .models import JournalEntryLine
-                JournalEntryLine.objects.create(entry=entry, account=instance.account, debit=instance.opening_balance, credit=0)
-                JournalEntryLine.objects.create(entry=entry, account=capital_acc, debit=0, credit=instance.opening_balance)
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Error creating treasury opening balance entry: {str(e)}")
+        _book_opening_balance_safely(instance)
 
 @receiver(post_save, sender=BankAccount)
 def create_bank_account(sender, instance, created, **kwargs):
@@ -555,22 +637,7 @@ def create_bank_account(sender, instance, created, **kwargs):
         BankAccount.objects.filter(id=instance.id).update(account=instance.account)
 
     if created and instance.opening_balance > 0 and instance.account:
-        from apps.tenant.services.journal_service import _get_system_account
-        from django.utils import timezone
-        try:
-            capital_acc = _get_system_account('3100')
-            if capital_acc:
-                entry = JournalEntry.objects.create(
-                    date=timezone.now().date(),
-                    reference=f"OPENING-BK-{instance.id}",
-                    description=f"رصيد افتتاحي - {instance.name}"
-                )
-                from .models import JournalEntryLine
-                JournalEntryLine.objects.create(entry=entry, account=instance.account, debit=instance.opening_balance, credit=0)
-                JournalEntryLine.objects.create(entry=entry, account=capital_acc, debit=0, credit=instance.opening_balance)
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Error creating bank opening balance entry: {str(e)}")
+        _book_opening_balance_safely(instance)
 
 @receiver(post_save, sender=EWallet)
 def create_ewallet_account(sender, instance, created, **kwargs):
@@ -601,18 +668,7 @@ def create_ewallet_account(sender, instance, created, **kwargs):
         EWallet.objects.filter(id=instance.id).update(account=instance.account)
 
     if created and instance.opening_balance > 0 and instance.account:
-        from apps.tenant.services.journal_service import _get_system_account
-        from django.utils import timezone
-        capital_acc = _get_system_account('3100')
-        if capital_acc:
-            entry = JournalEntry.objects.create(
-                date=timezone.now().date(),
-                reference=f"OPENING-EW-{instance.id}",
-                description=f"رصيد افتتاحي - {instance.name}"
-            )
-            from .models import JournalEntryLine
-            JournalEntryLine.objects.create(entry=entry, account=instance.account, debit=instance.opening_balance, credit=0)
-            JournalEntryLine.objects.create(entry=entry, account=capital_acc, debit=0, credit=instance.opening_balance)
+        _book_opening_balance_safely(instance)
 
 # ---------------------------------------------------------------------------
 # Expenses
@@ -661,24 +717,17 @@ class Expense(models.Model):
         return f"{self.expense_number} - {self.description[:30]}"
 
     def save(self, *args, **kwargs):
-        if not self.expense_number:
-            year = datetime.date.today().year
-            prefix = f"EXP-{year}-"
-            last = Expense.objects.filter(expense_number__startswith=prefix).order_by('-expense_number').first()
-            if last:
-                try:
-                    last_num = int(last.expense_number.split('-')[-1])
-                except ValueError:
-                    last_num = 0
-            else:
-                last_num = 0
-            self.expense_number = f"{prefix}{last_num + 1:05d}"
-            
         # Calculate amounts
         self.vat_amount = (self.amount * (self.vat_percent / Decimal('100.0'))).quantize(Decimal('0.01'))
         self.withholding_tax_amount = (self.amount * (self.withholding_tax_percent / Decimal('100.0'))).quantize(Decimal('0.01'))
         self.total_amount = self.amount + self.vat_amount - self.withholding_tax_amount
-        
+
+        if not self.expense_number:
+            year = datetime.date.today().year
+            with transaction.atomic():
+                self.expense_number = _next_doc_number('expense', Expense, 'expense_number', f"EXP-{year}-")
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     def confirm_expense(self):
@@ -686,10 +735,15 @@ class Expense(models.Model):
         from django.db import transaction
         
         with transaction.atomic():
+            # Lock the row and re-check status so a double click / concurrent request can't post twice
+            current_status = Expense.objects.select_for_update().filter(pk=self.pk).values_list('status', flat=True).first()
+            if current_status is not None:
+                self.status = current_status
             if self.status != self.DRAFT:
-                from django.core.exceptions import ValidationError
                 raise ValidationError("لا يمكن ترحيل إلا مسودة المصروف.")
-                
+            if (self.amount or Decimal('0')) <= 0 or (self.total_amount or Decimal('0')) <= 0:
+                raise ValidationError("لا يمكن ترحيل مصروف بمبلغ صفر أو سالب.")
+
             from apps.tenant.services.journal_service import _get_system_account
             
             # Clean up any orphaned journal entry from previous failed attempts
@@ -726,7 +780,7 @@ class Expense(models.Model):
             
             # Dr: VAT Account
             if self.vat_amount > 0:
-                vat_account = _get_system_account('2130')  # 2130 is Input VAT
+                vat_account = _get_system_account('1190')  # 1190 = Input VAT (مدخلات) — same as purchase invoices
                 if vat_account:
                     JournalItem.objects.create(
                         entry=entry,
@@ -736,22 +790,16 @@ class Expense(models.Model):
                         description=f"ضريبة قيمة مضافة - مصروف {self.expense_number}"
                     )
                     
-            # Cr: Withholding Tax Account
+            # Cr: Withholding Tax Payable (2120 - same account used by purchase invoices)
             if self.withholding_tax_amount > 0:
-                wh_account = _get_system_account('2140')
-                if not wh_account:
-                    # Fallback to create it
-                    liability_parent = Account.objects.filter(code__startswith='2').first()
-                    if liability_parent:
-                        wh_account = Account.objects.create(code='2140', name='ضريبة الخصم والإضافة', account_type=Account.LIABILITY, parent=liability_parent)
-                if wh_account:
-                    JournalItem.objects.create(
-                        entry=entry,
-                        account=wh_account,
-                        debit=0,
-                        credit=self.withholding_tax_amount,
-                        description=f"ضريبة خصم وإضافة - مصروف {self.expense_number}"
-                    )
+                wh_account = _get_system_account('2120')  # raises ValueError if missing
+                JournalItem.objects.create(
+                    entry=entry,
+                    account=wh_account,
+                    debit=0,
+                    credit=self.withholding_tax_amount,
+                    description=f"ضريبة خصم وإضافة - مصروف {self.expense_number}"
+                )
                     
             # Cr: Payment Account (Cash/Bank/Wallet)
             JournalItem.objects.create(
@@ -845,7 +893,11 @@ class Voucher(models.Model):
         'invoicing.POSSession', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='vouchers', verbose_name='الوردية المرتبطة'
     )
-    
+    branch = models.ForeignKey(
+        'core.Branch', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='vouchers', verbose_name='الفرع'
+    )
+
     description = models.TextField(verbose_name='البيان', blank=True, null=True)
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default=DRAFT, verbose_name='الحالة')
     
@@ -866,19 +918,6 @@ class Voucher(models.Model):
         return f"{self.get_voucher_type_display()} #{self.voucher_number} - {self.amount}"
 
     def save(self, *args, **kwargs):
-        if not self.voucher_number:
-            prefix = 'REC' if self.voucher_type == self.RECEIPT else 'PAY'
-            year = datetime.date.today().year
-            last_voucher = Voucher.objects.filter(voucher_number__startswith=f"{prefix}-{year}-").order_by('-voucher_number').first()
-            if last_voucher:
-                try:
-                    last_num = int(last_voucher.voucher_number.split('-')[-1])
-                except ValueError:
-                    last_num = 0
-            else:
-                last_num = 0
-            self.voucher_number = f"{prefix}-{year}-{(last_num + 1):05d}"
-
         # مزامنة تفاصيل السداد المقسم مع طريقة الدفع
         if self.payment_method == self.CASH:
             self.paid_cash = self.amount or Decimal('0')
@@ -908,7 +947,21 @@ class Voucher(models.Model):
             split_sum = (self.paid_cash or 0) + (self.paid_card or 0) + (self.paid_ewallet or 0) + (self.paid_bank or 0)
             if split_sum == 0 and self.amount:
                 self.paid_cash = self.amount
-            
+
+        # Branch attribution (used for branch-scoped visibility of vouchers)
+        if not self.branch_id:
+            if self.pos_session_id and self.pos_session and self.pos_session.branch_id:
+                self.branch_id = self.pos_session.branch_id
+            elif self.treasury_id and self.treasury and self.treasury.branch_id:
+                self.branch_id = self.treasury.branch_id
+
+        if not self.voucher_number:
+            prefix = 'REC' if self.voucher_type == self.RECEIPT else 'PAY'
+            year = datetime.date.today().year
+            with transaction.atomic():
+                self.voucher_number = _next_doc_number('voucher', Voucher, 'voucher_number', f"{prefix}-{year}-")
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     @property
@@ -989,9 +1042,17 @@ class Voucher(models.Model):
         from django.core.exceptions import ValidationError
         
         with transaction.atomic():
+            # Lock the row and re-check status so a voucher can never be posted twice concurrently
+            current_status = Voucher.objects.select_for_update().filter(pk=self.pk).values_list('status', flat=True).first()
+            if current_status is not None:
+                self.status = current_status
             if self.status != self.DRAFT:
                 raise ValidationError("لا يمكن ترحيل إلا مسودة السند.")
-            
+            if (self.amount or Decimal('0')) <= 0:
+                raise ValidationError("مبلغ السند يجب أن يكون أكبر من صفر.")
+            if any((v or Decimal('0')) < 0 for v in (self.paid_cash, self.paid_card, self.paid_ewallet, self.paid_bank)):
+                raise ValidationError("مبالغ السداد لا يمكن أن تكون سالبة.")
+
             if self.payment_method == self.SPLIT:
                 split_sum = (self.paid_cash or Decimal('0')) + (self.paid_card or Decimal('0')) + (self.paid_ewallet or Decimal('0')) + (self.paid_bank or Decimal('0'))
                 if abs(split_sum - self.amount) > Decimal('0.05'):
@@ -1105,18 +1166,23 @@ class Voucher(models.Model):
                 self.save()
 
     def cancel_voucher(self):
-        """Cancels the voucher and deletes its linked journal entry."""
-        from django.db import transaction
-        from django.core.exceptions import ValidationError
-
+        """
+        Cancels the voucher and removes its linked journal entry (same approach as
+        invoice_service.cancel_invoice). Runs atomically on a locked row, and is refused
+        when the voucher belongs to an already-closed cashier shift (the shift's cash
+        count was reconciled against it).
+        """
         with transaction.atomic():
-            if self.status == self.CANCELLED:
+            locked = Voucher.objects.select_for_update().select_related('pos_session').get(pk=self.pk)
+            if locked.status == self.CANCELLED:
                 raise ValidationError("السند ملغي بالفعل.")
+            if locked.status == self.POSTED:
+                _ensure_pos_session_open(locked.pos_session, 'إلغاء')
 
-            if self.journal_entry:
-                self.journal_entry.delete()
-                self.journal_entry = None
+            if locked.journal_entry_id:
+                JournalEntry.objects.filter(pk=locked.journal_entry_id).delete()
 
+            self.journal_entry = None
             self.status = self.CANCELLED
             self.save(update_fields=['status', 'journal_entry', 'updated_at'])
 
@@ -1214,18 +1280,8 @@ def create_pos_machine_account(sender, instance, created, **kwargs):
         instance.save(update_fields=['account'])
 
     if created and instance.opening_balance > 0 and instance.account:
-        from apps.tenant.services.journal_service import _get_system_account
-        from django.utils import timezone
-        capital_acc = _get_system_account('3100')
-        if capital_acc:
-            entry = JournalEntry.objects.create(
-                date=timezone.now().date(),
-                reference=f'OPENING-PM-{instance.id}',
-                description=f'رصيد افتتاحي - {instance.name}'
-            )
-            JournalItem.objects.create(entry=entry, account=instance.account, debit=instance.opening_balance, credit=0)
-            JournalItem.objects.create(entry=entry, account=capital_acc, debit=0, credit=instance.opening_balance)
-            entry.post()
+        # Same pattern as treasuries/banks/wallets: atomic + idempotent (errors propagate as before)
+        book_opening_balance(instance)
 
 
 # ---------------------------------------------------------------------------
@@ -1327,17 +1383,12 @@ class EServiceTransaction(models.Model):
     def save(self, *args, **kwargs):
         if not self.transaction_number:
             year = datetime.date.today().year
-            prefix = f'ESVC-{year}-'
-            last = EServiceTransaction.objects.filter(
-                transaction_number__startswith=prefix
-            ).order_by('-transaction_number').first()
-            last_num = 0
-            if last:
-                try:
-                    last_num = int(last.transaction_number.split('-')[-1])
-                except ValueError:
-                    pass
-            self.transaction_number = f'{prefix}{last_num + 1:05d}'
+            with transaction.atomic():
+                self.transaction_number = _next_doc_number(
+                    'eservice', EServiceTransaction, 'transaction_number', f'ESVC-{year}-'
+                )
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     def get_source_account(self):
@@ -1354,8 +1405,18 @@ class EServiceTransaction(models.Model):
         from apps.tenant.services.journal_service import _get_system_account
 
         with db_transaction.atomic():
+            current_status = EServiceTransaction.objects.select_for_update().filter(pk=self.pk).values_list('status', flat=True).first()
+            if current_status is not None:
+                self.status = current_status
             if self.status == self.POSTED:
                 raise ValidationError('هذه العملية مرحلة بالفعل.')
+            principal = self.principal_amount or Decimal('0')
+            if principal <= 0:
+                raise ValidationError('المبلغ الأصلي يجب أن يكون أكبر من صفر.')
+            if (self.commission_revenue or 0) < 0 or (self.commission_expense or 0) < 0:
+                raise ValidationError('العمولات لا يمكن أن تكون سالبة.')
+            if self.transaction_type == self.CASH_OUT and (self.commission_revenue or 0) > principal:
+                raise ValidationError('عمولة المحل لا يمكن أن تتجاوز المبلغ الأصلي في عملية السحب.')
 
             source_account = self.get_source_account()
             if not source_account:
@@ -1365,7 +1426,7 @@ class EServiceTransaction(models.Model):
 
             treasury_account = self.treasury.account
             revenue_account = _get_system_account('4200') or _get_system_account('4100')
-            expense_account = _get_system_account('5200') or _get_system_account('5100')
+            expense_account = Cheque.get_bank_expense_account()  # 5305 - agent / machine / wallet fees
 
             JournalEntry.objects.filter(reference=self.transaction_number).delete()
 
@@ -1438,21 +1499,13 @@ class EServiceTransaction(models.Model):
             if not cash_partner:
                 return
 
-            year = dt.date.today().year
-            inv_prefix = f'SVC-{year}-'
-            last_inv = Invoice.objects.filter(invoice_number__startswith=inv_prefix).order_by('-invoice_number').first()
-            last_num = 0
-            if last_inv:
-                try:
-                    last_num = int(last_inv.invoice_number.split('-')[-1])
-                except ValueError:
-                    pass
-            inv_number = f'{inv_prefix}{last_num + 1:05d}'
-
             branch = self.treasury.branch
             warehouse = branch.warehouses.first()
             if not warehouse:
                 return
+
+            year = dt.date.today().year
+            inv_number = _next_doc_number('invoice', Invoice, 'invoice_number', f'SVC-{year}-')
 
             invoice = Invoice.objects.create(
                 invoice_number=inv_number,
@@ -1547,15 +1600,12 @@ class InternalTransfer(models.Model):
     def save(self, *args, **kwargs):
         if not self.transfer_number:
             year = datetime.date.today().year
-            last_trf = InternalTransfer.objects.filter(transfer_number__startswith=f"TRF-{year}-").order_by('-transfer_number').first()
-            if last_trf:
-                try:
-                    last_num = int(last_trf.transfer_number.split('-')[-1])
-                except ValueError:
-                    last_num = 0
-            else:
-                last_num = 0
-            self.transfer_number = f"TRF-{year}-{(last_num + 1):05d}"
+            with transaction.atomic():
+                self.transfer_number = _next_doc_number(
+                    'internal_transfer', InternalTransfer, 'transfer_number', f"TRF-{year}-"
+                )
+                super().save(*args, **kwargs)
+            return
         super().save(*args, **kwargs)
 
     @property
@@ -1604,8 +1654,14 @@ class InternalTransfer(models.Model):
         from django.core.exceptions import ValidationError
 
         with transaction.atomic():
+            # Lock the transfer row and re-check its status (no double posting)
+            current_status = InternalTransfer.objects.select_for_update().filter(pk=self.pk).values_list('status', flat=True).first()
+            if current_status is not None:
+                self.status = current_status
             if self.status != self.DRAFT:
                 raise ValidationError("لا يمكن ترحيل إلا مسودة التحويل.")
+            if (self.amount or Decimal('0')) <= 0:
+                raise ValidationError("يجب أن يكون مبلغ التحويل أكبر من صفر.")
 
             src_acc = self.source_gl_account
             dst_acc = self.destination_gl_account
@@ -1617,9 +1673,13 @@ class InternalTransfer(models.Model):
             if src_acc == dst_acc:
                 raise ValidationError("غير مسموح بالتحويل من وإلى نفس الحساب المحاسبي.")
 
+            # Lock the source ledger account row: concurrent transfers out of the same
+            # treasury/bank/wallet are serialized, so the balance check below can't be raced.
+            locked_src_acc = Account.objects.select_for_update().get(pk=src_acc.pk)
+
             src_obj = self.source_object
             if src_obj:
-                src_balance = getattr(src_obj, 'current_balance', Decimal('0.00'))
+                src_balance = locked_src_acc.current_balance  # fresh instance -> live ledger balance
                 if src_balance < self.amount:
                     raise ValidationError(f"عفواً، رصيد {self.source_name} الحالي ({src_balance:,.2f} ج.م) غير كافٍ لإكمال تحويل بمبلغ {self.amount:,.2f} ج.م.")
 
@@ -1651,13 +1711,16 @@ class InternalTransfer(models.Model):
         from django.core.exceptions import ValidationError
 
         with transaction.atomic():
-            if self.status == self.CANCELLED:
+            locked = InternalTransfer.objects.select_for_update().select_related('pos_session').get(pk=self.pk)
+            if locked.status == self.CANCELLED:
                 raise ValidationError("التحويل ملغي بالفعل.")
+            if locked.status == self.POSTED:
+                _ensure_pos_session_open(locked.pos_session, 'إلغاء')
 
-            if self.journal_entry:
-                self.journal_entry.delete()
-                self.journal_entry = None
+            if locked.journal_entry_id:
+                JournalEntry.objects.filter(pk=locked.journal_entry_id).delete()
 
+            self.journal_entry = None
             self.status = self.CANCELLED
             self.save(update_fields=['status', 'journal_entry', 'updated_at'])
 
@@ -1815,6 +1878,40 @@ class Cheque(models.Model):
     def __str__(self):
         return f"{self.get_cheque_type_display()} #{self.cheque_number} - {self.amount} ج.م ({self.partner.name})"
 
+    # ── مراجع القيود (فريدة لكل شيك عبر الـ pk) ─────────────────
+    def _lock_and_refresh(self):
+        """Lock this cheque row (SELECT ... FOR UPDATE) and refresh its status/entry links."""
+        if not self.pk:
+            return
+        locked = Cheque.objects.select_for_update().get(pk=self.pk)
+        for f in ('status', 'entry_receive_issue_id', 'entry_deposit_id', 'entry_clearance_id',
+                  'entry_bounce_id', 'entry_endorse_id'):
+            setattr(self, f, getattr(locked, f))
+
+    def _linked_entry_ids(self):
+        return {eid for eid in (self.entry_receive_issue_id, self.entry_deposit_id, self.entry_clearance_id,
+                                self.entry_bounce_id, self.entry_endorse_id) if eid}
+
+    def _stage_reference(self, stage, legacy_ref=None, linked_entry_id=None):
+        """
+        Journal reference for one lifecycle stage of THIS cheque: CHQ-<pk>-<STAGE>.
+        The old format (CHK-REC-<cheque_number>) was shared by different partners' cheques
+        carrying the same number, and the old code deleted entries by that bare reference.
+        Entries are never deleted here; a stage that is already booked for this cheque raises.
+        A legacy-format entry is only considered when it is linked to this same cheque.
+        """
+        already = ValidationError('تم إثبات القيد المحاسبي لهذه المرحلة على هذا الشيك مسبقاً.')
+        if linked_entry_id:
+            raise already
+        ref = f"CHQ-{self.pk}-{stage}"
+        if JournalEntry.objects.filter(reference=ref).exists():
+            raise already
+        if legacy_ref:
+            legacy = JournalEntry.objects.filter(reference=legacy_ref).values_list('id', flat=True).first()
+            if legacy and legacy in self._linked_entry_ids():
+                raise already
+        return ref
+
     # ── Helpers للحسابات المحاسبية ─────────────────────────────
     @staticmethod
     def get_notes_receivable_account():
@@ -1845,12 +1942,12 @@ class Cheque(models.Model):
 
     @staticmethod
     def get_bank_expense_account():
-        """5300 - مصاريف إدارية وعمولات بنكية"""
-        acc = Account.objects.filter(code='5300').first()
-        if not acc:
+        """5305 - عمولات ماكينات الدفع والمحافظ والبنوك (تحت 5300 - مصاريف إدارية وعمولات بنكية)"""
+        from apps.tenant.services.journal_service import _get_system_account, PAYMENT_FEES_CODE
+        if not Account.objects.filter(code='5300').exists():
             exp = Account.objects.filter(code='5000').first()
-            acc = Account.objects.create(code='5300', name='مصاريف إدارية وعمولات بنكية', account_type=Account.EXPENSE, parent=exp)
-        return acc
+            Account.objects.create(code='5300', name='مصاريف إدارية وعمولات بنكية', account_type=Account.EXPENSE, parent=exp)
+        return _get_system_account(PAYMENT_FEES_CODE)
 
     def get_partner_account(self):
         """تحديد حساب الشريك المناسب (مدين للعملاء أو دائن للموردين أو الموحد)"""
@@ -1890,6 +1987,7 @@ class Cheque(models.Model):
         إلى حـ/ العملاء - ذمم مدينة (1130 / حساب الشريك)
         """
         with transaction.atomic():
+            self._lock_and_refresh()
             if self.cheque_type != ChequeType.RECEIVABLE:
                 raise ValidationError("هذا الإجراء مخصص لشيكات القبض فقط.")
 
@@ -1899,8 +1997,7 @@ class Cheque(models.Model):
                 raise ValidationError("لا يوجد حساب محاسبي مرتبط بالشريك.")
 
             # إنشاء قيد الاستلام بالحساب الوسيط
-            ref = f"CHK-REC-{self.cheque_number}"
-            JournalEntry.objects.filter(reference=ref).delete()
+            ref = self._stage_reference('REC', legacy_ref=f"CHK-REC-{self.cheque_number}", linked_entry_id=self.entry_receive_issue_id)
 
             entry = JournalEntry.objects.create(
                 date=self.received_date,
@@ -1931,10 +2028,11 @@ class Cheque(models.Model):
         """
         2. التحصيل الفعلي لشيك القبض (في البنك أو الخزينة) وإقفال الحساب الوسيط:
         من حـ/ البنك أو الخزينة (بالمبلغ الصافي)
-        من حـ/ عمولات ومصاريف بنكية (5300) بمبلغ العمولة (إن وجدت)
+        من حـ/ عمولات ماكينات الدفع والمحافظ والبنوك (5305) بمبلغ العمولة (إن وجدت)
         إلى حـ/ أوراق قبض - وسيط (1180) بإجمالي مبلغ الشيك
         """
         with transaction.atomic():
+            self._lock_and_refresh()
             if self.cheque_type != ChequeType.RECEIVABLE:
                 raise ValidationError("هذا الإجراء مخصص لشيكات القبض فقط.")
             if self.status not in (ChequeStatus.UNDER_COLLECTION, ChequeStatus.IN_PORTFOLIO):
@@ -1971,8 +2069,7 @@ class Cheque(models.Model):
             if net_amount < 0:
                 raise ValidationError("عمولة التحصيل لا يمكن أن تكون أكبر من قيمة الشيك.")
 
-            ref = f"CHK-CLR-{self.cheque_number}"
-            JournalEntry.objects.filter(reference=ref).delete()
+            ref = self._stage_reference('CLR', legacy_ref=f"CHK-CLR-{self.cheque_number}", linked_entry_id=self.entry_clearance_id)
 
             entry = JournalEntry.objects.create(
                 date=clr_date,
@@ -2015,6 +2112,7 @@ class Cheque(models.Model):
         إلى حـ/ أوراق قبض - وسيط (1180)
         """
         with transaction.atomic():
+            self._lock_and_refresh()
             if self.cheque_type != ChequeType.RECEIVABLE:
                 raise ValidationError("هذا الإجراء مخصص لشيكات القبض فقط.")
             if self.status not in (ChequeStatus.UNDER_COLLECTION, ChequeStatus.IN_PORTFOLIO):
@@ -2024,8 +2122,7 @@ class Cheque(models.Model):
             partner_acc = self.get_partner_account()
             notes_rec_acc = self.get_notes_receivable_account()
 
-            ref = f"CHK-BNC-{self.cheque_number}"
-            JournalEntry.objects.filter(reference=ref).delete()
+            ref = self._stage_reference('BNC', legacy_ref=f"CHK-BNC-{self.cheque_number}", linked_entry_id=self.entry_bounce_id)
 
             entry = JournalEntry.objects.create(
                 date=bnc_date,
@@ -2061,6 +2158,7 @@ class Cheque(models.Model):
         إلى حـ/ أوراق دفع (2170)
         """
         with transaction.atomic():
+            self._lock_and_refresh()
             if self.cheque_type != ChequeType.PAYABLE:
                 raise ValidationError("هذا الإجراء مخصص لشيكات الصرف فقط.")
             if not self.bank_account:
@@ -2069,8 +2167,7 @@ class Cheque(models.Model):
             supplier_acc = self.get_partner_account()
             notes_pay_acc = self.get_notes_payable_account()
 
-            ref = f"CHK-PAY-{self.cheque_number}"
-            JournalEntry.objects.filter(reference=ref).delete()
+            ref = self._stage_reference('PAY', legacy_ref=f"CHK-PAY-{self.cheque_number}", linked_entry_id=self.entry_receive_issue_id)
 
             entry = JournalEntry.objects.create(
                 date=self.received_date,
@@ -2108,6 +2205,7 @@ class Cheque(models.Model):
         إلى حـ/ بنك الشركة (1120)
         """
         with transaction.atomic():
+            self._lock_and_refresh()
             if self.cheque_type != ChequeType.PAYABLE:
                 raise ValidationError("هذا الإجراء مخصص لشيكات الصرف فقط.")
             if self.status != ChequeStatus.ISSUED:
@@ -2119,8 +2217,7 @@ class Cheque(models.Model):
             notes_pay_acc = self.get_notes_payable_account()
             bank_acc = self.bank_account.ensure_account()
 
-            ref = f"CHK-CLR-PAY-{self.cheque_number}"
-            JournalEntry.objects.filter(reference=ref).delete()
+            ref = self._stage_reference('CLRPAY', legacy_ref=f"CHK-CLR-PAY-{self.cheque_number}", linked_entry_id=self.entry_clearance_id)
 
             entry = JournalEntry.objects.create(
                 date=clr_date,
@@ -2155,6 +2252,7 @@ class Cheque(models.Model):
         إلى حـ/ الموردين (2110 / حساب الشريك)
         """
         with transaction.atomic():
+            self._lock_and_refresh()
             if self.cheque_type != ChequeType.PAYABLE:
                 raise ValidationError("هذا الإجراء مخصص لشيكات الصرف فقط.")
             if self.status != ChequeStatus.ISSUED:
@@ -2163,8 +2261,7 @@ class Cheque(models.Model):
             notes_pay_acc = self.get_notes_payable_account()
             supplier_acc = self.get_partner_account()
 
-            ref = f"CHK-CNC-PAY-{self.cheque_number}"
-            JournalEntry.objects.filter(reference=ref).delete()
+            ref = self._stage_reference('CNCPAY', legacy_ref=f"CHK-CNC-PAY-{self.cheque_number}", linked_entry_id=None)
 
             entry = JournalEntry.objects.create(
                 date=datetime.date.today(),
@@ -2354,16 +2451,8 @@ class FixedAsset(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.code:
-            prefix = "AST-"
-            last = FixedAsset.objects.filter(code__startswith=prefix).order_by('-id').first()
-            if last:
-                try:
-                    num = int(last.code.replace(prefix, '')) + 1
-                except ValueError:
-                    num = FixedAsset.objects.count() + 1
-            else:
-                num = 1
-            self.code = f"{prefix}{num:04d}"
+            # race-safe; the surrounding view (FixedAssetCreateView) runs inside transaction.atomic()
+            self.code = _next_doc_number('fixed_asset', FixedAsset, 'code', "AST-", width=4)
 
         # Automatic sync between useful_life_years and depreciation_rate
         if self.useful_life_years and self.useful_life_years > Decimal('0'):
@@ -2543,16 +2632,8 @@ class Loan(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.code:
-            prefix = "LOAN-"
-            last = Loan.objects.filter(code__startswith=prefix).order_by('-id').first()
-            if last:
-                try:
-                    num = int(last.code.replace(prefix, '')) + 1
-                except ValueError:
-                    num = Loan.objects.count() + 1
-            else:
-                num = 1
-            self.code = f"{prefix}{num:04d}"
+            # race-safe; the surrounding view (LoanCreateView) runs inside transaction.atomic()
+            self.code = _next_doc_number('loan', Loan, 'code', "LOAN-", width=4)
 
         # Automatic calculation of total commitment
         principal = self.principal_amount or Decimal('0.00')

@@ -1,10 +1,12 @@
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import JsonResponse
+from django.views.decorators.http import require_POST
 from django.db import transaction
 from django.contrib import messages
 from django.utils import timezone
 from decimal import Decimal, InvalidOperation
+import logging
 
 from .models import MaintenanceTicket, TicketPart
 from apps.tenant.partners.models import Partner
@@ -12,6 +14,18 @@ from apps.tenant.inventory.models import Product, Warehouse, SerialItem
 from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
 from apps.tenant.core.models import Branch
 from apps.tenant.core.decorators import custom_permission_required
+
+logger = logging.getLogger(__name__)
+
+# Manual status changes allowed from the edit panel. DELIVERED is NEVER allowed here:
+# it must go through deliver_ticket -> MaintenanceTicket.deliver() (journal + payment + COGS).
+_OPEN_STATUSES = {
+    MaintenanceTicket.STATUS_PENDING,
+    MaintenanceTicket.STATUS_IN_PROGRESS,
+    MaintenanceTicket.STATUS_WAITING_PARTS,
+    MaintenanceTicket.STATUS_DONE,
+}
+ALLOWED_STATUS_TRANSITIONS = {st: _OPEN_STATUSES - {st} for st in _OPEN_STATUSES}
 
 
 # ---------------------------------------------------------------------------
@@ -171,20 +185,36 @@ def ticket_edit(request, pk):
         try:
             field = request.POST.get('field')
             value = request.POST.get('value', '').strip()
-            if field == 'status':
-                if value in dict(MaintenanceTicket.STATUS_CHOICES):
+            with transaction.atomic():
+                ticket = MaintenanceTicket.objects.select_for_update().get(pk=ticket.pk)
+                if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
+                    return JsonResponse({'error': 'لا يمكن تعديل تذكرة مسلّمة.'}, status=400)
+                if field == 'status':
+                    if value == ticket.status:
+                        return JsonResponse({'success': True})
+                    if value == MaintenanceTicket.STATUS_DELIVERED:
+                        return JsonResponse({'error': 'التسليم يتم فقط من خلال زر "تسليم التذكرة" لتسجيل القيد والتحصيل.'}, status=400)
+                    if value not in ALLOWED_STATUS_TRANSITIONS.get(ticket.status, set()):
+                        return JsonResponse({'error': 'انتقال الحالة غير مسموح.'}, status=400)
                     ticket.status = value
                     ticket.save(update_fields=['status', 'updated_at'])
-            elif field == 'labor_cost':
-                ticket.labor_cost = Decimal(value)
-                ticket.save(update_fields=['labor_cost', 'updated_at'])
-            elif field == 'technician_id':
-                ticket.technician_id = value or None
-                ticket.save(update_fields=['technician', 'updated_at'])
-            elif field == 'notes':
-                ticket.notes = value
-                ticket.save(update_fields=['notes', 'updated_at'])
+                elif field == 'labor_cost':
+                    labor = Decimal(value or '0')
+                    if not labor.is_finite() or labor < 0:
+                        return JsonResponse({'error': 'المصنعية لا يمكن أن تكون سالبة.'}, status=400)
+                    ticket.labor_cost = labor
+                    ticket.save(update_fields=['labor_cost', 'updated_at'])
+                elif field == 'technician_id':
+                    ticket.technician_id = value or None
+                    ticket.save(update_fields=['technician', 'updated_at'])
+                elif field == 'notes':
+                    ticket.notes = value
+                    ticket.save(update_fields=['notes', 'updated_at'])
+                else:
+                    return JsonResponse({'error': 'حقل غير معروف.'}, status=400)
             return JsonResponse({'success': True})
+        except InvalidOperation:
+            return JsonResponse({'error': 'قيمة غير صالحة.'}, status=400)
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=400)
     return JsonResponse({'error': 'Invalid method'}, status=405)
@@ -207,21 +237,47 @@ def add_part(request, pk):
         try:
             product_id  = request.POST.get('product_id')
             warehouse_id = request.POST.get('warehouse_id')
-            quantity    = Decimal(request.POST.get('quantity', '1'))
-            selling_price = Decimal(request.POST.get('selling_price', '0'))
+            try:
+                quantity = Decimal(request.POST.get('quantity', '1') or '1')
+                selling_price = Decimal(request.POST.get('selling_price', '0') or '0')
+            except InvalidOperation:
+                return JsonResponse({'error': 'الكمية أو السعر غير صالح.'}, status=400)
+            if not quantity.is_finite() or quantity <= 0:
+                return JsonResponse({'error': 'الكمية يجب أن تكون أكبر من صفر.'}, status=400)
+            if not selling_price.is_finite() or selling_price < 0:
+                return JsonResponse({'error': 'سعر البيع لا يمكن أن يكون سالباً.'}, status=400)
             serial_item_id = request.POST.get('serial_item_id') or None
 
             product   = get_object_or_404(Product, id=product_id)
-            warehouse = get_object_or_404(Warehouse, id=warehouse_id)
+            wh_qs = Warehouse.objects.all()
+            if branch:
+                wh_qs = wh_qs.filter(branch=branch)
+            warehouse = get_object_or_404(wh_qs, id=warehouse_id)
 
             with transaction.atomic():
+                ticket = MaintenanceTicket.objects.select_for_update().get(pk=ticket.pk)
+                if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
+                    return JsonResponse({'error': 'لا يمكن إضافة قطع لتذكرة مسلّمة.'}, status=400)
+
+                serial_item = None
+                if product.product_type == 'SERIALIZED':
+                    if not serial_item_id:
+                        return JsonResponse({'error': f'يجب تحديد السيريال للقطعة "{product.name}"'}, status=400)
+                    if quantity != 1:
+                        return JsonResponse({'error': 'كمية القطعة ذات السيريال يجب أن تكون 1.'}, status=400)
+                    serial_item = SerialItem.objects.select_for_update().filter(
+                        pk=serial_item_id, product=product, warehouse=warehouse, is_sold=False,
+                    ).first()
+                    if serial_item is None:
+                        return JsonResponse({'error': 'السيريال غير متاح لهذا المنتج في هذا المخزن (أو تم بيعه).'}, status=400)
+
                 part = TicketPart(
                     ticket=ticket,
                     product=product,
                     warehouse=warehouse,
                     quantity=quantity,
                     selling_price=selling_price,
-                    serial_item_id=serial_item_id,
+                    serial_item=serial_item,
                 )
                 part.save()  # triggers _deduct_stock internally
 
@@ -241,13 +297,56 @@ def add_part(request, pk):
 # ---------------------------------------------------------------------------
 # Delete Part
 # ---------------------------------------------------------------------------
+@require_POST
 @custom_permission_required('maintenance.delete_ticketpart', redirect_url='core:main_screen')
 def delete_part(request, part_pk):
-    part = get_object_or_404(TicketPart, pk=part_pk)
-    if part.ticket.status == MaintenanceTicket.STATUS_DELIVERED:
-        return JsonResponse({'error': 'لا يمكن حذف قطع من تذكرة مسلّمة.'}, status=400)
-    part.delete()
-    return JsonResponse({'success': True})
+    """Delete a part and return its stock (FIFO batch at the consumed cost / un-sell the serial)."""
+    from apps.tenant.services.fifo_engine import add_inventory_batch
+
+    branch = getattr(request, 'branch', None)
+    qs = TicketPart.objects.all()
+    if branch:
+        qs = qs.filter(ticket__branch=branch)
+    part = get_object_or_404(qs, pk=part_pk)
+
+    try:
+        with transaction.atomic():
+            ticket = MaintenanceTicket.objects.select_for_update().get(pk=part.ticket_id)
+            if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
+                return JsonResponse({'error': 'لا يمكن حذف قطع من تذكرة مسلّمة.'}, status=400)
+            part = (TicketPart.objects.select_for_update()
+                    .select_related('product', 'warehouse').filter(pk=part.pk).first())
+            if part is None:
+                return JsonResponse({'error': 'القطعة غير موجودة (ربما حُذفت بالفعل).'}, status=404)
+
+            product = part.product
+            if part.stock_deducted and product.product_type != 'SERVICE':
+                if product.product_type == 'SERIALIZED':
+                    if part.serial_item_id:
+                        serial = SerialItem.objects.select_for_update().get(pk=part.serial_item_id)
+                        serial.is_sold = False
+                        serial.warehouse = part.warehouse
+                        serial.save()
+                elif part.quantity and part.quantity > 0:
+                    unit_cost = (Decimal(part.actual_cost or 0) / part.quantity).quantize(Decimal('0.0001'))
+                    # add_inventory_batch overwrites last_purchase_price; a return is not a purchase.
+                    prev_last_price = product.last_purchase_price
+                    add_inventory_batch(
+                        product=product,
+                        warehouse=part.warehouse,
+                        quantity=part.quantity,
+                        unit_cost=unit_cost,
+                        reference=f'صيانة-#{ticket.id}',
+                        movement_type='RETURN_IN',
+                    )
+                    if product.last_purchase_price != prev_last_price:
+                        product.last_purchase_price = prev_last_price
+                        product.save(update_fields=['last_purchase_price', 'updated_at'])
+            part.delete()
+        return JsonResponse({'success': True})
+    except Exception as e:
+        logger.exception('delete_part failed for part %s', part_pk)
+        return JsonResponse({'error': str(e)}, status=400)
 
 
 # ---------------------------------------------------------------------------

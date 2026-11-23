@@ -3,7 +3,9 @@ from django.http import HttpResponse
 from django.urls import reverse_lazy
 from django.contrib import messages
 from django.views.generic import ListView, CreateView, UpdateView, View, DetailView
+from django.contrib.auth.decorators import login_required
 from apps.tenant.core.mixins import CustomPermissionRequiredMixin
+from apps.tenant.core.decorators import custom_permission_required
 from .models import Equipment, Rental
 from .forms import EquipmentForm, RentalForm
 
@@ -330,6 +332,8 @@ class DetailedRentalsReportView(CustomPermissionRequiredMixin, View):
         return render(request, 'rentals/report_detailed_rentals.html', context)
 
 
+@login_required
+@custom_permission_required('rentals.view_rental')
 def export_detailed_rentals_excel(request):
     import datetime
     import openpyxl

@@ -14,9 +14,25 @@ from django.urls import reverse_lazy
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin, AccessMixin
 from django.views.generic import UpdateView, ListView, CreateView, View
 from django.contrib.auth.models import User
+from django.http import Http404
 from .models import SystemSetting
 from .forms import SystemSettingForm, EmployeeUserCreationForm, EmployeeUserUpdateForm
 from .decorators import custom_permission_required, is_admin_user
+from .access import allowed_branches as _allowed_branches
+
+_is_admin = is_admin_user
+
+
+def tenant_users_queryset(request):
+    """
+    Users of the CURRENT tenant only (auth_user is shared by all tenants):
+    users with an Employee profile in this schema. Platform superusers are
+    hidden from tenant admins.
+    """
+    qs = User.objects.filter(employee_profile__isnull=False).select_related('employee_profile__branch')
+    if not request.user.is_superuser:
+        qs = qs.filter(is_superuser=False)
+    return qs
 
 
 class AdminRequiredMixin(UserPassesTestMixin):
@@ -81,10 +97,7 @@ def main_screen(request):
     yesterday = today - timedelta(days=1)
 
     # Determine if user is admin/superuser to load quick stats
-    is_admin_user = (
-        request.user.is_superuser or 
-        (hasattr(request.user, 'employee_profile') and getattr(request.user.employee_profile, 'role', '') == 'Admin')
-    )
+    is_admin_user = _is_admin(request.user)
 
     today_sales = Decimal('0')
     today_sales_change = 0
@@ -163,6 +176,9 @@ def admin_dashboard(request):
     Admin analytics dashboard.
     Shows 7-day sales chart, top branches, FIFO age alerts.
     """
+    if not is_admin_user(request.user):
+        messages.error(request, 'عفواً، لوحة التحكم الإدارية مقتصرة على مديري النظام.')
+        return redirect('core:main_screen')
     from apps.tenant.core.models import Branch
     from apps.tenant.invoicing.models import Invoice, InvoiceLine
     from apps.tenant.inventory.models import InventoryBatch, Product
@@ -312,7 +328,7 @@ def admin_dashboard(request):
     total_products = Product.objects.filter(is_active=True).count()
 
     # --- Active Users ---
-    active_users_list = User.objects.filter(is_active=True).select_related('employee_profile__branch')[:5]
+    active_users_list = tenant_users_queryset(request).filter(is_active=True)[:5]
     users_with_branches = []
     for u in active_users_list:
         branch_obj = None
@@ -321,8 +337,9 @@ def admin_dashboard(request):
         users_with_branches.append({
             'username': u.username,
             'get_full_name': u.get_full_name() or u.username,
-            'is_superuser': u.is_superuser,
-            'is_staff': u.is_staff,
+            # Template shows "مدير" for is_superuser: reflect the tenant role.
+            'is_superuser': u.is_superuser or getattr(getattr(u, 'employee_profile', None), 'role', '') == 'ADMIN',
+            'is_staff': False,
             'branch': branch_obj
         })
 
@@ -438,7 +455,13 @@ def branch_list(request):
 # User Management Views
 # ==========================================
 
-class UserListView(LoginRequiredMixin, AdminRequiredMixin, ListView):
+class TenantUserQuerysetMixin:
+    """Restrict user management to the current tenant's employees."""
+    def get_queryset(self):
+        return tenant_users_queryset(self.request)
+
+
+class UserListView(LoginRequiredMixin, AdminRequiredMixin, TenantUserQuerysetMixin, ListView):
     model = User
     template_name = 'core/user_list.html'
     context_object_name = 'users'
@@ -503,13 +526,23 @@ class UserCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
         messages.error(self.request, 'تعذر الحفظ، يرجى مراجعة الأخطاء الموضحة بالاستمارة.')
         return super().form_invalid(form)
 
-class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView):
+class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, TenantUserQuerysetMixin, UpdateView):
     model = User
     form_class = EmployeeUserUpdateForm
     template_name = 'core/user_form.html'
     success_url = reverse_lazy('core:user_list')
 
+    def get_object(self, queryset=None):
+        obj = super().get_object(queryset)
+        # Defence in depth: only platform superusers may edit superusers.
+        if obj.is_superuser and not self.request.user.is_superuser:
+            raise Http404
+        return obj
+
     def form_valid(self, form):
+        if form.instance.pk == self.request.user.pk and not form.cleaned_data.get('is_active', True):
+            form.add_error('is_active', 'لا يمكنك تعطيل حسابك الحالي.')
+            return self.form_invalid(form)
         messages.success(self.request, f'تم تعديل بيانات المستخدم "{form.instance.username}" بنجاح.')
         return super().form_valid(form)
 
@@ -676,9 +709,12 @@ def warehouses_by_branch_api(request):
     """API returning warehouses for a specific branch."""
     from apps.tenant.inventory.models import Warehouse
     branch_id = request.GET.get('branch_id')
-    warehouses = Warehouse.objects.filter(is_active=True)
+    warehouses = Warehouse.objects.filter(is_active=True, branch__in=_allowed_branches(request))
     if branch_id:
-        warehouses = warehouses.filter(branch_id=branch_id)
+        try:
+            warehouses = warehouses.filter(branch_id=int(branch_id))
+        except (TypeError, ValueError):
+            warehouses = warehouses.none()
     data = [{'id': w.id, 'name': w.name} for w in warehouses]
     return JsonResponse({'warehouses': data})
 
@@ -686,127 +722,155 @@ def warehouses_by_branch_api(request):
 # =============================================================================
 # DATABASE BACKUP & RESTORE VIEWS
 # =============================================================================
+# Backups are per tenant (see backup_service). Access: platform superuser or
+# tenant ADMIN only. All mutating actions require POST.
 from django.http import FileResponse, Http404
+from django.views.decorators.http import require_POST, require_GET
 from . import backup_service
 
-@login_required
-def database_backup_view(request):
-    """لوحة إدارة والنسخ الاحتياطي لقاعدة البيانات"""
-    if not is_admin_user(request.user):
-        messages.error(request, 'عفواً، الوصول لصفحة النسخ الاحتياطي مقتصر على مديري النظام فقط.')
-        return redirect('core:main_screen')
 
-    db_info = backup_service.get_current_db_info()
-    backups = backup_service.list_backups()
-    pg_dump_path = backup_service.find_pg_tool('pg_dump')
+def _backup_access_denied(request):
+    if not is_admin_user(request.user):
+        messages.error(request, 'عفواً، الوصول للنسخ الاحتياطي مقتصر على مديري النظام فقط.')
+        return redirect('core:main_screen')
+    return None
+
+
+@login_required
+@require_GET
+def database_backup_view(request):
+    """لوحة إدارة النسخ الاحتياطي لمساحة العمل الحالية"""
+    denied = _backup_access_denied(request)
+    if denied:
+        return denied
+
+    try:
+        db_info = backup_service.get_current_db_info()
+        backups = backup_service.list_backups()
+    except backup_service.BackupError as e:
+        messages.error(request, str(e))
+        return redirect('core:main_screen')
 
     context = {
         'title': 'النسخ الاحتياطي لقاعدة البيانات',
         'db_info': db_info,
         'backups': backups,
-        'pg_dump_path': pg_dump_path,
-        'backup_dir': backup_service.BACKUP_DIR,
+        # Server details are only shown to platform superusers (template).
+        'pg_dump_path': backup_service.find_pg_tool('pg_dump') if request.user.is_superuser else None,
+        'backup_dir': db_info.get('schema'),
+        'max_upload_mb': backup_service.MAX_UPLOAD_BYTES // (1024 * 1024),
     }
     return render(request, 'core/database_backup.html', context)
 
 
 @login_required
+@require_POST
 def database_backup_create(request):
-    """أخذ نسخة احتياطية فورية وحفظها في مجلد backups"""
-    if not is_admin_user(request.user):
-        messages.error(request, 'غير مصرح لك بهذا الإجراء.')
-        return redirect('core:main_screen')
+    """أخذ نسخة احتياطية فورية لمساحة العمل الحالية"""
+    denied = _backup_access_denied(request)
+    if denied:
+        return denied
 
-    if request.method == 'POST':
-        success, msg_or_filename, filepath = backup_service.create_backup()
-        if success:
-            messages.success(request, f'✅ تم أخذ النسخة الاحتياطية بنجاح: {msg_or_filename}')
-            # If user clicked "create and download"
-            if request.POST.get('download') == '1' and filepath and os.path.exists(filepath):
-                return FileResponse(open(filepath, 'rb'), as_attachment=True, filename=msg_or_filename)
-        else:
-            messages.error(request, f'❌ فشل أخذ النسخة الاحتياطية: {msg_or_filename}')
+    success, msg_or_filename, filepath = backup_service.create_backup()
+    if not success:
+        messages.error(request, f'❌ فشل أخذ النسخة الاحتياطية: {msg_or_filename}')
+        return redirect('core:database_backup')
 
+    messages.success(request, f'✅ تم أخذ النسخة الاحتياطية بنجاح: {msg_or_filename}')
+    if request.POST.get('download') == '1':
+        return _bundle_response(request, msg_or_filename)
     return redirect('core:database_backup')
 
 
-@login_required
-def database_backup_download(request, filename):
-    """تحميل ملف نسخة احتياطية محدد"""
-    if not is_admin_user(request.user):
-        messages.error(request, 'غير مصرح لك بتحميل النسخ الاحتياطية.')
-        return redirect('core:main_screen')
+def _bundle_response(request, filename):
+    try:
+        tmp_path, download_name = backup_service.build_download_bundle(filename)
+    except backup_service.BackupError as e:
+        messages.error(request, str(e))
+        return redirect('core:database_backup')
 
-    safe_name = os.path.basename(filename)
-    filepath = os.path.join(backup_service.BACKUP_DIR, safe_name)
+    class _TempFile:
+        """File wrapper that deletes the temp zip once the response is closed."""
+        def __init__(self, path):
+            self._fh = open(path, 'rb')
+            self._path = path
 
-    if not os.path.exists(filepath) or not os.path.isfile(filepath):
-        raise Http404('ملف النسخة الاحتياطية غير موجود.')
+        def read(self, *args):
+            return self._fh.read(*args)
 
-    return FileResponse(open(filepath, 'rb'), as_attachment=True, filename=safe_name)
-
-
-@login_required
-def database_backup_delete(request, filename):
-    """حذف ملف نسخة احتياطية محدد"""
-    if not is_admin_user(request.user):
-        messages.error(request, 'غير مصرح لك بحذف النسخ الاحتياطية.')
-        return redirect('core:main_screen')
-
-    if request.method == 'POST':
-        safe_name = os.path.basename(filename)
-        filepath = os.path.join(backup_service.BACKUP_DIR, safe_name)
-        if os.path.exists(filepath) and os.path.isfile(filepath):
+        def close(self):
             try:
-                os.remove(filepath)
-                messages.success(request, f'🗑️ تم حذف ملف النسخة الاحتياطية: {safe_name}')
-            except Exception as e:
-                messages.error(request, f'تعذر حذف الملف: {str(e)}')
-        else:
-            messages.warning(request, 'الملف المطلوب حذفه غير موجود.')
+                self._fh.close()
+            finally:
+                try:
+                    os.remove(self._path)
+                except OSError:
+                    pass
 
+    return FileResponse(_TempFile(tmp_path), as_attachment=True, filename=download_name,
+                        content_type='application/zip')
+
+
+@login_required
+@require_GET
+def database_backup_download(request, filename):
+    """تنزيل نسخة احتياطية كحزمة zip موقّعة (الملف + التوقيع)"""
+    denied = _backup_access_denied(request)
+    if denied:
+        return denied
+    try:
+        backup_service.resolve_backup_path(filename)
+    except backup_service.BackupError:
+        raise Http404('ملف النسخة الاحتياطية غير موجود.')
+    return _bundle_response(request, filename)
+
+
+@login_required
+@require_POST
+def database_backup_delete(request, filename):
+    """حذف ملف نسخة احتياطية من مجلد مساحة العمل الحالية"""
+    denied = _backup_access_denied(request)
+    if denied:
+        return denied
+    try:
+        name = backup_service.delete_backup(filename)
+        messages.success(request, f'🗑️ تم حذف ملف النسخة الاحتياطية: {name}')
+    except backup_service.BackupError as e:
+        messages.warning(request, str(e))
+    except Exception:
+        backup_service.logger.exception('Backup delete failed')
+        messages.error(request, backup_service.GENERIC_ERROR)
     return redirect('core:database_backup')
 
 
 @login_required
+@require_POST
 def database_backup_restore(request, filename=None):
-    """استعادة قاعدة البيانات من ملف محفوظ أو ملف مرفوع"""
-    if not is_admin_user(request.user):
-        messages.error(request, 'غير مصرح لك باستعادة قاعدة البيانات.')
-        return redirect('core:main_screen')
+    """استعادة بيانات مساحة العمل من نسخة موقّعة (محفوظة أو حزمة zip مرفوعة)"""
+    denied = _backup_access_denied(request)
+    if denied:
+        return denied
 
-    if request.method == 'POST':
-        # 1. Check if user uploaded a file
+    try:
         uploaded_file = request.FILES.get('backup_file')
         if uploaded_file:
-            safe_name = f"uploaded_{uploaded_file.name}"
-            target_path = os.path.join(backup_service.BACKUP_DIR, safe_name)
-            with open(target_path, 'wb+') as destination:
-                for chunk in uploaded_file.chunks():
-                    destination.write(chunk)
-
-            ok, msg = backup_service.restore_backup(target_path)
-            if ok:
-                messages.success(request, f'✅ {msg}')
-            else:
-                messages.error(request, f'❌ {msg}')
+            target_path = backup_service.import_uploaded_bundle(uploaded_file)
+        elif filename:
+            target_path = backup_service.resolve_backup_path(filename)
+        else:
+            messages.warning(request, 'يرجى اختيار ملف لاستعادة قاعدة البيانات منه.')
             return redirect('core:database_backup')
+    except backup_service.BackupError as e:
+        messages.error(request, f'❌ {e}')
+        return redirect('core:database_backup')
+    except Exception:
+        backup_service.logger.exception('Backup upload/lookup failed')
+        messages.error(request, f'❌ {backup_service.GENERIC_ERROR}')
+        return redirect('core:database_backup')
 
-        # 2. Check if restoring an existing filename from backups directory
-        if filename:
-            safe_name = os.path.basename(filename)
-            target_path = os.path.join(backup_service.BACKUP_DIR, safe_name)
-            ok, msg = backup_service.restore_backup(target_path)
-            if ok:
-                messages.success(request, f'✅ {msg}')
-            else:
-                messages.error(request, f'❌ {msg}')
-            return redirect('core:database_backup')
-
-    messages.warning(request, 'يرجى اختيار ملف لاستعادة قاعدة البيانات منه.')
+    ok, msg = backup_service.restore_backup(target_path)
+    if ok:
+        messages.success(request, f'✅ {msg}')
+    else:
+        messages.error(request, f'❌ {msg}')
     return redirect('core:database_backup')
-
-
-
-
-

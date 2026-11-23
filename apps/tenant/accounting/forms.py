@@ -11,6 +11,30 @@ from .models import (
 from apps.tenant.partners.models import Partner
 
 
+def _branch_scope(user):
+    """
+    Returns (restricted, branch).
+    Admins (and forms built without a user context) are unrestricted; any other user is
+    restricted to `user.employee_profile.branch` (None -> sees no branch-bound treasuries).
+    """
+    if user is None:
+        return False, None
+    from apps.tenant.core.decorators import is_admin_user
+    if is_admin_user(user):
+        return False, None
+    emp = getattr(user, 'employee_profile', None)
+    return True, (getattr(emp, 'branch', None) if emp else None)
+
+
+def scoped_treasuries(user):
+    """Treasuries the user may see / move money from (own branch only for non-admins)."""
+    restricted, branch = _branch_scope(user)
+    qs = Treasury.objects.all()
+    if restricted:
+        qs = qs.filter(branch=branch) if branch else qs.none()
+    return qs
+
+
 class BaseGlassForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -65,8 +89,14 @@ class ExpenseItemForm(BaseGlassForm):
         fields = ['description', 'amount']
         widgets = {
             'description': forms.TextInput(attrs={'placeholder': 'بيان البند'}),
-            'amount': forms.NumberInput(attrs={'class': 'item-amount'}),
+            'amount': forms.NumberInput(attrs={'class': 'item-amount', 'min': '0.01', 'step': '0.01'}),
         }
+
+    def clean_amount(self):
+        amount = self.cleaned_data.get('amount')
+        if amount is not None and amount <= 0:
+            raise forms.ValidationError('مبلغ البند يجب أن يكون أكبر من صفر.')
+        return amount
 
 ExpenseItemFormSet = inlineformset_factory(
     Expense, 
@@ -138,7 +168,8 @@ class ExpenseForm(BaseGlassForm):
             w.ensure_account()
 
         # Filter payment accounts to show ONLY active Treasuries, Bank Accounts, and EWallets
-        treasury_account_ids = list(Treasury.objects.filter(account__isnull=False).values_list('account_id', flat=True))
+        # (non-admin users only see their own branch's treasuries)
+        treasury_account_ids = list(scoped_treasuries(self.user).filter(account__isnull=False).values_list('account_id', flat=True))
         bank_account_ids = list(BankAccount.objects.filter(account__isnull=False).values_list('account_id', flat=True))
         ewallet_account_ids = list(EWallet.objects.filter(account__isnull=False).values_list('account_id', flat=True))
         allowed_account_ids = set(treasury_account_ids + bank_account_ids + ewallet_account_ids)
@@ -156,6 +187,30 @@ class ExpenseForm(BaseGlassForm):
                 if not emp.is_admin() and emp.branch:
                     return emp.branch
         return branch
+
+    def _clean_percent(self, field):
+        value = self.cleaned_data.get(field)
+        if value is not None and (value < 0 or value > 100):
+            raise forms.ValidationError('النسبة يجب أن تكون بين 0 و 100.')
+        return value
+
+    def clean_vat_percent(self):
+        return self._clean_percent('vat_percent')
+
+    def clean_withholding_tax_percent(self):
+        return self._clean_percent('withholding_tax_percent')
+
+    def clean(self):
+        cleaned_data = super().clean()
+        payment_account = cleaned_data.get('payment_account')
+        branch = cleaned_data.get('branch')
+        # A treasury-based payment account must belong to the expense's branch for non-admin users
+        restricted, _ = _branch_scope(self.user)
+        if restricted and payment_account and branch:
+            treasury = Treasury.objects.filter(account=payment_account).select_related('branch').first()
+            if treasury and treasury.branch_id != branch.id:
+                self.add_error('payment_account', 'لا يمكن الصرف من خزينة تابعة لفرع آخر.')
+        return cleaned_data
 
 class TreasuryForm(BaseGlassForm):
     class Meta:
@@ -242,6 +297,8 @@ class VoucherForm(BaseGlassForm):
         self.fields['account'].widget = forms.HiddenInput()
         self.fields['account'].required = False
 
+        # Non-admin users can only collect into / pay from their own branch's treasuries
+        self.fields['treasury'].queryset = scoped_treasuries(self.user)
         self.fields['treasury'].label = "خزينة السداد / التحصيل"
         self.fields['treasury'].empty_label = "--- اختر خزينة السداد / التحصيل ---"
         self.fields['bank_account'].label = "ماكينة الفيزا / الحساب البنكي"
@@ -265,8 +322,8 @@ class VoucherForm(BaseGlassForm):
                 self.fields['treasury'].initial = open_session.treasury
             elif sys_setting and sys_setting.default_pos_treasury:
                 self.fields['treasury'].initial = sys_setting.default_pos_treasury
-            elif Treasury.objects.count() == 1:
-                self.fields['treasury'].initial = Treasury.objects.first()
+            elif self.fields['treasury'].queryset.count() == 1:
+                self.fields['treasury'].initial = self.fields['treasury'].queryset.first()
 
             if sys_setting and sys_setting.default_pos_bank_account:
                 self.fields['bank_account'].initial = sys_setting.default_pos_bank_account
@@ -285,7 +342,39 @@ class VoucherForm(BaseGlassForm):
             elif EWallet.objects.count() == 1:
                 self.fields['ewallet'].initial = EWallet.objects.first()
 
+    def clean_amount(self):
+        amount = self.cleaned_data.get('amount')
+        if amount is None or amount <= 0:
+            raise forms.ValidationError('مبلغ السند يجب أن يكون أكبر من صفر.')
+        return amount
+
+    def _clean_non_negative(self, field):
+        value = self.cleaned_data.get(field)
+        if value is not None and value < 0:
+            raise forms.ValidationError('لا يمكن إدخال مبلغ سالب.')
+        return value
+
+    def clean_paid_cash(self):
+        return self._clean_non_negative('paid_cash')
+
+    def clean_paid_card(self):
+        return self._clean_non_negative('paid_card')
+
+    def clean_paid_ewallet(self):
+        return self._clean_non_negative('paid_ewallet')
+
+    def clean_paid_bank(self):
+        return self._clean_non_negative('paid_bank')
+
     def clean(self):
+        cleaned_data = self._clean_voucher()
+        treasury = cleaned_data.get('treasury')
+        restricted, _ = _branch_scope(self.user)
+        if restricted and treasury and not scoped_treasuries(self.user).filter(pk=treasury.pk).exists():
+            self.add_error('treasury', 'لا يمكن استخدام خزينة تابعة لفرع آخر.')
+        return cleaned_data
+
+    def _clean_voucher(self):
         cleaned_data = super().clean()
         partner = cleaned_data.get('partner')
         expense_account = cleaned_data.get('expense_account')
@@ -333,8 +422,8 @@ class VoucherForm(BaseGlassForm):
                 open_session = POSSession.objects.filter(user=self.user, status=POSSession.OPEN).first() if self.user else None
                 if open_session and open_session.treasury:
                     cleaned_data['treasury'] = open_session.treasury
-                elif Treasury.objects.count() == 1:
-                    cleaned_data['treasury'] = Treasury.objects.first()
+                elif self.fields['treasury'].queryset.count() == 1:
+                    cleaned_data['treasury'] = self.fields['treasury'].queryset.first()
                 else:
                     self.add_error('treasury', 'برجاء اختيار خزينة السداد / التحصيل.')
             elif self.user:
@@ -411,8 +500,8 @@ class VoucherForm(BaseGlassForm):
                     cleaned_data['treasury'] = open_session.treasury
                 elif sys_setting and sys_setting.default_pos_treasury:
                     cleaned_data['treasury'] = sys_setting.default_pos_treasury
-                elif Treasury.objects.count() == 1:
-                    cleaned_data['treasury'] = Treasury.objects.first()
+                elif self.fields['treasury'].queryset.count() == 1:
+                    cleaned_data['treasury'] = self.fields['treasury'].queryset.first()
                 else:
                     self.add_error('treasury', 'برجاء اختيار الخزينة للجزء النقدي.')
 
@@ -566,11 +655,11 @@ class InternalTransferForm(BaseGlassForm):
         for w in EWallet.objects.filter(account__isnull=True):
             w.ensure_account()
 
-        self.fields['from_treasury'].queryset = Treasury.objects.all()
+        self.fields['from_treasury'].queryset = scoped_treasuries(self.user)  # own branch only for non-admins
         self.fields['from_bank_account'].queryset = BankAccount.objects.all()
         self.fields['from_ewallet'].queryset = EWallet.objects.all()
 
-        self.fields['to_treasury'].queryset = Treasury.objects.all()
+        self.fields['to_treasury'].queryset = scoped_treasuries(self.user)
         self.fields['to_bank_account'].queryset = BankAccount.objects.all()
         self.fields['to_ewallet'].queryset = EWallet.objects.all()
 
@@ -589,7 +678,7 @@ class InternalTransferForm(BaseGlassForm):
         to_type = cleaned_data.get('to_account_type')
         amount = cleaned_data.get('amount')
 
-        if amount and amount <= 0:
+        if amount is not None and amount <= 0:
             raise forms.ValidationError({'amount': 'يجب أن يكون مبلغ التحويل أكبر من صفر.'})
 
         # Validate Source Account

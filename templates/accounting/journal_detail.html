@@ -7,7 +7,7 @@
         <h2 class="text-neon-gold m-0">{{ title }}</h2>
         <div class="d-flex gap-2">
             <a href="{% url 'accounting:journal_list' %}" class="btn" style="background:#ff7300; color:#fff; font-weight:bold; border-radius:8px;">⬅️ العودة لدفتر اليومية</a>
-            {% if request.user.is_superuser or request.user.employee_profile.is_admin or request.user.employee_profile.role == 'Admin' %}
+            {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
             <a href="{% url 'accounting:journal_create' %}" class="btn" style="background:rgba(0,229,255,0.15); color:#00e5ff; border:1px solid rgba(0,229,255,0.4); font-weight:bold; border-radius:8px;">➕ قيد جديد</a>
             {% endif %}
         </div>

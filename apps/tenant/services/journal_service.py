@@ -19,6 +19,7 @@ Required Chart of Accounts codes (created by setup_chart_of_accounts command):
   1120 - البنوك
   1130 - ذمم مدينة - عملاء
   1140 - المخزون
+  1190 - ضرائب خصم وإضافة مدينة (WHT مخصومة بمعرفة العملاء) — تُنشأ تلقائياً عند الحاجة
   2110 - ذمم دائنة - موردون
   2120 - ضريبة الخصم والإضافة (Tax Withholding)
   2130 - ضريبة القيمة المضافة (VAT Payable)
@@ -32,6 +33,22 @@ from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+# ضريبة الخصم من المنبع لنا (مدينة) — المخصومة من مبيعاتنا بمعرفة العملاء.
+# 1150 في الشجرة الافتراضية هو "عهد نقدية ومصروفات مقدمة"، لذلك نستخدم كوداً مستقلاً يُنشأ عند الحاجة.
+WHT_RECEIVABLE_CODE = '1155'
+# ضريبة القيمة المضافة - مدخلات (مشتريات ومصروفات) — أصل. المخرجات (مبيعات) تبقى على 2130.
+INPUT_VAT_CODE = '1190'
+OUTPUT_VAT_CODE = '2130'
+# عمولات ماكينات الدفع والمحافظ والبنوك
+PAYMENT_FEES_CODE = '5305'
+
+# Lazily created system accounts: code -> (name, account_type, parent codes in preference order, extra)
+_LAZY_ACCOUNTS = {
+    WHT_RECEIVABLE_CODE: ('ضريبة خصم من المنبع لنا (مدينة)', 'ASSET', ('1100', '1000'), {'allow_reconcile': True}),
+    INPUT_VAT_CODE: ('ضريبة القيمة المضافة - مدخلات (مشتريات)', 'ASSET', ('1100', '1000'), {}),
+    PAYMENT_FEES_CODE: ('عمولات ماكينات الدفع والمحافظ والبنوك', 'EXPENSE', ('5300', '5000'), {'allow_direct_payment': False}),
+}
 
 
 def _get_system_account(code: str):
@@ -63,12 +80,29 @@ def _get_system_account(code: str):
         logger.warning(f"Error during setup_chart_of_accounts_data in _get_system_account: {e}")
 
     # Fallback auto-creation for specific dynamic/special accounts
-    if code == '1150':
+    if code in _LAZY_ACCOUNTS:
+        name, acc_type, parent_codes, extra = _LAZY_ACCOUNTS[code]
+        existing = Account.objects.filter(code=code).first()
+        if existing:  # exists but inactive -> reactivate instead of failing on the unique code
+            existing.is_active = True
+            existing.save(update_fields=['is_active'])
+            return existing
+        parent = None
+        for pc in parent_codes:
+            parent = Account.objects.filter(code=pc).first()
+            if parent:
+                break
+        acc, _ = Account.objects.get_or_create(
+            code=code,
+            defaults=dict(name=name, account_type=acc_type, parent=parent, is_active=True, **extra),
+        )
+        return acc
+    elif code == '1150':
         curr_assets = Account.objects.filter(code='1100').first()
         if curr_assets:
             return Account.objects.create(
-                code='1150', name='ضرائب مدينة - خصم منبع', 
-                account_type=Account.ASSET, parent=curr_assets
+                code='1150', name='عهد نقدية ومصروفات مقدمة',
+                account_type=Account.ASSET, parent=curr_assets, allow_reconcile=True
             )
     elif code == '1110':
         curr_assets = Account.objects.filter(code='1100').first() or Account.objects.filter(code='1000').first()
@@ -174,8 +208,11 @@ def _get_system_account(code: str):
 
 def _next_reference(prefix: str) -> str:
     """
-    Generates the next sequential journal entry reference.
+    Generates the next sequential journal entry reference (race-safe).
     Format: JE-SALE-2024-00001, JE-PUR-2024-00001, etc.
+
+    Uses the locked DocumentSequence counter so two concurrent transactions can never
+    receive the same reference. Call it inside the atomic block that saves the entry.
 
     Args:
         prefix: A short prefix like 'SALE', 'PUR', 'PAY'
@@ -184,19 +221,14 @@ def _next_reference(prefix: str) -> str:
         str: Next unique reference string
     """
     from apps.tenant.accounting.models import JournalEntry
+    from apps.tenant.core.sequences import next_sequence, max_numeric_suffix
     year = timezone.now().year
     full_prefix = f'JE-{prefix}-{year}-'
-    last = JournalEntry.objects.filter(
-        reference__startswith=full_prefix
-    ).order_by('-reference').first()
-    if last:
-        try:
-            last_num = int(last.reference.split('-')[-1])
-        except (ValueError, IndexError):
-            last_num = 0
-    else:
-        last_num = 0
-    return f'{full_prefix}{last_num + 1:05d}'
+    num = next_sequence(
+        f'journal_entry:{full_prefix}',
+        seed=lambda: max_numeric_suffix(JournalEntry.objects.all(), 'reference', full_prefix),
+    )
+    return f'{full_prefix}{num:05d}'
 
 
 @transaction.atomic
@@ -315,7 +347,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     # Dr: WHT (Tax Withheld by customer)
     if wht_amount > 0:
-        wht_account = _get_system_account('1150')
+        wht_account = _get_system_account(WHT_RECEIVABLE_CODE)
         items_to_create.append(JournalItem(
             entry=entry,
             account=wht_account,
@@ -326,7 +358,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     # Cr: VAT
     if vat_amount > 0:
-        vat_account = _get_system_account('2130')
+        vat_account = _get_system_account(OUTPUT_VAT_CODE)  # Output VAT (sales)
         items_to_create.append(JournalItem(
             entry=entry,
             account=vat_account,
@@ -470,7 +502,7 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
 
     # Dr: Input VAT
     if vat_amount > 0:
-        vat_account = _get_system_account('2130')
+        vat_account = _get_system_account(INPUT_VAT_CODE)  # Input VAT (purchases) - reversed automatically for purchase returns
         items_to_create.append(JournalItem(
             entry=entry,
             account=vat_account,
@@ -693,16 +725,45 @@ def post_payment(payment) -> 'JournalEntry':
     return entry
 
 
+def _own_sums(account_ids):
+    """{account_id: (total_debit, total_credit)} للقيود المرحلة المسجلة مباشرة على الحسابات (استعلام واحد)."""
+    from django.db.models import Sum
+    from django.db.models.functions import Coalesce
+    from apps.tenant.accounting.models import JournalItem, JournalEntry
+
+    if not account_ids:
+        return {}
+    rows = JournalItem.objects.filter(
+        entry__status=JournalEntry.POSTED,
+        account_id__in=list(account_ids)
+    ).values('account_id').annotate(
+        total_debit=Coalesce(Sum('debit'), Decimal('0.00')),
+        total_credit=Coalesce(Sum('credit'), Decimal('0.00'))
+    )
+    return {r['account_id']: (r['total_debit'], r['total_credit']) for r in rows}
+
+
+def _signed_balance(acc, total_d, total_c):
+    if acc.normal_balance == 'DEBIT':
+        return (total_d - total_c).quantize(Decimal('0.01'))
+    return (total_c - total_d).quantize(Decimal('0.01'))
+
+
+def _is_leaf_account(acc):
+    return acc.lft is not None and acc.rght is not None and acc.rght - acc.lft == 1
+
+
 def batch_get_account_balances(account_qs=None, account_ids=None):
     """
-    حساب أرصدة مجموعة حسابات دفعة واحدة في استعلام تجميعي واحد (SQL Aggregation)
-    بدون أي لوبات N+1.
+    حساب أرصدة مجموعة حسابات (الحساب + كل أبنائه) دفعة واحدة بعدد ثابت من الاستعلامات:
+      - استعلام واحد لعُقد الشجرة المطلوبة (فقط عند وجود حسابات رئيسية ضمن المطلوب)
+      - استعلام تجميعي واحد للقيود المرحلة
+    يعتمد على نطاقات MPTT (tree_id / lft / rght) بدلاً من get_descendants لكل حساب،
+    مع اختصار مباشر للحسابات الطرفية (leaf).
     يقوم بحقن الرصيد المحسوب مباشرة في `_prefetched_balance` لكل حساب ليعمل تلقائياً
     مع `account.current_balance` دون تشغيل أي استعلام إضافي.
     """
-    from django.db.models import Sum
-    from django.db.models.functions import Coalesce
-    from apps.tenant.accounting.models import Account, JournalItem, JournalEntry
+    from apps.tenant.accounting.models import Account
 
     if account_qs is None and account_ids is None:
         account_qs = Account.objects.filter(is_active=True)
@@ -713,42 +774,65 @@ def batch_get_account_balances(account_qs=None, account_ids=None):
     if not accounts_list:
         return {}
 
-    # Map each account to all its descendants + self
-    account_descendants_map = {}
-    all_needed_ids = set()
+    parents = [acc for acc in accounts_list if not _is_leaf_account(acc)]
+    needed_ids = {acc.id for acc in accounts_list}
 
-    for acc in accounts_list:
-        desc_ids = list(acc.get_descendants(include_self=True).values_list('id', flat=True))
-        account_descendants_map[acc.id] = desc_ids
-        all_needed_ids.update(desc_ids)
+    # tree_id -> [(node_id, lft)] for every node of the trees that contain requested parent accounts
+    tree_nodes = {}
+    if parents:
+        tree_ids = {acc.tree_id for acc in parents}
+        for row in Account.objects.filter(tree_id__in=tree_ids).values('id', 'tree_id', 'lft'):
+            tree_nodes.setdefault(row['tree_id'], []).append((row['id'], row['lft']))
+            needed_ids.add(row['id'])
 
-    # 1 single SQL query to sum debits and credits for all needed accounts
-    items_agg = JournalItem.objects.filter(
-        entry__status=JournalEntry.POSTED,
-        account_id__in=all_needed_ids
-    ).values('account_id').annotate(
-        total_debit=Coalesce(Sum('debit'), Decimal('0.00')),
-        total_credit=Coalesce(Sum('credit'), Decimal('0.00'))
-    )
-
-    raw_sums = {
-        row['account_id']: (row['total_debit'], row['total_credit'])
-        for row in items_agg
-    }
+    raw_sums = _own_sums(needed_ids)
+    zero = (Decimal('0.00'), Decimal('0.00'))
 
     balances_map = {}
     for acc in accounts_list:
-        desc_ids = account_descendants_map[acc.id]
-        total_d = sum((raw_sums[aid][0] for aid in desc_ids if aid in raw_sums), Decimal('0.00'))
-        total_c = sum((raw_sums[aid][1] for aid in desc_ids if aid in raw_sums), Decimal('0.00'))
-
-        if acc.normal_balance == 'DEBIT':
-            bal = (total_d - total_c).quantize(Decimal('0.01'))
+        if _is_leaf_account(acc):
+            total_d, total_c = raw_sums.get(acc.id, zero)
         else:
-            bal = (total_c - total_d).quantize(Decimal('0.01'))
-
+            total_d = Decimal('0.00')
+            total_c = Decimal('0.00')
+            for node_id, lft in tree_nodes.get(acc.tree_id, ()):
+                if acc.lft <= lft < acc.rght and node_id in raw_sums:
+                    d, c = raw_sums[node_id]
+                    total_d += d
+                    total_c += c
+        bal = _signed_balance(acc, total_d, total_c)
         acc._prefetched_balance = bal
         balances_map[acc.id] = bal
 
     return balances_map
 
+
+def batch_get_own_balances(account_qs=None):
+    """
+    أرصدة الحسابات من القيود المسجلة عليها **مباشرة** فقط (بدون أبنائها) في استعلام تجميعي واحد.
+    مخصصة للتقارير (الميزانية / قائمة الدخل / ميزان المراجعة): مجموع الأرصدة المباشرة لكل الحسابات
+    لا يكرر أي مبلغ، ويُظهر المبالغ المرحلة مباشرة على الحسابات الرئيسية (مثل 1110 / 1120 / 1130 / 1160)
+    والتي كانت تختفي عند الاعتماد على الحسابات الطرفية فقط.
+
+    يحقن في كل حساب:
+      - own_debit / own_credit : إجمالي المدين والدائن المباشر
+      - own_balance            : الرصيد الموقّع حسب طبيعة الحساب
+      - is_leaf                : هل الحساب طرفي (بدون أبناء) — بدون استعلام إضافي
+    ويعيد {account_id: own_balance}.
+    """
+    from apps.tenant.accounting.models import Account
+
+    if account_qs is None:
+        account_qs = Account.objects.filter(is_active=True)
+    accounts_list = list(account_qs)
+    raw_sums = _own_sums({acc.id for acc in accounts_list})
+    zero = (Decimal('0.00'), Decimal('0.00'))
+    result = {}
+    for acc in accounts_list:
+        total_d, total_c = raw_sums.get(acc.id, zero)
+        acc.own_debit = total_d
+        acc.own_credit = total_c
+        acc.own_balance = _signed_balance(acc, total_d, total_c)
+        acc.is_leaf = _is_leaf_account(acc)
+        result[acc.id] = acc.own_balance
+    return result

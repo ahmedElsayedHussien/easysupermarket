@@ -60,10 +60,10 @@
         </button>
 
         <!-- Logo -->
-        <div class="navbar-logo" style="display:flex; align-items:center; gap:8px;">
-            <img src="{% static 'img/logo.png' %}" alt="مسار" style="height:36px; border-radius:6px; object-fit:contain;">
-            <span class="logo-arabic" style="font-size:1.1rem; font-weight:800; color:var(--neon-orange);">{% trans 'مسار' %}</span>
-            <span class="logo-english" style="font-size:0.85rem; font-weight:700; color:var(--text-secondary);">Masar</span>
+        <div class="navbar-logo" style="display:flex; align-items:center; justify-content:center; padding:0 0.5rem;">
+            <a href="/" title="{% trans 'الرئيسية' %}" style="display:flex; align-items:center; text-decoration:none;">
+                <img src="{% static 'img/logo.png' %}" alt="مسار" style="height:44px; max-width:160px; object-fit:contain;">
+            </a>
         </div>
 
         <div class="navbar-divider"></div>
@@ -105,7 +105,7 @@
                 <div class="user-info-text">
                     <span class="user-name">{{ request.user.get_full_name|default:request.user.username }}</span>
                     <span class="user-role">
-                        {% if request.user.is_superuser or is_admin %}مدير النظام{% elif request.user.is_staff %}مشرف{% else %}كاشير{% endif %}
+                        {% if is_admin %}مدير النظام{% else %}كاشير{% endif %}
                     </span>
                 </div>
                 
@@ -468,7 +468,7 @@
             {% endif %}
             {% endif %}
 
-            {% if request.user.is_staff or request.user.is_superuser or request.user.employee_profile.is_admin or is_admin %}
+            {% if is_admin %}
             {% if system_setting is None or system_setting.show_nav_admin_dashboard or system_setting.show_nav_branches or system_setting.show_nav_users or system_setting.show_nav_reports %}
             <p class="nav-section-title">{% trans 'الإدارة' %}</p>
 

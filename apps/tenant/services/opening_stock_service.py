@@ -69,8 +69,8 @@ def get_product_opening_info(product: Product, warehouse: Warehouse = None):
             warehouse=warehouse,
             source_invoice_line__isnull=True
         ).filter(
-            models.Q(batch_number__startswith='رصيد') | 
-            models.Q(batch_number__startswith='تسوية') |
+            # Only opening-balance batches: adjustment batches ('تسوية ...') are NOT opening stock
+            models.Q(batch_number__startswith='رصيد') |
             models.Q(movements__movement_type='OPENING_BALANCE')
         ).distinct().order_by('created_at').first()
 
@@ -186,8 +186,8 @@ def update_or_create_product_opening_stock(
             warehouse=wh_locked,
             source_invoice_line__isnull=True
         ).filter(
-            models.Q(batch_number__startswith='رصيد') | 
-            models.Q(batch_number__startswith='تسوية') |
+            # Only opening-balance batches: adjustment batches ('تسوية ...') are NOT opening stock
+            models.Q(batch_number__startswith='رصيد') |
             models.Q(movements__movement_type='OPENING_BALANCE')
         ).distinct().order_by('created_at').first()
 
@@ -212,13 +212,18 @@ def update_or_create_product_opening_stock(
             )
 
         delta_qty = (new_quantity - old_qty).quantize(Decimal('0.01'))
-        old_total_val = (old_qty * old_cost).quantize(Decimal('0.01'))
-        new_total_val = (new_quantity * unit_cost).quantize(Decimal('0.01'))
+        old_remaining = batch.quantity_remaining
+        new_remaining = old_remaining + delta_qty
+        # Units already sold/consumed were costed (COGS) at the old cost: they keep it.
+        # A cost change only revalues the quantity still on hand.
+        consumed_val = (consumed_qty * old_cost).quantize(Decimal('0.01'))
+        old_total_val = (consumed_val + old_remaining * old_cost).quantize(Decimal('0.01'))
+        new_total_val = (consumed_val + new_remaining * unit_cost).quantize(Decimal('0.01'))
         delta_val = (new_total_val - old_total_val).quantize(Decimal('0.01'))
 
         # Update batch
         batch.quantity_original = new_quantity
-        batch.quantity_remaining += delta_qty
+        batch.quantity_remaining = new_remaining
         batch.unit_cost = unit_cost
         batch.save(update_fields=['quantity_original', 'quantity_remaining', 'unit_cost', 'updated_at'])
 
@@ -331,30 +336,19 @@ def update_or_create_product_opening_stock(
 
         total_val = (new_quantity * unit_cost).quantize(Decimal('0.01'))
 
-        # Create batch
-        batch = InventoryBatch.objects.create(
+        # Create batch through the FIFO engine so existing deficit (negative) batches
+        # in this warehouse are offset first; records the OPENING_BALANCE movement.
+        from apps.tenant.services.fifo_engine import add_inventory_batch
+        batch = add_inventory_batch(
             product=prod_locked,
             warehouse=wh_locked,
-            quantity_original=new_quantity,
-            quantity_remaining=new_quantity,
-            unit_cost=unit_cost,
-            batch_number=f"رصيد-{today.strftime('%Y%m%d')}",
-        )
-
-        if unit_cost > Decimal('0'):
-            prod_locked.last_purchase_price = unit_cost
-            prod_locked.save(update_fields=['last_purchase_price', 'updated_at'])
-
-        # Record movement
-        StockMovement.objects.create(
-            product=prod_locked,
-            warehouse=wh_locked,
-            batch=batch,
-            movement_type='OPENING_BALANCE',
             quantity=new_quantity,
             unit_cost=unit_cost,
+            batch_number=f"رصيد-{today.strftime('%Y%m%d')}",
             reference=f'رصيد افتتاحي - {prod_locked.id}',
-            notes=reason or f'إدخال رصيد أول المدة لصنف {prod_locked.name}'
+            movement_type='OPENING_BALANCE',
+            update_last_purchase_price=unit_cost > Decimal('0'),
+            notes=reason or f'إدخال رصيد أول المدة لصنف {prod_locked.name}',
         )
 
         # Create Journal Entry

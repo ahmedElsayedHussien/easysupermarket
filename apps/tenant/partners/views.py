@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from decimal import Decimal
 from django.contrib.auth.decorators import login_required
 from .models import Partner, Payment
 from apps.tenant.core.decorators import custom_permission_required
@@ -17,8 +18,12 @@ def supplier_list(request):
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
     
+    from apps.tenant.partners.services import batch_get_partners_balances
+    balances = batch_get_partners_balances(partner_qs=list(page_obj.object_list))
     for supplier in page_obj:
-        supplier.balance = supplier.supplier_balance if supplier.partner_type == 'BOTH' else supplier.outstanding_balance
+        data = balances.get(supplier.id)
+        # batch final_balance is debit - credit (customer perspective); suppliers show what we owe
+        supplier.balance = -data['final_balance'] if data else Decimal('0')
         
     context = {
         'partners': page_obj,
@@ -45,8 +50,11 @@ def customer_list(request):
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
     
+    from apps.tenant.partners.services import batch_get_partners_balances
+    balances = batch_get_partners_balances(partner_qs=list(page_obj.object_list))
     for customer in page_obj:
-        customer.balance = customer.customer_balance if customer.partner_type == 'BOTH' else customer.outstanding_balance
+        data = balances.get(customer.id)
+        customer.balance = data['final_balance'] if data else Decimal('0')
         
     context = {
         'partners': page_obj,
@@ -87,8 +95,16 @@ def partner_create(request):
 
         try:
             op_balance = Decimal(opening_balance) if opening_balance else Decimal('0')
+            if not op_balance.is_finite():
+                raise InvalidOperation
         except InvalidOperation:
-            op_balance = Decimal('0')
+            op_balance = None
+        if op_balance is None or op_balance < 0:
+            messages.error(request, 'رصيد أول المدة يجب أن يكون رقماً موجباً أو صفراً. استخدم نوع الرصيد (مدين/دائن) لتحديد الاتجاه.')
+            return redirect(request.path)
+        if opening_balance_type not in (Partner.OPENING_DEBIT, Partner.OPENING_CREDIT):
+            messages.error(request, 'نوع رصيد أول المدة غير صالح.')
+            return redirect(request.path)
 
         op_date = None
         if opening_balance_date_str:
@@ -150,8 +166,16 @@ def partner_edit(request, pk):
 
         try:
             op_balance = Decimal(opening_balance) if opening_balance else Decimal('0')
+            if not op_balance.is_finite():
+                raise InvalidOperation
         except InvalidOperation:
-            op_balance = Decimal('0')
+            op_balance = None
+        if op_balance is None or op_balance < 0:
+            messages.error(request, 'رصيد أول المدة يجب أن يكون رقماً موجباً أو صفراً. استخدم نوع الرصيد (مدين/دائن) لتحديد الاتجاه.')
+            return redirect(request.path)
+        if opening_balance_type not in (Partner.OPENING_DEBIT, Partner.OPENING_CREDIT):
+            messages.error(request, 'نوع رصيد أول المدة غير صالح.')
+            return redirect(request.path)
 
         op_date = None
         if opening_balance_date_str:
@@ -203,6 +227,41 @@ def post_payment_view(request):
         pass
     return redirect('core:main_screen')
 
+def _detail_lines_with_adjustment(t):
+    """
+    Yields (line_dict, debit, credit) for an invoice transaction of the statement in detailed
+    mode. Line totals do not include invoice-level discounts / withholding tax / rounding, so an
+    adjustment pseudo-line is appended whenever they differ from the invoice amount used by the
+    statement. This keeps the detailed running balance equal to the statement final balance.
+    """
+    from decimal import Decimal
+    lines = t.get('lines') or []
+    t_dr = Decimal(str(t.get('debit') or 0))
+    t_cr = Decimal(str(t.get('credit') or 0))
+    is_debit = t.get('badge_type') in ['sale', 'return_purchase'] or t_dr > 0
+    lines_total = Decimal('0')
+    for l in lines:
+        amt = Decimal(str(l.get('total_amount') or 0))
+        lines_total += amt
+        yield (l, amt, Decimal('0')) if is_debit else (l, Decimal('0'), amt)
+
+    target = t_dr if is_debit else t_cr
+    diff = target - lines_total
+    if abs(diff) >= Decimal('0.005'):
+        signed = diff if is_debit else -diff  # expressed as debit
+        adj = {
+            'product_name': 'تسوية إجمالي الفاتورة (خصم إجمالي / خصم وإضافة / تقريب)',
+            'quantity': None,
+            'uom_name': '—',
+            'unit_price': None,
+            'discount_amount': Decimal('0'),
+            'tax_amount': Decimal('0'),
+            'total_amount': diff,
+            'is_adjustment': True,
+        }
+        yield (adj, signed, Decimal('0')) if signed > 0 else (adj, Decimal('0'), -signed)
+
+
 @login_required
 @custom_permission_required('partners.view_partner', redirect_url='core:main_screen')
 def partner_ledger(request, pk):
@@ -240,17 +299,9 @@ def partner_ledger(request, pk):
             url_val = t.get('url')
 
             if lines:
-                is_sale_type = badge_type_val in ['sale', 'return_purchase'] or (t.get('debit', 0) > 0)
-                for l in lines:
+                for l, line_dr, line_cr in _detail_lines_with_adjustment(t):
                     tot_amount = Decimal(str(l.get('total_amount') or 0))
-                    if is_sale_type:
-                        line_dr = tot_amount
-                        line_cr = Decimal('0')
-                        running_bal += line_dr
-                    else:
-                        line_dr = Decimal('0')
-                        line_cr = tot_amount
-                        running_bal -= line_cr
+                    running_bal += line_dr - line_cr
 
                     detailed_rows.append({
                         'counter': row_counter,
@@ -624,9 +675,7 @@ def partner_ledger_export_excel(request, pk):
             lines = t.get('lines', [])
 
             if lines:
-                is_sale_type = t.get('badge_type') in ['sale', 'return_purchase'] or (t.get('debit', 0) > 0)
-
-                for l in lines:
+                for l, d_dr, d_cr in _detail_lines_with_adjustment(t):
                     ws.row_dimensions[curr_row].height = 22
                     q_num = float(l.get('quantity') or 0)
                     u_name = l.get('uom_name') or 'قطعة'
@@ -635,14 +684,9 @@ def partner_ledger_export_excel(request, pk):
                     tax_num = float(l.get('tax_amount') or 0)
                     tot_num = float(l.get('total_amount') or 0)
 
-                    if is_sale_type:
-                        line_dr = tot_num
-                        line_cr = 0.0
-                        running_bal += line_dr
-                    else:
-                        line_dr = 0.0
-                        line_cr = tot_num
-                        running_bal -= line_cr
+                    line_dr = float(d_dr)
+                    line_cr = float(d_cr)
+                    running_bal += line_dr - line_cr
 
                     is_even = (row_counter % 2 == 0)
                     row_vals = [

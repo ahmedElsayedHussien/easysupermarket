@@ -37,7 +37,7 @@
     <div class="context-info-group">
         <label class="context-info-label">{% trans 'الدور' %}</label>
         <div class="context-info-value" style="color:var(--neon-cyan);">
-            {% if request.user.is_superuser %}مدير النظام{% elif request.user.is_staff %}مشرف{% else %}كاشير{% endif %}
+            {% if is_admin %}مدير النظام{% else %}كاشير{% endif %}
         </div>
     </div>
 
