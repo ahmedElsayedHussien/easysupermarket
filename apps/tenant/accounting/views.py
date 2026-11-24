@@ -1255,69 +1255,149 @@ class VoucherCancelView(CustomPermissionRequiredMixin, View):
 # POS Machines (ماكينات الدفع الإلكتروني)
 # ===========================================================================
 
-@login_required
-@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
-def pos_machine_list(request):
-    """List all POS machines with current balances."""
+def _scoped_machines(request):
+    """Machines the user may see: own branch (non-admins) / header branch (admins, all = everything)."""
+    from apps.tenant.core.access import filter_by_branch
     from .models import POSMachine
-    machines = POSMachine.objects.select_related('branch', 'account').all()
+    return filter_by_branch(POSMachine.objects.select_related('branch', 'account'), request, 'branch')
+
+
+def _scoped_eservice_transactions(request):
+    from apps.tenant.core.access import filter_by_branch
+    from .models import EServiceTransaction
+    return filter_by_branch(EServiceTransaction.objects.all(), request, 'treasury__branch')
+
+
+def _query_without_page(request):
+    params = request.GET.copy()
+    params.pop('page', None)
+    return params.urlencode()
+
+
+def _parse_amount(raw, default=None):
+    """'' -> default; otherwise a finite Decimal (raises InvalidOperation)."""
+    raw = (raw or '').strip()
+    if raw == '':
+        return default
+    value = Decimal(raw)
+    if not value.is_finite():
+        raise InvalidOperation
+    return value
+
+
+def _pos_machine_form_post(request, machine, branches):
+    """Validates the machine form; returns (fields dict, error)."""
+    from .models import POSMachine
+    name = request.POST.get('name', '').strip()
+    machine_type = request.POST.get('machine_type', POSMachine.OTHER)
+    branch_id = request.POST.get('branch_id')
+    if not name or not branch_id:
+        return None, 'برجاء إدخال اسم الماكينة والفرع.'
+    if machine_type not in {c for c, _ in POSMachine.MACHINE_TYPE_CHOICES}:
+        return None, 'نوع الماكينة غير صحيح.'
+    branch = branches.filter(id=branch_id).first() if str(branch_id).isdigit() else None
+    if branch is None:
+        return None, 'الفرع المحدد غير متاح.'
+    try:
+        min_alert = _parse_amount(request.POST.get('min_balance_alert'), Decimal('0'))
+        opening = _parse_amount(request.POST.get('opening_balance'), Decimal('0'))
+    except (InvalidOperation, ValueError):
+        return None, 'برجاء إدخال مبالغ رقمية صحيحة.'
+    if min_alert < 0 or opening < 0:
+        return None, 'المبالغ لا يمكن أن تكون سالبة.'
+    fields = {
+        'name': name, 'machine_type': machine_type, 'branch': branch,
+        'min_balance_alert': min_alert, 'notes': request.POST.get('notes', ''),
+    }
+    if machine is None:
+        fields['opening_balance'] = opening
+    else:
+        fields['is_active'] = request.POST.get('is_active') == 'on'
+    return fields, None
+
+
+@login_required
+@custom_permission_required('accounting.view_posmachine', redirect_url='core:main_screen')
+def pos_machine_list(request):
+    """POS machines of the user's branch scope with current balances."""
+    machines = list(_scoped_machines(request))
     context = {
         'machines': machines,
+        'low_balance_count': sum(1 for m in machines if m.is_active and m.is_low_balance),
         'title': 'ماكينات الدفع الإلكتروني',
     }
     return render(request, 'accounting/pos_machines/machine_list.html', context)
 
 
 @login_required
-@custom_permission_required('accounting.add_account', redirect_url='core:main_screen')
+@custom_permission_required('accounting.add_posmachine', redirect_url='core:main_screen')
 def pos_machine_create(request):
-    """Create a new POS machine."""
+    """Create a new POS machine (its ledger account under 1170 is created automatically)."""
     from .models import POSMachine
-    from apps.tenant.core.models import Branch
-    branches = Branch.objects.filter(is_active=True)
+    from apps.tenant.core.access import allowed_branches, get_working_branch
+    branches = allowed_branches(request)
     if request.method == 'POST':
-        name = request.POST.get('name', '').strip()
-        machine_type = request.POST.get('machine_type', POSMachine.OTHER)
-        branch_id = request.POST.get('branch_id')
-        opening_balance = request.POST.get('opening_balance', '0') or '0'
-        notes = request.POST.get('notes', '')
-        if not name or not branch_id:
-            messages.error(request, 'برجاء إدخال اسم الماكينة والفرع.')
+        fields, error = _pos_machine_form_post(request, None, branches)
+        if error:
+            messages.error(request, error)
         else:
             try:
-                from apps.tenant.core.models import Branch
-                branch = Branch.objects.get(id=branch_id)
-                machine = POSMachine.objects.create(
-                    name=name,
-                    machine_type=machine_type,
-                    branch=branch,
-                    opening_balance=Decimal(opening_balance),
-                    notes=notes,
-                )
+                machine = POSMachine.objects.create(**fields)
                 messages.success(request, f'تم إنشاء الماكينة "{machine.name}" بنجاح وتم إنشاء حسابها المحاسبي تلقائياً.')
                 return redirect('accounting:pos_machine_list')
             except Exception as e:
                 messages.error(request, f'حدث خطأ: {_error_text(e)}')
+    wb = get_working_branch(request)
     context = {
         'branches': branches,
         'machine_types': POSMachine.MACHINE_TYPE_CHOICES,
+        'selected_branch_id': wb.id if wb else None,
         'title': 'إضافة ماكينة دفع جديدة',
     }
     return render(request, 'accounting/pos_machines/machine_form.html', context)
 
 
 @login_required
-@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
+@custom_permission_required('accounting.change_posmachine', redirect_url='core:main_screen')
+def pos_machine_update(request, pk):
+    """Edit a machine (name, type, branch, active, low-balance alert). The opening balance is fixed."""
+    from .models import POSMachine
+    from apps.tenant.core.access import allowed_branches
+    machine = get_object_or_404(_scoped_machines(request), pk=pk)
+    branches = allowed_branches(request)
+    if request.method == 'POST':
+        fields, error = _pos_machine_form_post(request, machine, branches)
+        if error:
+            messages.error(request, error)
+        else:
+            for k, v in fields.items():
+                setattr(machine, k, v)
+            machine.save()
+            if machine.account_id and machine.account.name != machine.name:
+                machine.account.name = machine.name
+                machine.account.save(update_fields=['name'])
+            messages.success(request, f'تم حفظ بيانات الماكينة "{machine.name}".')
+            return redirect('accounting:pos_machine_detail', pk=machine.pk)
+    context = {
+        'machine': machine,
+        'branches': branches,
+        'machine_types': POSMachine.MACHINE_TYPE_CHOICES,
+        'selected_branch_id': machine.branch_id,
+        'title': f'تعديل الماكينة: {machine.name}',
+    }
+    return render(request, 'accounting/pos_machines/machine_form.html', context)
+
+
+@login_required
+@custom_permission_required('accounting.view_posmachine', redirect_url='core:main_screen')
 def pos_machine_detail(request, pk):
-    """Show machine details with its transaction history."""
-    from .models import POSMachine, EServiceTransaction
-    machine = get_object_or_404(POSMachine, pk=pk)
-    transactions = EServiceTransaction.objects.filter(
-        pos_machine=machine
-    ).order_by('-date', '-created_at')[:50]
+    """Machine details with its latest operations."""
+    machine = get_object_or_404(_scoped_machines(request), pk=pk)
+    transactions = machine.transactions.select_related('treasury', 'agent').order_by('-date', '-created_at')[:50]
     context = {
         'machine': machine,
         'transactions': transactions,
+        'rules': machine.commission_rules.all(),
         'title': f'تفاصيل: {machine.name}',
     }
     return render(request, 'accounting/pos_machines/machine_detail.html', context)
@@ -1327,20 +1407,40 @@ def pos_machine_detail(request, pk):
 # E-Service Center (مركز خدمات الدفع)
 # ===========================================================================
 
-@login_required
-@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
-def eservice_center(request):
-    """Main e-service center for handling recharge/withdrawal/transfer operations."""
-    from .models import POSMachine, EWallet, Treasury, EServiceTransaction
+def _open_shift(user):
+    """The user's OPEN cashier shift (invoicing.POSSession), or None."""
+    from apps.tenant.invoicing.models import POSSession
+    return (POSSession.objects.filter(user=user, status=POSSession.OPEN)
+            .select_related('treasury', 'branch').order_by('-start_time').first())
 
-    machines = POSMachine.objects.filter(is_active=True).select_related('branch')
-    # Money operations use the CURRENT branch only (header / open shift / own branch).
-    from .forms import _branch_scope
-    restricted, current = _branch_scope(request.user)
-    if restricted:
-        machines = machines.filter(branch=current) if current else machines.none()
+
+def _can_override_commission(user):
+    return is_admin_user(user) or user.has_perm('accounting.override_eservice_commission')
+
+
+def _agents_qs():
+    from apps.tenant.partners.models import Partner
+    return Partner.objects.filter(is_active=True, partner_type__in=(Partner.SUPPLIER, Partner.BOTH)).order_by('name')
+
+
+@login_required
+@custom_permission_required('accounting.view_eservicetransaction', redirect_url='core:main_screen')
+def eservice_center(request):
+    """Cash-in / cash-out for customers and machine recharge from an agent."""
+    from .models import POSMachine, EWallet, Treasury, EServiceTransaction
+    from apps.tenant.core.access import get_working_branch
+
+    # Money operations use the CURRENT working branch only (header / open shift / own branch).
+    working_branch = get_working_branch(request)
+    machines = POSMachine.objects.filter(is_active=True).select_related('branch', 'account')
+    machines = machines.filter(branch=working_branch) if working_branch else machines.none()
     ewallets = EWallet.objects.all()
     treasuries = scope_treasuries(Treasury.objects.all(), request.user)
+    shift = _open_shift(request.user)
+    if shift is not None:
+        # While a shift is open, cash moves through the shift's drawer only.
+        treasuries = treasuries.filter(pk=shift.treasury_id)
+    agents = _agents_qs()
 
     if request.method == 'POST':
         # Posting cash movements requires the add permission (viewing the screen only needs view)
@@ -1353,16 +1453,16 @@ def eservice_center(request):
         pos_machine_id = request.POST.get('pos_machine_id') or None
         ewallet_id = request.POST.get('ewallet_id') or None
         treasury_id = request.POST.get('treasury_id')
+        agent_id = request.POST.get('agent_id') or None
+        paid_on_credit = request.POST.get('paid_on_credit') in ('1', 'on', 'true')
         description = request.POST.get('description', '')
 
         error = None
-        principal = commission_rev = commission_exp = None
+        principal = commission = None
+        commission_key = 'commission_expense' if transaction_type == EServiceTransaction.MERCHANT_RECHARGE else 'commission_revenue'
         try:
-            principal = Decimal(request.POST.get('principal_amount', '0') or '0')
-            commission_rev = Decimal(request.POST.get('commission_revenue', '0') or '0')
-            commission_exp = Decimal(request.POST.get('commission_expense', '0') or '0')
-            if not all(x.is_finite() for x in (principal, commission_rev, commission_exp)):
-                raise InvalidOperation
+            principal = _parse_amount(request.POST.get('principal_amount'), Decimal('0'))
+            commission = _parse_amount(request.POST.get(commission_key), None)
         except (InvalidOperation, ValueError, TypeError):
             error = 'برجاء إدخال مبالغ رقمية صحيحة.'
 
@@ -1374,16 +1474,21 @@ def eservice_center(request):
                 error = 'مصدر العملية غير صحيح.'
             elif not treasury_id:
                 error = 'برجاء اختيار الخزينة / الدرج.'
+            elif shift is not None and str(treasury_id) != str(shift.treasury_id):
+                error = (f'لديك وردية مفتوحة على خزينة "{shift.treasury}". '
+                         f'حركات النقدية تتم على خزينة الوردية فقط حتى إغلاقها.')
             elif principal <= 0:
                 error = 'برجاء إدخال مبلغ صحيح.'
-            elif commission_rev < 0 or commission_exp < 0:
+            elif commission is not None and commission < 0:
                 error = 'العمولات لا يمكن أن تكون سالبة.'
-            elif commission_rev > principal or commission_exp > principal:
+            elif commission is not None and commission > principal:
                 error = 'العمولة لا يمكن أن تتجاوز المبلغ الأصلي.'
             elif source_type == 'MACHINE' and not pos_machine_id:
                 error = 'برجاء اختيار الماكينة.'
             elif source_type == 'EWALLET' and not ewallet_id:
                 error = 'برجاء اختيار المحفظة الإلكترونية.'
+            elif transaction_type == EServiceTransaction.MERCHANT_RECHARGE and paid_on_credit and not agent_id:
+                error = 'الشحن الآجل يتطلب اختيار المندوب / المورد.'
 
         if error:
             messages.error(request, error)
@@ -1396,78 +1501,266 @@ def eservice_center(request):
                         source_type=source_type,
                         treasury=treasury,
                         principal_amount=principal,
-                        commission_revenue=commission_rev,
-                        commission_expense=commission_exp,
                         description=description,
                         created_by=request.user,
+                        pos_session=shift,
                     )
                     if source_type == 'MACHINE':
                         txn.pos_machine = machines.get(id=pos_machine_id)
                     else:
                         txn.ewallet = EWallet.objects.get(id=ewallet_id)
+                    if transaction_type == EServiceTransaction.MERCHANT_RECHARGE:
+                        if agent_id:
+                            txn.agent = agents.get(id=agent_id)
+                        txn.paid_on_credit = paid_on_credit
+                    txn.apply_commission_rule(commission, can_override=_can_override_commission(request.user))
+                    if txn.commission_amount > principal:
+                        raise ValidationError('العمولة لا يمكن أن تتجاوز المبلغ الأصلي.')
                     txn.save()
-                    txn.post_transaction()
-                messages.success(request, f'✅ تم تنفيذ العملية {txn.transaction_number} بنجاح وتم إنشاء القيد المحاسبي.')
+                    txn.post_transaction(user=request.user)
+                messages.success(request, f'تم تنفيذ العملية {txn.transaction_number} بنجاح وتم إنشاء القيد المحاسبي.')
                 return redirect('accounting:eservice_center')
             except (Treasury.DoesNotExist, POSMachine.DoesNotExist, EWallet.DoesNotExist, ValueError):
                 messages.error(request, 'الخزينة أو الماكينة أو المحفظة المحددة غير متاحة.')
             except ValidationError as e:
                 messages.error(request, _error_text(e))
             except Exception as e:
-                messages.error(request, f'حدث خطأ: {_error_text(e)}')
+                from apps.tenant.partners.models import Partner
+                if isinstance(e, Partner.DoesNotExist):
+                    messages.error(request, 'المندوب المحدد غير متاح أو ليس مورداً.')
+                else:
+                    messages.error(request, f'حدث خطأ: {_error_text(e)}')
 
     context = {
         'machines': machines,
         'ewallets': ewallets,
         'treasuries': treasuries,
+        'agents': agents,
+        'shift': shift,
+        'default_treasury_id': shift.treasury_id if shift else (treasuries[0].id if len(treasuries) == 1 else None),
+        'working_branch': working_branch,
+        'can_override_commission': _can_override_commission(request.user),
         'transaction_types': EServiceTransaction.TRANSACTION_TYPE_CHOICES,
+        # ?type=&machine= presets (e.g. "recharge" link from the liquidity dashboard)
+        'preset_type': request.POST.get('transaction_type') or request.GET.get('type', ''),
+        'preset_machine': request.POST.get('pos_machine_id') or request.GET.get('machine', ''),
         'title': 'مركز خدمات الدفع الإلكتروني',
     }
     return render(request, 'accounting/pos_machines/service_center.html', context)
 
 
 @login_required
-@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
+@custom_permission_required('accounting.view_eservicetransaction', redirect_url='core:main_screen')
+def eservice_commission(request):
+    """
+    JSON: the commission computed by the matching rule.
+    GET type=<CASH_IN|CASH_OUT|MERCHANT_RECHARGE>&machine=<id or empty>&amount=<principal>
+    -> {has_rule, rule, field, commission}  (field = commission_revenue | commission_expense)
+    """
+    from django.http import JsonResponse
+    from .models import EServiceTransaction, EServiceCommissionRule
+    ttype = request.GET.get('type', '')
+    if ttype not in {t for t, _ in EServiceTransaction.TRANSACTION_TYPE_CHOICES}:
+        return JsonResponse({'error': 'نوع العملية غير صحيح.'}, status=400)
+    try:
+        amount = _parse_amount(request.GET.get('amount'), Decimal('0'))
+    except (InvalidOperation, ValueError):
+        return JsonResponse({'error': 'المبلغ غير صحيح.'}, status=400)
+    machine = None
+    machine_id = request.GET.get('machine') or ''
+    if machine_id:
+        machine = _scoped_machines(request).filter(pk=machine_id).first() if machine_id.isdigit() else None
+        if machine is None:
+            return JsonResponse({'error': 'الماكينة غير متاحة.'}, status=404)
+    rule = EServiceCommissionRule.match(ttype, machine)
+    field = 'commission_expense' if ttype == EServiceTransaction.MERCHANT_RECHARGE else 'commission_revenue'
+    return JsonResponse({
+        'has_rule': rule is not None,
+        'rule': rule.name if rule else '',
+        'field': field,
+        'commission': str(rule.compute(amount)) if rule else None,
+    })
+
+
+@login_required
+@custom_permission_required('accounting.view_eservicetransaction', redirect_url='core:main_screen')
 def eservice_history(request):
-    """List all e-service transactions."""
+    """Operations log: filters, totals and pagination."""
+    from django.core.paginator import Paginator
+    from django.db.models import Sum, Count
     from .models import EServiceTransaction
-    transactions = EServiceTransaction.objects.select_related(
-        'pos_machine', 'ewallet', 'treasury', 'created_by'
+
+    qs = _scoped_eservice_transactions(request).select_related(
+        'pos_machine', 'ewallet', 'treasury', 'created_by', 'agent', 'invoice'
     ).order_by('-date', '-created_at')
+
+    f = {k: (request.GET.get(k) or '').strip() for k in ('date_from', 'date_to', 'type', 'machine', 'status', 'q')}
+    try:
+        if f['date_from']:
+            qs = qs.filter(date__gte=datetime.date.fromisoformat(f['date_from']))
+        if f['date_to']:
+            qs = qs.filter(date__lte=datetime.date.fromisoformat(f['date_to']))
+    except ValueError:
+        messages.error(request, 'صيغة التاريخ غير صحيحة.')
+    if f['type'] in {t for t, _ in EServiceTransaction.TRANSACTION_TYPE_CHOICES}:
+        qs = qs.filter(transaction_type=f['type'])
+    if f['machine'].isdigit():
+        qs = qs.filter(pos_machine_id=int(f['machine']))
+    if f['status'] in {s for s, _ in EServiceTransaction.STATUS_CHOICES}:
+        qs = qs.filter(status=f['status'])
+    if f['q']:
+        qs = qs.filter(Q(transaction_number__icontains=f['q']) | Q(description__icontains=f['q']))
+
+    posted = qs.filter(status=EServiceTransaction.POSTED)
+    agg = posted.aggregate(principal=Sum('principal_amount'), earned=Sum('commission_revenue'),
+                           fees=Sum('commission_expense'), cnt=Count('id'))
+    net_cash = sum(
+        (t.cash_effect for t in posted.select_related(None).only(
+            'status', 'transaction_type', 'principal_amount', 'commission_revenue',
+            'commission_expense', 'paid_on_credit').iterator()),
+        Decimal('0'),
+    )
+    totals = {
+        'count': qs.count(),
+        'posted_count': agg['cnt'] or 0,
+        'principal': agg['principal'] or Decimal('0'),
+        'earned': agg['earned'] or Decimal('0'),
+        'fees': agg['fees'] or Decimal('0'),
+        'net_cash': net_cash,
+    }
+
+    paginator = Paginator(qs, 25)
+    page_obj = paginator.get_page(request.GET.get('page'))
     context = {
-        'transactions': transactions,
+        'transactions': page_obj,
+        'page_obj': page_obj,
+        'page_range': paginator.get_elided_page_range(page_obj.number, on_each_side=2, on_ends=1),
+        'page_query': _query_without_page(request),
+        'total_count': paginator.count,
+        'item_label': 'عملية',
+        'totals': totals,
+        'filters': f,
+        'machines': _scoped_machines(request),
+        'transaction_types': EServiceTransaction.TRANSACTION_TYPE_CHOICES,
+        'status_choices': EServiceTransaction.STATUS_CHOICES,
         'title': 'سجل حركات خدمات الدفع',
     }
     return render(request, 'accounting/pos_machines/eservice_history.html', context)
 
 
 @login_required
-@custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
+@custom_permission_required('accounting.view_eservicetransaction', redirect_url='core:main_screen')
 def eservice_detail(request, pk):
-    from .models import EServiceTransaction
-    txn = get_object_or_404(EServiceTransaction, pk=pk)
+    txn = get_object_or_404(
+        _scoped_eservice_transactions(request).select_related(
+            'pos_machine', 'ewallet', 'treasury', 'agent', 'pos_session', 'journal_entry',
+            'invoice', 'created_by', 'cancelled_by'),
+        pk=pk,
+    )
+    user = request.user
     context = {
         'transaction': txn,
+        'reversal_entry': txn.reversal_entry,
+        'can_cancel': txn.status != txn.CANCELLED and (
+            is_admin_user(user) or user.has_perm('accounting.cancel_eservicetransaction')),
+        'can_post': txn.status == txn.DRAFT and (
+            is_admin_user(user) or user.has_perm('accounting.change_eservicetransaction')),
         'title': f'تفاصيل الحركة: {txn.transaction_number}',
     }
     return render(request, 'accounting/pos_machines/eservice_detail.html', context)
 
 
 @login_required
-@custom_permission_required('accounting.add_journalentry', redirect_url='core:main_screen')
+@custom_permission_required('accounting.change_eservicetransaction', redirect_url='core:main_screen')
 def eservice_post(request, pk):
     if request.method == 'POST':
         from .models import EServiceTransaction
-        from django.core.exceptions import ValidationError
-        txn = get_object_or_404(EServiceTransaction, pk=pk, status=EServiceTransaction.DRAFT)
+        txn = get_object_or_404(_scoped_eservice_transactions(request), pk=pk, status=EServiceTransaction.DRAFT)
         try:
-            txn.post_transaction()
+            txn.post_transaction(user=request.user)
             messages.success(request, f'تم ترحيل الحركة {txn.transaction_number} بنجاح.')
         except ValidationError as e:
-            messages.error(request, str(e.message))
+            messages.error(request, _error_text(e))
         except Exception as e:
             messages.error(request, f'حدث خطأ أثناء الترحيل: {_error_text(e)}')
     return redirect('accounting:eservice_history')
+
+
+@login_required
+@custom_permission_required('accounting.cancel_eservicetransaction', redirect_url='core:main_screen')
+def eservice_cancel(request, pk):
+    """POST only: cancel an operation (posted -> reversal entry dated today)."""
+    from django.http import HttpResponseNotAllowed
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    txn = get_object_or_404(_scoped_eservice_transactions(request), pk=pk)
+    try:
+        txn.cancel_transaction(user=request.user, reason=request.POST.get('reason', ''))
+        messages.success(request, f'تم إلغاء العملية {txn.transaction_number}'
+                                  + (' وتسجيل قيد عكسي.' if txn.journal_entry_id else '.'))
+    except ValidationError as e:
+        messages.error(request, _error_text(e))
+    except Exception as e:
+        messages.error(request, f'حدث خطأ أثناء الإلغاء: {_error_text(e)}')
+    return redirect('accounting:eservice_detail', pk=txn.pk)
+
+
+# ---------------------------------------------------------------------------
+# Commission rules (قواعد عمولات خدمات الدفع)
+# ---------------------------------------------------------------------------
+
+@login_required
+@custom_permission_required('accounting.view_eservicecommissionrule', redirect_url='core:main_screen')
+def eservice_rule_list(request):
+    from .models import EServiceCommissionRule
+    rules = EServiceCommissionRule.objects.select_related('pos_machine', 'pos_machine__branch').order_by(
+        'transaction_type', 'name')
+    context = {'rules': rules, 'title': 'قواعد عمولات خدمات الدفع'}
+    return render(request, 'accounting/pos_machines/rule_list.html', context)
+
+
+def _rule_form_view(request, rule=None):
+    from .forms import EServiceCommissionRuleForm
+    machines = _scoped_machines(request)
+    form = EServiceCommissionRuleForm(request.POST or None, instance=rule, machines=machines)
+    if request.method == 'POST' and form.is_valid():
+        saved = form.save()
+        messages.success(request, f'تم حفظ قاعدة العمولة "{saved.name}".')
+        return redirect('accounting:eservice_rule_list')
+    context = {
+        'form': form,
+        'rule': rule,
+        'title': f'تعديل قاعدة: {rule.name}' if rule else 'إضافة قاعدة عمولة',
+    }
+    return render(request, 'accounting/pos_machines/rule_form.html', context)
+
+
+@login_required
+@custom_permission_required('accounting.add_eservicecommissionrule', redirect_url='core:main_screen')
+def eservice_rule_create(request):
+    return _rule_form_view(request)
+
+
+@login_required
+@custom_permission_required('accounting.change_eservicecommissionrule', redirect_url='core:main_screen')
+def eservice_rule_update(request, pk):
+    from .models import EServiceCommissionRule
+    rule = get_object_or_404(EServiceCommissionRule, pk=pk)
+    return _rule_form_view(request, rule)
+
+
+@login_required
+@custom_permission_required('accounting.delete_eservicecommissionrule', redirect_url='core:main_screen')
+def eservice_rule_delete(request, pk):
+    from django.http import HttpResponseNotAllowed
+    from .models import EServiceCommissionRule
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    rule = get_object_or_404(EServiceCommissionRule, pk=pk)
+    name = rule.name
+    rule.delete()
+    messages.success(request, f'تم حذف قاعدة العمولة "{name}".')
+    return redirect('accounting:eservice_rule_list')
 
 from decimal import Decimal
 from django.views.generic import CreateView

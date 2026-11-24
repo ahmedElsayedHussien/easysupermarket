@@ -1,12 +1,12 @@
 {% extends 'base.html' %}
-{% block title %}إضافة ماكينة دفع{% endblock %}
+{% block title %}{{ title }}{% endblock %}
 
 {% block content %}
 <div class="glass-container" style="padding:2rem;max-width:700px;margin:0 auto;">
     <div class="top-header">
-        <h2 style="margin:0;color:#fff;"><i class="fas fa-plus-circle" style="color:#ff7300;margin-left:0.5rem;"></i>{{ title }}</h2>
-        <a href="{% url 'accounting:pos_machine_list' %}" class="btn-action">
-            <i class="fas fa-arrow-right"></i> العودة للقائمة
+        <h2 style="margin:0;color:#fff;"><i class="fas {% if machine %}fa-edit{% else %}fa-plus-circle{% endif %}" style="color:#ff7300;margin-left:0.5rem;"></i>{{ title }}</h2>
+        <a href="{% if machine %}{% url 'accounting:pos_machine_detail' machine.pk %}{% else %}{% url 'accounting:pos_machine_list' %}{% endif %}" class="btn-action">
+            <i class="fas fa-arrow-right"></i> رجوع
         </a>
     </div>
 
@@ -20,13 +20,14 @@
         {% csrf_token %}
         <div class="form-group">
             <label class="form-label">اسم الماكينة *</label>
-            <input type="text" name="name" class="form-control" placeholder="مثال: ماكينة فوري 1 | فيزا البنك الأهلي" required>
+            <input type="text" name="name" class="form-control" placeholder="مثال: ماكينة فوري 1 | فيزا البنك الأهلي" required
+                   value="{% if request.POST.name %}{{ request.POST.name }}{% else %}{{ machine.name|default:'' }}{% endif %}">
         </div>
         <div class="form-group">
             <label class="form-label">نوع الماكينة *</label>
             <select name="machine_type" class="form-control">
                 {% for val, label in machine_types %}
-                <option value="{{ val }}">{{ label }}</option>
+                <option value="{{ val }}" {% if machine and machine.machine_type == val %}selected{% endif %}>{{ label }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -35,22 +36,37 @@
             <select name="branch_id" class="form-control" required>
                 <option value="">— اختر الفرع —</option>
                 {% for branch in branches %}
-                <option value="{{ branch.id }}">{{ branch.name }}</option>
+                <option value="{{ branch.id }}" {% if branch.id == selected_branch_id %}selected{% endif %}>{{ branch.name }}</option>
                 {% endfor %}
             </select>
         </div>
+        {% if not machine %}
         <div class="form-group">
             <label class="form-label">رصيد أول المدة (اختياري)</label>
             <input type="number" name="opening_balance" class="form-control" value="0" step="0.01" min="0">
             <small style="color:#94a3b8;">إذا كان لديك رصيد حالي في الماكينة، أدخله هنا وسيتم إنشاء قيد افتتاحي تلقائياً.</small>
         </div>
+        {% endif %}
+        <div class="form-group">
+            <label class="form-label">تنبيه عند انخفاض الرصيد عن</label>
+            <input type="number" name="min_balance_alert" class="form-control" step="0.01" min="0"
+                   value="{% if machine %}{{ machine.min_balance_alert|stringformat:'s' }}{% else %}0{% endif %}">
+            <small style="color:#94a3b8;">0 = بدون تنبيه. يظهر تنبيه عند نزول رصيد الماكينة عن هذا المبلغ.</small>
+        </div>
+        {% if machine %}
+        <div class="form-group">
+            <label style="display:flex;align-items:center;gap:0.5rem;color:#e2e8f0;cursor:pointer;">
+                <input type="checkbox" name="is_active" {% if machine.is_active %}checked{% endif %}> الماكينة نشطة
+            </label>
+        </div>
+        {% endif %}
         <div class="form-group">
             <label class="form-label">ملاحظات</label>
-            <textarea name="notes" class="form-control" rows="2" placeholder="أي ملاحظات إضافية..."></textarea>
+            <textarea name="notes" class="form-control" rows="2" placeholder="أي ملاحظات إضافية...">{{ machine.notes|default:'' }}</textarea>
         </div>
         <div style="display:flex;gap:1rem;margin-top:2rem;">
             <button type="submit" class="btn-orange" style="flex:1;padding:0.9rem;font-size:1rem;">
-                <i class="fas fa-save"></i> حفظ وإنشاء الماكينة
+                <i class="fas fa-save"></i> {% if machine %}حفظ التعديلات{% else %}حفظ وإنشاء الماكينة{% endif %}
             </button>
             <a href="{% url 'accounting:pos_machine_list' %}" style="flex:1;padding:0.9rem;text-align:center;border-radius:8px;border:1px solid #475569;color:#94a3b8;text-decoration:none;">
                 إلغاء

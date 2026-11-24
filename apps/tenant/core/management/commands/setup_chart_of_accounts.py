@@ -75,6 +75,7 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='4210', defaults={'name': 'خصم مكتسب (موردين)', 'account_type': Account.REVENUE, 'parent': rev})
     Account.objects.get_or_create(code='4220', defaults={'name': 'إيرادات غرامات وتأخيرات', 'account_type': Account.REVENUE, 'parent': rev})
     Account.objects.get_or_create(code='4230', defaults={'name': 'أرباح بيع واستبعاد أصول ثابتة', 'account_type': Account.REVENUE, 'parent': rev})
+    Account.objects.get_or_create(code='4240', defaults={'name': 'إيرادات عمولات خدمات الدفع', 'account_type': Account.REVENUE, 'parent': rev})
     Account.objects.get_or_create(code='4300', defaults={'name': 'إيرادات الصيانة والمصنعيات', 'account_type': Account.REVENUE, 'parent': rev})
     Account.objects.get_or_create(code='4999', defaults={'name': 'أرباح وإيرادات فروق جرد وتسويات بالزيادة', 'account_type': Account.REVENUE, 'parent': rev})
 

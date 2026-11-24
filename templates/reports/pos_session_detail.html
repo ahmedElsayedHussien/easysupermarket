@@ -713,6 +713,12 @@
                         <span class="val" style="color: #ff4757;">-{{ details.total_cash_payments|floatformat:2 }} ج.م</span>
                     </div>
                     {% endif %}
+                    {% if details.total_eservice_cash or details.eservices_count %}
+                    <div class="recon-item">
+                        <span><i class="fas fa-credit-card me-2" style="color: #ff7300; font-size: 0.85rem;"></i> (±) خدمات الدفع الإلكتروني (صافي نقدي){% if details.eservices_count %} <small style="color:#94a3b8">· {{ details.eservices_count }} عملية</small>{% endif %}:</span>
+                        <span class="val" style="color: #ff7300;"><bdi dir="ltr">{% if details.total_eservice_cash > 0 %}+{% endif %}{{ details.total_eservice_cash|floatformat:2 }}</bdi> ج.م</span>
+                    </div>
+                    {% endif %}
                 </div>
 
                 <!-- Right: High-Impact Reconciliation Box -->
@@ -750,6 +756,22 @@
                             {% endif %}
                         </span>
                     </div>
+                    {% if session_obj.status == 'CLOSED' and details.difference %}
+                    <div class="no-print" style="margin-top: 0.6rem; padding: 0.6rem 0.8rem; border-radius: 8px; background: rgba(255,255,255,0.04); font-size: 0.82rem; color: #cbd5e1; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;">
+                        {% if session_obj.variance_entry %}
+                        <span><i class="fas fa-book"></i> مقيد في الحسابات — {{ session_obj.get_variance_charged_to_display|default:"مصروف على المحل" }}
+                            (<a href="{% url 'accounting:journal_detail' session_obj.variance_entry.pk %}" style="color: var(--neon-cyan);">{{ session_obj.variance_entry.reference }}</a>)</span>
+                        {% if details.difference < 0 and session_obj.variance_charged_to != 'CASHIER' and can_charge_cashier %}
+                        <form method="post" action="{% url 'invoicing:pos_shift_charge_cashier' session_obj.pk %}" onsubmit="return confirm('تحميل العجز على الكاشير؟ سيُعكس قيد المصروف ويُسجل على ذمم الموظفين (1135).');" style="margin: 0;">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger"><i class="fas fa-user-tag"></i> تحميل العجز على الكاشير</button>
+                        </form>
+                        {% endif %}
+                        {% else %}
+                        <span style="color: var(--status-warning);"><i class="fas fa-exclamation-triangle"></i> وردية قديمة: الفرق غير مقيد في الحسابات.</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -1034,6 +1056,12 @@
                 <tr>
                     <td>(-) مصروفات وسندات صرف:</td>
                     <td style="text-align: left; font-weight: bold;">-{{ details.total_cash_payments|floatformat:2 }}</td>
+                </tr>
+                {% endif %}
+                {% if details.total_eservice_cash %}
+                <tr>
+                    <td>(±) خدمات الدفع الإلكتروني (صافي نقدي):</td>
+                    <td style="text-align: left; font-weight: bold;"><bdi dir="ltr">{% if details.total_eservice_cash > 0 %}+{% endif %}{{ details.total_eservice_cash|floatformat:2 }}</bdi></td>
                 </tr>
                 {% endif %}
                 <tr style="border-top: 1px dashed black; font-weight: bold;">

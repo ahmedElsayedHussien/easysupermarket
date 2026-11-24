@@ -3057,13 +3057,21 @@ def get_pos_session_details(session):
     total_cash_rentals = rental_agg['total_cash_rentals']
     total_credit_rentals = rental_agg['total_credit_rentals']
 
+    # E-payment services done on this shift (net drawer cash, mirrors EServiceTransaction.cash_effect)
+    from apps.tenant.accounting.eservice_dashboard_views import eservice_cash_for_session
+    from apps.tenant.accounting.models import EServiceTransaction
+    total_eservice_cash = eservice_cash_for_session(session)
+    shift_eservices = (EServiceTransaction.objects.filter(pos_session=session, status=EServiceTransaction.POSTED)
+                       .select_related('pos_machine', 'ewallet').order_by('-created_at'))
+
     expected_balance = (
         session.opening_balance +
         total_cash_sales -
         total_cash_refunds +
         total_cash_receipts -
         total_cash_payments +
-        total_cash_rentals
+        total_cash_rentals +
+        total_eservice_cash
     )
 
     actual_balance = session.closing_balance_actual if session.status == 'CLOSED' else expected_balance
@@ -3091,6 +3099,9 @@ def get_pos_session_details(session):
         'total_rentals_amount': total_rentals_amount,
         'total_cash_rentals': total_cash_rentals,
         'total_credit_rentals': total_credit_rentals,
+        'total_eservice_cash': total_eservice_cash,
+        'shift_eservices': shift_eservices,
+        'eservices_count': shift_eservices.count(),
         'expected_balance': expected_balance,
         'actual_balance': actual_balance,
         'difference': difference,
@@ -3352,6 +3363,8 @@ class ShiftDetailView(CustomPermissionRequiredMixin, DetailView):
         details = get_pos_session_details(self.object)
         context['details'] = details
         context['title'] = f"تقرير مفصل للوردية #{self.object.id}"
+        from apps.tenant.core.decorators import is_admin_user
+        context['can_charge_cashier'] = is_admin_user(self.request.user)
         return context
 
 
@@ -3418,6 +3431,7 @@ def shift_detail_api(request, pk):
         'total_credit_sales': float(dt['total_credit_sales']),
         'total_cash_receipts': float(dt['total_cash_receipts']),
         'total_cash_payments': float(dt['total_cash_payments']),
+        'total_eservice_cash': float(dt['total_eservice_cash']),
         'expected_balance': float(dt['expected_balance']),
         'actual_balance': float(dt['actual_balance']),
         'difference': float(dt['difference']),
@@ -3510,6 +3524,23 @@ class TrialBalanceReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomPe
 
         return context
 
+def _ledger_quick_ranges():
+    """[(label, start, end)] shortcuts for the date filter."""
+    import datetime as _dt
+    today = timezone.localdate()
+    month_start = today.replace(day=1)
+    prev_end = month_start - _dt.timedelta(days=1)
+    q_start = today.replace(month=((today.month - 1) // 3) * 3 + 1, day=1)
+    return [
+        ('اليوم', today, today),
+        ('هذا الشهر', month_start, today),
+        ('الشهر الماضي', prev_end.replace(day=1), prev_end),
+        ('هذا الربع', q_start, today),
+        ('هذه السنة', today.replace(month=1, day=1), today),
+        ('السنة الماضية', today.replace(year=today.year - 1, month=1, day=1), today.replace(year=today.year - 1, month=12, day=31)),
+    ]
+
+
 class GeneralLedgerReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomPermissionRequiredMixin, TemplateView):
     permission_required = 'core.view_accounting_reports'
     template_name = 'reports/general_ledger.html'
@@ -3538,10 +3569,12 @@ class GeneralLedgerReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomP
         start_date = _date_param(self.request, 'start_date')
         end_date = _date_param(self.request, 'end_date')
 
-        context['accounts_list'] = Account.objects.all().order_by('code')
+        context['accounts_list'] = Account.objects.filter(is_active=True).order_by('code')
         context['start_date'] = start_date
         context['end_date'] = end_date
         context['account_id'] = account_id
+        context['quick_ranges'] = _ledger_quick_ranges()
+        context['printed_at'] = timezone.localtime()
 
         if account_id and account_id.isdigit():
             try:
@@ -3599,7 +3632,7 @@ class GeneralLedgerReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomP
                     total_debit += debit
                     total_credit += credit
                     
-                transactions.reverse()
+                # Ledger convention: chronological (oldest first), matching the running balance.
                 context['transactions'] = transactions
                 context['total_debit'] = total_debit
                 context['total_credit'] = total_credit
@@ -3845,6 +3878,8 @@ def export_shift_detail_excel(request, pk):
     recon_rows.append(["(-) المرتجعات النقدية المسددة من الدرج", -to_dec(dt['total_cash_refunds']), "مرتجعات مبيعات كاش"])
     if to_dec(dt['total_cash_payments']) > 0:
         recon_rows.append(["(-) سندات الصرف النقدية والمصروفات", -to_dec(dt['total_cash_payments']), "مصروفات مسددة نقداً"])
+    if to_dec(dt['total_eservice_cash']) != 0:
+        recon_rows.append(["(±) خدمات الدفع الإلكتروني (صافي نقدي)", to_dec(dt['total_eservice_cash']), "سحب / إيداع / شحن ماكينات"])
     recon_rows.extend([
         ["(=) النقدية المتوقعة بالدرج (دفترياً)", to_dec(dt['expected_balance']), "الرصيد الدفتري المفترض"],
         ["(📥) النقدية الفعلية المسلمة عند الإغلاق", to_dec(dt['actual_balance']), "الجرد الفعلي للكاش"],

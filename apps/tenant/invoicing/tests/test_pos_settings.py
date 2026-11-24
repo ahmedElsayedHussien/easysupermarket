@@ -11,6 +11,7 @@ from apps.tenant.core.tests.factories import (
     make_treasury, stock_in, system_settings,
 )
 from apps.tenant.invoicing.models import Invoice, POSSession
+from apps.tenant.invoicing.views import _pos_default_ids
 
 
 class _POSBase(TestCase):
@@ -50,7 +51,12 @@ class BranchPaymentDefaultsTests(_POSBase):
 
         resp = self.client.get(reverse('invoicing:pos'))
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.context['pos_default_treasury_id'], branch_treasury.id)
+        # The open shift's drawer wins over the branch default: its cash is what gets counted.
+        self.assertEqual(resp.context['pos_default_treasury_id'], self.w.treasury.id)
+        POSSession.objects.all().delete()
+        self.assertEqual(
+            _pos_default_ids(self.w.branch)['pos_default_treasury_id'],
+            branch_treasury.id)
         self.assertEqual(resp.context['pos_default_bank_account_id'], branch_bank.id)
 
     def test_card_sale_uses_branch_default_bank(self):

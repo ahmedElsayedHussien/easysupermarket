@@ -56,7 +56,29 @@
                 </div>
             </div>
         </div>
-        
+
+        {% if total_cash_rentals or total_eservice_cash %}
+        <div class="row mb-4">
+            {% if total_eservice_cash %}
+            <div class="col-md-6 mb-3 mb-md-0">
+                <div class="p-3 rounded" id="eserviceCashLine" style="background: rgba(255, 115, 0, 0.1); border: 1px solid rgba(255, 115, 0, 0.35);">
+                    <span class="d-block mb-1" style="color: #ff7300; font-size: 0.9rem;">💳 خدمات الدفع الإلكتروني (صافي نقدي)</span>
+                    <span class="fs-4 fw-bold" style="color: #ff7300;"><bdi dir="ltr">{% if total_eservice_cash > 0 %}+{% endif %}{{ total_eservice_cash|floatformat:2 }}</bdi> ج.م</span>
+                    <small class="d-block mt-1" style="color: var(--text-secondary);">سحب كاش للعملاء (−) · إيداع وتحويل (+) · شحن ماكينات نقداً (−)</small>
+                </div>
+            </div>
+            {% endif %}
+            {% if total_cash_rentals %}
+            <div class="col-md-6">
+                <div class="p-3 rounded" style="background: rgba(46, 213, 115, 0.1); border: 1px solid rgba(46, 213, 115, 0.3);">
+                    <span class="d-block mb-1" style="color: var(--status-success); font-size: 0.9rem;">🧰 إيجارات نقدية</span>
+                    <span class="fs-4 fw-bold" style="color: var(--status-success);">+ {{ total_cash_rentals|floatformat:2 }} ج.م</span>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
         <div class="row mb-4">
             <div class="col-6 col-md-3 mb-3 mb-md-0">
                 <div class="p-3 rounded text-center" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-default);">
@@ -88,6 +110,13 @@
             </div>
         </div>
         
+        {% if total_transfers_net %}
+        <div class="p-3 rounded mb-4" style="background: rgba(255,255,255,0.04); border: 1px solid var(--border-default);">
+            <span class="d-block mb-1" style="color: var(--text-secondary); font-size: 0.9rem;">🔁 تحويلات أموال من/إلى الدرج خلال الوردية (صافي)</span>
+            <span class="fs-5 fw-bold text-white"><bdi dir="ltr">{% if total_transfers_net > 0 %}+{% endif %}{{ total_transfers_net|floatformat:2 }}</bdi> ج.م</span>
+        </div>
+        {% endif %}
+
         <div class="p-4 rounded text-center mb-5" style="background: rgba(251, 191, 36, 0.1); border: 1px solid var(--neon-gold);">
             <span class="d-block mb-2 fw-bold" style="color: var(--neon-gold); font-size: 1.1rem; text-shadow: 0 0 5px var(--neon-gold-glow);">النقدية المتوقعة في الدرج (النظام)</span>
             <h1 class="m-0 fw-bold" id="expectedBalance" data-val="{{ expected_balance|stringformat:'f' }}" style="color: var(--neon-gold); font-size: 2.5rem; text-shadow: 0 0 10px var(--neon-gold-glow);">{{ expected_balance|floatformat:2 }} ج.م</h1>
@@ -106,6 +135,39 @@
 
             <div class="alert d-none text-center rounded p-3 mb-4" id="diffAlert" style="border-width: 2px;">
                 <h5 class="m-0 fw-bold" id="diffText"></h5>
+            </div>
+
+            {% if can_charge_cashier %}
+            <div class="mb-4 d-none" id="shortageChoice">
+                <label class="form-label text-white fw-bold">العجز يُسجَّل على</label>
+                <div class="d-flex flex-wrap gap-3">
+                    <label class="form-check" style="color: var(--text-primary);"><input class="form-check-input" type="radio" name="shortage_charge_to" value="EXPENSE" checked> مصروف على المحل <small style="color: var(--text-muted);">(5400 عجز وزيادة الخزينة)</small></label>
+                    <label class="form-check" style="color: var(--text-primary);"><input class="form-check-input" type="radio" name="shortage_charge_to" value="CASHIER"> على الكاشير {{ session.user|display_name }} <small style="color: var(--text-muted);">(1135 ذمم الموظفين والعهد)</small></label>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="mb-4 p-3 rounded" style="background: rgba(255,255,255,0.03); border: 1px dashed var(--border-bright);">
+                <label class="form-label text-white fw-bold mb-2"><i class="fas fa-people-carry me-1" style="color: var(--neon-cyan);"></i> توريد نقدية من الدرج (اختياري)</label>
+                <div class="row g-2">
+                    <div class="col-md-5">
+                        <select name="deposit_target_combo" id="depositTarget" class="form-select" style="background-color: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-bright);">
+                            <option value="">— بدون توريد (النقدية تبقى في الدرج) —</option>
+                            {% if deposit_treasuries %}<optgroup label="خزائن">{% for t in deposit_treasuries %}<option value="TREASURY:{{ t.id }}">{{ t.name }}{% if t.branch_id != session.treasury.branch_id %} — فرع {{ t.branch.name }} (بالطريق){% endif %}</option>{% endfor %}</optgroup>{% endif %}
+                            {% if deposit_banks %}<optgroup label="حسابات بنكية">{% for b in deposit_banks %}<option value="BANK:{{ b.id }}">{{ b }}</option>{% endfor %}</optgroup>{% endif %}
+                            {% if deposit_ewallets %}<optgroup label="محافظ إلكترونية">{% for e in deposit_ewallets %}<option value="EWALLET:{{ e.id }}">{{ e }}</option>{% endfor %}</optgroup>{% endif %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <input type="number" step="0.01" min="0" name="deposit_amount" id="depositAmount" class="form-control text-center" placeholder="مبلغ التوريد" dir="ltr" disabled style="background-color: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-bright);">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-center" style="color: var(--text-secondary); font-size: 0.85rem;">
+                        يتبقى بالدرج: <strong class="ms-1" id="drawerRemain" dir="ltr" style="color: var(--neon-gold);">—</strong>
+                    </div>
+                </div>
+                <input type="hidden" name="deposit_type" id="depositType">
+                <input type="hidden" name="deposit_target" id="depositTargetId">
+                <small class="d-block mt-2" style="color: var(--text-muted);">يُنشأ تحويل أموال تلقائي من الدرج. الباقي يظل رصيد افتتاح للوردية القادمة.</small>
             </div>
 
             <div class="d-grid mt-4">
@@ -145,9 +207,9 @@
                 diffAlert.style.borderColor = 'var(--status-danger)';
                 diffAlert.style.color = 'var(--status-danger)';
                 if (diff < 0) {
-                    diffText.innerHTML = `⚠️ يوجد عجز بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong> <br><small style="color:var(--status-danger); font-weight:bold;">(غير مسموح بإغلاق الوردية بوجود عجز)</small>`;
+                    diffText.innerHTML = `⚠️ يوجد عجز بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong> <br><small style="font-weight:bold;">(سيتم تسجيل العجز في الحسابات عند الإغلاق)</small>`;
                 } else {
-                    diffText.innerHTML = `⚠️ يوجد زيادة بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong> <br><small style="color:var(--status-danger); font-weight:bold;">(غير مسموح بإغلاق الوردية بوجود زيادة)</small>`;
+                    diffText.innerHTML = `⚠️ يوجد زيادة بقيمة: <strong style="font-size:1.3rem;">${Math.abs(diff).toFixed(2)} ج.م</strong> <br><small style="font-weight:bold;">(ستُسجل الزيادة في الحسابات على الدرج عند الإغلاق)</small>`;
                 }
             } else {
                 diffAlert.style.backgroundColor = 'rgba(46, 213, 115, 0.1)';
@@ -157,8 +219,28 @@
             }
         }
         
-        actualInput.addEventListener('input', updateDiff);
+        const shortageChoice = document.getElementById('shortageChoice');
+        const depSel = document.getElementById('depositTarget');
+        const depAmt = document.getElementById('depositAmount');
+        const depRemain = document.getElementById('drawerRemain');
+        function updateExtras() {
+            const raw = actualInput.value.trim();
+            const actualVal = parseFloat(raw) || 0;
+            if (shortageChoice) shortageChoice.classList.toggle('d-none', raw === '' || (actualVal - expectedVal) >= -0.005);
+            const v = depSel.value;
+            depAmt.disabled = !v;
+            document.getElementById('depositType').value = v ? v.split(':')[0] : '';
+            document.getElementById('depositTargetId').value = v ? v.split(':')[1] : '';
+            if (!v) depAmt.value = '';
+            const dep = parseFloat(depAmt.value) || 0;
+            depRemain.textContent = raw === '' ? '—' : (actualVal - dep).toFixed(2);
+            depRemain.style.color = (actualVal - dep) < 0 ? 'var(--status-danger)' : 'var(--neon-gold)';
+        }
+        actualInput.addEventListener('input', function () { updateDiff(); updateExtras(); });
+        depSel.addEventListener('change', updateExtras);
+        depAmt.addEventListener('input', updateExtras);
         updateDiff();
+        updateExtras();
         
         document.getElementById('closeShiftForm').addEventListener('submit', function(e) {
             const rawVal = actualInput.value.trim();
@@ -178,6 +260,19 @@
                 msg = `⚠️ يوجد ${diffType} بقيمة (${Math.abs(diff).toFixed(2)} ج.م).\n\nالنقدية المتوقعة: ${expectedVal.toFixed(2)} ج.م\nالنقدية المدخلة: ${actualVal.toFixed(2)} ج.م\n\nهل أنت متأكد من تأكيد الجرد وتسجيل الفرق وإغلاق الوردية؟`;
             }
 
+            const depVal = parseFloat(depAmt.value) || 0;
+            if (depSel.value && depVal > actualVal + 0.001) {
+                e.preventDefault();
+                alert('⚠️ مبلغ التوريد أكبر من النقدية الفعلية في الدرج.');
+                depAmt.focus();
+                return;
+            }
+            if (depSel.value && depVal > 0) {
+                msg += `
+
+سيتم توريد ${depVal.toFixed(2)} ج.م إلى: ${depSel.options[depSel.selectedIndex].text}
+ويتبقى بالدرج ${(actualVal - depVal).toFixed(2)} ج.م.`;
+            }
             if (confirm(msg)) {
                 try {
                     sessionStorage.removeItem('pos_sessions');

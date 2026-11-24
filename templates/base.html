@@ -19,6 +19,7 @@
 
     <!-- Design System CSS -->
     <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
+    <link rel="stylesheet" href="{% static 'css/compat.css' %}">
     
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -319,72 +320,14 @@
             </a>
             {% endif %}
 
-            {% if system_setting is None or system_setting.show_nav_expenses or system_setting.show_nav_receipts or system_setting.show_nav_payments or system_setting.show_nav_transfers or system_setting.show_nav_cheques or system_setting.show_nav_fixed_assets or system_setting.show_nav_loans or system_setting.show_nav_journals or system_setting.show_nav_chart_of_accounts or system_setting.show_nav_liquidity_dashboard %}
+            {% if system_setting is None or system_setting.show_nav_accounting_dashboard or system_setting.show_nav_liquidity_dashboard %}
             <p class="nav-section-title">{% trans 'المحاسبة' %}</p>
 
-            {% if system_setting is None or system_setting.show_nav_expenses %}
-            <a href="{% url 'accounting:expense_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'expense_list' %}active{% endif %}">
-                <span class="nav-icon">🧾</span>
-                <span class="nav-text">{% trans 'المصروفات' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_receipts %}
-            <a href="{% url 'accounting:receipt_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'receipt_list' %}active{% endif %}">
-                <span class="nav-icon">📥</span>
-                <span class="nav-text">{% trans 'سندات القبض' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_payments %}
-            <a href="{% url 'accounting:payment_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'payment_list' %}active{% endif %}">
-                <span class="nav-icon">📤</span>
-                <span class="nav-text">{% trans 'سندات الصرف' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_transfers %}
-            <a href="{% url 'accounting:transfer_list' %}" class="nav-link nav-gold {% if request.resolver_match.app_name == 'accounting' and 'transfer' in request.resolver_match.url_name %}active{% endif %}">
-                <span class="nav-icon">🔄</span>
-                <span class="nav-text">{% trans 'تحويل الأموال' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_cheques %}
-            <a href="{% url 'accounting:cheque_list' %}" class="nav-link nav-gold {% if 'cheque' in request.resolver_match.url_name %}active{% endif %}">
-                <span class="nav-icon">📑</span>
-                <span class="nav-text">{% trans 'إدارة الشيكات' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_fixed_assets %}
-            <a href="{% url 'accounting:fixed_asset_list' %}" class="nav-link nav-gold {% if 'fixed_asset' in request.resolver_match.url_name %}active{% endif %}">
-                <span class="nav-icon">🏛️</span>
-                <span class="nav-text">{% trans 'الأصول الثابتة' %}</span>
-            </a>
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_loans %}
-            <a href="{% url 'accounting:loan_list' %}" class="nav-link nav-gold {% if 'loan' in request.resolver_match.url_name %}active{% endif %}">
-                <span class="nav-icon">🏦</span>
-                <span class="nav-text">{% trans 'القروض والتمويل' %}</span>
-            </a>
-            {% endif %}
-
-
-            {% if request.user.is_superuser or request.user.employee_profile.is_admin or is_admin %}
-            {% if system_setting is None or system_setting.show_nav_journals %}
-            <a href="{% url 'accounting:journal_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'journal_list' %}active{% endif %}">
+            {% if system_setting is None or system_setting.show_nav_accounting_dashboard %}
+            {# expenses, vouchers, transfers, cheques, fixed assets, loans, journals, chart of accounts, reports: all inside #}
+            <a href="{% url 'accounting:accounting_dashboard' %}" class="nav-link nav-gold {% if request.resolver_match.app_name == 'accounting' and request.resolver_match.url_name != 'liquidity_dashboard' and request.resolver_match.url_name|slice:':8' != 'eservice' and request.resolver_match.url_name|slice:':11' != 'pos_machine' and request.resolver_match.url_name|slice:':8' != 'treasury' and request.resolver_match.url_name|slice:':4' != 'bank' and request.resolver_match.url_name|slice:':7' != 'ewallet' %}active{% endif %}">
                 <span class="nav-icon">📒</span>
-                <span class="nav-text">{% trans 'قيود اليومية' %}</span>
-            </a>
-            {% endif %}
-            {% endif %}
-
-            {% if system_setting is None or system_setting.show_nav_chart_of_accounts %}
-            <a href="{% url 'accounting:chart_of_accounts' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'chart_of_accounts' %}active{% endif %}">
-                <span class="nav-icon">📊</span>
-                <span class="nav-text">{% trans 'دليل الحسابات' %}</span>
+                <span class="nav-text">{% trans 'لوحة المحاسبة' %}</span>
             </a>
             {% endif %}
 
@@ -394,6 +337,16 @@
                 <span class="nav-icon">💧</span>
                 <span class="nav-text">{% trans 'إدارة السيولة' %}</span>
             </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_liquidity_dashboard %}
+            {# E-payment services: machines, cash-in/out, recharge (dashboard + center + history) #}
+            {% with un=request.resolver_match.url_name|default:'' %}
+            <a href="/accounting/eservice/dashboard/" class="nav-link nav-gold {% if un|slice:':8' == 'eservice' or un|slice:':11' == 'pos_machine' %}active{% endif %}">
+                <span class="nav-icon">💳</span>
+                <span class="nav-text">{% trans 'خدمات الدفع' %}</span>
+            </a>
+            {% endwith %}
             {% endif %}
             {% endif %}
 

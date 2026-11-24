@@ -1,0 +1,211 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/panels.css' %}">
+
+<div class="glass-container lq-root" style="padding: 1.5rem;">
+  <!-- Header -->
+  <div class="lq-head">
+    <div>
+      <h2>💳 {{ title }}</h2>
+      <span class="lq-scope">الفرع: {{ scope_label }} · {{ active_machines }} ماكينة نشطة</span>
+    </div>
+    <div class="lq-actions">
+      <a class="lq-btn primary" href="{% url 'accounting:eservice_center' %}">⚡ عملية جديدة</a>
+      <a class="lq-btn" href="{% url 'accounting:eservice_center' %}?type=MERCHANT_RECHARGE">🔋 شحن ماكينة</a>
+    </div>
+  </div>
+
+  <!-- Every e-service page, grouped -->
+  <div class="lq-groups">
+    <div class="lq-group"><h4>العمليات</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'accounting:eservice_center' %}">🏪 مركز الخدمات</a>
+      <a class="lq-btn" href="{% url 'accounting:eservice_history' %}">📜 السجل{% if draft_count %} <span class="lq-badge" title="مسودات لم تُرحّل">{{ draft_count }}</span>{% endif %}</a>
+    </div></div>
+    <div class="lq-group"><h4>الإعدادات</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'accounting:pos_machine_list' %}">⚙️ الماكينات</a>
+      {% if commission_rules_url %}<a class="lq-btn" href="{{ commission_rules_url }}">🧮 قواعد العمولات</a>{% endif %}
+    </div></div>
+    <div class="lq-group"><h4>السيولة</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'accounting:liquidity_dashboard' %}">💧 إدارة السيولة</a>
+    </div></div>
+  </div>
+
+  <!-- KPI tiles -->
+  <div class="lq-tiles">
+    <div class="lq-tile hero">
+      <div class="k">صافي ربح الشهر</div>
+      <div class="v"{% if month_net < 0 %} style="color:var(--flow-out)"{% endif %}><bdi dir="ltr">{{ month_net|money }}</bdi> <small style="font-size:0.75rem;color:var(--lq-muted)">ج.م</small></div>
+      <div class="s">العمولات − رسوم المناديب · {{ month_count }} عملية</div>
+    </div>
+    <div class="lq-tile"><div class="k">عمليات اليوم</div>
+      <div class="v">{{ today_count }}</div><div class="s">حجم <bdi dir="ltr">{{ today_volume|money }}</bdi> ج.م</div></div>
+    <div class="lq-tile"><div class="k">عمولات الشهر</div>
+      <div class="v"><bdi dir="ltr">{{ month_earned|money }}</bdi></div><div class="s">سحب + إيداع</div></div>
+    <div class="lq-tile"><div class="k">رسوم المناديب (الشهر)</div>
+      <div class="v"><bdi dir="ltr">{{ month_fees|money }}</bdi></div><div class="s">شحن الماكينات</div></div>
+    <div class="lq-tile"><div class="k">أرصدة الماكينات</div>
+      <div class="v"{% if machines_total < 0 %} style="color:var(--flow-out)"{% endif %}><bdi dir="ltr">{{ machines_total|money }}</bdi></div>
+      <div class="s">{{ machine_rows|length }} ماكينة</div></div>
+  </div>
+
+  <!-- Low-balance alerts (status colour + icon + label) -->
+  {% if low_balance %}
+  <div class="lq-alerts" id="es-low">
+    {% for r in low_balance %}
+    <a class="lq-alert st-warning" href="{% url 'accounting:eservice_center' %}?type=MERCHANT_RECHARGE&machine={{ r.obj.pk }}" title="إعادة شحن {{ r.obj.name }}">
+      <div class="k">⚠️ رصيد منخفض · {{ r.obj.name }}</div>
+      <div class="v"><bdi dir="ltr">{{ r.balance|money }}</bdi></div>
+      <div class="s">الحد الأدنى <bdi dir="ltr">{{ r.min_alert|money }}</bdi> · {{ r.branch.name }} · اضغط للشحن</div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="lq-grid2" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr);">
+    <!-- 30-day net commission (single series) -->
+    <section class="lq-card" aria-labelledby="es-net-title">
+      <h3 id="es-net-title">صافي العمولة اليومي <small>آخر {{ chart_days }} يوم · الإجمالي <bdi dir="ltr">{{ chart_net_total|money }}</bdi></small></h3>
+      <div class="lq-chart"><canvas id="esNetChart" role="img" aria-label="صافي العمولة اليومي لآخر {{ chart_days }} يوم"></canvas></div>
+      <details class="lq-table-view"><summary>عرض كجدول</summary>
+        <div class="lq-scroll"><table class="lq-table" id="esNetTable"><thead><tr><th>اليوم</th><th>صافي العمولة</th></tr></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+
+    <!-- 30-day volume by type (stacked, fixed categorical slots 1..3) -->
+    <section class="lq-card" aria-labelledby="es-vol-title">
+      <h3 id="es-vol-title">حجم العمليات حسب النوع <small>آخر {{ chart_days }} يوم</small></h3>
+      <div class="lq-chart"><canvas id="esVolChart" role="img" aria-label="حجم العمليات اليومي حسب النوع: {% for t in type_totals %}{{ t.label }}{% if not forloop.last %}، {% endif %}{% endfor %}"></canvas></div>
+      <ul class="lq-legend">
+        {% for t in type_totals %}
+        <li><span class="lq-dot" style="background: var(--series-{{ t.series }});"></span>{{ t.label }}<b><bdi dir="ltr">{{ t.total|money }}</bdi></b><span class="pct">ج.م</span></li>
+        {% endfor %}
+      </ul>
+      <details class="lq-table-view"><summary>عرض كجدول</summary>
+        <div class="lq-scroll"><table class="lq-table" id="esVolTable"><thead><tr><th>اليوم</th>{% for t in type_totals %}<th>{{ t.label }}</th>{% endfor %}</tr></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+  </div>
+
+  <!-- Machines -->
+  <section class="lq-card" style="margin-bottom: 1.25rem;">
+    <h3>الماكينات <small>الرصيد · حجم اليوم · عمولات الشهر</small></h3>
+    <div class="lq-scroll">
+      <table class="lq-table">
+        <thead><tr><th>الماكينة</th><th>الفرع</th><th>الرصيد الحالي</th><th>حجم اليوم</th><th>عمولات الشهر</th><th>آخر حركة</th><th>إجراءات</th></tr></thead>
+        <tbody>
+          {% for r in machine_rows %}
+          <tr>
+            <td style="font-weight:700">{{ r.obj.name }} <small style="color:var(--lq-muted);font-weight:400">{{ r.obj.get_machine_type_display }}</small>
+              {% if not r.obj.is_active %}<small style="color:var(--lq-muted)">· موقوفة</small>{% endif %}
+              {% if r.low %}<span class="lq-status st-warning">⚠️ رصيد منخفض</span>{% endif %}</td>
+            <td style="color:var(--lq-text-2)">{{ r.branch.name|default:"—" }}</td>
+            <td class="num{% if r.balance < 0 %} neg{% endif %}"><bdi dir="ltr">{{ r.balance|money }}</bdi></td>
+            <td class="num" style="font-weight:400"><bdi dir="ltr">{{ r.today_volume|money }}</bdi></td>
+            <td class="num"><bdi dir="ltr">{{ r.month_commission|money }}</bdi></td>
+            <td style="color:var(--lq-text-2); white-space:nowrap">{{ r.last_move|date:"Y-m-d"|default:"—" }}</td>
+            <td><div class="lq-row-actions">
+              {% if r.account %}<a href="{% url 'core:report_general_ledger' %}?account_id={{ r.account.id }}">📄 كشف حساب</a>{% endif %}
+              <a href="{% url 'accounting:eservice_center' %}?type=MERCHANT_RECHARGE&machine={{ r.obj.pk }}">⚡ إعادة شحن</a>
+              <a href="{% url 'accounting:pos_machine_detail' r.obj.pk %}">🔎 التفاصيل</a>
+            </div></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="lq-empty">لا توجد ماكينات في {{ scope_label }} — <a href="{% url 'accounting:pos_machine_list' %}" style="color:#00e5ff">أضف ماكينة</a></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Recent operations -->
+  <section class="lq-card">
+    <h3>آخر العمليات {% if draft_count %}<small>📝 {{ draft_count }} مسودة لم تُرحّل</small>{% endif %}</h3>
+    <div class="lq-scroll">
+      <table class="lq-table">
+        <thead><tr><th>رقم العملية</th><th>التاريخ</th><th>النوع</th><th>الماكينة / المحفظة</th><th>المبلغ</th><th>العمولة</th><th>أثر الدرج</th><th>الحالة</th></tr></thead>
+        <tbody>
+          {% for t in recent_ops %}
+          <tr>
+            <td><a href="{% url 'accounting:eservice_detail' t.pk %}" style="color:#00e5ff">{{ t.transaction_number }}</a></td>
+            <td class="num" style="font-weight:400">{{ t.date|date:"Y-m-d" }}</td>
+            <td>{{ t.get_transaction_type_display }}</td>
+            <td style="color:var(--lq-text-2)">{% if t.pos_machine %}{{ t.pos_machine.name }}{% elif t.ewallet %}{{ t.ewallet.name }}{% else %}—{% endif %}</td>
+            <td class="num"><bdi dir="ltr">{{ t.principal_amount|money }}</bdi></td>
+            <td class="num" style="font-weight:400">{% if t.transaction_type == 'MERCHANT_RECHARGE' %}<span class="neg"><bdi dir="ltr">-{{ t.commission_expense|money }}</bdi></span>{% else %}<bdi dir="ltr">{{ t.commission_revenue|money }}</bdi>{% endif %}</td>
+            <td class="num{% if t.cash_effect < 0 %} neg{% endif %}" style="font-weight:400"><bdi dir="ltr">{{ t.cash_effect|money }}</bdi>{% if t.paid_on_credit %} <small style="color:var(--lq-muted)">آجل</small>{% endif %}</td>
+            <td>{% if t.status == 'POSTED' %}<span style="color:var(--lq-text-2)">✓ مرحل</span>{% elif t.status == 'CANCELLED' %}<span style="color:var(--st-critical)">✕ ملغي</span>{% else %}<span style="color:var(--st-warning)">📝 مسودة</span>{% endif %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="8" class="lq-empty">لا توجد عمليات بعد</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+{{ chart_data|json_script:"es-chart-data" }}
+<script>
+(function () {
+  var data = JSON.parse(document.getElementById('es-chart-data').textContent);
+  var root = document.querySelector('.lq-root');
+  var css = function (v) { return getComputedStyle(root).getPropertyValue(v).trim(); };
+  var fmt = function (n) { return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+  // Table views (only days with activity)
+  var netBody = document.querySelector('#esNetTable tbody');
+  data.labels.forEach(function (d, i) {
+    var v = data.net_commission[i];
+    if (!v) return;
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td class="num" style="font-weight:400">' + d + '</td><td class="num' + (v < 0 ? ' neg' : '') + '">' + fmt(v) + '</td>';
+    netBody.appendChild(tr);
+  });
+  if (!netBody.children.length) netBody.innerHTML = '<tr><td colspan="2" class="lq-empty">لا توجد عمولات</td></tr>';
+
+  var volBody = document.querySelector('#esVolTable tbody');
+  data.labels.forEach(function (d, i) {
+    if (!data.types.some(function (t) { return t.data[i]; })) return;
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td class="num" style="font-weight:400">' + d + '</td>' +
+      data.types.map(function (t) { return '<td class="num">' + fmt(t.data[i]) + '</td>'; }).join('');
+    volBody.appendChild(tr);
+  });
+  if (!volBody.children.length) volBody.innerHTML = '<tr><td colspan="' + (data.types.length + 1) + '" class="lq-empty">لا توجد عمليات</td></tr>';
+
+  if (typeof Chart === 'undefined') return;
+  var axisX = { grid: { display: false }, ticks: { color: css('--lq-muted'), maxRotation: 0, autoSkipPadding: 12, font: { size: 10 } } };
+  var axisY = { grid: { color: css('--lq-grid') }, border: { display: false },
+                ticks: { color: css('--lq-muted'), font: { size: 10 }, callback: function (v) { return v.toLocaleString('en-US'); } } };
+  var tip = { rtl: true, textDirection: 'rtl',
+              callbacks: { label: function (ctx) { return ctx.dataset.label + ': ' + fmt(ctx.parsed.y) + ' ج.م'; } } };
+
+  // Single series: net commission per day (series-1); negative days drop below the baseline
+  new Chart(document.getElementById('esNetChart'), {
+    type: 'bar',
+    data: { labels: data.labels, datasets: [{
+      label: 'صافي العمولة', data: data.net_commission, backgroundColor: css('--series-1'),
+      borderRadius: 4, borderSkipped: 'start', maxBarThickness: 14 }] },
+    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+               plugins: { legend: { display: false }, tooltip: tip }, scales: { x: axisX, y: axisY } }
+  });
+
+  // Volume by type: stacked (part of the day's volume), fixed slots 1..3, 2px surface gap between segments
+  var surface = css('--lq-surface');
+  new Chart(document.getElementById('esVolChart'), {
+    type: 'bar',
+    data: { labels: data.labels, datasets: data.types.map(function (t, k) {
+      return { label: t.label, data: t.data, backgroundColor: css('--series-' + t.series), stack: 'vol',
+               borderColor: surface, borderWidth: { top: 2 }, borderSkipped: 'bottom', maxBarThickness: 14,
+               borderRadius: k === data.types.length - 1 ? { topLeft: 4, topRight: 4 } : 0 };
+    }) },
+    options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+               plugins: { legend: { display: false }, tooltip: tip },  // legend with totals rendered under the chart
+               scales: { x: Object.assign({ stacked: true }, axisX), y: Object.assign({ stacked: true }, axisY) } }
+  });
+})();
+</script>
+{% endblock %}

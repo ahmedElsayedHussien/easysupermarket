@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding:2rem;max-width:760px;margin:0 auto;">
+    <div class="top-header">
+        <h2 style="margin:0;color:#fff;"><i class="fas fa-percent" style="color:#ff7300;margin-left:0.5rem;"></i>{{ title }}</h2>
+        <a href="{% url 'accounting:eservice_rule_list' %}" class="btn-action"><i class="fas fa-arrow-right"></i> رجوع</a>
+    </div>
+
+    {% if form.non_field_errors %}
+    <div style="margin:1rem 0;padding:0.75rem 1rem;border-radius:8px;background:rgba(255,59,48,0.1);border:1px solid #ff3b30;color:#ff3b30;">
+        {% for e in form.non_field_errors %}{{ e }}<br>{% endfor %}
+    </div>
+    {% endif %}
+
+    <form method="post" style="margin-top:1.5rem;">
+        {% csrf_token %}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;">
+            {% for field in form %}
+            <div class="form-group" {% if field.name == 'name' %}style="grid-column:1/-1;"{% endif %}>
+                {% if field.name == 'is_active' %}
+                <label style="display:flex;align-items:center;gap:0.5rem;color:#e2e8f0;cursor:pointer;margin-top:1.8rem;">{{ field }} {{ field.label }}</label>
+                {% else %}
+                <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
+                {{ field }}
+                {% endif %}
+                {% if field.help_text %}<small style="color:#94a3b8;">{{ field.help_text }}</small>{% endif %}
+                {% for e in field.errors %}<small style="color:#ff3b30;display:block;">{{ e }}</small>{% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        <small style="color:#94a3b8;display:block;margin-top:0.5rem;">
+            اترك الماكينة والنوع فارغين لقاعدة عامة. اختيار ماكينة محددة يتقدم على نوع الماكينة.
+        </small>
+        <div style="display:flex;gap:1rem;margin-top:2rem;">
+            <button type="submit" class="btn-orange" style="flex:1;padding:0.9rem;"><i class="fas fa-save"></i> حفظ</button>
+            <a href="{% url 'accounting:eservice_rule_list' %}" style="flex:1;padding:0.9rem;text-align:center;border-radius:8px;border:1px solid #475569;color:#94a3b8;text-decoration:none;">إلغاء</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

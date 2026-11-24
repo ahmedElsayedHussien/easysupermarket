@@ -92,6 +92,16 @@ class POSSession(models.Model):
         max_length=10, choices=STATUS_CHOICES, default=OPEN, verbose_name='الحالة'
     )
     notes = models.TextField(blank=True, verbose_name='ملاحظات')
+    # Ledger entry of the closing difference (shift_services.post_shift_variance)
+    variance_entry = models.ForeignKey(
+        'accounting.JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+', verbose_name='قيد فرق الدرج'
+    )
+    variance_charged_to = models.CharField(
+        max_length=10, blank=True, default='',
+        choices=[('EXPENSE', 'مصروف على المحل'), ('CASHIER', 'محمّل على الكاشير')],
+        verbose_name='تحميل الفرق'
+    )
 
     class Meta:
         verbose_name = 'وردية نقاط البيع'

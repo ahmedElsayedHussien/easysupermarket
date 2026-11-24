@@ -295,6 +295,28 @@ def get_partner_full_statement(partner, start_date=None, end_date=None):
                 'credit': Decimal('0'),
             })
 
+    # 3b. E-service merchant recharges on credit (شحن ماكينات آجل من المندوب = دائن للمورد)
+    from apps.tenant.accounting.models import EServiceTransaction
+    for es in EServiceTransaction.objects.filter(
+            agent=partner, transaction_type=EServiceTransaction.MERCHANT_RECHARGE,
+            paid_on_credit=True, status=EServiceTransaction.POSTED).order_by('date', 'created_at'):
+        es_url = None
+        try:
+            es_url = reverse('accounting:eservice_detail', kwargs={'pk': es.pk})
+        except Exception:
+            pass
+        raw_txns.append({
+            'date': es.date,
+            'created_at': es.created_at or datetime.datetime.combine(es.date, datetime.time.min),
+            'doc_type': 'شحن ماكينة آجل',
+            'badge_type': 'purchase',
+            'reference': es.transaction_number,
+            'description': es.description or f'شحن رصيد {es.pos_machine or es.ewallet or ""} (آجل)',
+            'url': es_url,
+            'debit': Decimal('0'),
+            'credit': (es.principal_amount or Decimal('0')) + (es.commission_expense or Decimal('0')),
+        })
+
     # 4. Partner Payments (المدفوعات المسجلة عبر نموذج Payment إن وجدت ولم تسجل كسند)
     for pay in partner.payments.filter(status='POSTED'):
         pay_dt = pay.created_at or datetime.datetime.combine(pay.date, datetime.time.min)
@@ -579,6 +601,19 @@ def batch_get_partners_balances(partner_ids=None, partner_qs=None):
             partners[pid]['period_credit'] += tot
         elif vtype == Voucher.PAYMENT:
             partners[pid]['period_debit'] += tot
+
+    # 3b. E-service merchant recharges on credit: the agent (supplier) is credited
+    from apps.tenant.accounting.models import EServiceTransaction
+    es_data = EServiceTransaction.objects.filter(
+        agent_id__in=pids, transaction_type=EServiceTransaction.MERCHANT_RECHARGE,
+        paid_on_credit=True, status=EServiceTransaction.POSTED,
+    ).values('agent_id').annotate(p=Sum('principal_amount'), f=Sum('commission_expense'), cnt=Count('id'))
+    for row in es_data:
+        pid = row['agent_id']
+        if pid not in partners:
+            continue
+        partners[pid]['period_credit'] += (row['p'] or Decimal('0')) + (row['f'] or Decimal('0'))
+        partners[pid]['transactions_count'] += row['cnt'] or 0
 
     # 4. Payments (الدفعات)
     pay_data = Payment.objects.filter(

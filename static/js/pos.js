@@ -230,6 +230,7 @@ const POS = {
                 const s = this.sessions.find(x => x.id === this.activeSessionId);
                 const custId = posCustomerSelect.value;
                 if (s) { s.customerId = custId; this.saveSessions(); }
+                this.renderTabs();
                 const whtCheckbox = document.getElementById('posApplyWht');
                 const opt = posCustomerSelect.options[posCustomerSelect.selectedIndex];
                 if (whtCheckbox && opt) {
@@ -1343,6 +1344,7 @@ const POS = {
     // CART DISPLAY UPDATE
     // ============================================================
     updateCartDisplay(syncDiscount = true) {
+        this.renderTabs();   // tab item counts follow the cart
         const cartItems = document.getElementById('cartItems');
         if (!cartItems) return;
 
@@ -2040,6 +2042,24 @@ const POS = {
     // ============================================================
     async completeSale(paymentType, cashReceived = null, ewalletId = null, bankAccountId = null, splitPayments = null) {
         if (this.cart.length === 0) return;
+        // One sale at a time: a double Ctrl+Enter / double click must not post the cart twice.
+        if (this.saleInFlight) {
+            this.showNotification('⏳ جاري حفظ الفاتورة الحالية... انتظر لحظة', 'warning');
+            return;
+        }
+        this.saleInFlight = true;
+        try {
+            return await this._completeSale(paymentType, cashReceived, ewalletId, bankAccountId, splitPayments);
+        } finally {
+            this.saleInFlight = false;
+        }
+    },
+
+    async _completeSale(paymentType, cashReceived = null, ewalletId = null, bankAccountId = null, splitPayments = null) {
+        // The tab (and its cart) this sale belongs to — tabs are locked while it saves,
+        // and the result is applied to THIS tab, never to whichever tab is open later.
+        const saleSessionId = this.activeSessionId;
+        const saleCart = this.cart.slice();
 
         const totals = this.calculateTotals();
         if (!this.checkLargeAmountCustomer(totals.total)) return;
@@ -2147,7 +2167,7 @@ const POS = {
                 }
 
                 // Update stock locally: subtract sold quantities or add returned quantities to grid (factored)
-                this.cart.forEach(item => {
+                saleCart.forEach(item => {
                     const row = document.querySelector(`[data-product-id="${item.id}"]`);
                     if (row) {
                         const oldStock = parseFloat(row.dataset.availableStock) || 0;
@@ -2172,7 +2192,8 @@ const POS = {
                 if (this.autoPrintReceipt && data.invoice_id) {
                     this.printReceipt(data.invoice_id);
                 }
-                this.closeTab(null, this.activeSessionId);
+                this.saleInFlight = false;          // let the tab of this sale close
+                this.closeTab(null, saleSessionId);
                 this.checkConsecutiveCustomerWarning(false);
                 this.updateGridStockDisplay();
                 this.showNotification(`تم حفظ الفاتورة: ${data.invoice_number}`, 'success');
@@ -2377,6 +2398,10 @@ const POS = {
     // TABS MANAGEMENT
     // ============================================================
     createTab() {
+        if (this.saleInFlight) {
+            this.showNotification('⏳ جاري حفظ الفاتورة... لا يمكن تغيير الفاتورة الآن', 'warning');
+            return;
+        }
         const current = this.sessions.find(s => s.id === this.activeSessionId);
         if (current) {
             const custEl = document.getElementById('posCustomer');
@@ -2407,6 +2432,10 @@ const POS = {
     },
 
     switchTab(id) {
+        if (this.saleInFlight && id !== this.activeSessionId) {
+            this.showNotification('⏳ جاري حفظ الفاتورة... لا يمكن تغيير الفاتورة الآن', 'warning');
+            return;
+        }
         const current = this.sessions.find(s => s.id === this.activeSessionId);
         if (current && current.id !== id) {
             const custEl = document.getElementById('posCustomer');
@@ -2460,6 +2489,10 @@ const POS = {
         if (event && event.stopPropagation) {
             event.stopPropagation();
         }
+        if (this.saleInFlight) {
+            this.showNotification('⏳ جاري حفظ الفاتورة... لا يمكن تغيير الفاتورة الآن', 'warning');
+            return;
+        }
         if (this.sessions.length <= 1) {
             this.clearCart();
             return;
@@ -2477,12 +2510,27 @@ const POS = {
         const tabsContainer = document.getElementById('posTabs');
         if (!tabsContainer) return;
         
-        tabsContainer.innerHTML = this.sessions.map(s => `
-            <div class="pos-tab ${s.id === this.activeSessionId ? 'active' : ''}" onclick="POS.switchTab(${s.id})">
-                ${s.name}
+        // Each tab shows ITS customer and item count, so the cashier sees which
+        // invoice belongs to whom without opening it.
+        const custSel = document.getElementById('posCustomer');
+        const esc = (t) => String(t).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+        const customerName = (id) => {
+            if (!id || !custSel) return '';
+            const o = Array.from(custSel.options).find(x => x.value === String(id));
+            return o ? o.text.trim() : '';
+        };
+        tabsContainer.innerHTML = this.sessions.map(s => {
+            const name = customerName(s.customerId);
+            const items = (s.cart || []).length;
+            return `
+            <div class="pos-tab ${s.id === this.activeSessionId ? 'active' : ''}" onclick="POS.switchTab(${s.id})" title="${esc(s.name)} — ${esc(name || 'عميل نقدي')}${items ? ' — ' + items + ' صنف' : ''}">
+                <span class="pos-tab-text">
+                    <span class="pos-tab-name">${esc(s.name)}${items ? ` <span class="pos-tab-count">${items}</span>` : ''}</span>
+                    <span class="pos-tab-customer${name ? ' has-customer' : ''}">👤 ${esc(name || 'نقدي')}</span>
+                </span>
                 ${this.sessions.length > 1 ? `<button type="button" class="pos-tab-close" onclick="POS.closeTab(event, ${s.id})">❌</button>` : ''}
-            </div>
-        `).join('') + `<button type="button" class="pos-tab-add" onclick="POS.createTab()" title="New Tab (F4)">+</button>`;
+            </div>`;
+        }).join('') + `<button type="button" class="pos-tab-add" onclick="POS.createTab()" title="New Tab (F4)">+</button>`;
     },
 
     // ============================================================
@@ -2839,8 +2887,8 @@ const POS = {
                 data-avg-cost="${p.avg_cost || p.last_purchase_price || 0}">
                 <td class="td-product">
                     <div style="display:inline-flex; align-items:center; gap:10px;">
-                        ${p.image ? `<img src="${p.image}" class="product-thumb" alt="${p.name}">` :
-                          `<div class="product-thumb-placeholder">📦</div>`}
+                        ${p.image ? `<img src="${p.image}" class="product-thumb" alt="${safeName}" loading="lazy">` :
+                          `<div class="product-thumb-placeholder">${p.product_type === 'SERVICE' ? '🛠️' : '📦'}</div>`}
                         <div>
                             <div class="product-name">${p.name}</div>
                             ${p.barcode ? `<span class="product-barcode-tag en">${p.barcode}</span>` : ''}
@@ -2851,8 +2899,8 @@ const POS = {
                 <td class="last-sale-col en">${parseFloat(p.last_sale_price || p.sale_price || 0).toFixed(2)} ج.م</td>
                 <td class="price-col en">${parseFloat(effectivePrice).toFixed(2)} ج.م ${badgeHtml}</td>
                 <td class="stock-cell">${p.available_stock || 0}</td>
-                <td>${p.unit_display || p.unit || '-'}</td>
-                <td>
+                <td class="unit-col">${p.unit_display || p.unit || '-'}</td>
+                <td class="qty-col">
                     <div class="qty-control" style="justify-content:center;">
                         <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, ${p.id}, -1)">−</button>
                         <span class="qty-value">1</span>

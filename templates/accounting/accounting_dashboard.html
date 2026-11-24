@@ -1,0 +1,200 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/panels.css' %}">
+
+<div class="glass-container lq-root" style="padding: 1.5rem;">
+  <div class="lq-head">
+    <div>
+      <h2>📒 {{ title }}</h2>
+      <span class="lq-scope">أرقام الأرباح والخسائر على مستوى الشركة · {{ month_label }}
+        · {% if lock_date %}🔒 الفترة مقفلة حتى {{ lock_date|date:"Y-m-d" }}{% else %}الفترة مفتوحة{% endif %}</span>
+    </div>
+    <div class="lq-actions">
+      {% if perms.accounting.add_expense %}<a class="lq-btn primary" href="{% url 'accounting:expense_create' %}">＋ مصروف</a>{% endif %}
+      {% if perms.accounting.add_voucher %}
+        <a class="lq-btn" href="{% url 'accounting:receipt_create' %}">⬇️ سند قبض</a>
+        <a class="lq-btn" href="{% url 'accounting:payment_create' %}">⬆️ سند صرف</a>
+      {% endif %}
+      {% if perms.accounting.add_journalentry %}<a class="lq-btn" href="{% url 'accounting:journal_create' %}">📝 قيد يدوي</a>{% endif %}
+    </div>
+  </div>
+
+  <div class="lq-groups">
+    <div class="lq-group"><h4>الحركات اليومية</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'accounting:expense_list' %}">🧾 المصروفات{% if draft_expenses %} <span class="lq-badge">{{ draft_expenses }}</span>{% endif %}</a>
+      <a class="lq-btn" href="{% url 'accounting:receipt_list' %}">⬇️ سندات القبض</a>
+      <a class="lq-btn" href="{% url 'accounting:payment_list' %}">⬆️ سندات الصرف</a>
+      <a class="lq-btn" href="{% url 'accounting:transfer_list' %}">🔄 تحويل الأموال{% if draft_transfers %} <span class="lq-badge">{{ draft_transfers }}</span>{% endif %}</a>
+    </div></div>
+    <div class="lq-group"><h4>الشيكات والتمويل</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'accounting:cheque_list' %}">📑 إدارة الشيكات</a>
+      <a class="lq-btn" href="{% url 'accounting:loan_list' %}">🏦 القروض والتمويل</a>
+    </div></div>
+    <div class="lq-group"><h4>الأصول الثابتة</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'accounting:fixed_asset_list' %}">🏛 الأصول الثابتة</a>
+      {% if assets_pending_dep %}<a class="lq-btn" href="{% url 'accounting:fixed_asset_list' %}">⚙️ تشغيل الإهلاك <span class="lq-badge">{{ assets_pending_dep }}</span></a>{% endif %}
+    </div></div>
+    <div class="lq-group"><h4>الدفاتر والتقارير</h4><div class="lq-actions">
+      <a class="lq-btn" href="{% url 'accounting:journal_list' %}">📒 قيود اليومية</a>
+      <a class="lq-btn" href="{% url 'accounting:chart_of_accounts' %}">📊 دليل الحسابات</a>
+      <a class="lq-btn" href="{% url 'accounting:trial_balance' %}">⚖️ ميزان المراجعة</a>
+      <a class="lq-btn" href="{% url 'accounting:income_statement' %}">📈 قائمة الدخل</a>
+      <a class="lq-btn" href="{% url 'accounting:balance_sheet' %}">🧮 الميزانية</a>
+      <a class="lq-btn" href="{% url 'core:report_general_ledger' %}">📄 الأستاذ العام</a>
+    </div></div>
+  </div>
+
+  <div class="lq-tiles">
+    <div class="lq-tile hero"><div class="k">صافي ربح {{ month_label }}</div>
+      <div class="v" {% if net_month < 0 %}style="color:var(--flow-out)"{% endif %}><bdi dir="ltr">{% if net_month > 0 %}+{% endif %}{{ net_month|money }}</bdi> <small style="font-size:0.75rem;color:var(--lq-muted)">ج.م</small></div>
+      <div class="s">الإيرادات − المصروفات (شاملة تكلفة المبيعات)</div></div>
+    <div class="lq-tile"><div class="k"><span class="lq-dot" style="background:var(--series-1)"></span>إيرادات الشهر</div>
+      <div class="v"><bdi dir="ltr">{{ revenue_month|money }}</bdi></div><div class="s">بعد خصم المردودات والخصومات</div></div>
+    <div class="lq-tile"><div class="k"><span class="lq-dot" style="background:var(--series-2)"></span>مصروفات الشهر</div>
+      <div class="v"><bdi dir="ltr">{{ expenses_month|money }}</bdi></div><div class="s">شاملة تكلفة البضاعة المباعة</div></div>
+    <div class="lq-tile"><div class="k">مصروفات اليوم</div><div class="v"><bdi dir="ltr">{{ expenses_today|money }}</bdi></div></div>
+  </div>
+
+  <!-- Needs action (status color + icon + label) -->
+  <div class="lq-alerts">
+    <a class="lq-alert st-warning{% if not drafts_total %} is-zero{% endif %}" href="{% url 'accounting:expense_list' %}">
+      <div class="k">📝 مستندات غير مرحّلة</div><div class="v">{{ drafts_total }}</div>
+      <div class="s">مصروفات {{ draft_expenses }} · سندات {{ draft_vouchers }} · تحويلات {{ draft_transfers }}</div></a>
+    <a class="lq-alert st-warning{% if not cheques_in.soon_n and not cheques_out.soon_n %} is-zero{% endif %}" href="#ac-cheques">
+      <div class="k">📅 شيكات تستحق خلال {{ due_days }} أيام</div><div class="v">{{ cheques_in.soon_n|add:cheques_out.soon_n }}</div>
+      <div class="s">قبض <bdi dir="ltr">{{ cheques_in.soon_v|money }}</bdi> · صرف <bdi dir="ltr">{{ cheques_out.soon_v|money }}</bdi></div></a>
+    <a class="lq-alert st-critical{% if not cheques_in.over_n and not cheques_out.over_n %} is-zero{% endif %}" href="{% url 'accounting:cheque_list' %}">
+      <div class="k">⛔ شيكات متأخرة عن الاستحقاق</div><div class="v">{{ cheques_in.over_n|add:cheques_out.over_n }}</div>
+      <div class="s">قبض <bdi dir="ltr">{{ cheques_in.over_v|money }}</bdi> · صرف <bdi dir="ltr">{{ cheques_out.over_v|money }}</bdi></div></a>
+    <a class="lq-alert st-serious{% if not bounced_month %} is-zero{% endif %}" href="{% url 'accounting:cheque_list' %}">
+      <div class="k">↩️ شيكات مرتدة هذا الشهر</div><div class="v">{{ bounced_month }}</div><div class="s">شيك</div></a>
+    <a class="lq-alert {% if installments.over_n %}st-critical{% else %}st-warning{% endif %}{% if not installments.soon_n and not installments.over_n %} is-zero{% endif %}" href="#ac-loans">
+      <div class="k">🏦 أقساط قروض</div><div class="v">{{ installments.soon_n|add:installments.over_n }}</div>
+      <div class="s">قريبة <bdi dir="ltr">{{ installments.soon_v|money }}</bdi>{% if installments.over_n %} · متأخرة {{ installments.over_n }}{% endif %}</div></a>
+    <a class="lq-alert st-warning{% if not assets_pending_dep %} is-zero{% endif %}" href="{% url 'accounting:fixed_asset_list' %}">
+      <div class="k">⚙️ إهلاك {{ prev_month_label }} لم يُسجل</div><div class="v">{{ assets_pending_dep }}</div><div class="s">أصل نشط</div></a>
+    {% if ledger_diff %}
+    <a class="lq-alert st-critical" href="{% url 'accounting:trial_balance' %}">
+      <div class="k">❗ ميزان المراجعة غير متوازن</div><div class="v"><bdi dir="ltr">{{ ledger_diff|money }}</bdi></div><div class="s">راجع القيود فوراً</div></a>
+    {% endif %}
+  </div>
+
+  <div class="lq-grid2">
+    <section class="lq-card">
+      <h3>مصروفات {{ month_label }} حسب الحساب</h3>
+      <ul class="lq-hbars">
+        {% for b in expense_bars %}
+        <li class="{% if b.other %}other{% endif %}" title="{{ b.code }} {{ b.label }}: {{ b.value|money }} ج.م ({{ b.share|floatformat:'1u' }}%)">
+          <span class="lbl">{{ b.label }}</span>
+          <span class="trk"><i style="width: {{ b.pct|floatformat:'1u' }}%; background: var(--series-2);"></i></span>
+          <span class="val"><bdi dir="ltr">{{ b.value|money }}</bdi><small>{{ b.share|floatformat:"0u" }}%</small></span>
+        </li>
+        {% empty %}<li class="lq-empty" style="display:block">لا توجد مصروفات هذا الشهر</li>{% endfor %}
+      </ul>
+    </section>
+    <section class="lq-card">
+      <h3>الإيرادات مقابل المصروفات <small>آخر {{ months }} شهور</small>
+        <span class="lq-flow-legend"><span><span class="lq-dot" style="background:var(--series-1)"></span>إيرادات</span><span><span class="lq-dot" style="background:var(--series-2)"></span>مصروفات</span></span></h3>
+      <div class="lq-chart"><canvas id="acTrendChart" role="img" aria-label="الإيرادات والمصروفات شهرياً"></canvas></div>
+      <details class="lq-table-view"><summary>عرض كجدول (مع صافي الربح)</summary>
+        <div class="lq-scroll"><table class="lq-table" id="acTrendTable"><thead><tr><th>الشهر</th><th>الإيرادات</th><th>المصروفات</th><th>صافي الربح</th></tr></thead><tbody></tbody></table></div>
+      </details>
+    </section>
+  </div>
+
+  <div class="lq-grid2" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr);">
+    <section class="lq-card" id="ac-cheques">
+      <h3>📅 شيكات مستحقة / متأخرة <small>حتى {{ due_days }} أيام قادمة</small></h3>
+      <div class="lq-scroll"><table class="lq-table">
+        <thead><tr><th>الشيك</th><th>النوع</th><th>الشريك</th><th>الاستحقاق</th><th>المبلغ</th></tr></thead>
+        <tbody>
+          {% for c in upcoming_cheques %}
+          <tr>
+            <td><a href="{% url 'accounting:cheque_detail' c.pk %}" style="color:#00e5ff">{{ c.cheque_number }}</a></td>
+            <td>{% if c.cheque_type == 'RECEIVABLE' %}⬇️ قبض{% else %}⬆️ صرف{% endif %}</td>
+            <td>{{ c.partner.name|default:c.payee_name|default:"-" }}</td>
+            <td class="num{% if c.due_date < today %} neg{% endif %}" style="font-weight:400">{{ c.due_date|date:"Y-m-d" }}{% if c.due_date < today %} ⛔{% endif %}</td>
+            <td class="num"><bdi dir="ltr">{{ c.amount|money }}</bdi></td>
+          </tr>
+          {% empty %}<tr><td colspan="5" class="lq-empty">لا توجد شيكات مستحقة قريباً</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </section>
+    <section class="lq-card" id="ac-loans">
+      <h3>🏦 أقساط قروض قريبة / متأخرة</h3>
+      <div class="lq-scroll"><table class="lq-table">
+        <thead><tr><th>القرض</th><th>القسط</th><th>الاستحقاق</th><th>المبلغ</th></tr></thead>
+        <tbody>
+          {% for i in upcoming_installments %}
+          <tr>
+            <td><a href="{% url 'accounting:loan_detail' i.loan.pk %}" style="color:#00e5ff">{{ i.loan.name }}</a></td>
+            <td class="num" style="font-weight:400">#{{ i.installment_number }}</td>
+            <td class="num{% if i.due_date < today %} neg{% endif %}" style="font-weight:400">{{ i.due_date|date:"Y-m-d" }}{% if i.due_date < today %} ⛔{% endif %}</td>
+            <td class="num"><bdi dir="ltr">{{ i.total_amount|money }}</bdi></td>
+          </tr>
+          {% empty %}<tr><td colspan="4" class="lq-empty">لا توجد أقساط مستحقة قريباً</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <section class="lq-card">
+    <h3>آخر القيود المرحّلة</h3>
+    <div class="lq-scroll"><table class="lq-table">
+      <thead><tr><th>المرجع</th><th>التاريخ</th><th>البيان</th><th>القيمة</th></tr></thead>
+      <tbody>
+        {% for e in recent_entries %}
+        <tr>
+          <td>{% if is_admin %}<a href="{% url 'accounting:journal_detail' e.pk %}" style="color:#00e5ff">{{ e.reference }}</a>{% else %}{{ e.reference }}{% endif %}</td>
+          <td class="num" style="font-weight:400">{{ e.date|date:"Y-m-d" }}</td>
+          <td style="color:var(--lq-text-2); max-width: 420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="{{ e.description }}">{{ e.description|default:"-" }}</td>
+          <td class="num"><bdi dir="ltr">{{ e.total|money }}</bdi></td>
+        </tr>
+        {% empty %}<tr><td colspan="4" class="lq-empty">لا توجد قيود بعد</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+</div>
+
+{{ trend|json_script:"ac-trend" }}
+<script>
+(function () {
+  var t = JSON.parse(document.getElementById('ac-trend').textContent);
+  var root = document.querySelector('.lq-root');
+  var css = function (v) { return getComputedStyle(root).getPropertyValue(v).trim(); };
+  var fmt = function (n) { return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+  var tbody = document.querySelector('#acTrendTable tbody');
+  t.labels.forEach(function (m, i) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + m + '</td><td class="num">' + fmt(t.revenue[i]) + '</td><td class="num">' + fmt(t.expenses[i]) +
+      '</td><td class="num' + (t.net[i] < 0 ? ' neg' : '') + '"><bdi dir="ltr">' + fmt(t.net[i]) + '</bdi></td>';
+    tbody.appendChild(tr);
+  });
+  if (typeof Chart === 'undefined') return;
+  new Chart(document.getElementById('acTrendChart'), {
+    type: 'bar',
+    data: { labels: t.labels, datasets: [
+      { label: 'إيرادات', data: t.revenue, backgroundColor: css('--series-1'), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'bottom', maxBarThickness: 22 },
+      { label: 'مصروفات', data: t.expenses, backgroundColor: css('--series-2'), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'bottom', maxBarThickness: 22 }
+    ] },
+    options: {
+      maintainAspectRatio: false,
+      datasets: { bar: { categoryPercentage: 0.7, barPercentage: 0.9 } },
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false },
+        tooltip: { rtl: true, textDirection: 'rtl', callbacks: {
+          label: function (c) { return c.dataset.label + ': ' + fmt(c.parsed.y) + ' ج.م'; },
+          footer: function (items) { var i = items[0].dataIndex; return 'صافي الربح: ' + fmt(t.net[i]) + ' ج.م'; } } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: css('--lq-muted'), font: { size: 11 } } },
+        y: { beginAtZero: true, grid: { color: css('--lq-grid') }, border: { display: false },
+             ticks: { color: css('--lq-muted'), font: { size: 10 }, callback: function (v) { return Number(v).toLocaleString('en-US'); } } }
+      }
+    }
+  });
+})();
+</script>
+{% endblock %}

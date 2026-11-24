@@ -18,7 +18,7 @@ from apps.tenant.core.decorators import custom_permission_required, is_admin_use
 from apps.tenant.core.access import (
     BRANCH_UNASSIGNED_MESSAGE, allowed_branches, get_allowed_branch_ids, get_branch_scope,
     get_working_branch, is_branch_restricted, is_branch_unassigned, set_header_branch,
-    shift_branch_lock_error,
+    shift_branch_lock_error, filter_by_branch,
 )
 
 from django.views.decorators.cache import never_cache
@@ -224,7 +224,8 @@ def _pos_default_ids(branch, open_session=None):
     (get_pos_defaults), the cash treasury falling back to the open shift's treasury."""
     d = get_pos_defaults(branch)
     treasury = d['treasury']
-    treasury_id = treasury.id if treasury else (open_session.treasury_id if open_session else None)
+    # The open shift's drawer wins: its cash must be posted on the treasury being counted.
+    treasury_id = open_session.treasury_id if (open_session and open_session.treasury_id) else (treasury.id if treasury else None)
     return {
         'pos_default_treasury_id': treasury_id,
         'pos_default_bank_account_id': d['bank_account'].id if d['bank_account'] else None,
@@ -255,36 +256,76 @@ def pos_open_shift(request):
         messages.error(request, 'لا يوجد فرع نشط لفتح الوردية عليه.')
         return redirect('core:main_screen')
     from django.db.models import Q as _Q
+    from apps.tenant.core.settings_helpers import get_pos_defaults, setting
     treasuries = Treasury.objects.filter(_Q(branch=user_branch) | _Q(branch__isnull=True))
 
+    # Default drawer = the branch's POS default treasury (branch settings, then the
+    # global default if it belongs to this branch); a branch with a single treasury
+    # needs no choice either. With "lock POS payment accounts" it can't be changed.
+    default_treasury = get_pos_defaults(user_branch)['treasury']
+    if default_treasury is not None and not treasuries.filter(pk=default_treasury.pk).exists():
+        default_treasury = None
+    if default_treasury is None and treasuries.count() == 1:
+        default_treasury = treasuries.first()
+    treasury_locked = bool(default_treasury) and bool(setting('lock_pos_payment_accounts', False))
+
+    from apps.tenant.invoicing.shift_services import open_session_on_treasury, treasury_book_balance
+
     if request.method == 'POST':
-        opening_balance_str = request.POST.get('opening_balance', '0')
-        treasury_id = request.POST.get('treasury_id')
+        treasury_id = request.POST.get('treasury_id') or (str(default_treasury.pk) if default_treasury else '')
+        if treasury_locked:
+            treasury_id = str(default_treasury.pk)
         if not treasury_id:
             messages.error(request, 'برجاء اختيار خزينة.')
         else:
             try:
-                opening_balance = Decimal(opening_balance_str)
-                treasury = treasuries.get(id=treasury_id)
-
-                POSSession.objects.create(
-                    branch=user_branch,
-                    treasury=treasury,
-                    user=request.user,
-                    opening_balance=opening_balance,
-                    status=POSSession.OPEN
-                )
+                from django.db import transaction as _tx
+                with _tx.atomic():
+                    # Lock the drawer row: two cashiers can't open it at the same moment.
+                    treasury = treasuries.select_for_update().get(id=treasury_id)
+                    busy = open_session_on_treasury(treasury)
+                    if busy:
+                        from apps.tenant.core.templatetags.user_tags import display_name as _dn
+                        raise ValueError(
+                            f'الدرج "{treasury.name}" عليه وردية مفتوحة للكاشير {_dn(busy.user)} '
+                            f'(#{busy.pk}). يجب إغلاقها أولاً — درج واحد لكاشير واحد.')
+                    # Opening balance = the drawer's book balance (what the last shift left in it).
+                    POSSession.objects.create(
+                        branch=user_branch,
+                        treasury=treasury,
+                        user=request.user,
+                        opening_balance=treasury_book_balance(treasury),
+                        status=POSSession.OPEN
+                    )
                 messages.success(request, 'تم فتح الوردية بنجاح.')
                 return redirect('/invoicing/pos/?new_shift=1')
             except Treasury.DoesNotExist:
                 messages.error(request, 'الخزينة المختارة لا تتبع هذا الفرع.')
+            except ValueError as e:
+                messages.error(request, str(e))
             except Exception as e:
                 messages.error(request, f'حدث خطأ: {str(e)}')
+
+    treasury_rows = []
+    for t in treasuries.order_by('name'):
+        busy = open_session_on_treasury(t)
+        treasury_rows.append({'obj': t, 'balance': treasury_book_balance(t), 'busy': busy})
+    if default_treasury is not None and any(r['busy'] for r in treasury_rows if r['obj'].pk == default_treasury.pk):
+        default_busy = True
+    else:
+        default_busy = False
+    default_balance = next((r['balance'] for r in treasury_rows
+                            if default_treasury is not None and r['obj'].pk == default_treasury.pk), None)
 
     context = {
         'title': 'فتح وردية كاشير',
         'treasuries': treasuries,
-        'current_branch': user_branch
+        'treasury_rows': treasury_rows,
+        'current_branch': user_branch,
+        'default_treasury': default_treasury,
+        'default_balance': default_balance,
+        'default_busy': default_busy,
+        'treasury_locked': treasury_locked,
     }
     return render(request, 'pos/open_shift.html', context)
 
@@ -425,13 +466,39 @@ def pos_close_shift(request):
     )
     total_cash_rentals = shift_rentals.filter(payment_method=Rental.PAYMENT_CASH).aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
 
+    # E-payment services (Fawry/Aman/...) done on this shift: net drawer cash
+    from apps.tenant.accounting.eservice_dashboard_views import eservice_cash_for_session
+    total_eservice_cash = eservice_cash_for_session(open_session)
+
+    # Fund transfers into / out of this drawer during the shift (cash drops, top-ups).
+    # The variance is now booked to the ledger, so a drop that isn't counted here would
+    # be taken off the treasury twice.
+    from apps.tenant.accounting.models import InternalTransfer
+    tr_base = InternalTransfer.objects.filter(created_at__gte=open_session.start_time)
+    total_transfers_out = tr_base.filter(
+        from_account_type=InternalTransfer.TREASURY, from_treasury=open_session.treasury,
+        status__in=[InternalTransfer.POSTED, InternalTransfer.IN_TRANSIT],
+    ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
+    # Incoming: counted when the cash ARRIVED (an inter-branch transfer sent before the
+    # shift but received during it lands in this drawer now).
+    total_transfers_in = InternalTransfer.objects.filter(
+        to_account_type=InternalTransfer.TREASURY, to_treasury=open_session.treasury,
+        status=InternalTransfer.POSTED,
+    ).filter(
+        Q(received_at__gte=open_session.start_time)
+        | Q(received_at__isnull=True, created_at__gte=open_session.start_time)
+    ).aggregate(s=Sum(Coalesce('received_amount', 'amount')))['s'] or Decimal('0')
+    total_transfers_net = total_transfers_in - total_transfers_out
+
     expected_balance = (
         open_session.opening_balance +
         total_cash_sales -
         total_cash_refunds +
         total_cash_receipts -
         total_cash_payments +
-        total_cash_rentals
+        total_cash_rentals +
+        total_eservice_cash +
+        total_transfers_net
     )
 
     if request.method == 'POST':
@@ -440,22 +507,58 @@ def pos_close_shift(request):
             messages.error(request, 'يرجى إدخال مبلغ النقدية الفعلية بالدرج أولاً قبل إغلاق الوردية.')
             from django.urls import reverse
             return redirect(f"{reverse('invoicing:pos_close_shift')}?session_id={open_session.id}")
+        from django.core.exceptions import ValidationError as _VE
+        from django.db import transaction as _tx
+        from apps.tenant.invoicing import shift_services as _ss
         try:
             actual_balance = Decimal(actual_balance_str)
-            difference = actual_balance - expected_balance
+            if actual_balance < 0:
+                raise _VE('النقدية الفعلية لا يمكن أن تكون بالسالب.')
+            difference = (actual_balance - expected_balance).quantize(Decimal('0.01'))
             notes = request.POST.get('notes', '').strip()
+            # Who bears a shortage is the manager's call; a cashier closing alone books it
+            # as a shop expense (an admin can charge it to the cashier later from the report).
+            charge_to = _ss.CHARGE_EXPENSE
+            if is_admin_user(request.user) and request.POST.get('shortage_charge_to') == _ss.CHARGE_CASHIER:
+                charge_to = _ss.CHARGE_CASHIER
+            deposit_amount = Decimal(request.POST.get('deposit_amount') or '0')
+            if deposit_amount < 0:
+                raise _VE('مبلغ التوريد لا يمكن أن يكون بالسالب.')
+            if deposit_amount > actual_balance:
+                raise _VE('مبلغ التوريد أكبر من النقدية الفعلية في الدرج.')
 
-            open_session.closing_balance_expected = expected_balance
-            open_session.closing_balance_actual = actual_balance
-            open_session.difference = difference
-            open_session.end_time = timezone.now()
-            open_session.status = POSSession.CLOSED
-            if notes:
-                open_session.notes = notes
-            open_session.save()
-            
-            messages.success(request, f'تم إغلاق الوردية رقم #{open_session.id} بنجاح وتحويل حالتها إلى مغلقة.')
+            with _tx.atomic():
+                open_session = POSSession.objects.select_for_update().get(pk=open_session.pk)
+                if open_session.status != POSSession.OPEN:
+                    raise _VE('الوردية مغلقة بالفعل.')
+                open_session.closing_balance_expected = expected_balance
+                open_session.closing_balance_actual = actual_balance
+                open_session.difference = difference
+                open_session.end_time = timezone.now()
+                open_session.status = POSSession.CLOSED
+                if notes:
+                    open_session.notes = notes
+                open_session.save()
+                # Book the difference so the treasury's balance = the cash really in the drawer
+                _ss.post_shift_variance(open_session, charge_to, request.user)
+                transfer = None
+                if deposit_amount > 0:
+                    transfer = _ss.deposit_drawer_cash(
+                        open_session, request.POST.get('deposit_type', ''),
+                        request.POST.get('deposit_target', ''), deposit_amount, request.user)
+
+            msg = f'تم إغلاق الوردية رقم #{open_session.id} بنجاح.'
+            if abs(difference) >= Decimal('0.01'):
+                kind = 'عجز' if difference < 0 else 'زيادة'
+                msg += f' تم تسجيل {kind} بقيمة {abs(difference):,.2f} ج.م في الحسابات.'
+            if transfer is not None:
+                msg += f' تم توريد {deposit_amount:,.2f} ج.م إلى {transfer.destination_name} ({transfer.transfer_number}).'
+                if transfer.status == transfer.IN_TRANSIT:
+                    msg += ' (بالطريق — بانتظار استلام الفرع الآخر)'
+            messages.success(request, msg)
             return redirect('core:report_shift_detail', pk=open_session.id)
+        except _VE as e:
+            messages.error(request, ' '.join(e.messages))
         except Exception as e:
             messages.error(request, f'حدث خطأ أثناء إغلاق الوردية: {str(e)}')
 
@@ -471,8 +574,43 @@ def pos_close_shift(request):
         'total_ewallet_sales': total_ewallet_sales,
         'total_bank_sales': total_bank_sales,
         'total_credit_sales': total_credit_sales,
+        'total_cash_rentals': total_cash_rentals,
+        'total_eservice_cash': total_eservice_cash,
+        'total_transfers_net': total_transfers_net,
+        'can_charge_cashier': is_admin_user(request.user),
+        **_deposit_targets(open_session),
     }
     return render(request, 'pos/close_shift.html', context)
+
+
+@login_required
+@require_POST
+def pos_shift_charge_cashier(request, pk):
+    """Admin: move a closed shift's shortage from the shop's expense onto the cashier (1135)."""
+    from django.core.exceptions import ValidationError as _VE
+    from apps.tenant.invoicing.shift_services import charge_shortage_to_cashier
+    if not is_admin_user(request.user):
+        messages.error(request, 'تحميل العجز على الكاشير متاح للمدير فقط.')
+        return redirect('core:report_shift_detail', pk=pk)
+    session = get_object_or_404(filter_by_branch(POSSession.objects.all(), request), pk=pk)
+    try:
+        charge_shortage_to_cashier(session, request.user)
+        messages.success(request, f'تم تحميل عجز الوردية #{pk} على الكاشير (ذمم الموظفين والعهد 1135).')
+    except _VE as e:
+        messages.error(request, ' '.join(e.messages))
+    return redirect('core:report_shift_detail', pk=pk)
+
+
+def _deposit_targets(session):
+    """Where the drawer cash can be dropped at close: other treasuries (any branch —
+    another branch makes it a two-step transfer), bank accounts and e-wallets."""
+    from apps.tenant.accounting.models import BankAccount, EWallet, Treasury
+    treasuries = Treasury.objects.exclude(pk=session.treasury_id).select_related('branch').order_by('branch__name', 'name')
+    return {
+        'deposit_treasuries': treasuries,
+        'deposit_banks': BankAccount.objects.all().order_by('pk'),
+        'deposit_ewallets': EWallet.objects.all().order_by('pk'),
+    }
 
 @login_required
 @custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
@@ -939,6 +1077,16 @@ def invoice_detail(request, invoice_id):
     for line in lines:
         line.available_return_qty = line.quantity - line.returned_quantity
 
+    # Return refunds: treasuries of the current branch only; with an open shift the
+    # cash comes out of the shift's drawer (enforced again by process_invoice_return).
+    from apps.tenant.accounting.forms import scoped_treasuries
+    return_treasuries = scoped_treasuries(request.user)
+    open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).select_related('treasury').first()
+    money_allowance = None
+    if invoice.status == Invoice.POSTED and invoice.invoice_type in (Invoice.SALE, Invoice.PURCHASE):
+        from apps.tenant.invoicing.return_rules import money_refund_allowance
+        money_allowance = money_refund_allowance(invoice)
+
     if invoice.invoice_type in [Invoice.SALE, Invoice.RETURN_SALE]:
         partners = Partner.objects.filter(partner_type__in=[Partner.CUSTOMER, Partner.BOTH])
     else:
@@ -949,7 +1097,9 @@ def invoice_detail(request, invoice_id):
         'lines': lines,
         'is_fully_returned': is_fully_returned,
         'has_returns': has_returns,
-        'treasuries': Treasury.objects.all(),
+        'treasuries': return_treasuries,
+        'return_shift_treasury': open_session.treasury if open_session else None,
+        'money_refund_allowance': money_allowance,
         'bank_accounts': BankAccount.objects.all(),
         'ewallets': EWallet.objects.all(),
         'partners': partners,
@@ -1344,7 +1494,9 @@ def complete_sale(request):
             if open_session.branch_id and branch.id != open_session.branch_id:
                 raise _SaleAbort('الفرع المرسل لا يطابق فرع الوردية المفتوحة. أعد تحميل نقطة البيع.', status=409)
 
-            if not treasury_id and open_session.treasury_id:
+            # Cash of a shift sale always lands in the shift's drawer (one drawer = one
+            # cashier; the closing count reconciles exactly that treasury).
+            if open_session.treasury_id:
                 treasury_id = open_session.treasury_id
             # Payment defaults of the sale's branch (= the open shift's branch).
             branch_defaults = get_pos_defaults(branch)
@@ -1824,7 +1976,18 @@ def process_invoice_return(request, invoice_id):
             ewallet_id = def_w.id if def_w else None
 
         open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
-        session_to_use = open_session or original_invoice.pos_session
+        # A return belongs to the shift open NOW (never re-opens the figures of the
+        # original sale's shift, which may already be closed and counted).
+        session_to_use = open_session
+        # Cash refunded during an open shift comes out of that shift's drawer.
+        if open_session and open_session.treasury_id and req_cash > 0:
+            treasury_id = open_session.treasury_id
+        elif req_cash > 0 and treasury_id:
+            # Without a shift: only a treasury of the current working branch.
+            from apps.tenant.accounting.forms import scoped_treasuries
+            if not scoped_treasuries(request.user).filter(pk=treasury_id).exists():
+                return JsonResponse({'status': 'error', 'message':
+                    'الخزينة المختارة لا تتبع الفرع الحالي. اختر خزينة من خزائن الفرع لصرف النقدية.'})
 
         with transaction.atomic():
             # Lock the original invoice so concurrent returns against it are serialized
@@ -1924,6 +2087,19 @@ def process_invoice_return(request, invoice_id):
                 return_invoice.paid_credit = total_amount if payment_type == Invoice.CREDIT else Decimal('0')
 
             return_invoice.save(update_fields=['paid_cash', 'paid_card', 'paid_ewallet', 'paid_bank', 'paid_credit'])
+
+            # Money (cash/card/wallet/bank) can't exceed what was really paid on the original
+            # invoice: an unpaid credit sale is returned as credit (reduces the balance).
+            from apps.tenant.invoicing.return_rules import money_part, money_refund_allowance
+            requested_money = money_part(return_invoice)
+            allowed_money = money_refund_allowance(original_invoice)
+            if requested_money > allowed_money + Decimal('0.01'):
+                who = 'العميل' if return_type == Invoice.RETURN_SALE else 'المورد'
+                raise Exception(
+                    f'لا يمكن رد {requested_money:,.2f} ج.م نقداً/إلكترونياً: المدفوع فعلياً على هذه الفاتورة '
+                    f'والمتاح للرد هو {allowed_money:,.2f} ج.م فقط. '
+                    f'رد الباقي ({requested_money - allowed_money:,.2f} ج.م) كرصيد دائن لـ{who} (آجل) '
+                    f'أو اختر "سداد مقسم".')
 
             # Confirm
             from apps.tenant.services.invoice_service import confirm_invoice
@@ -2730,7 +2906,11 @@ def get_shift_stats_data(open_session):
         rental_time_filter &= Q(created_at__lte=open_session.end_time)
     total_cash_rentals = Rental.objects.filter(rental_time_filter, payment_method=Rental.PAYMENT_CASH).aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
 
-    cash_in_drawer = open_session.opening_balance + total_cash_sales + total_cash_receipts - total_cash_payments + total_cash_rentals
+    from apps.tenant.accounting.eservice_dashboard_views import eservice_cash_for_session
+    total_eservice_cash = eservice_cash_for_session(open_session)
+
+    cash_in_drawer = (open_session.opening_balance + total_cash_sales + total_cash_receipts - total_cash_payments
+                      + total_cash_rentals + total_eservice_cash)
 
     recent_invoices = []
     for inv in posted_invoices.select_related('partner').order_by('-id')[:8]:
@@ -2755,6 +2935,7 @@ def get_shift_stats_data(open_session):
         'card_sales': float(total_card_sales),
         'ewallet_sales': float(total_ewallet_sales),
         'bank_sales': float(total_bank_sales),
+        'eservice_cash': float(total_eservice_cash),
         'opening_balance': float(open_session.opening_balance),
         'recent_invoices': recent_invoices,
     }

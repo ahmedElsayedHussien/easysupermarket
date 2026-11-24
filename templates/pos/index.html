@@ -9,6 +9,7 @@
     <link rel="shortcut icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
     <link rel="apple-touch-icon" href="{% static 'img/logo.png' %}">
     <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
+    <link rel="stylesheet" href="{% static 'css/compat.css' %}">
     <link rel="stylesheet" href="{% static 'css/pos.css' %}?v={% now 'U' %}">
 </head>
 <body class="pos-page">
@@ -60,11 +61,17 @@
         <div class="pos-subbar-group">
             <div class="pos-field-pill pos-customer-pill" title="{% trans 'اختيار أو بحث العميل' %}">
                 <span class="pos-field-label">👤 {% trans 'العميل' %}:</span>
-                <input type="text" id="posCustomerSearch" class="pos-customer-filter" placeholder="{% trans 'بحث عميل...' %}" autocomplete="off">
-                <select id="posCustomer" class="pos-subbar-select">
+                {# Type-ahead picker (static/js/pos_customer_picker.js); the hidden select stays the source of truth #}
+                <div class="pos-customer-picker" id="posCustomerPicker">
+                    <input type="text" class="pcp-input" placeholder="{% trans 'عميل نقدي — اكتب اسم أو رقم' %}" autocomplete="off" spellcheck="false" aria-label="{% trans 'العميل' %}">
+                    <button type="button" class="pcp-clear" title="{% trans 'رجوع لعميل نقدي' %}" tabindex="-1">✕</button>
+                    <kbd class="pcp-kbd" title="{% trans 'اختصار البحث عن عميل' %}">F6</kbd>
+                    <ul class="pcp-list" hidden></ul>
+                </div>
+                <select id="posCustomer" class="pos-subbar-select" hidden tabindex="-1" aria-hidden="true">
                     <option value="">{% trans 'عميل نقدي' %}</option>
                     {% for customer in customers %}
-                    <option value="{{ customer.id }}" data-wht-subject="{{ customer.subject_to_withholding_tax|yesno:'true,false' }}">{{ customer.name }}</option>
+                    <option value="{{ customer.id }}" data-wht-subject="{{ customer.subject_to_withholding_tax|yesno:'true,false' }}"{% if customer.phone %} data-phone="{{ customer.phone }}"{% endif %}{% if customer.mobile %} data-mobile="{{ customer.mobile }}"{% endif %}>{{ customer.name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -183,10 +190,14 @@
                     <span class="pos-info-chip-label">📦 {% trans 'المخزون' %}:</span>
                     <span id="displayStock" style="font-weight:800; color:#22d3ee;">-</span>
                 </div>
+                <div class="pos-view-toggle" role="group" aria-label="طريقة عرض الأصناف">
+                    <button type="button" data-view="table" onclick="setPosProductsView('table')" title="عرض جدول">☰ جدول</button>
+                    <button type="button" data-view="cards" onclick="setPosProductsView('cards')" title="عرض كروت بالصور">▦ كروت</button>
+                </div>
             </div>
 
             <!-- Products Table -->
-            <div class="pos-products-wrapper">
+            <div class="pos-products-wrapper" id="posProductsWrapper">
                 <table class="pos-products-table">
                     <thead>
                         <tr>
@@ -221,7 +232,7 @@
                             data-avg-cost="{{ product.pos_avg_cost|stringformat:'f' }}">
                             <td class="td-product">
                                 <div style="display:inline-flex; align-items:center; gap:10px;">
-                                    <div class="product-thumb-placeholder">{% if product.product_type == 'SERVICE' %}🛠️{% else %}📦{% endif %}</div>
+                                    {% if product.image %}<img src="{{ product.image.url }}" class="product-thumb" alt="{{ product.name }}" loading="lazy">{% else %}<div class="product-thumb-placeholder">{% if product.product_type == 'SERVICE' %}🛠️{% else %}📦{% endif %}</div>{% endif %}
                                     <div>
                                         <div class="product-name">{{ product.name }}</div>
                                         {% if product.barcode %}<span class="product-barcode-tag en">{{ product.barcode }}</span>{% endif %}
@@ -240,8 +251,8 @@
                                     {% localize off %}{{ product.pos_stock|floatformat:"-2" }}{% endlocalize %}
                                 {% endif %}
                             </td>
-                            <td>{{ product.pos_unit_name }}</td>
-                            <td>
+                            <td class="unit-col">{{ product.pos_unit_name }}</td>
+                            <td class="qty-col">
                                 <div class="qty-control" style="justify-content:center;">
                                     <button class="qty-btn" onclick="event.stopPropagation(); POS.updateQuantityForProduct(event, {{ product.id }}, -1)">−</button>
                                     <span class="qty-value">1</span>
@@ -255,6 +266,137 @@
                     </tbody>
                 </table>
             </div>
+
+            <div class="pos-cards-pager" id="posCardsPager" style="display:none">
+                <button type="button" id="posPagePrev" onclick="posCardsPage(-1)">‹ السابق</button>
+                <span id="posPageInfo">—</span>
+                <button type="button" id="posPageNext" onclick="posCardsPage(1)">التالي ›</button>
+            </div>
+
+            <script>
+                /* Card view = pages that fit the panel (no endless scrolling; search /
+                   barcode reach everything else). Display only: rows hidden by the search
+                   keep style.display='none'; paging uses its own class (.page-hidden). */
+                var posCardsState = { page: 0, pages: 1, sig: '', lastWheel: 0 };
+                function posCardsActive() {
+                    var w = document.getElementById('posProductsWrapper');
+                    return !!(w && w.classList.contains('view-cards'));
+                }
+                function posMatchedRows() {
+                    return Array.prototype.filter.call(
+                        document.querySelectorAll('#productsTableBody .product-row'),
+                        function (r) { return r.style.display !== 'none'; });
+                }
+                function posRowsSig(rows) {
+                    return rows.map(function (r) { return r.dataset.productId; }).join(',');
+                }
+                function posPaginateCards(resetPage) {
+                    var w = document.getElementById('posProductsWrapper');
+                    var pager = document.getElementById('posCardsPager');
+                    var all = document.querySelectorAll('#productsTableBody .product-row');
+                    if (!posCardsActive()) {
+                        all.forEach(function (r) { r.classList.remove('page-hidden'); });
+                        if (pager) pager.style.display = 'none';
+                        return;
+                    }
+                    var rows = posMatchedRows();
+                    var sig = posRowsSig(rows);
+                    if (resetPage || sig !== posCardsState.sig) posCardsState.page = 0;
+                    posCardsState.sig = sig;
+                    // measure with every card shown (same task -> no paint, no flicker)
+                    all.forEach(function (r) { r.classList.remove('page-hidden'); });
+                    w.style.removeProperty('--pos-thumb-h');
+                    var tbody = document.getElementById('productsTableBody');
+                    var tcs = getComputedStyle(tbody);
+                    var cols = Math.max(1, tcs.gridTemplateColumns.split(' ').filter(Boolean).length);
+                    var firstRow = rows.slice(0, cols);
+                    function rowHeight() {
+                        var h = 0;
+                        firstRow.forEach(function (r) { h = Math.max(h, r.offsetHeight); });
+                        return h;
+                    }
+                    var cardH = rowHeight();
+                    var gap = parseFloat(tcs.rowGap) || 10;
+                    var cs = getComputedStyle(w);
+                    var avail = w.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+                    var MIN_ROWS = 2;
+                    var fitRows = cardH ? Math.floor((avail + gap) / (cardH + gap)) : 1;
+                    if (cardH && fitRows < MIN_ROWS && rows.length > cols) {
+                        // shrink the card image just enough for MIN_ROWS rows to fit
+                        var thumb = firstRow[0].querySelector('.product-thumb, .product-thumb-placeholder');
+                        var thumbH = thumb ? thumb.offsetHeight : 0;
+                        var target = (avail - gap * (MIN_ROWS - 1)) / MIN_ROWS;
+                        if (thumbH) {
+                            w.style.setProperty('--pos-thumb-h', Math.max(36, Math.floor(thumbH - (cardH - target)) - 1) + 'px');
+                            cardH = rowHeight();
+                        }
+                        fitRows = MIN_ROWS;   // the panel scrolls a little only on very small screens
+                    }
+                    fitRows = Math.max(1, fitRows);
+                    var size = cols * fitRows;
+                    posCardsState.pages = Math.max(1, Math.ceil(rows.length / size));
+                    posCardsState.page = Math.min(posCardsState.page, posCardsState.pages - 1);
+                    var from = posCardsState.page * size, to = from + size;
+                    rows.forEach(function (r, i) { r.classList.toggle('page-hidden', i < from || i >= to); });
+                    w.scrollTop = 0;
+                    if (pager) {
+                        pager.style.display = posCardsState.pages > 1 ? 'flex' : 'none';
+                        document.getElementById('posPageInfo').textContent =
+                            'صفحة ' + (posCardsState.page + 1) + ' من ' + posCardsState.pages + ' · ' + rows.length + ' صنف';
+                        document.getElementById('posPagePrev').disabled = posCardsState.page === 0;
+                        document.getElementById('posPageNext').disabled = posCardsState.page >= posCardsState.pages - 1;
+                    }
+                }
+                function posCardsPage(delta) {
+                    posCardsState.page = Math.max(0, Math.min(posCardsState.pages - 1, posCardsState.page + delta));
+                    posCardsState.sig = posRowsSig(posMatchedRows());
+                    posPaginateCards(false);
+                }
+                (function () {
+                    var tbody = document.getElementById('productsTableBody');
+                    var w = document.getElementById('posProductsWrapper');
+                    var pending = false;
+                    function schedule() {
+                        if (pending) return;
+                        pending = true;
+                        requestAnimationFrame(function () { pending = false; posPaginateCards(false); });
+                    }
+                    // search filtering (style) and re-rendered rows (childList) -> re-page
+                    if (tbody && window.MutationObserver) {
+                        new MutationObserver(schedule).observe(tbody, {
+                            childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+                    }
+                    window.addEventListener('resize', schedule);
+                    window.addEventListener('load', schedule);   // images / fonts change card height
+                    // mouse wheel flips pages in card view
+                    if (w) w.addEventListener('wheel', function (e) {
+                        if (!posCardsActive() || posCardsState.pages < 2 || Math.abs(e.deltaY) < 10) return;
+                        e.preventDefault();
+                        var now = Date.now();
+                        if (now - posCardsState.lastWheel < 350) return;
+                        posCardsState.lastWheel = now;
+                        posCardsPage(e.deltaY > 0 ? 1 : -1);
+                    }, { passive: false });
+                })();
+
+                function setPosProductsView(mode) {
+                    mode = mode === 'cards' ? 'cards' : 'table';
+                    var w = document.getElementById('posProductsWrapper');
+                    if (w) w.classList.toggle('view-cards', mode === 'cards');
+                    document.querySelectorAll('.pos-view-toggle button').forEach(function (b) {
+                        b.classList.toggle('active', b.getAttribute('data-view') === mode);
+                    });
+                    try { localStorage.setItem('pos_products_view', mode); } catch (e) {}
+                    posPaginateCards(true);
+                    var sel = w && w.querySelector('.product-row.selected:not(.page-hidden)');
+                    if (sel) sel.scrollIntoView({ block: 'nearest' });
+                }
+                (function () {
+                    var m = 'table';
+                    try { m = localStorage.getItem('pos_products_view') || 'table'; } catch (e) {}
+                    setPosProductsView(m);
+                })();
+            </script>
 
             <!-- Cashier Shift Live Dashboard & Recent Invoices -->
             <div class="pos-shift-bar">
@@ -574,6 +716,7 @@
 
     {% csrf_token %}
     <script src="{% static 'js/pos.js' %}?v={% now 'U' %}"></script>
+    <script src="{% static 'js/pos_customer_picker.js' %}?v={% now 'U' %}"></script>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <script>
         POS.currentUserId = {{ request.user.id|default:'null' }};

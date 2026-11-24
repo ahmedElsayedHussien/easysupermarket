@@ -6,3 +6,8 @@ class CoreConfig(AppConfig):
     name = 'apps.tenant.core'
     label = 'core'
     verbose_name = 'الإعدادات الأساسية'
+
+    def ready(self):
+        # Uploaded images -> resized WebP files (apps.tenant.core.images)
+        from apps.tenant.core.images import connect_image_optimizers
+        connect_image_optimizers()

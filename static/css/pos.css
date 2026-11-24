@@ -1729,3 +1729,299 @@
     min-width: 360px !important;
   }
 }
+
+/* ============================================================
+   PRODUCTS VIEW TOGGLE (table <-> cards)
+   Display only: the cards ARE the same <tr class="product-row"> elements
+   (same data-* attributes, click / search / qty handlers untouched).
+   ============================================================ */
+.pos-view-toggle {
+  margin-inline-start: auto;
+  display: inline-flex;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.pos-view-toggle button {
+  background: #0f172a;
+  color: #94a3b8;
+  border: none;
+  padding: 3px 10px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  font-family: 'Tajawal', 'Inter', sans-serif;
+  cursor: pointer;
+}
+.pos-view-toggle button + button { border-inline-start: 1px solid #334155; }
+.pos-view-toggle button:hover { color: #f8fafc; }
+.pos-view-toggle button.active { background: #ff7300; color: #0b1220; }
+
+.pos-products-wrapper.view-cards { padding: 10px; }
+.view-cards .pos-products-table { min-width: 0; display: block; }
+.view-cards .pos-products-table thead { display: none; }
+.view-cards .pos-products-table tbody {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+/* non-product rows ("لا توجد منتجات") span the whole grid */
+.view-cards .pos-products-table tbody tr:not(.product-row) { display: block; grid-column: 1 / -1; }
+.view-cards .pos-products-table tbody tr:not(.product-row) td { display: block; }
+
+.view-cards .pos-products-table tbody tr.product-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: #111a2e;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 8px;
+  gap: 4px;
+  box-shadow: none;
+  transition: border-color 0.14s ease, transform 0.14s ease, box-shadow 0.14s ease;
+}
+.view-cards .pos-products-table tbody tr.product-row:nth-child(even) { background: #111a2e; }
+.view-cards .pos-products-table tbody tr.product-row:hover {
+  background: #15203a;
+  border-color: #ff7300;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transform: translateY(-1px);
+}
+.view-cards .pos-products-table tbody tr.product-row.selected {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px #38bdf8, 0 4px 14px rgba(56, 189, 248, 0.2);
+}
+
+.view-cards .pos-products-table tbody tr.product-row td {
+  display: block;
+  padding: 0;
+  border: none;
+  text-align: center;
+}
+
+/* image + name */
+.view-cards .pos-products-table tbody tr.product-row td.td-product { order: 1; padding: 0; text-align: center; }
+.view-cards td.td-product > div {
+  display: flex !important;
+  flex-direction: column;
+  align-items: stretch !important;
+  gap: 6px !important;
+}
+.view-cards td.td-product .product-thumb,
+.view-cards td.td-product .product-thumb-placeholder {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+}
+.view-cards td.td-product .product-thumb { object-fit: cover; background: #1e293b; }
+.view-cards td.td-product .product-thumb-placeholder { font-size: 2.4rem; }
+.view-cards .pos-products-table tbody tr.product-row td .product-name {
+  font-size: 0.86rem;
+  line-height: 1.3;
+  min-height: 2.6em;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.view-cards .pos-products-table tbody tr.product-row td .product-barcode-tag { font-size: 0.68rem; margin-top: 2px; }
+
+/* price, unit, qty */
+.view-cards .pos-products-table tbody tr.product-row td.price-col { order: 2; font-size: 1rem; white-space: normal; }
+.view-cards .pos-products-table tbody tr.product-row td.unit-col { order: 3; font-size: 0.72rem; color: #94a3b8; }
+.view-cards .pos-products-table tbody tr.product-row td.qty-col { order: 4; margin-top: auto; padding-top: 4px; }
+.view-cards .pos-products-table tbody tr.product-row td.cost-col,
+.view-cards .pos-products-table tbody tr.product-row td.last-sale-col { display: none; }
+
+/* available stock: its own labelled line under the price (JS keeps updating the number
+   and its colour as items go into the cart) */
+.view-cards .pos-products-table tbody tr.product-row td.stock-cell {
+  order: 3;
+  align-self: center;
+  background: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 999px;
+  padding: 1px 10px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #22d3ee;
+  font-family: 'Inter', 'Tajawal', monospace;
+}
+.view-cards .pos-products-table tbody tr.product-row td.stock-cell::before {
+  content: 'المتاح: ';
+  font-family: 'Tajawal', 'Inter', sans-serif;
+  font-weight: 600;
+  color: #94a3b8;
+}
+.view-cards .pos-products-table tbody tr.product-row td.unit-col { order: 4; }
+.view-cards .pos-products-table tbody tr.product-row td.qty-col { order: 5; }
+.view-cards .pos-products-table tbody tr.product-row[data-product-type="SERVICE"] td.stock-cell { display: none; }
+
+/* Card view paging: one screenful of cards at a time */
+.pos-products-wrapper.view-cards { overflow-y: hidden; }
+.view-cards .pos-products-table tbody tr.product-row.page-hidden { display: none; }
+.pos-cards-pager {
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 10px;
+  background: #0f172a;
+  border-top: 1px solid #1e293b;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  font-weight: 700;
+}
+.pos-cards-pager button {
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 4px 14px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-family: 'Tajawal', 'Inter', sans-serif;
+  cursor: pointer;
+}
+.pos-cards-pager button:hover:not(:disabled) { border-color: #ff7300; color: #ff9f43; }
+.pos-cards-pager button:disabled { opacity: 0.4; cursor: default; }
+/* compact cards so more rows fit a page */
+.view-cards .pos-products-table tbody tr.product-row { gap: 3px; padding: 7px; }
+.view-cards td.td-product .product-thumb,
+.view-cards td.td-product .product-thumb-placeholder { aspect-ratio: 16 / 10; }
+.view-cards td.td-product .product-thumb { object-fit: contain; }
+.view-cards td.td-product .product-thumb-placeholder { font-size: 2rem; }
+.view-cards td.td-product > div { gap: 4px !important; }
+
+/* image height set by the pager when it must shrink cards to fit two rows */
+.view-cards td.td-product .product-thumb,
+.view-cards td.td-product .product-thumb-placeholder { height: var(--pos-thumb-h, auto); }
+.pos-products-wrapper.view-cards { overflow-y: auto; }
+.view-cards td.td-product .product-thumb-placeholder { font-size: min(2rem, calc(var(--pos-thumb-h, 200px) * 0.6)); overflow: hidden; }
+
+/* ============================================================
+   POS CUSTOMER PICKER (type-ahead over the hidden #posCustomer select)
+   ============================================================ */
+.pos-customer-picker { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+.pos-customer-picker .pcp-input {
+  width: 190px;
+  background: #131c31;
+  border: 1px solid #2a3b55;
+  border-radius: 4px;
+  color: #f8fafc;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  outline: none;
+  transition: width 0.15s ease, border-color 0.15s ease;
+}
+.pos-customer-picker .pcp-input::placeholder { color: #94a3b8; font-weight: 600; }
+.pos-customer-picker .pcp-input:focus { border-color: #00e5ff; width: 240px; }
+.pos-customer-picker.has-customer .pcp-input { color: #00e5ff; border-color: rgba(0, 229, 255, 0.45); }
+.pos-customer-picker .pcp-clear {
+  display: none;
+  background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 0.75rem; padding: 0 2px;
+}
+.pos-customer-picker.has-customer .pcp-clear { display: inline; }
+.pos-customer-picker .pcp-clear:hover { color: #ff4757; }
+.pos-customer-picker .pcp-kbd {
+  font-family: 'Inter', monospace; font-size: 0.62rem; color: #94a3b8;
+  border: 1px solid #334155; border-radius: 3px; padding: 0 4px; background: #0f172a;
+}
+.pcp-list {
+  position: fixed;
+  direction: rtl;
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  z-index: 10050;
+}
+.pcp-list .pcp-item {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 10px; border-radius: 6px; cursor: pointer;
+}
+.pcp-list .pcp-item .pcp-name { color: #f8fafc; font-size: 0.85rem; font-weight: 700; }
+.pcp-list .pcp-item .pcp-sub { color: #94a3b8; font-size: 0.7rem; font-family: 'Inter', 'Tajawal', sans-serif; }
+.pcp-list .pcp-item:hover { background: #1e293b; }
+.pcp-list .pcp-item.active { background: rgba(255, 115, 0, 0.18); box-shadow: inset 3px 0 0 #ff7300; }
+.pcp-list .pcp-item.current .pcp-name::after { content: ' ✓'; color: #34d399; }
+.pcp-list .pcp-empty { padding: 8px 10px; color: #94a3b8; font-size: 0.8rem; }
+
+/* Invoice tabs: customer + item count per tab */
+.pos-tab-text { display: flex; flex-direction: column; line-height: 1.15; }
+.pos-tab-name { display: inline-flex; align-items: center; gap: 4px; }
+.pos-tab-count {
+  background: #ff7300; color: #0b1220; border-radius: 999px;
+  font-size: 0.62rem; font-weight: 800; padding: 0 5px; line-height: 1.4; font-family: 'Inter', sans-serif;
+}
+.pos-tab-customer {
+  font-size: 0.66rem; font-weight: 600; color: #64748b;
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pos-tab-customer.has-customer { color: #00e5ff; }
+.pos-tab.active .pos-tab-customer:not(.has-customer) { color: #94a3b8; }
+.pcp-list .pcp-item .pcp-sub { text-align: right; unicode-bidi: plaintext; }
+
+/* "العميل:" label opens the full customer list */
+.pos-field-label.pcp-open-list { cursor: pointer; border-radius: 4px; padding: 1px 3px; transition: color 0.15s, background 0.15s; }
+.pos-field-label.pcp-open-list:hover,
+.pos-field-label.pcp-open-list:focus-visible { color: #00e5ff; background: rgba(0, 229, 255, 0.1); outline: none; }
+
+/* Customer list popup */
+.pcp-modal-overlay {
+  position: fixed; inset: 0; z-index: 10060;
+  background: rgba(2, 6, 23, 0.72);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 6vh 16px 16px;
+}
+.pcp-modal-overlay[hidden] { display: none; }
+.pcp-modal {
+  direction: rtl;
+  width: min(640px, 100%);
+  max-height: 84vh;
+  display: flex; flex-direction: column; gap: 10px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-top: 3px solid #00e5ff;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  font-family: 'Tajawal', 'Inter', sans-serif;
+}
+.pcp-modal-head { display: flex; align-items: center; justify-content: space-between; }
+.pcp-modal-head h3 { margin: 0; color: #f8fafc; font-size: 1.05rem; font-weight: 800; }
+.pcp-modal-x { background: none; border: none; color: #94a3b8; font-size: 1rem; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.pcp-modal-x:hover { color: #ff4757; background: rgba(255, 71, 87, 0.12); }
+.pcp-modal-search {
+  width: 100%; box-sizing: border-box;
+  background: #131c31; color: #f8fafc;
+  border: 1px solid #00e5ff; border-radius: 8px;
+  padding: 10px 12px; font-size: 0.95rem; font-family: inherit; outline: none;
+}
+.pcp-modal-count { color: #94a3b8; font-size: 0.78rem; }
+.pcp-modal-scroll { overflow-y: auto; min-height: 120px; border: 1px solid #1e293b; border-radius: 8px; }
+.pcp-modal-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.pcp-modal-table thead th {
+  position: sticky; top: 0; background: #131c31; color: #cbd5e1; font-weight: 800;
+  text-align: right; padding: 8px 12px; border-bottom: 2px solid #00e5ff; font-size: 0.8rem;
+}
+.pcp-modal-table tbody tr { cursor: pointer; border-bottom: 1px solid #1e293b; }
+.pcp-modal-table tbody td { padding: 8px 12px; color: #f8fafc; font-weight: 600; }
+.pcp-modal-table tbody td[dir="ltr"] { color: #94a3b8; font-family: 'Inter', monospace; font-size: 0.8rem; text-align: right; }
+.pcp-modal-table tbody tr:hover { background: #1e293b; }
+.pcp-modal-table tbody tr.active { background: rgba(0, 229, 255, 0.14); box-shadow: inset -3px 0 0 #00e5ff; }
+.pcp-modal-table tbody tr.cash td:first-child { color: #94a3b8; }
+.pcp-modal-table .pcp-check { color: #34d399; font-weight: 800; }
+.pcp-modal-empty { text-align: center; color: #94a3b8; padding: 18px; }
+.pcp-modal-foot { color: #64748b; font-size: 0.72rem; text-align: center; }

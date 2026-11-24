@@ -6,7 +6,7 @@ import datetime
 from .models import (
     Treasury, BankAccount, EWallet, Expense, ExpenseItem, Account, Voucher, InternalTransfer,
     Cheque, ChequeBook, ChequeType, ChequeStatus, FixedAsset, AssetDepreciationLog,
-    Loan, LoanInstallment
+    Loan, LoanInstallment, EServiceCommissionRule
 )
 from apps.tenant.partners.models import Partner
 
@@ -1327,3 +1327,39 @@ class LoanInstallmentPayForm(forms.Form):
 
 
 
+
+
+class EServiceCommissionRuleForm(BaseGlassForm):
+    """Commission rule for payment services (fixed + percent, clamped to min / max)."""
+
+    class Meta:
+        model = EServiceCommissionRule
+        fields = ['name', 'transaction_type', 'pos_machine', 'machine_type', 'fixed_amount', 'percent',
+                  'min_amount', 'max_amount', 'is_active']
+
+    def __init__(self, *args, machines=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if machines is not None:
+            self.fields['pos_machine'].queryset = machines
+        self.fields['pos_machine'].empty_label = '— كل الماكينات —'
+        self.fields['machine_type'].choices = [('', '— كل الأنواع —')] + [
+            c for c in self.fields['machine_type'].choices if c[0]]
+
+    def clean(self):
+        cleaned = super().clean()
+        for f in ('fixed_amount', 'percent', 'min_amount', 'max_amount'):
+            v = cleaned.get(f)
+            if v is not None and v < 0:
+                self.add_error(f, 'لا يمكن أن تكون القيمة سالبة.')
+        pct = cleaned.get('percent')
+        if pct is not None and pct > 100:
+            self.add_error('percent', 'النسبة لا يمكن أن تتجاوز 100%.')
+        mn, mx = cleaned.get('min_amount'), cleaned.get('max_amount')
+        if mn and mx and mx < mn:
+            self.add_error('max_amount', 'الحد الأقصى يجب أن يكون أكبر من أو يساوي الحد الأدنى.')
+        machine, mtype = cleaned.get('pos_machine'), cleaned.get('machine_type')
+        if machine and mtype and machine.machine_type != mtype:
+            self.add_error('machine_type', 'نوع الماكينة لا يطابق الماكينة المختارة. اتركه فارغاً عند اختيار ماكينة محددة.')
+        elif machine:
+            cleaned['machine_type'] = ''
+        return cleaned

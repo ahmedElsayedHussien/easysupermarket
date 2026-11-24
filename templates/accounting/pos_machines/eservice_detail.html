@@ -2,13 +2,13 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="glass-container" style="padding:2rem; max-width:800px; margin:0 auto;">
+<div class="glass-container" style="padding:2rem; max-width:860px; margin:0 auto;">
     <div class="top-header" style="border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:1rem; margin-bottom:1.5rem;">
         <h2 style="margin:0;color:#fff;">
             <i class="fas fa-file-invoice-dollar" style="color:#ff7300;margin-left:0.5rem;"></i>{{ title }}
         </h2>
-        <div style="display:flex; gap:1rem;">
-            {% if transaction.status == 'DRAFT' %}
+        <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+            {% if can_post %}
             <form method="POST" action="{% url 'accounting:eservice_post' transaction.pk %}" style="margin:0;">
                 {% csrf_token %}
                 <button type="submit" class="btn-orange" style="background:#2ed573; border-color:#2ed573;" onclick="return confirm('هل أنت متأكد من ترحيل هذه الحركة؟');">
@@ -22,7 +22,23 @@
         </div>
     </div>
 
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; margin-bottom:2rem;">
+    {% if messages %}
+    {% for message in messages %}
+    <div style="margin:0 0 1rem;padding:0.75rem 1rem;border-radius:8px;
+        {% if 'error' in message.tags %}background:rgba(255,59,48,0.1);border:1px solid #ff3b30;color:#ff3b30;
+        {% else %}background:rgba(46,213,115,0.1);border:1px solid #2ed573;color:#2ed573;{% endif %}">{{ message }}</div>
+    {% endfor %}
+    {% endif %}
+
+    {% if transaction.status == 'CANCELLED' %}
+    <div style="margin-bottom:1.5rem;padding:1rem;border-radius:8px;background:rgba(255,59,48,0.08);border:1px solid rgba(255,59,48,0.4);color:#fca5a5;">
+        <b>ملغاة</b> بواسطة {{ transaction.cancelled_by|display_username|default:"—" }} في {{ transaction.cancelled_at|date:"Y-m-d H:i" }}
+        — السبب: {{ transaction.cancel_reason|default:"—" }}
+        {% if reversal_entry %}<br>القيد العكسي: <a href="{% url 'accounting:journal_detail' reversal_entry.pk %}" style="color:#ff7300;">{{ reversal_entry.reference }}</a>{% endif %}
+    </div>
+    {% endif %}
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:1.5rem; margin-bottom:2rem;">
         <div>
             <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">رقم العملية</p>
             <div style="font-size:1.1rem; color:#00e5ff; font-family:monospace; font-weight:bold;">{{ transaction.transaction_number }}</div>
@@ -35,6 +51,7 @@
             <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">الحالة</p>
             <div>
                 {% if transaction.status == 'POSTED' %}<span class="badge-status badge-success">مرحل</span>
+                {% elif transaction.status == 'CANCELLED' %}<span class="badge-status badge-danger">ملغي</span>
                 {% else %}<span class="badge-status badge-warning">مسودة</span>{% endif %}
             </div>
         </div>
@@ -46,29 +63,31 @@
 
     <div style="background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; margin-bottom:2rem;">
         <h3 style="margin-top:0; color:#ff7300; border-bottom:1px solid rgba(255,115,0,0.3); padding-bottom:0.5rem; margin-bottom:1rem;">تفاصيل العملية</h3>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.5rem;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:1.5rem;">
             <div>
                 <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">نوع العملية</p>
-                <div style="font-size:1.1rem; color:#fff;">{{ transaction.get_transaction_type_display }}</div>
+                <div style="font-size:1.1rem; color:#fff;">{{ transaction.get_transaction_type_display }}{% if transaction.paid_on_credit %} <span style="color:#fbbf24;">(آجل)</span>{% endif %}</div>
             </div>
             <div>
                 <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">المصدر (ماكينة/محفظة)</p>
-                <div style="font-size:1.1rem; color:#fff;">
-                    {% if transaction.source_type == 'MACHINE' and transaction.pos_machine %}
-                        {{ transaction.pos_machine.name }}
-                    {% elif transaction.source_type == 'EWALLET' and transaction.ewallet %}
-                        {{ transaction.ewallet.name }}
-                    {% else %}
-                        —
-                    {% endif %}
-                </div>
+                <div style="font-size:1.1rem; color:#fff;">{{ transaction.source_name }}</div>
             </div>
             <div>
                 <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">الخزينة/الدرج</p>
                 <div style="font-size:1.1rem; color:#fff;">{{ transaction.treasury.name|default:"—" }}</div>
             </div>
             <div>
-                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">رقم قيد اليومية</p>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">الوردية</p>
+                <div style="font-size:1.1rem; color:#fff;">{{ transaction.pos_session|default:"—" }}</div>
+            </div>
+            {% if transaction.agent %}
+            <div>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">المندوب / المورد</p>
+                <div style="font-size:1.1rem; color:#fff;">{{ transaction.agent.name }}</div>
+            </div>
+            {% endif %}
+            <div>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">قيد اليومية</p>
                 <div style="font-size:1.1rem;">
                     {% if transaction.journal_entry %}
                         <a href="{% url 'accounting:journal_detail' transaction.journal_entry.pk %}" style="color:#ff7300;">{{ transaction.journal_entry.reference }}</a>
@@ -77,33 +96,60 @@
                     {% endif %}
                 </div>
             </div>
+            {% if transaction.invoice %}
+            <div>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">فاتورة قديمة (نظام سابق)</p>
+                <div style="font-size:1rem;"><a href="{% url 'invoicing:invoice_detail' transaction.invoice.pk %}" style="color:#94a3b8;">{{ transaction.invoice.invoice_number }}</a></div>
+            </div>
+            {% endif %}
         </div>
     </div>
 
     <div style="background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; margin-bottom:2rem;">
         <h3 style="margin-top:0; color:#2ed573; border-bottom:1px solid rgba(46,213,115,0.3); padding-bottom:0.5rem; margin-bottom:1rem;">التفاصيل المالية</h3>
-        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1rem;">
             <div style="text-align:center;">
                 <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">المبلغ الأصلي</p>
                 <div style="font-size:1.4rem; color:#fff; font-weight:bold;">{{ transaction.principal_amount|floatformat:2 }}</div>
             </div>
-            <div style="text-align:center; border-right:1px solid rgba(255,255,255,0.1); border-left:1px solid rgba(255,255,255,0.1);">
-                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">عمولة الإيراد (للمحل)</p>
+            <div style="text-align:center;">
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">عمولة المحل</p>
                 <div style="font-size:1.4rem; color:#2ed573; font-weight:bold;">+{{ transaction.commission_revenue|floatformat:2 }}</div>
             </div>
             <div style="text-align:center;">
-                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">عمولة المصروف (للمندوب)</p>
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">رسوم المندوب</p>
                 <div style="font-size:1.4rem; color:#ff3b30; font-weight:bold;">-{{ transaction.commission_expense|floatformat:2 }}</div>
             </div>
+            <div style="text-align:center;">
+                <p style="color:#94a3b8; font-size:0.9rem; margin-bottom:0.25rem;">أثر النقدية على الدرج</p>
+                <div style="font-size:1.4rem; color:#00e5ff; font-weight:bold;"><bdi dir="ltr">{{ transaction.cash_effect|floatformat:2 }}</bdi></div>
+            </div>
         </div>
+        {% if transaction.commission_overridden %}
+        <p style="color:#fbbf24;margin:1rem 0 0;"><i class="fas fa-pen"></i> تم تعديل العمولة يدوياً (تختلف عن قاعدة العمولة).</p>
+        {% endif %}
     </div>
 
     {% if transaction.description %}
-    <div style="background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px;">
+    <div style="background:rgba(0,0,0,0.2); padding:1.5rem; border-radius:8px; margin-bottom:2rem;">
         <h3 style="margin-top:0; color:#fff; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:0.5rem; margin-bottom:1rem;">البيان</h3>
         <p style="color:#cbd5e1; margin:0; line-height:1.6;">{{ transaction.description|linebreaksbr }}</p>
     </div>
     {% endif %}
 
+    {% if can_cancel %}
+    <form method="POST" action="{% url 'accounting:eservice_cancel' transaction.pk %}"
+          style="background:rgba(255,59,48,0.06); padding:1.5rem; border-radius:8px; border:1px solid rgba(255,59,48,0.3);"
+          onsubmit="return confirm('{% if transaction.status == 'POSTED' %}سيتم تسجيل قيد عكسي بتاريخ اليوم وإلغاء العملية. هل أنت متأكد؟{% else %}سيتم إلغاء المسودة. هل أنت متأكد؟{% endif %}');">
+        {% csrf_token %}
+        <h3 style="margin-top:0; color:#ff3b30; font-size:1.1rem;"><i class="fas fa-ban"></i> إلغاء العملية</h3>
+        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+            <input type="text" name="reason" class="form-control" required maxlength="255" placeholder="سبب الإلغاء (إجباري)" style="flex:1; min-width:220px;">
+            <button type="submit" class="btn-orange" style="background:#ff3b30; border-color:#ff3b30;">
+                <i class="fas fa-undo"></i> إلغاء{% if transaction.status == 'POSTED' %} بقيد عكسي{% endif %}
+            </button>
+        </div>
+    </form>
+    {% endif %}
 </div>
 {% endblock %}

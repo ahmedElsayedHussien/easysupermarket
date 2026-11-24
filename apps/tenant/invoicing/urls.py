@@ -6,6 +6,7 @@ urlpatterns = [
     path('pos/', views.pos_view, name='pos'),
     path('pos/open-shift/', views.pos_open_shift, name='pos_open_shift'),
     path('pos/close-shift/', views.pos_close_shift, name='pos_close_shift'),
+    path('pos/shifts/<int:pk>/charge-cashier/', views.pos_shift_charge_cashier, name='pos_shift_charge_cashier'),
     path('pos/api/shift-stats/', views.pos_shift_stats_api, name='pos_shift_stats_api'),
     path('purchase/create/', views.purchase_invoice_view, name='purchase_invoice'),
     path('sales/', views.sales_invoice_list, name='sales_invoice_list'),

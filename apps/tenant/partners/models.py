@@ -212,7 +212,15 @@ class Partner(models.Model):
             cheque_type='PAYABLE', status__in=['ISSUED', 'CLEARED']
         ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
 
-        res = net_opening + (purchases + split_purchases) - (pur_returns + split_pur_returns) - (payments + voucher_payments + chq_payments)
+        # شحن ماكينات خدمات الدفع آجل من المندوب (يزيد مستحقات المورد)
+        from apps.tenant.accounting.models import EServiceTransaction
+        es = self.eservice_recharges.filter(
+            transaction_type=EServiceTransaction.MERCHANT_RECHARGE, paid_on_credit=True,
+            status=EServiceTransaction.POSTED,
+        ).aggregate(p=Sum('principal_amount'), f=Sum('commission_expense'))
+        credit_recharges = (es['p'] or Decimal('0')) + (es['f'] or Decimal('0'))
+
+        res = net_opening + (purchases + split_purchases + credit_recharges) - (pur_returns + split_pur_returns) - (payments + voucher_payments + chq_payments)
         self._cached_supplier_balance = res
         return res
 

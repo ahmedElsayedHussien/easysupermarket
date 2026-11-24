@@ -1437,6 +1437,11 @@ class POSMachine(models.Model):
         related_name='pos_machines', verbose_name='حساب الدليل'
     )
     is_active = models.BooleanField(default=True, verbose_name='نشطة')
+    min_balance_alert = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        verbose_name='تنبيه عند انخفاض الرصيد عن',
+        help_text='0 = بدون تنبيه. يظهر تنبيه في لوحة خدمات الدفع عند نزول رصيد الماكينة عن هذا المبلغ.'
+    )
     notes = models.TextField(blank=True, verbose_name='ملاحظات')
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -1453,6 +1458,12 @@ class POSMachine(models.Model):
         if not self.account:
             return Decimal('0')
         return self.account.current_balance
+
+    @property
+    def is_low_balance(self):
+        """True when a minimum-balance alert is set and the balance dropped below it."""
+        return bool(self.min_balance_alert and self.min_balance_alert > 0
+                    and self.current_balance < self.min_balance_alert)
 
 
 @receiver(post_save, sender=POSMachine)
@@ -1523,10 +1534,14 @@ class EServiceTransaction(models.Model):
 
     DRAFT = 'DRAFT'
     POSTED = 'POSTED'
+    CANCELLED = 'CANCELLED'
     STATUS_CHOICES = [
         (DRAFT, 'مسودة'),
         (POSTED, 'مرحل'),
+        (CANCELLED, 'ملغي (بقيد عكسي)'),
     ]
+
+    REVENUE_ACCOUNT_CODE = '4240'   # إيرادات عمولات خدمات الدفع
 
     transaction_number = models.CharField(
         max_length=30, unique=True, blank=True, verbose_name='رقم العملية'
@@ -1568,6 +1583,26 @@ class EServiceTransaction(models.Model):
         max_length=10, choices=STATUS_CHOICES, default=DRAFT, verbose_name='الحالة'
     )
 
+    # Cash drawer reconciliation: the cashier's open shift when the operation was made
+    pos_session = models.ForeignKey(
+        'invoicing.POSSession', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='eservice_transactions', verbose_name='الوردية'
+    )
+    # Merchant recharge: the agent (supplier) and whether it was paid now or on credit
+    agent = models.ForeignKey(
+        'partners.Partner', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='eservice_recharges', verbose_name='المندوب / المورد'
+    )
+    paid_on_credit = models.BooleanField(
+        default=False, verbose_name='شحن آجل (يُسجل على حساب المندوب بدلاً من الدفع من الخزينة)'
+    )
+    commission_overridden = models.BooleanField(default=False, verbose_name='تم تعديل العمولة يدوياً')
+    cancelled_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+', verbose_name='ألغاها'
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الإلغاء')
+    cancel_reason = models.CharField(max_length=255, blank=True, default='', verbose_name='سبب الإلغاء')
+
     invoice = models.OneToOneField(
         'invoicing.Invoice', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='eservice_transaction', verbose_name='فاتورة المبيعات'
@@ -1585,6 +1620,10 @@ class EServiceTransaction(models.Model):
         verbose_name = 'حركة خدمات دفع'
         verbose_name_plural = 'حركات خدمات الدفع'
         ordering = ['-date', '-created_at']
+        permissions = [
+            ('override_eservice_commission', 'تعديل عمولة خدمات الدفع يدوياً'),
+            ('cancel_eservicetransaction', 'إلغاء حركة خدمات دفع'),
+        ]
 
     def __str__(self):
         return f'{self.transaction_number} - {self.get_transaction_type_display()} - {self.principal_amount}'
@@ -1600,6 +1639,26 @@ class EServiceTransaction(models.Model):
             return
         super().save(*args, **kwargs)
 
+    @property
+    def cash_effect(self):
+        """
+        Signed effect on the treasury / cash drawer once POSTED (0 otherwise):
+          CASH_OUT          -> -(principal - commission)   cash handed to the customer
+          CASH_IN           -> +(principal + commission)   cash received from the customer
+          MERCHANT_RECHARGE -> -(principal + agent fee)    cash paid to the agent (0 if on credit)
+        Single source of truth for shift reconciliation and dashboards.
+        """
+        if self.status != self.POSTED:
+            return Decimal('0')
+        principal = self.principal_amount or Decimal('0')
+        if self.transaction_type == self.CASH_OUT:
+            return -(principal - (self.commission_revenue or 0))
+        if self.transaction_type == self.CASH_IN:
+            return principal + (self.commission_revenue or 0)
+        if self.transaction_type == self.MERCHANT_RECHARGE:
+            return Decimal('0') if self.paid_on_credit else -(principal + (self.commission_expense or 0))
+        return Decimal('0')
+
     def get_source_account(self):
         if self.source_type == self.SOURCE_MACHINE and self.pos_machine:
             return self.pos_machine.account
@@ -1607,148 +1666,331 @@ class EServiceTransaction(models.Model):
             return self.ewallet.account
         return None
 
-    def post_transaction(self):
-        """Creates journal entries and service invoice, then marks as POSTED."""
-        from django.db import transaction as db_transaction
-        from django.core.exceptions import ValidationError
-        from apps.tenant.services.journal_service import _get_system_account
+    @property
+    def source_name(self):
+        if self.source_type == self.SOURCE_MACHINE and self.pos_machine:
+            return self.pos_machine.name
+        if self.source_type == self.SOURCE_EWALLET and self.ewallet:
+            return self.ewallet.name
+        return '—'
 
-        with db_transaction.atomic():
-            current_status = EServiceTransaction.objects.select_for_update().filter(pk=self.pk).values_list('status', flat=True).first()
+    # -- commission -----------------------------------------------------------
+
+    @property
+    def commission_field(self):
+        """The commission field that applies to this type: the store's revenue for
+        CASH_IN / CASH_OUT, the agent's fee (expense) for MERCHANT_RECHARGE."""
+        return 'commission_expense' if self.transaction_type == self.MERCHANT_RECHARGE else 'commission_revenue'
+
+    @property
+    def commission_amount(self):
+        return getattr(self, self.commission_field) or Decimal('0')
+
+    def apply_commission_rule(self, entered=None, can_override=False):
+        """
+        Sets the commission from the matching EServiceCommissionRule (most specific wins).
+
+        - entered is None (field left blank)        -> the computed value is used.
+        - no rule matches                           -> the entered value is accepted (manual).
+        - entered == computed                       -> fine.
+        - entered != computed and can_override      -> kept, commission_overridden=True.
+        - entered != computed and not can_override  -> ValidationError.
+        The field that does not apply to the type is reset to 0.
+        Returns the matching rule (or None).
+        """
+        other = 'commission_revenue' if self.commission_field == 'commission_expense' else 'commission_expense'
+        setattr(self, other, Decimal('0'))
+        machine = self.pos_machine if self.source_type == self.SOURCE_MACHINE else None
+        rule = EServiceCommissionRule.match(self.transaction_type, machine)
+        self.commission_overridden = False
+        if rule is None:
+            setattr(self, self.commission_field, Decimal(str(entered or 0)).quantize(Decimal('0.01')))
+            return None
+        computed = rule.compute(self.principal_amount)
+        if entered is None:
+            setattr(self, self.commission_field, computed)
+            return rule
+        entered = Decimal(str(entered)).quantize(Decimal('0.01'))
+        if entered != computed:
+            if not can_override:
+                raise ValidationError(
+                    f'العمولة المدخلة ({entered:,.2f} ج.م) تختلف عن العمولة المحسوبة حسب قاعدة '
+                    f'"{rule.name}" ({computed:,.2f} ج.م). تعديل العمولة يدوياً يحتاج صلاحية '
+                    f'"تعديل عمولة خدمات الدفع يدوياً".'
+                )
+            self.commission_overridden = True
+        setattr(self, self.commission_field, entered)
+        return rule
+
+    # -- accounts -------------------------------------------------------------
+
+    @classmethod
+    def revenue_account(cls):
+        """4240 - إيرادات عمولات خدمات الدفع (REVENUE under 4000), created lazily."""
+        acc = Account.objects.filter(code=cls.REVENUE_ACCOUNT_CODE).first()
+        if acc:
+            if not acc.is_active:
+                acc.is_active = True
+                acc.save(update_fields=['is_active'])
+            return acc
+        parent = Account.objects.filter(code='4000').first()
+        acc, _ = Account.objects.get_or_create(
+            code=cls.REVENUE_ACCOUNT_CODE,
+            defaults={'name': 'إيرادات عمولات خدمات الدفع', 'account_type': Account.REVENUE, 'parent': parent},
+        )
+        return acc
+
+    def agent_payable_account(self):
+        """The agent's (supplier's) payable ledger account; 2110 when it has none."""
+        if not self.agent_id:
+            return None
+        if self.agent.payable_account_id:
+            return self.agent.payable_account
+        from apps.tenant.services.journal_service import _get_system_account
+        return _get_system_account('2110')
+
+    # -- posting --------------------------------------------------------------
+
+    def _validate_for_posting(self):
+        principal = self.principal_amount or Decimal('0')
+        if principal <= 0:
+            raise ValidationError('المبلغ الأصلي يجب أن يكون أكبر من صفر.')
+        if (self.commission_revenue or 0) < 0 or (self.commission_expense or 0) < 0:
+            raise ValidationError('العمولات لا يمكن أن تكون سالبة.')
+        if self.transaction_type == self.CASH_OUT and (self.commission_revenue or 0) > principal:
+            raise ValidationError('عمولة المحل لا يمكن أن تتجاوز المبلغ الأصلي في عملية السحب.')
+        if self.transaction_type not in (self.CASH_OUT, self.CASH_IN, self.MERCHANT_RECHARGE):
+            raise ValidationError('نوع العملية غير صحيح.')
+
+        if self.transaction_type == self.MERCHANT_RECHARGE:
+            if self.agent_id and not self.agent.is_supplier:
+                raise ValidationError('المندوب يجب أن يكون مورداً (مورد أو عميل ومورد).')
+            if self.paid_on_credit and not self.agent_id:
+                raise ValidationError('الشحن الآجل يتطلب تحديد المندوب / المورد الذي سيُسجل عليه المبلغ.')
+        elif self.paid_on_credit:
+            raise ValidationError('الشحن الآجل متاح لعمليات شحن الماكينة من مندوب فقط.')
+
+        if not self.treasury_id or not self.treasury.account_id:
+            raise ValidationError('يجب تحديد خزينة/درج صحيح.')
+        session = self.pos_session
+        if session is not None and session.status == 'OPEN' and session.treasury_id != self.treasury_id:
+            raise ValidationError(
+                f'لديك وردية مفتوحة على خزينة "{session.treasury}". '
+                f'حركات النقدية يجب أن تتم على خزينة الوردية.'
+            )
+
+    def _check_balances(self, source_account, treasury_account):
+        """
+        Locks the ledger rows involved (pk order, no deadlocks) and verifies the money
+        that leaves is actually there: concurrent operations on the same machine /
+        drawer are serialized, so two cashiers can't spend the same balance.
+        """
+        ids = sorted({source_account.pk, treasury_account.pk})
+        locked = {a.pk: a for a in Account.objects.select_for_update().filter(pk__in=ids).order_by('pk')}
+        principal = self.principal_amount
+        if self.transaction_type == self.CASH_IN:
+            available = locked[source_account.pk].current_balance
+            if available < principal:
+                raise ValidationError(
+                    f'رصيد {self.source_name} الحالي ({available:,.2f} ج.م) غير كافٍ لتحويل '
+                    f'{principal:,.2f} ج.م للعميل. اشحن الرصيد أولاً.'
+                )
+        elif self.transaction_type == self.CASH_OUT:
+            needed = principal - (self.commission_revenue or 0)
+            available = locked[treasury_account.pk].current_balance
+            if available < needed:
+                raise ValidationError(
+                    f'رصيد الخزينة "{self.treasury.name}" الحالي ({available:,.2f} ج.م) غير كافٍ لصرف '
+                    f'{needed:,.2f} ج.م كاش للعميل.'
+                )
+        elif self.transaction_type == self.MERCHANT_RECHARGE and not self.paid_on_credit:
+            needed = principal + (self.commission_expense or 0)
+            available = locked[treasury_account.pk].current_balance
+            if available < needed:
+                raise ValidationError(
+                    f'رصيد الخزينة "{self.treasury.name}" الحالي ({available:,.2f} ج.م) غير كافٍ لدفع '
+                    f'{needed:,.2f} ج.م للمندوب. يمكنك تسجيل الشحن آجلاً على حساب المندوب.'
+                )
+
+    def post_transaction(self, user=None):
+        """
+        Books the operation's journal entry and marks it POSTED (DRAFT only).
+        No sales invoice is created: the store's commission is a payment-services
+        revenue (4240), unrelated to invoices / e-invoicing.
+        """
+        from apps.tenant.services.journal_service import delete_orphan_entries, unique_reference
+
+        with transaction.atomic():
+            current_status = EServiceTransaction.objects.select_for_update().filter(
+                pk=self.pk).values_list('status', flat=True).first()
             if current_status is not None:
                 self.status = current_status
             if self.status == self.POSTED:
                 raise ValidationError('هذه العملية مرحلة بالفعل.')
-            principal = self.principal_amount or Decimal('0')
-            if principal <= 0:
-                raise ValidationError('المبلغ الأصلي يجب أن يكون أكبر من صفر.')
-            if (self.commission_revenue or 0) < 0 or (self.commission_expense or 0) < 0:
-                raise ValidationError('العمولات لا يمكن أن تكون سالبة.')
-            if self.transaction_type == self.CASH_OUT and (self.commission_revenue or 0) > principal:
-                raise ValidationError('عمولة المحل لا يمكن أن تتجاوز المبلغ الأصلي في عملية السحب.')
+            if self.status != self.DRAFT:
+                raise ValidationError('لا يمكن ترحيل عملية ملغاة.')
+            self._validate_for_posting()
 
             source_account = self.get_source_account()
             if not source_account:
                 raise ValidationError('يجب تحديد ماكينة أو محفظة للعملية.')
-            if not self.treasury or not self.treasury.account:
-                raise ValidationError('يجب تحديد خزينة/درج صحيح.')
-
             treasury_account = self.treasury.account
-            revenue_account = _get_system_account('4200') or _get_system_account('4100')
-            expense_account = Cheque.get_bank_expense_account()  # 5305 - agent / machine / wallet fees
+            self._check_balances(source_account, treasury_account)
 
-            from apps.tenant.services.journal_service import delete_orphan_entries, unique_reference
+            principal = self.principal_amount
+            commission = self.commission_revenue or Decimal('0')
+            fee = self.commission_expense or Decimal('0')
+
             delete_orphan_entries(self.transaction_number)
-
             entry = JournalEntry.objects.create(
                 date=self.date,
                 reference=unique_reference(self.transaction_number),
-                description=f'{self.get_transaction_type_display()} - {self.description}'
+                description=f'{self.get_transaction_type_display()} - {self.transaction_number}'
+                            + (f' - {self.description}' if self.description else ''),
+                created_by=user if getattr(user, 'pk', None) else self.created_by,
+                content_type=ContentType.objects.get_for_model(EServiceTransaction) if self.pk else None,
+                object_id=self.pk,
             )
 
+            def line(account, debit, credit, desc):
+                JournalItem.objects.create(entry=entry, account=account, debit=debit, credit=credit,
+                                           description=desc)
+
             if self.transaction_type == self.CASH_OUT:
-                # Dr: Machine (gets customer's transfer) | Cr: Treasury (net cash out) + Cr: Revenue (commission)
-                net_cash_out = self.principal_amount - self.commission_revenue
-                JournalItem.objects.create(entry=entry, account=source_account,
-                                           debit=self.principal_amount, credit=0,
-                                           description='استلام تحويل من عميل')
-                JournalItem.objects.create(entry=entry, account=treasury_account,
-                                           debit=0, credit=net_cash_out,
-                                           description='صرف كاش للعميل')
-                if self.commission_revenue > 0 and revenue_account:
-                    JournalItem.objects.create(entry=entry, account=revenue_account,
-                                               debit=0, credit=self.commission_revenue,
-                                               description='عمولة المحل')
+                # Dr machine (customer's transfer) | Cr treasury (net cash) + Cr 4240 (commission)
+                line(source_account, principal, 0, 'استلام تحويل من عميل')
+                if principal - commission > 0:
+                    line(treasury_account, 0, principal - commission, 'صرف كاش للعميل')
+                if commission > 0:
+                    line(self.revenue_account(), 0, commission, 'عمولة خدمات الدفع')
 
             elif self.transaction_type == self.CASH_IN:
-                # Dr: Treasury (gross cash) | Cr: Machine (sends transfer) + Cr: Revenue (commission)
-                gross_cash_in = self.principal_amount + self.commission_revenue
-                JournalItem.objects.create(entry=entry, account=treasury_account,
-                                           debit=gross_cash_in, credit=0,
-                                           description='استلام كاش من عميل')
-                JournalItem.objects.create(entry=entry, account=source_account,
-                                           debit=0, credit=self.principal_amount,
-                                           description='تحويل رصيد للعميل')
-                if self.commission_revenue > 0 and revenue_account:
-                    JournalItem.objects.create(entry=entry, account=revenue_account,
-                                               debit=0, credit=self.commission_revenue,
-                                               description='عمولة المحل')
+                # Dr treasury (gross cash) | Cr machine (transfer sent) + Cr 4240 (commission)
+                line(treasury_account, principal + commission, 0, 'استلام كاش من عميل')
+                line(source_account, 0, principal, 'تحويل رصيد للعميل')
+                if commission > 0:
+                    line(self.revenue_account(), 0, commission, 'عمولة خدمات الدفع')
 
-            elif self.transaction_type == self.MERCHANT_RECHARGE:
-                # Dr: Machine + Dr: Expense (fees) | Cr: Treasury (total cash paid to agent)
-                gross_cash_out = self.principal_amount + self.commission_expense
-                JournalItem.objects.create(entry=entry, account=source_account,
-                                           debit=self.principal_amount, credit=0,
-                                           description='شحن رصيد الماكينة')
-                if self.commission_expense > 0 and expense_account:
-                    JournalItem.objects.create(entry=entry, account=expense_account,
-                                               debit=self.commission_expense, credit=0,
-                                               description='رسوم مندوب الشحن')
-                JournalItem.objects.create(entry=entry, account=treasury_account,
-                                           debit=0, credit=gross_cash_out,
-                                           description='دفع كاش للمندوب')
+            else:  # MERCHANT_RECHARGE
+                # Dr machine + Dr 5305 (agent fee) | Cr treasury (cash) or Cr agent payable (credit)
+                line(source_account, principal, 0, 'شحن رصيد الماكينة')
+                if fee > 0:
+                    line(Cheque.get_bank_expense_account(), fee, 0, 'رسوم مندوب الشحن')
+                if self.paid_on_credit:
+                    line(self.agent_payable_account(), 0, principal + fee,
+                         f'شحن آجل على حساب المندوب {self.agent.name}')
+                else:
+                    line(treasury_account, 0, principal + fee,
+                         'دفع كاش للمندوب' + (f' {self.agent.name}' if self.agent_id else ''))
 
             entry.post()
-
-            # Create service invoice for revenue-generating transactions
-            if self.transaction_type in [self.CASH_OUT, self.CASH_IN] and self.commission_revenue > 0:
-                self._create_service_invoice()
 
             self.journal_entry = entry
             self.status = self.POSTED
             self.save()
 
-    def _create_service_invoice(self):
+    def cancel_transaction(self, user=None, reason=''):
         """
-        Creates a POSTED sales invoice documenting the commission revenue.
-
-        The revenue itself is already booked by this transaction's journal entry, so the
-        invoice is a supporting document only and the caller (post_transaction) treats it
-        as optional: when no partner/warehouse exists it is simply skipped. Any DB error is
-        confined to its own savepoint (so on PostgreSQL the caller's transaction stays
-        usable), logged with the traceback, and the transaction posting continues.
+        POSTED -> reversal entry dated today (the original stays for the audit trail;
+        the accounting period lock applies to the new entry), status CANCELLED.
+        DRAFT  -> CANCELLED without any entry.
         """
-        from apps.tenant.invoicing.models import Invoice
-        from apps.tenant.partners.models import Partner
-        import datetime as dt
+        from django.utils import timezone
+        from apps.tenant.services.journal_service import reverse_entry_if_active
 
-        cash_partner = Partner.objects.filter(name='عميل نقدي').first() or Partner.objects.first()
-        if not cash_partner:
-            logger.warning('Service invoice skipped for %s: no partner available.', self.transaction_number)
+        reason = (reason or '').strip()
+        if not reason:
+            raise ValidationError('برجاء إدخال سبب الإلغاء.')
+        with transaction.atomic():
+            locked = EServiceTransaction.objects.select_for_update().select_related(
+                'pos_session', 'journal_entry').get(pk=self.pk)
+            if locked.status == self.CANCELLED:
+                raise ValidationError('هذه العملية ملغاة بالفعل.')
+            if locked.status == self.POSTED:
+                _ensure_pos_session_open(locked.pos_session, 'إلغاء')
+                if locked.journal_entry_id:
+                    reverse_entry_if_active(
+                        locked.journal_entry,
+                        reason=f'إلغاء عملية خدمات الدفع {locked.transaction_number}: {reason}',
+                        user=user,
+                    )
+            self.status = self.CANCELLED
+            self.cancelled_by = user if getattr(user, 'pk', None) else None
+            self.cancelled_at = timezone.now()
+            self.cancel_reason = reason[:255]
+            self.save(update_fields=['status', 'cancelled_by', 'cancelled_at', 'cancel_reason'])
+
+    @property
+    def reversal_entry(self):
+        if not self.journal_entry_id:
             return None
+        return JournalEntry.objects.filter(reversal_of_id=self.journal_entry_id).first()
 
-        branch = self.treasury.branch
-        warehouse = branch.warehouses.first()
-        if not warehouse:
-            logger.warning('Service invoice skipped for %s: branch %s has no warehouse.', self.transaction_number, branch)
-            return None
 
-        try:
-            with transaction.atomic():
-                year = dt.date.today().year
-                inv_number = _next_doc_number('invoice', Invoice, 'invoice_number', f'SVC-{year}-')
+class EServiceCommissionRule(models.Model):
+    """
+    How much the store earns (CASH_IN / CASH_OUT) or pays the agent
+    (MERCHANT_RECHARGE) per operation: fixed + percent, clamped to min / max.
+    Most specific match wins: machine > machine type > any.
+    """
+    name = models.CharField(max_length=150, verbose_name='اسم القاعدة')
+    transaction_type = models.CharField(
+        max_length=20, choices=EServiceTransaction.TRANSACTION_TYPE_CHOICES, verbose_name='نوع العملية')
+    pos_machine = models.ForeignKey(
+        POSMachine, on_delete=models.CASCADE, null=True, blank=True, related_name='commission_rules',
+        verbose_name='ماكينة محددة (اختياري)')
+    machine_type = models.CharField(
+        max_length=20, choices=POSMachine.MACHINE_TYPE_CHOICES, blank=True, default='',
+        verbose_name='نوع الماكينة (اختياري)')
+    fixed_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='مبلغ ثابت')
+    percent = models.DecimalField(max_digits=6, decimal_places=3, default=0, verbose_name='نسبة (%)')
+    min_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='حد أدنى')
+    max_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='حد أقصى (0 = بدون)')
+    is_active = models.BooleanField(default=True, verbose_name='نشطة')
+    created_at = models.DateTimeField(auto_now_add=True)
 
-                invoice = Invoice.objects.create(
-                    invoice_number=inv_number,
-                    invoice_type=Invoice.SALE,
-                    partner=cash_partner,
-                    branch=branch,
-                    warehouse=warehouse,
-                    date=self.date,
-                    payment_type=Invoice.CASH,
-                    treasury=self.treasury,
-                    subtotal=self.commission_revenue,
-                    discount_amount=Decimal('0'),
-                    total_amount=self.commission_revenue,
-                    status=Invoice.POSTED,
-                    notes=f'عمولة خدمة: {self.get_transaction_type_display()} - {self.transaction_number}'
-                )
-                self.invoice = invoice
-                self.save(update_fields=['invoice'])
-                return invoice
-        except Exception:
-            logger.exception('Error creating service invoice for e-service transaction %s', self.transaction_number)
-            return None
+    class Meta:
+        verbose_name = 'قاعدة عمولة خدمات دفع'
+        verbose_name_plural = 'قواعد عمولات خدمات الدفع'
+        ordering = ['transaction_type', 'name']
+
+    def __str__(self):
+        return self.name
+
+    def compute(self, amount):
+        amount = Decimal(str(amount or 0))
+        value = (self.fixed_amount or 0) + amount * (self.percent or 0) / Decimal('100')
+        if self.min_amount and value < self.min_amount:
+            value = self.min_amount
+        if self.max_amount and value > self.max_amount:
+            value = self.max_amount
+        return Decimal(value).quantize(Decimal('0.01'))
+
+    @classmethod
+    def match(cls, transaction_type, pos_machine=None):
+        """
+        The active rule for ``transaction_type`` that is most specific to the machine:
+        a rule for this machine > a rule for its machine type > a generic rule.
+        Ties: the most recently created rule wins. None = no rule (commission is manual).
+        """
+        qs = cls.objects.filter(is_active=True, transaction_type=transaction_type).order_by('-created_at', '-pk')
+        if pos_machine is not None:
+            rule = qs.filter(pos_machine=pos_machine).first()
+            if rule:
+                return rule
+            if pos_machine.machine_type:
+                rule = qs.filter(pos_machine__isnull=True, machine_type=pos_machine.machine_type).first()
+                if rule:
+                    return rule
+        return qs.filter(pos_machine__isnull=True, machine_type='').first()
+
+    @property
+    def scope_label(self):
+        if self.pos_machine_id:
+            return f'ماكينة: {self.pos_machine.name}'
+        if self.machine_type:
+            return f'نوع: {self.get_machine_type_display()}'
+        return 'عامة (كل الماكينات والمحافظ)'
 
 
 # ---------------------------------------------------------------------------

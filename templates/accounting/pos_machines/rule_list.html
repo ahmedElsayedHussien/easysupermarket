@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+{% block title %}قواعد عمولات خدمات الدفع{% endblock %}
+
+{% block content %}
+<div class="glass-container" style="padding:2rem;">
+    <div class="top-header">
+        <h2 style="margin:0;color:#fff;"><i class="fas fa-percent" style="color:#ff7300;margin-left:0.5rem;"></i>{{ title }}</h2>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+            <a href="{% url 'accounting:eservice_center' %}" class="btn-action"><i class="fas fa-exchange-alt"></i> مركز الخدمات</a>
+            {% if is_admin or perms.accounting.add_eservicecommissionrule %}
+            <a href="{% url 'accounting:eservice_rule_create' %}" class="btn-orange"><i class="fas fa-plus"></i> إضافة قاعدة</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if messages %}
+    {% for message in messages %}
+    <div style="margin:1rem 0;padding:0.75rem 1rem;border-radius:8px;
+        {% if 'error' in message.tags %}background:rgba(255,59,48,0.1);border:1px solid #ff3b30;color:#ff3b30;
+        {% else %}background:rgba(46,213,115,0.1);border:1px solid #2ed573;color:#2ed573;{% endif %}">{{ message }}</div>
+    {% endfor %}
+    {% endif %}
+
+    <div class="card p-3" style="margin-top:1.5rem;color:#94a3b8;font-size:0.9rem;line-height:1.8;">
+        العمولة = مبلغ ثابت + نسبة من المبلغ الأصلي، ثم تُقيد بالحد الأدنى والأقصى.
+        في السحب والإيداع هي <b style="color:#2ed573;">ربح المحل</b>، وفي شحن الماكينة هي <b style="color:#ff3b30;">رسوم المندوب</b>.
+        عند تعدد القواعد تُطبق الأكثر تحديداً: <b>ماكينة محددة</b> ← <b>نوع الماكينة</b> ← <b>قاعدة عامة</b>.
+        إن لم تنطبق أي قاعدة تُدخل العمولة يدوياً.
+    </div>
+
+    <div class="data-table-container" style="margin-top:1.5rem;">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>اسم القاعدة</th>
+                    <th>نوع العملية</th>
+                    <th>النطاق</th>
+                    <th>ثابت</th>
+                    <th>نسبة</th>
+                    <th>حد أدنى</th>
+                    <th>حد أقصى</th>
+                    <th>الحالة</th>
+                    <th>الإجراءات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rules %}
+                <tr>
+                    <td style="font-weight:bold;color:#ff7300;">{{ r.name }}</td>
+                    <td>{{ r.get_transaction_type_display }}</td>
+                    <td>{{ r.scope_label }}</td>
+                    <td>{{ r.fixed_amount|floatformat:2 }}</td>
+                    <td>{{ r.percent|floatformat:3 }}%</td>
+                    <td>{{ r.min_amount|floatformat:2 }}</td>
+                    <td>{% if r.max_amount %}{{ r.max_amount|floatformat:2 }}{% else %}—{% endif %}</td>
+                    <td>{% if r.is_active %}<span class="badge-status badge-success">نشطة</span>{% else %}<span class="badge-status badge-danger">معطلة</span>{% endif %}</td>
+                    <td>
+                        <div style="display:flex;gap:0.5rem;">
+                            {% if is_admin or perms.accounting.change_eservicecommissionrule %}
+                            <a href="{% url 'accounting:eservice_rule_update' r.pk %}" class="btn-action" title="تعديل"><i class="fas fa-edit"></i></a>
+                            {% endif %}
+                            {% if is_admin or perms.accounting.delete_eservicecommissionrule %}
+                            <form method="post" action="{% url 'accounting:eservice_rule_delete' r.pk %}" style="margin:0;" onsubmit="return confirm('حذف القاعدة &quot;{{ r.name|escapejs }}&quot;؟');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn-action" title="حذف" style="color:#ff3b30;"><i class="fas fa-trash"></i></button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="9" style="text-align:center;padding:2rem;color:#94a3b8;">لا توجد قواعد عمولات — العمولة تُدخل يدوياً في كل عملية.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

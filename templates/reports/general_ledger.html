@@ -3,128 +3,220 @@
 {% block title %}دفتر الأستاذ العام{% endblock %}
 
 {% block content %}
-<div class="content-header" style="display: flex; justify-content: space-between; align-items: center;">
-    <div class="content-title">
-        <h1>📒 دفتر الأستاذ العام (General Ledger)</h1>
-        <p>كشف حساب تفصيلي وحركة القيود لحساب معين</p>
-    </div>
-    <div class="header-actions">
-        <button type="button" class="btn btn-outline" onclick="window.print()">🖨️ طباعة</button>
-        <a href="?{{ request.GET.urlencode }}&export=excel" class="btn btn-neon-green">📥 تصدير إكسيل</a>
-        <a href="{% url 'core:reports_index' %}" class="btn btn-outline">⬅️ عودة للتقارير</a>
-    </div>
+<style>
+  .gl-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .gl-head h1 { margin: 0; font-size: 1.6rem; }
+  .gl-head p { margin: .3rem 0 0; color: var(--text-muted); }
+  .gl-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+
+  .gl-filters { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: 1.25rem; }
+  .gl-filter-row { display: grid; grid-template-columns: minmax(260px, 2.2fr) repeat(2, minmax(150px, 1fr)) auto; gap: .9rem; align-items: end; }
+  @media (max-width: 900px) { .gl-filter-row { grid-template-columns: 1fr 1fr; } .gl-filter-row .gl-account { grid-column: 1 / -1; } }
+  @media (max-width: 520px) { .gl-filter-row { grid-template-columns: 1fr; } }
+  .gl-field label { display: block; font-size: .82rem; font-weight: 600; color: var(--text-secondary); margin-bottom: .35rem; }
+  .gl-field .form-input, .gl-field .form-select { height: 42px; }
+  .gl-search { margin-bottom: .4rem; height: 34px !important; font-size: .82rem !important; }
+  .gl-submit { height: 42px; padding-inline: 1.4rem; }
+  .gl-quick { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .85rem; padding-top: .8rem; border-top: 1px dashed var(--border-default); align-items: center; }
+  .gl-quick span { color: var(--text-muted); font-size: .8rem; margin-inline-end: .25rem; }
+  .gl-chip { padding: .28rem .7rem; border-radius: 999px; border: 1px solid var(--border-bright); color: var(--text-secondary);
+             font-size: .8rem; text-decoration: none; background: transparent; }
+  .gl-chip:hover, .gl-chip.active { border-color: var(--neon-cyan); color: var(--neon-cyan); background: var(--neon-cyan-glow); }
+
+  .gl-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .9rem; margin-bottom: 1.25rem; }
+  .gl-tile { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: .9rem 1rem; }
+  .gl-tile .k { color: var(--text-muted); font-size: .8rem; }
+  .gl-tile .v { font-size: 1.3rem; font-weight: 800; margin-top: .2rem; font-variant-numeric: tabular-nums; }
+  .gl-tile .s { color: var(--text-muted); font-size: .75rem; margin-top: .15rem; }
+  .gl-tile.account .v { font-size: 1.05rem; }
+
+  .gl-table td.num, .gl-table th.num { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .gl-table .opening td { background: var(--bg-secondary); font-weight: 700; }
+  .gl-table tfoot td { background: var(--bg-tertiary); font-weight: 800; }
+  .gl-ref { font-family: var(--font-english, inherit); white-space: nowrap; }
+
+  /* print header (hidden on screen) */
+  .gl-print-head { border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 10px; }
+  .gl-print-head .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .gl-print-head img { max-height: 48px; }
+  .gl-print-head h2 { margin: 0; font-size: 15pt; }
+  .gl-print-head .meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 6px; font-size: 9.5pt; flex-wrap: wrap; }
+  .gl-print-foot { margin-top: 14px; font-size: 8.5pt; display: flex; justify-content: space-between; }
+  @media print {
+    .gl-head, .gl-filters { display: none !important; }
+    .gl-summary { grid-template-columns: repeat(4, 1fr) !important; gap: 6px !important; margin-bottom: 8px !important; }
+    .gl-tile { border: 1px solid #999 !important; padding: 5px 8px !important; border-radius: 4px !important; }
+    .gl-table td, .gl-table th { font-size: 9.5pt !important; }
+    .gl-tile .v { font-size: 11pt !important; }
+    .gl-table .opening td, .gl-table tfoot td { background: #f2f2f2 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+
+<!-- Screen header -->
+<div class="gl-head no-print">
+  <div>
+    <h1>📒 دفتر الأستاذ العام</h1>
+    <p>كشف حساب تفصيلي وحركة القيود لحساب معين</p>
+  </div>
+  <div class="gl-actions">
+    {% if selected_account %}
+    <button type="button" class="btn btn-outline" onclick="window.print()">🖨️ طباعة</button>
+    <a href="?{{ request.GET.urlencode }}&export=excel" class="btn btn-neon-green">📥 تصدير إكسيل</a>
+    {% endif %}
+    <a href="{% url 'core:reports_index' %}" class="btn btn-outline">⬅️ عودة للتقارير</a>
+  </div>
 </div>
 
 <!-- Filters -->
-<div class="card filters-card mb-4">
-    <form method="get" class="row align-items-end g-3">
-        <div class="col-md-4">
-            <label class="form-label">الحساب</label>
-            <select name="account_id" class="form-input" required>
-                <option value="">-- اختر الحساب --</option>
-                {% for acc in accounts_list %}
-                    <option value="{{ acc.id }}" {% if account_id|add:"0" == acc.id %}selected{% endif %}>
-                        {{ acc.code }} - {{ acc.name }} ({{ acc.get_account_type_display }})
-                    </option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="col-md-3">
-            <label class="form-label">من تاريخ</label>
-            <input type="date" name="start_date" class="form-input" value="{{ start_date }}">
-        </div>
-        <div class="col-md-3">
-            <label class="form-label">إلى تاريخ</label>
-            <input type="date" name="end_date" class="form-input" value="{{ end_date }}">
-        </div>
-        <div class="col-md-2">
-            <button type="submit" class="btn btn-primary w-100">🔍 عرض</button>
-        </div>
-    </form>
-</div>
+<form method="get" class="gl-filters no-print" id="glForm">
+  <div class="gl-filter-row">
+    <div class="gl-field gl-account">
+      <label for="glAccount">الحساب</label>
+      <input type="search" class="form-input gl-search" id="glAccountSearch" placeholder="🔎 ابحث بالكود أو الاسم..." autocomplete="off">
+      <select name="account_id" id="glAccount" class="form-select" required>
+        <option value="">-- اختر الحساب --</option>
+        {% for acc in accounts_list %}
+        <option value="{{ acc.id }}" {% if account_id|add:"0" == acc.id %}selected{% endif %}>{{ acc.code }} - {{ acc.name }} ({{ acc.get_account_type_display }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="gl-field">
+      <label for="glStart">من تاريخ</label>
+      <input type="date" name="start_date" id="glStart" class="form-input" value="{{ start_date|default:'' }}">
+    </div>
+    <div class="gl-field">
+      <label for="glEnd">إلى تاريخ</label>
+      <input type="date" name="end_date" id="glEnd" class="form-input" value="{{ end_date|default:'' }}">
+    </div>
+    <button type="submit" class="btn btn-primary gl-submit">🔍 عرض</button>
+  </div>
+  <div class="gl-quick">
+    <span>فترة سريعة:</span>
+    {% for label, s, e in quick_ranges %}
+    {% with s_str=s|date:"Y-m-d" e_str=e|date:"Y-m-d" %}
+    <a class="gl-chip{% if start_date == s_str and end_date == e_str %} active{% endif %}" href="#" data-start="{{ s_str }}" data-end="{{ e_str }}">{{ label }}</a>
+    {% endwith %}
+    {% endfor %}
+    <a class="gl-chip{% if not start_date and not end_date %} active{% endif %}" href="#" data-start="" data-end="">كل الفترات</a>
+  </div>
+</form>
 
 {% if selected_account %}
-<div class="grid-2 mb-4">
-    <div class="card" style="display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
-        <div style="font-size: 2.5rem; color: var(--neon-cyan);">📋</div>
-        <div>
-            <div style="color: var(--text-muted); font-size: 0.9rem;">اسم الحساب</div>
-            <div style="font-size: 1.25rem; font-weight: 700; color: var(--text-primary);">{{ selected_account.code }} - {{ selected_account.name }}</div>
-            <div style="font-size: 0.8rem; color: var(--neon-gold); margin-top: 0.2rem;">طبيعة الحساب: {% if selected_account.normal_balance == 'DEBIT' %}مدين (أصول/مصروفات){% else %}دائن (خصوم/إيرادات){% endif %}</div>
-        </div>
+<!-- Print header (paper only) -->
+<div class="print-only gl-print-head">
+  <div class="top">
+    <div>
+      <h2>دفتر الأستاذ العام — {{ selected_account.code }} {{ selected_account.name }}</h2>
+      <div style="font-size:9.5pt">{{ system_setting.store_name|default:"" }}{% if system_setting.tax_number %} · الرقم الضريبي {{ system_setting.tax_number }}{% endif %}</div>
     </div>
-    <div class="card" style="display: flex; align-items: center; gap: 1rem; padding: 1.5rem;">
-        <div style="font-size: 2.5rem; color: var(--neon-green);">💰</div>
-        <div>
-            <div style="color: var(--text-muted); font-size: 0.9rem;">الرصيد النهائي (المتراكم)</div>
-            <div style="font-size: 1.5rem; font-weight: 700; font-family: var(--font-english); color: var(--neon-green);">{{ final_balance|floatformat:2 }} ج.م</div>
-        </div>
-    </div>
+    {% if system_setting.company_logo %}<img src="{{ system_setting.company_logo.url }}" alt="">{% endif %}
+  </div>
+  <div class="meta">
+    <span>الفترة: {% if start_date %}من {{ start_date }}{% else %}من البداية{% endif %} {% if end_date %}إلى {{ end_date }}{% else %}حتى اليوم{% endif %}</span>
+    <span>طبيعة الحساب: {% if selected_account.normal_balance == 'DEBIT' %}مدين{% else %}دائن{% endif %}</span>
+    <span>تاريخ الطباعة: {{ printed_at|date:"Y-m-d H:i" }}</span>
+  </div>
 </div>
 
-<!-- Report Table -->
-<div class="card">
-    <div class="table-container" style="overflow-x: auto;">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>التاريخ</th>
-                    <th>رقم القيد</th>
-                    <th>البيان</th>
-                    <th style="color: var(--neon-cyan); text-align: left;">مدين (Debit)</th>
-                    <th style="color: var(--neon-red); text-align: left;">دائن (Credit)</th>
-                    <th style="text-align: left;">الرصيد التراكمي</th>
-                </tr>
-            </thead>
-            <tbody>
-                <!-- Opening Balance Row -->
-                <tr style="background-color: var(--bg-secondary); font-weight: bold;">
-                    <td colspan="3" style="text-align: right; color: var(--text-muted);">رصيد افتتاحي (قبل {{ start_date|default:"بداية المدة" }})</td>
-                    <td colspan="2"></td>
-                    <td class="en" style="text-align: left; color: var(--neon-gold);">{{ opening_balance|floatformat:2 }}</td>
-                </tr>
+<div class="gl-summary">
+  <div class="gl-tile account">
+    <div class="k">الحساب</div>
+    <div class="v">{{ selected_account.code }} - {{ selected_account.name }}</div>
+    <div class="s">طبيعته: {% if selected_account.normal_balance == 'DEBIT' %}مدين (أصول/مصروفات){% else %}دائن (خصوم/إيرادات){% endif %}</div>
+  </div>
+  <div class="gl-tile"><div class="k">رصيد أول الفترة</div><div class="v"><bdi dir="ltr">{{ opening_balance|money }}</bdi></div></div>
+  <div class="gl-tile"><div class="k">حركة الفترة (مدين / دائن)</div>
+    <div class="v" style="font-size:1.05rem"><bdi dir="ltr">{{ total_debit|money }}</bdi> / <bdi dir="ltr">{{ total_credit|money }}</bdi></div>
+    <div class="s">{{ transactions|length }} حركة</div></div>
+  <div class="gl-tile"><div class="k">الرصيد في نهاية الفترة</div>
+    <div class="v" style="color: {% if final_balance < 0 %}var(--neon-red){% else %}var(--neon-green){% endif %};"><bdi dir="ltr">{{ final_balance|money }}</bdi> <small style="font-size:.7rem;color:var(--text-muted)">ج.م</small></div></div>
+</div>
 
-                <!-- Transactions -->
-                {% for txn in transactions %}
-                <tr>
-                    <td class="en">{{ txn.date|date:"Y-m-d" }}</td>
-                    <td class="en">{{ txn.reference }}</td>
-                    <td>{{ txn.description }}</td>
-                    <td class="en" style="text-align: left; color: var(--neon-cyan);">{% if txn.debit > 0 %}{{ txn.debit|floatformat:2 }}{% else %}-{% endif %}</td>
-                    <td class="en" style="text-align: left; color: var(--neon-red);">{% if txn.credit > 0 %}{{ txn.credit|floatformat:2 }}{% else %}-{% endif %}</td>
-                    <td class="en" style="text-align: left; font-weight: bold;">{{ txn.balance|floatformat:2 }}</td>
-                </tr>
-                {% empty %}
-                <tr>
-                    <td colspan="6" class="text-center" style="padding: 2rem;">لا توجد حركات على هذا الحساب في الفترة المحددة</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-            <tfoot>
-                <tr style="background-color: var(--bg-tertiary); font-weight: bold; font-size: 1.05rem;">
-                    <td colspan="3" style="text-align: right; color: var(--neon-gold);">إجمالي حركات الفترة:</td>
-                    <td class="en" style="text-align: left; color: var(--neon-cyan);">{{ total_debit|floatformat:2 }}</td>
-                    <td class="en" style="text-align: left; color: var(--neon-red);">{{ total_credit|floatformat:2 }}</td>
-                    <td class="en" style="text-align: left;">{{ final_balance|floatformat:2 }}</td>
-                </tr>
-            </tfoot>
-        </table>
-    </div>
+<div class="card" style="padding: 0;">
+  <div class="table-container" style="overflow-x: auto;">
+    <table class="data-table gl-table">
+      <thead>
+        <tr>
+          <th style="width:9%">التاريخ</th>
+          <th style="width:14%">رقم القيد</th>
+          <th>البيان</th>
+          <th class="num" style="width:12%">مدين</th>
+          <th class="num" style="width:12%">دائن</th>
+          <th class="num" style="width:13%">الرصيد</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="opening">
+          <td colspan="5">رصيد أول الفترة {% if start_date %}(قبل {{ start_date }}){% else %}(بداية الحسابات){% endif %}</td>
+          <td class="num"><bdi dir="ltr">{{ opening_balance|money }}</bdi></td>
+        </tr>
+        {% for txn in transactions %}
+        <tr>
+          <td class="num" style="text-align:right">{{ txn.date|date:"Y-m-d" }}</td>
+          <td class="gl-ref">{{ txn.reference }}</td>
+          <td>{{ txn.description }}</td>
+          <td class="num" style="color: var(--neon-cyan);">{% if txn.debit > 0 %}<bdi dir="ltr">{{ txn.debit|money }}</bdi>{% else %}—{% endif %}</td>
+          <td class="num" style="color: var(--neon-red);">{% if txn.credit > 0 %}<bdi dir="ltr">{{ txn.credit|money }}</bdi>{% else %}—{% endif %}</td>
+          <td class="num" style="font-weight: 700;"><bdi dir="ltr">{{ txn.balance|money }}</bdi></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center" style="padding: 2rem; color: var(--text-muted);">لا توجد حركات على هذا الحساب في الفترة المحددة</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3">إجمالي حركات الفترة</td>
+          <td class="num"><bdi dir="ltr">{{ total_debit|money }}</bdi></td>
+          <td class="num"><bdi dir="ltr">{{ total_credit|money }}</bdi></td>
+          <td class="num"><bdi dir="ltr">{{ final_balance|money }}</bdi></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<div class="print-only gl-print-foot">
+  <span>طُبع بواسطة: {{ request.user|display_name }}</span>
+  <span>توقيع المراجع: ....................</span>
 </div>
 {% else %}
 <div class="card text-center" style="padding: 4rem 1rem;">
-    <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--text-muted);">👆</div>
-    <h3 style="color: var(--text-secondary);">يرجى اختيار حساب من القائمة أعلاه لعرض دفتر الأستاذ الخاص به</h3>
+  <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--text-muted);">👆</div>
+  <h3 style="color: var(--text-secondary);">اختر حساباً وفترة من الأعلى لعرض دفتر الأستاذ</h3>
 </div>
 {% endif %}
 
-<style>
-    @media print {
-        .content-header .header-actions, .filters-card { display: none !important; }
-        body { background: white; color: black; }
-        .card { border: none; box-shadow: none; padding: 0 !important; }
-        .grid-2 { display: flex; justify-content: space-between; border-bottom: 2px solid #ccc; padding-bottom: 1rem; }
-        .data-table th, .data-table td { color: black !important; border: 1px solid #ddd; padding: 0.4rem; }
-    }
-</style>
+<script>
+(function () {
+  // quick period chips -> fill dates and submit (only if an account is chosen)
+  var form = document.getElementById('glForm');
+  form.querySelectorAll('.gl-chip').forEach(function (chip) {
+    chip.addEventListener('click', function (e) {
+      e.preventDefault();
+      document.getElementById('glStart').value = chip.dataset.start;
+      document.getElementById('glEnd').value = chip.dataset.end;
+      if (document.getElementById('glAccount').value) form.submit();
+      else document.getElementById('glAccountSearch').focus();
+    });
+  });
+  // account search filters the long select
+  var search = document.getElementById('glAccountSearch');
+  var select = document.getElementById('glAccount');
+  search.addEventListener('input', function () {
+    var q = search.value.trim().toLowerCase();
+    var first = null;
+    Array.prototype.forEach.call(select.options, function (o, i) {
+      if (i === 0) return;
+      var show = !q || o.text.toLowerCase().indexOf(q) !== -1;
+      o.hidden = !show;
+      if (show && !first) first = o;
+    });
+    if (q && first) select.value = first.value;
+  });
+  // end date can't be before start date
+  var s = document.getElementById('glStart'), en = document.getElementById('glEnd');
+  s.addEventListener('change', function () { en.min = s.value; });
+  if (s.value) en.min = s.value;
+})();
+</script>
 {% endblock %}

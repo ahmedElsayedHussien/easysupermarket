@@ -5,10 +5,95 @@
 <div class="glass-container" style="padding:2rem;">
     <div class="top-header">
         <h2 style="margin:0;color:#fff;"><i class="fas fa-history" style="color:#ff7300;margin-left:0.5rem;"></i>{{ title }}</h2>
-        <a href="{% url 'accounting:eservice_center' %}" class="btn-orange">
-            <i class="fas fa-plus"></i> عملية جديدة
-        </a>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+            {% if is_admin or perms.accounting.view_eservicecommissionrule %}
+            <a href="{% url 'accounting:eservice_rule_list' %}" class="btn-action"><i class="fas fa-percent"></i> قواعد العمولات</a>
+            {% endif %}
+            <a href="{% url 'accounting:eservice_center' %}" class="btn-orange">
+                <i class="fas fa-plus"></i> عملية جديدة
+            </a>
+        </div>
     </div>
+
+    {% if messages %}
+    {% for message in messages %}
+    <div style="margin:1rem 0;padding:0.75rem 1rem;border-radius:8px;
+        {% if 'error' in message.tags %}background:rgba(255,59,48,0.1);border:1px solid #ff3b30;color:#ff3b30;
+        {% else %}background:rgba(46,213,115,0.1);border:1px solid #2ed573;color:#2ed573;{% endif %}">{{ message }}</div>
+    {% endfor %}
+    {% endif %}
+
+    <!-- Filters -->
+    <form method="get" class="card p-3" style="margin-top:1.5rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0.75rem;align-items:end;">
+        <div>
+            <label class="form-label">من تاريخ</label>
+            <input type="date" name="date_from" value="{{ filters.date_from }}" class="form-control">
+        </div>
+        <div>
+            <label class="form-label">إلى تاريخ</label>
+            <input type="date" name="date_to" value="{{ filters.date_to }}" class="form-control">
+        </div>
+        <div>
+            <label class="form-label">نوع العملية</label>
+            <select name="type" class="form-control">
+                <option value="">الكل</option>
+                {% for val, label in transaction_types %}
+                <option value="{{ val }}" {% if filters.type == val %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="form-label">الماكينة</label>
+            <select name="machine" class="form-control">
+                <option value="">الكل</option>
+                {% for m in machines %}
+                <option value="{{ m.id }}" {% if filters.machine == m.id|stringformat:"s" %}selected{% endif %}>{{ m.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="form-label">الحالة</label>
+            <select name="status" class="form-control">
+                <option value="">الكل</option>
+                {% for val, label in status_choices %}
+                <option value="{{ val }}" {% if filters.status == val %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="form-label">بحث (رقم / بيان)</label>
+            <input type="text" name="q" value="{{ filters.q }}" class="form-control" placeholder="ESVC-...">
+        </div>
+        <div style="display:flex;gap:0.5rem;">
+            <button type="submit" class="btn-orange" style="flex:1;"><i class="fas fa-filter"></i> تصفية</button>
+            <a href="{% url 'accounting:eservice_history' %}" class="btn-action" title="مسح الفلاتر"><i class="fas fa-times"></i></a>
+        </div>
+    </form>
+
+    <!-- Totals -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem;margin-top:1rem;">
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">عدد العمليات (المرحّل)</div>
+            <div style="color:#fff;font-weight:900;font-size:1.3rem;">{{ totals.count }} <small style="color:#94a3b8;">({{ totals.posted_count }})</small></div>
+        </div>
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">إجمالي المبالغ الأصلية</div>
+            <div style="color:#e2e8f0;font-weight:900;font-size:1.3rem;">{{ totals.principal|floatformat:2 }}</div>
+        </div>
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">عمولات مكتسبة</div>
+            <div style="color:#2ed573;font-weight:900;font-size:1.3rem;">+{{ totals.earned|floatformat:2 }}</div>
+        </div>
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">رسوم مدفوعة للمندوبين</div>
+            <div style="color:#ff3b30;font-weight:900;font-size:1.3rem;">-{{ totals.fees|floatformat:2 }}</div>
+        </div>
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">صافي أثر النقدية على الدرج</div>
+            <div style="font-weight:900;font-size:1.3rem;color:{% if totals.net_cash < 0 %}#ff3b30{% else %}#00e5ff{% endif %};"><bdi dir="ltr">{{ totals.net_cash|floatformat:2 }}</bdi></div>
+        </div>
+    </div>
+    <small style="color:#64748b;display:block;margin-top:0.4rem;">الإجماليات المالية للعمليات المرحّلة فقط ضمن نتائج التصفية.</small>
 
     <div class="data-table-container" style="margin-top:1.5rem;">
         <table class="data-table">
@@ -21,8 +106,8 @@
                     <th>الخزينة</th>
                     <th>المبلغ الأصلي</th>
                     <th>العمولة</th>
+                    <th>أثر النقدية</th>
                     <th>الحالة</th>
-                    <th>الفاتورة</th>
                     <th>الإجراءات</th>
                 </tr>
             </thead>
@@ -34,55 +119,44 @@
                     <td>
                         {% if txn.transaction_type == 'CASH_OUT' %}<span style="color:#2ed573;">💰 سحب كاش</span>
                         {% elif txn.transaction_type == 'CASH_IN' %}<span style="color:#00e5ff;">📲 إيداع</span>
-                        {% else %}<span style="color:#ff7300;">🔋 شحن ماكينة</span>{% endif %}
-                    <td>
-                        {% if txn.source_type == 'MACHINE' and txn.pos_machine %}
-                            {{ txn.pos_machine.name }}
-                        {% elif txn.source_type == 'EWALLET' and txn.ewallet %}
-                            {{ txn.ewallet.name }}
-                        {% else %}
-                            —
-                        {% endif %}
+                        {% else %}<span style="color:#ff7300;">🔋 شحن ماكينة</span>{% if txn.paid_on_credit %} <small style="color:#fbbf24;">(آجل)</small>{% endif %}{% endif %}
                     </td>
+                    <td>{{ txn.source_name }}{% if txn.agent %}<small style="color:#94a3b8;display:block;">{{ txn.agent.name }}</small>{% endif %}</td>
                     <td>{{ txn.treasury.name }}</td>
-                    <td style="font-weight:bold;color:#e2e8f0;">{{ txn.principal_amount|floatformat:2 }} ج.م</td>
+                    <td style="font-weight:bold;color:#e2e8f0;">{{ txn.principal_amount|floatformat:2 }}</td>
                     <td>
                         {% if txn.commission_revenue > 0 %}<span style="color:#2ed573;font-weight:bold;">+{{ txn.commission_revenue|floatformat:2 }}</span>
                         {% elif txn.commission_expense > 0 %}<span style="color:#ff3b30;font-weight:bold;">-{{ txn.commission_expense|floatformat:2 }}</span>
                         {% else %}—{% endif %}
+                        {% if txn.commission_overridden %}<span title="تم تعديل العمولة يدوياً" style="color:#fbbf24;">✎</span>{% endif %}
                     </td>
+                    <td><bdi dir="ltr">{{ txn.cash_effect|floatformat:2 }}</bdi></td>
                     <td>
                         {% if txn.status == 'POSTED' %}<span class="badge-status badge-success">مرحل</span>
+                        {% elif txn.status == 'CANCELLED' %}<span class="badge-status badge-danger">ملغي</span>
                         {% else %}<span class="badge-status badge-warning">مسودة</span>{% endif %}
                     </td>
                     <td>
-                        {% if txn.invoice %}
-                        <a href="{% url 'invoicing:invoice_detail' txn.invoice.pk %}" style="color:#ff7300;font-size:0.8rem;">
-                            {{ txn.invoice.invoice_number }}
-                        </a>
-                        {% else %}—{% endif %}
-                    </td>
-                    <td>
                         <div style="display:flex; gap:0.5rem;">
-                            <a href="{% url 'accounting:eservice_detail' txn.pk %}" class="btn-action" title="تفاصيل الحركة">
-                                👁️
-                            </a>
-                            {% if txn.status == 'DRAFT' %}
+                            <a href="{% url 'accounting:eservice_detail' txn.pk %}" class="btn-action" title="تفاصيل الحركة">👁️</a>
+                            {% if txn.status == 'DRAFT' %}{% if is_admin or perms.accounting.change_eservicetransaction %}
                             <form method="POST" action="{% url 'accounting:eservice_post' txn.pk %}" style="margin:0;">
                                 {% csrf_token %}
                                 <button type="submit" class="btn-action" title="ترحيل الحركة" style="background:#2ed573; color:#fff;" onclick="return confirm('تأكيد ترحيل هذه الحركة؟');">
                                     <i class="fas fa-check"></i>
                                 </button>
                             </form>
-                            {% endif %}
+                            {% endif %}{% endif %}
                         </div>
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="10" style="text-align:center;padding:2rem;color:#94a3b8;">لا توجد حركات بعد</td></tr>
+                <tr><td colspan="10" style="text-align:center;padding:2rem;color:#94a3b8;">لا توجد حركات</td></tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
+
+    {% include 'includes/pagination.html' %}
 </div>
 {% endblock %}

@@ -220,15 +220,6 @@ class SystemSetting(models.Model):
     # Partners
 
     # Accounting
-    show_nav_expenses = models.BooleanField(default=True, verbose_name=_('المصروفات'))
-    show_nav_receipts = models.BooleanField(default=True, verbose_name=_('سندات القبض'))
-    show_nav_payments = models.BooleanField(default=True, verbose_name=_('سندات الصرف'))
-    show_nav_transfers = models.BooleanField(default=True, verbose_name=_('تحويل الأموال'))
-    show_nav_cheques = models.BooleanField(default=True, verbose_name=_('إدارة الشيكات'))
-    show_nav_fixed_assets = models.BooleanField(default=True, verbose_name=_('الأصول الثابتة'))
-    show_nav_loans = models.BooleanField(default=True, verbose_name=_('القروض والتمويل'))
-    show_nav_journals = models.BooleanField(default=True, verbose_name=_('قيود اليومية'))
-    show_nav_chart_of_accounts = models.BooleanField(default=True, verbose_name=_('دليل الحسابات'))
 
     # Administration
     show_nav_admin_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المدير'))
@@ -243,6 +234,7 @@ class SystemSetting(models.Model):
     show_nav_inventory_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المخزون'))
     show_nav_partners_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة الشركاء'))
     show_nav_liquidity_dashboard = models.BooleanField(default=True, verbose_name=_('إدارة السيولة'))
+    show_nav_accounting_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المحاسبة'))
     
     class Meta:
         verbose_name = _('إعدادات النظام')

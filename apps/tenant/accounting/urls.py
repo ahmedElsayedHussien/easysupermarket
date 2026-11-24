@@ -1,6 +1,8 @@
 from django.urls import path
 from . import views
 from . import liquidity_views
+from . import accounting_dashboard_views
+from . import eservice_dashboard_views
 
 app_name = 'accounting'
 urlpatterns = [
@@ -25,6 +27,7 @@ urlpatterns = [
     path('payment-methods/<int:pk>/update/', views.PaymentMethodUpdateView.as_view(), name='payment_method_update'),
     
     # Treasuries
+    path('dashboard/', accounting_dashboard_views.accounting_dashboard, name='accounting_dashboard'),
     path('liquidity/', liquidity_views.liquidity_dashboard, name='liquidity_dashboard'),
     path('treasuries/', views.TreasuryListView.as_view(), name='treasury_list'),
     path('treasuries/create/', views.TreasuryCreateView.as_view(), name='treasury_create'),
@@ -68,12 +71,20 @@ urlpatterns = [
     path('pos-machines/', views.pos_machine_list, name='pos_machine_list'),
     path('pos-machines/create/', views.pos_machine_create, name='pos_machine_create'),
     path('pos-machines/<int:pk>/', views.pos_machine_detail, name='pos_machine_detail'),
+    path('pos-machines/<int:pk>/edit/', views.pos_machine_update, name='pos_machine_update'),
 
     # E-Service Center (مركز خدمات الدفع)
     path('eservice/', views.eservice_center, name='eservice_center'),
     path('eservice/history/', views.eservice_history, name='eservice_history'),
+    path('eservice/dashboard/', eservice_dashboard_views.eservice_dashboard, name='eservice_dashboard'),
     path('eservice/<int:pk>/', views.eservice_detail, name='eservice_detail'),
     path('eservice/<int:pk>/post/', views.eservice_post, name='eservice_post'),
+    path('eservice/<int:pk>/cancel/', views.eservice_cancel, name='eservice_cancel'),
+    path('eservice/commission/', views.eservice_commission, name='eservice_commission'),
+    path('eservice/rules/', views.eservice_rule_list, name='eservice_rule_list'),
+    path('eservice/rules/create/', views.eservice_rule_create, name='eservice_rule_create'),
+    path('eservice/rules/<int:pk>/edit/', views.eservice_rule_update, name='eservice_rule_update'),
+    path('eservice/rules/<int:pk>/delete/', views.eservice_rule_delete, name='eservice_rule_delete'),
 
     # Internal Transfers (تحويل الأموال بين الحسابات)
     path('transfers/', views.InternalTransferListView.as_view(), name='transfer_list'),

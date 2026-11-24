@@ -8,9 +8,15 @@
             <i class="fas fa-cash-register" style="color:#ff7300;margin-left:0.5rem;"></i>
             {{ machine.name }}
         </h2>
-        <a href="{% url 'accounting:pos_machine_list' %}" class="btn-action">
-            <i class="fas fa-arrow-right"></i> العودة
-        </a>
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;">
+            {% if is_admin or perms.accounting.change_posmachine %}
+            <a href="{% url 'accounting:pos_machine_update' machine.pk %}" class="btn-action"><i class="fas fa-edit"></i> تعديل</a>
+            {% endif %}
+            <a href="{% url 'accounting:eservice_history' %}?machine={{ machine.pk }}" class="btn-action"><i class="fas fa-history"></i> كل الحركات</a>
+            <a href="{% url 'accounting:pos_machine_list' %}" class="btn-action">
+                <i class="fas fa-arrow-right"></i> العودة
+            </a>
+        </div>
     </div>
 
     <!-- Machine Info -->
@@ -29,9 +35,23 @@
         </div>
         <div class="card p-3 text-center">
             <div style="color:#94a3b8;font-size:0.8rem;">الرصيد الحالي</div>
-            <div style="color:#2ed573;font-weight:900;font-size:1.5rem;">{{ machine.current_balance|floatformat:2 }} ج.م</div>
+            <div style="color:{% if machine.is_low_balance %}#ff3b30{% else %}#2ed573{% endif %};font-weight:900;font-size:1.5rem;">{{ machine.current_balance|floatformat:2 }} ج.م</div>
+            {% if machine.min_balance_alert > 0 %}<small style="color:#94a3b8;">حد التنبيه: {{ machine.min_balance_alert|floatformat:2 }}</small>{% endif %}
+        </div>
+        <div class="card p-3 text-center">
+            <div style="color:#94a3b8;font-size:0.8rem;">الحالة</div>
+            <div style="font-weight:700;">{% if machine.is_active %}<span style="color:#2ed573;">نشطة</span>{% else %}<span style="color:#ff3b30;">معطلة</span>{% endif %}</div>
         </div>
     </div>
+
+    {% if rules %}
+    <div class="card p-3" style="margin-bottom:1.5rem;">
+        <h4 style="color:#00e5ff;margin:0 0 0.5rem;"><i class="fas fa-percent"></i> قواعد العمولة الخاصة بهذه الماكينة</h4>
+        {% for r in rules %}
+        <div style="color:#cbd5e1;padding:0.25rem 0;">{{ r.name }} — {{ r.get_transaction_type_display }}: {{ r.fixed_amount|floatformat:2 }} + {{ r.percent|floatformat:3 }}%{% if not r.is_active %} <small style="color:#ff3b30;">(معطلة)</small>{% endif %}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
 
     <div class="data-table-container">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
@@ -54,7 +74,7 @@
             <tbody>
                 {% for txn in transactions %}
                 <tr>
-                    <td style="color:#00e5ff;font-family:monospace;">{{ txn.transaction_number }}</td>
+                    <td style="font-family:monospace;"><a href="{% url 'accounting:eservice_detail' txn.pk %}" style="color:#00e5ff;">{{ txn.transaction_number }}</a></td>
                     <td>{{ txn.date }}</td>
                     <td>{{ txn.get_transaction_type_display }}</td>
                     <td style="font-weight:bold;">{{ txn.principal_amount|floatformat:2 }} ج.م</td>
@@ -68,6 +88,8 @@
                     <td>
                         {% if txn.status == 'POSTED' %}
                         <span class="badge-status badge-success">مرحل</span>
+                        {% elif txn.status == 'CANCELLED' %}
+                        <span class="badge-status badge-danger">ملغي</span>
                         {% else %}
                         <span class="badge-status badge-warning">مسودة</span>
                         {% endif %}

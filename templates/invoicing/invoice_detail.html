@@ -103,6 +103,7 @@
                     {% elif invoice.payment_type == 'SPLIT' %}دفع متعدد (كاش: {{ invoice.paid_cash|floatformat:2 }} | شبكة: {{ invoice.paid_card|floatformat:2 }} | محفظة: {{ invoice.paid_ewallet|floatformat:2 }} | تحويل: {{ invoice.paid_bank|floatformat:2 }})
                     {% endif %}
                 </span>
+            </div>
             {% if invoice.notes %}
             <div class="mb-3">
                 <span class="text-muted d-block text-sm">بيان / ملاحظات الفاتورة</span>
@@ -148,7 +149,7 @@
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="4" class="text-center">لا توجد أصناف</td>
+                            <td colspan="5" class="text-center">لا توجد أصناف</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -298,11 +299,19 @@
           <!-- Treasury selector (shown if CASH or SPLIT) -->
           <div id="return_field_treasury" style="flex:1; min-width:200px;">
             <label style="display:block; color:#cbd5e1; font-weight:600; font-size:0.8rem; margin-bottom:5px;">الخزينة (صرف النقدية)</label>
+            {% if return_shift_treasury %}
+            {# An open shift: refund cash always comes out of the shift drawer #}
+            <select id="return_treasury_id" disabled style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:9px 12px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif; font-size:0.9rem; opacity:0.85;">
+              <option value="{{ return_shift_treasury.id }}" selected>{{ return_shift_treasury.name }}</option>
+            </select>
+            <small style="display:block; color:#94a3b8; font-size:0.72rem; margin-top:4px;">🔒 درج ورديتك المفتوحة</small>
+            {% else %}
             <select id="return_treasury_id" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:9px 12px; border-radius:8px; outline:none; font-family:'Tajawal',sans-serif; font-size:0.9rem;">
               {% for t in treasuries %}
               <option value="{{ t.id }}" {% if invoice.treasury_id == t.id %}selected{% endif %}>{{ t.name }}</option>
               {% endfor %}
             </select>
+            {% endif %}
           </div>
 
           <!-- Bank selector (shown if CARD, BANK_TRANSFER, or SPLIT) -->
@@ -325,6 +334,13 @@
             </select>
           </div>
         </div>
+
+        {% if money_refund_allowance is not None %}
+        <div id="returnMoneyAllowance" data-allow="{{ money_refund_allowance|stringformat:'f' }}" style="margin-top:8px; font-size:0.8rem; color:#94a3b8; background:rgba(56,189,248,0.06); border:1px solid rgba(56,189,248,0.25); border-radius:8px; padding:8px 12px;">
+          💡 المتاح رده نقداً / إلكترونياً على هذه الفاتورة: <b style="color:#38bdf8;" dir="ltr">{{ money_refund_allowance|floatformat:2 }}</b> ج.م
+          — {% if invoice.invoice_type == 'SALE' %}ما زاد عن ذلك يُرد رصيداً دائناً للعميل (آجل) لأنه لم يُدفع نقداً.{% else %}ما زاد عن ذلك يُخصم من رصيد المورد (آجل) لأنه لم يُدفع له نقداً.{% endif %}
+        </div>
+        {% endif %}
 
         <!-- SPLIT payment breakdown box -->
         <div id="return_field_split" style="display:none; flex-direction:column; gap:10px; background:rgba(255,255,255,0.02); border:1px dashed rgba(255,115,0,0.3); border-radius:10px; padding:12px 14px;">
@@ -642,6 +658,19 @@ function submitReturn() {
         const totalSplit = splitPayments.cash + splitPayments.card + splitPayments.ewallet + splitPayments.bank + splitPayments.credit;
         if (Math.abs(totalSplit - totalReturn) > 0.05) {
             alert('إجمالي مبالغ رد المرتجع (' + totalSplit.toFixed(2) + ' ج.م) يجب أن يساوي قيمة المرتجع (' + totalReturn.toFixed(2) + ' ج.م)!');
+            return;
+        }
+    }
+
+    // Money refund can't exceed what was really paid on the invoice (checked again on the server)
+    const allowEl = document.getElementById('returnMoneyAllowance');
+    if (allowEl) {
+        const allow = parseFloat(allowEl.dataset.allow) || 0;
+        let money = 0;
+        if (ptype === 'SPLIT') money = splitPayments.cash + splitPayments.card + splitPayments.ewallet + splitPayments.bank;
+        else if (ptype !== 'CREDIT') money = totalReturn;
+        if (money > allow + 0.01) {
+            alert('لا يمكن رد ' + money.toFixed(2) + ' ج.م نقداً/إلكترونياً — المدفوع فعلياً والمتاح للرد ' + allow.toFixed(2) + ' ج.م فقط. رد الباقي كرصيد دائن (آجل) أو استخدم "سداد مقسم".');
             return;
         }
     }

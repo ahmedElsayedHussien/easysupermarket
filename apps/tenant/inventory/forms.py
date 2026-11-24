@@ -34,6 +34,18 @@ class ProductForm(BaseGlassForm):
         super().__init__(*args, **kwargs)
         if 'barcode' in self.fields:
             self.fields['barcode'].required = True
+        if 'image' in self.fields:
+            self.fields['image'].widget.attrs['accept'] = 'image/*'
+            self.fields['image'].help_text = 'تُحوَّل الصورة تلقائياً إلى WebP خفيف (أقصى بُعد 800px).'
+
+    IMAGE_MAX_BYTES = 15 * 1024 * 1024
+
+    def clean_image(self):
+        from django.core.files.uploadedfile import UploadedFile
+        img = self.cleaned_data.get('image')
+        if img and isinstance(img, UploadedFile) and img.size > self.IMAGE_MAX_BYTES:
+            raise forms.ValidationError('حجم الصورة يجب ألا يتجاوز 15 ميجابايت.')
+        return img
 
 class ProductUoMForm(BaseGlassForm):
     class Meta:

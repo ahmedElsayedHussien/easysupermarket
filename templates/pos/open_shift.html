@@ -9,7 +9,7 @@
                 <i class="fas fa-cash-register" style="color: var(--neon-orange); text-shadow: 0 0 10px var(--neon-orange-glow);"></i> 
                 فتح وردية كاشير
             </h2>
-            <p style="color: var(--text-secondary);">يرجى إدخال العهدة النقدية وتأكيد نقطة البيع للبدء</p>
+            <p style="color: var(--text-secondary);">تأكد من الدرج — رصيد الافتتاح يُؤخذ من رصيد الخزينة تلقائياً</p>
         </div>
 
         <form method="post" class="needs-validation" novalidate>
@@ -34,27 +34,46 @@
             {% endif %}
 
             <div class="mb-4">
-                <label class="form-label text-white" for="treasury_id">الخزينة / الدرج <span class="text-danger">*</span></label>
+                <label class="form-label text-white" for="treasury_id">الخزينة / الدرج {% if not treasury_locked %}<span class="text-danger">*</span>{% endif %}</label>
+                {% if treasury_locked %}
+                {# Fixed by the POS payment-account settings: shown like the branch, not editable #}
+                <input type="hidden" name="treasury_id" id="treasury_id" value="{{ default_treasury.id }}" data-balance="{{ default_balance|stringformat:'f' }}"{% if default_busy %} data-busy="1"{% endif %}>
+                <div class="form-control d-flex align-items-center" style="background-color: rgba(255,255,255,0.05); color: var(--text-primary); border: 1px solid var(--border-bright); padding: 12px;">
+                    <i class="fas fa-cash-register me-2" style="color: var(--neon-orange);"></i>
+                    {{ default_treasury.name }}
+                    <span style="margin-inline-start: auto; font-size: 0.75rem; color: var(--text-muted);">🔒 محددة من إعدادات حسابات الدفع</span>
+                </div>
+                {% else %}
                 <select name="treasury_id" id="treasury_id" class="form-select" style="background-color: var(--bg-input); color: var(--text-primary); border: 1px solid var(--border-bright); padding: 12px; box-shadow: 0 0 10px rgba(0,0,0,0.5) inset;" required>
-                    <option value="">-- اختر الخزينة --</option>
-                    {% for t in treasuries %}
-                    <option value="{{ t.id }}">{{ t.name }}</option>
+                    <option value="" data-balance="" {% if not default_treasury %}selected{% endif %}>-- اختر الخزينة --</option>
+                    {% for r in treasury_rows %}
+                    <option value="{{ r.obj.id }}" data-balance="{{ r.balance|stringformat:'f' }}"{% if r.busy %} disabled data-busy="1"{% endif %} {% if default_treasury and r.obj.id == default_treasury.id and not r.busy %}selected{% endif %}>{{ r.obj.name }}{% if default_treasury and r.obj.id == default_treasury.id %} (الافتراضية){% endif %}{% if r.busy %} — مشغول: وردية مفتوحة لـ {{ r.busy.user|display_name }}{% endif %}</option>
                     {% endfor %}
                 </select>
-                <div class="invalid-feedback">يرجى اختيار الخزينة.</div>
+                {% if default_treasury and default_busy %}
+                <div class="form-text mt-1" style="color: var(--status-warning);"><i class="fas fa-exclamation-triangle me-1"></i> الخزينة الافتراضية عليها وردية مفتوحة لكاشير آخر — درج واحد لكاشير واحد. أغلق تلك الوردية أو اختر درجاً آخر.</div>
+                {% elif default_treasury %}
+                <div class="form-text mt-1" style="color: var(--text-secondary);"><i class="fas fa-check-circle me-1" style="color: var(--neon-green);"></i> تم اختيار الخزينة الافتراضية للفرع تلقائياً — يمكنك تغييرها.</div>
+                {% else %}
+                <div class="form-text mt-1" style="color: var(--text-secondary);"><i class="fas fa-info-circle me-1"></i> لا توجد خزينة افتراضية لهذا الفرع — حددها من إعدادات الفرع لتُختار تلقائياً.</div>
+                {% endif %}
+                {% endif %}
+                {% if treasury_locked and default_busy %}
+                <div class="form-text mt-1" style="color: var(--status-warning);"><i class="fas fa-exclamation-triangle me-1"></i> هذا الدرج عليه وردية مفتوحة لكاشير آخر — يجب إغلاقها أولاً (درج واحد لكاشير واحد).</div>
+                {% endif %}
             </div>
 
             <div class="mb-5">
-                <label class="form-label text-white" for="opening_balance">رصيد الافتتاح (العهدة) <span class="text-danger">*</span></label>
+                <label class="form-label text-white">رصيد الافتتاح (من رصيد الخزينة)</label>
                 <div class="input-group">
-                    <input type="number" step="0.01" min="0" class="form-control text-center fw-bold fs-4" id="opening_balance" name="opening_balance" value="0.00" required dir="ltr" style="background-color: var(--bg-input); color: var(--neon-orange); border: 1px solid var(--border-bright); padding: 15px; box-shadow: 0 0 15px rgba(255, 140, 66, 0.1) inset;">
+                    <div class="form-control text-center fw-bold fs-4" id="openingBalanceView" dir="ltr" style="background-color: rgba(255,255,255,0.04); color: var(--neon-orange); border: 1px solid var(--border-bright); padding: 15px;">—</div>
                     <span class="input-group-text fw-bold" style="background-color: rgba(255, 140, 66, 0.2); color: var(--neon-orange); border: 1px solid var(--neon-orange); padding: 0 20px;">ج.م</span>
                 </div>
-                <div class="form-text mt-2" style="color: var(--text-secondary);"><i class="fas fa-info-circle me-1"></i> أدخل المبلغ الموجود حالياً في الدرج للبدء (الفكة).</div>
+                <div class="form-text mt-2" style="color: var(--text-secondary);"><i class="fas fa-info-circle me-1"></i> يُحسب تلقائياً من رصيد الدرج في الحسابات (ما تركته الوردية السابقة). لنقل نقدية من/إلى الدرج استخدم تحويل الأموال أو التوريد عند إغلاق الوردية.</div>
             </div>
 
             <div class="d-grid mt-4">
-                <button type="submit" class="btn btn-orange btn-lg fw-bold" style="padding: 15px; border-radius: 8px; font-size: 1.2rem; box-shadow: 0 0 15px var(--neon-orange-glow);">
+                <button type="submit" id="openShiftBtn" class="btn btn-orange btn-lg fw-bold" style="padding: 15px; border-radius: 8px; font-size: 1.2rem; box-shadow: 0 0 15px var(--neon-orange-glow);">
                     <i class="fas fa-lock-open me-2"></i> فتح الوردية والبدء في البيع
                 </button>
             </div>
@@ -64,6 +83,17 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+        var sel = document.getElementById('treasury_id');
+        var view = document.getElementById('openingBalanceView');
+        var btn = document.getElementById('openShiftBtn');
+        function fmt(v) { return v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+        function refresh() {
+            var src = sel && sel.tagName === 'SELECT' ? sel.options[sel.selectedIndex] : sel;
+            var raw = src ? (src.getAttribute('data-balance') || '') : '';
+            view.textContent = raw === '' ? '—' : fmt(parseFloat(raw) || 0);
+            if (btn) btn.disabled = !src || !src.value || src.getAttribute('data-busy') === '1';
+        }
+        if (sel) { sel.addEventListener('change', refresh); refresh(); }
         try {
             sessionStorage.removeItem('pos_sessions');
             sessionStorage.removeItem('pos_activeSessionId');

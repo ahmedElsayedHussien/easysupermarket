@@ -10,7 +10,7 @@
   <div class="lq-head">
     <div>
       <h2>💧 {{ title }}</h2>
-      <span class="lq-scope">الخزائن: {{ scope_label }} · البنوك والمحافظ: كل الشركة</span>
+      <span class="lq-scope">الخزائن والماكينات: {{ scope_label }} · البنوك والمحافظ: كل الشركة</span>
     </div>
     <div class="lq-actions">
       {% if perms.accounting.add_internaltransfer %}<a class="lq-btn primary" href="{% url 'accounting:transfer_create' %}">🔄 تحويل جديد</a>{% endif %}
@@ -22,6 +22,7 @@
       {% if perms.accounting.add_treasury %}<a class="lq-btn" href="{% url 'accounting:treasury_create' %}">＋ خزينة</a>{% endif %}
       {% if perms.accounting.add_bankaccount %}<a class="lq-btn" href="{% url 'accounting:bank_create' %}">＋ حساب بنكي</a>{% endif %}
       {% if perms.accounting.add_ewallet %}<a class="lq-btn" href="{% url 'accounting:ewallet_create' %}">＋ محفظة</a>{% endif %}
+      {% if perms.accounting.add_posmachine %}<a class="lq-btn" href="{% url 'accounting:pos_machine_create' %}">＋ ماكينة دفع</a>{% endif %}
     </div>
   </div>
 
@@ -30,7 +31,7 @@
     <div class="lq-tile hero">
       <div class="k">إجمالي السيولة</div>
       <div class="v"><bdi dir="ltr">{{ grand_total|money }}</bdi> <small style="font-size:0.75rem;color:var(--lq-muted)">ج.م</small></div>
-      <div class="s">{{ treasury_rows|length }} خزينة · {{ bank_rows|length }} بنك · {{ ewallet_rows|length }} محفظة</div>
+      <div class="s">{{ treasury_rows|length }} خزينة · {{ bank_rows|length }} بنك · {{ ewallet_rows|length }} محفظة · {{ machine_rows|length }} ماكينة</div>
     </div>
     <div class="lq-tile"><div class="k"><span class="lq-dot" style="background:var(--series-1)"></span>نقدية بالخزائن</div>
       <div class="v"><bdi dir="ltr">{{ totals.TREASURY|money }}</bdi></div></div>
@@ -38,9 +39,12 @@
       <div class="v"><bdi dir="ltr">{{ totals.BANK|money }}</bdi></div></div>
     <div class="lq-tile"><div class="k"><span class="lq-dot" style="background:var(--series-3)"></span>المحافظ الإلكترونية</div>
       <div class="v"><bdi dir="ltr">{{ totals.EWALLET|money }}</bdi></div></div>
+    <div class="lq-tile"><div class="k"><span class="lq-dot" style="background:var(--series-4)"></span>ماكينات الدفع</div>
+      <div class="v"><bdi dir="ltr">{{ totals.POS|money }}</bdi></div>
+      {% if low_machines %}<div class="s" style="color:var(--st-warning)">⚠️ {{ low_machines }} ماكينة رصيدها منخفض</div>{% endif %}</div>
     <div class="lq-tile"><div class="k">صافي الحركة ({{ flow_days }} يوم)</div>
       <div class="v" {% if net_flow < 0 %}style="color:var(--flow-out)"{% endif %}><bdi dir="ltr">{% if net_flow > 0 %}+{% endif %}{{ net_flow|money }}</bdi></div>
-      <div class="s">بدون التحويلات الداخلية</div></div>
+      <div class="s">بدون التحويلات الداخلية · خدمات الدفع بصافي العمولة</div></div>
     <div class="lq-tile"><div class="k">🚚 بالطريق بين الفروع</div>
       <div class="v">{{ incoming_count|add:outgoing_count }}</div>
       <div class="s">وارد {{ incoming_total|money }} · صادر {{ outgoing_total|money }}</div></div>
@@ -100,15 +104,17 @@
       <button class="lq-tab active" data-tab="TREASURY" role="tab">💰 الخزائن ({{ treasury_rows|length }})</button>
       <button class="lq-tab" data-tab="BANK" role="tab">🏦 حسابات البنوك ({{ bank_rows|length }})</button>
       <button class="lq-tab" data-tab="EWALLET" role="tab">📱 المحافظ الإلكترونية ({{ ewallet_rows|length }})</button>
+      <button class="lq-tab" data-tab="POS" role="tab">💳 ماكينات الدفع ({{ machine_rows|length }}){% if low_machines %} <span class="lq-badge" title="رصيد منخفض">{{ low_machines }}</span>{% endif %}</button>
     </div>
     {% include "accounting/_liquidity_accounts_table.html" with rows=treasury_rows kind="TREASURY" active=True show_branch=True %}
     {% include "accounting/_liquidity_accounts_table.html" with rows=bank_rows kind="BANK" %}
     {% include "accounting/_liquidity_accounts_table.html" with rows=ewallet_rows kind="EWALLET" %}
+    {% include "accounting/_liquidity_accounts_table.html" with rows=machine_rows kind="POS" show_branch=True %}
   </section>
 
   <!-- Recent movements -->
   <section class="lq-card">
-    <h3>آخر الحركات <small>على الخزائن والبنوك والمحافظ</small></h3>
+    <h3>آخر الحركات <small>على الخزائن والبنوك والمحافظ والماكينات</small></h3>
     <div class="lq-scroll">
       <table class="lq-table">
         <thead><tr><th>التاريخ</th><th>الحساب</th><th>البيان</th><th>داخل</th><th>خارج</th><th>القيد</th></tr></thead>

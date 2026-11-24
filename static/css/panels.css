@@ -12,6 +12,7 @@
     --series-1: #3987e5;   /* treasuries */
     --series-2: #d95926;   /* banks */
     --series-3: #199e70;   /* e-wallets */
+    --series-4: #c98500;   /* POS machines (4-slot palette validated on #0d1526, adjacent CVD dE 8.4) */
     --flow-in: #3987e5;    /* diverging pole: money in */
     --flow-out: #e66767;   /* diverging pole: money out */
     --seq: #3987e5;        /* per-account balance bars */
@@ -94,6 +95,10 @@
   .lq-alert.is-zero { opacity: 0.6; }
   .st-good { --st: var(--st-good); } .st-warning { --st: var(--st-warning); }
   .st-serious { --st: var(--st-serious); } .st-critical { --st: var(--st-critical); }
+  /* inline status pill: icon + label + status colour (never colour alone) */
+  .lq-status { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.72rem; font-weight: 700; white-space: nowrap;
+    color: var(--lq-text); border: 1px solid var(--st, var(--lq-border)); border-radius: 999px; padding: 0 0.5rem;
+    background: color-mix(in srgb, var(--st, transparent) 14%, transparent); }
   .lq-hbars { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.55rem; }
   .lq-hbars li { display: grid; grid-template-columns: minmax(90px, 30%) 1fr auto; gap: 0.6rem; align-items: center; font-size: 0.84rem; }
   .lq-hbars .lbl { color: var(--lq-text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

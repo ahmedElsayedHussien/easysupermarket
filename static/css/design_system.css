@@ -895,3 +895,83 @@ h1, h2, h3, h4, h5, h6 { font-weight: 800; line-height: 1.3; color: #ffffff; }
 @media (max-width: 480px) {
   .module-grid-5 { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   BUTTON COMPATIBILITY LAYER
+   Templates use some Bootstrap-style class names that the design
+   system never defined, so those buttons rendered unstyled (dark
+   text on the dark background). Map each one onto the brand's
+   neon buttons so every button follows the visual identity.
+   ============================================================ */
+.btn-secondary,
+.btn-outline-secondary,
+.btn-outline,
+.btn-outline-light,
+.btn-icon {
+  background: transparent; border: 1px solid var(--border-bright); color: var(--text-secondary);
+}
+.btn-secondary:hover, .btn-outline-secondary:hover, .btn-outline:hover,
+.btn-outline-light:hover, .btn-icon:hover {
+  border-color: var(--neon-cyan); color: var(--neon-cyan); background: var(--neon-cyan-glow);
+}
+.btn-outline-light { color: var(--text-primary); }
+
+.btn-outline-info, .btn-outline-cyan {
+  background: var(--neon-cyan-glow); border: 1px solid var(--neon-cyan); color: var(--neon-cyan);
+}
+.btn-outline-info:hover, .btn-outline-cyan:hover {
+  background: var(--neon-cyan); color: var(--bg-primary); box-shadow: 0 0 15px var(--neon-cyan-glow);
+}
+.btn-outline-danger, .btn-delete-row {
+  background: var(--neon-red-glow); border: 1px solid var(--neon-red); color: var(--neon-red);
+}
+.btn-outline-danger:hover, .btn-delete-row:hover {
+  background: var(--neon-red); color: #fff; box-shadow: 0 0 15px var(--neon-red-glow);
+}
+.btn-outline-warning {
+  background: var(--neon-gold-glow); border: 1px solid var(--neon-gold); color: var(--neon-gold);
+}
+.btn-outline-warning:hover { background: var(--neon-gold); color: var(--bg-primary); }
+.btn-outline-success {
+  background: var(--neon-green-glow); border: 1px solid var(--neon-green); color: var(--neon-green);
+}
+.btn-outline-success:hover { background: var(--neon-green); color: var(--bg-primary); }
+.btn-outline-orange {
+  background: var(--neon-orange-glow); border: 1px solid var(--neon-orange); color: var(--neon-orange);
+}
+.btn-outline-orange:hover { background: var(--neon-orange); color: var(--bg-primary); }
+
+/* orange primary aliases used by some pages */
+.btn-primary-orange, .btn-orange-primary, .btn-orange-glow {
+  background-color: #ff7300; border: 1px solid #ff7300; color: #fff; font-weight: 700;
+  box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); border-radius: 8px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; text-decoration: none;
+}
+.btn-primary-orange:hover, .btn-orange-primary:hover, .btn-orange-glow:hover {
+  background-color: #e66a00; color: #fff; box-shadow: 0 6px 20px rgba(255, 115, 0, 0.6);
+}
+
+/* compact delete / icon buttons */
+.btn-delete-row, .btn-icon {
+  padding: 0.3rem 0.6rem; border-radius: 6px; cursor: pointer; font-family: var(--font-arabic);
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem;
+}
+
+/* modal close (Bootstrap draws it with a background SVG we don't load) */
+.btn-close {
+  width: 2rem; height: 2rem; padding: 0; border: 1px solid var(--border-bright); border-radius: 8px;
+  background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 1rem; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.btn-close:empty::before { content: '✕'; }
+.btn-close:hover { border-color: var(--neon-red); color: var(--neon-red); background: var(--neon-red-glow); }
+.btn-close-white { color: var(--text-primary); }
+
+/* links styled as buttons must not get the browser's blue/purple */
+a.btn, a[class*="btn-"] { text-decoration: none; }
+
+/* Bootstrap utility names used across templates (Bootstrap itself is not loaded) */
+@media screen { .text-white { color: #fff; } }  /* screen only: print styles can still turn text black */
+.fw-bold { font-weight: 700 !important; }
+.me-1 { margin-inline-end: 0.25rem !important; } .me-2 { margin-inline-end: 0.5rem !important; }
+.ms-1 { margin-inline-start: 0.25rem !important; } .ms-2 { margin-inline-start: 0.5rem !important; }

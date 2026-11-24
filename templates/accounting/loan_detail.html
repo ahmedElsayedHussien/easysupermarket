@@ -325,14 +325,14 @@
 </div>
 
 <!-- نافذة منبثقة (Modal) لسداد القسط بنقرة واحدة -->
-<div class="modal fade" id="payInstallmentModal" tabindex="-1" aria-labelledby="payInstallmentModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content" style="background: #1e293b; border: 1px solid rgba(255,115,0,0.4); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-            <div class="modal-header" style="border-bottom: 1px solid rgba(255,255,255,0.1); background: rgba(15, 23, 42, 0.6);">
+<div class="modal-overlay" id="payInstallmentModal" role="dialog" aria-modal="true" aria-labelledby="payInstallmentModalLabel" style="display: none;" onclick="if (event.target === this) closePayModal()">
+    <div>
+        <div class="modal-box" style="padding: 0; max-width: 560px; border-color: rgba(255,115,0,0.4); overflow: hidden;">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem; border-bottom: 1px solid rgba(255,255,255,0.1); background: rgba(15, 23, 42, 0.6);">
                 <h5 class="modal-title text-white fw-bold" id="payInstallmentModalLabel">
                     <i class="fas fa-money-bill-wave text-warning me-2"></i> سداد قسط القرض
                 </h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                <button type="button" class="btn-close btn-close-white" onclick="closePayModal()" aria-label="إغلاق"></button>
             </div>
             <form id="payInstallmentForm" method="post" action="">
                 {% csrf_token %}
@@ -388,8 +388,8 @@
                         {{ pay_form.payment_notes }}
                     </div>
                 </div>
-                <div class="modal-footer" style="border-top: 1px solid rgba(255,255,255,0.1); background: rgba(15, 23, 42, 0.6);">
-                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">إلغاء</button>
+                <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 0.75rem; padding: 1rem 1.25rem; border-top: 1px solid rgba(255,255,255,0.1); background: rgba(15, 23, 42, 0.6);">
+                    <button type="button" class="btn btn-outline-secondary" onclick="closePayModal()">إلغاء</button>
                     <button type="submit" class="btn btn-orange" style="background-color: #ff7300; border-color: #ff7300; color: #fff; font-weight: 700; border-radius: 8px; box-shadow: 0 4px 12px rgba(255,115,0,0.3); padding: 0.55rem 1.5rem;">
                         <i class="fas fa-check-circle me-1"></i> تأكيد السداد وتوليد القيد
                     </button>
@@ -421,11 +421,17 @@ function openPayModal(instId, instNum, total, principal, interest, dueDate) {
     const form = document.getElementById('payInstallmentForm');
     form.action = "{% url 'accounting:loan_installment_pay' 0 %}".replace('/0/', '/' + instId + '/');
     
-    // Show modal
-    const modalEl = document.getElementById('payInstallmentModal');
-    const modal = new bootstrap.Modal(modalEl);
-    modal.show();
+    // Show modal (design-system overlay; Bootstrap JS is not loaded in this project)
+    document.getElementById('payInstallmentModal').style.display = 'flex';
 }
+
+function closePayModal() {
+    document.getElementById('payInstallmentModal').style.display = 'none';
+}
+
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closePayModal();
+});
 
 document.addEventListener('DOMContentLoaded', function() {
     const destSelect = document.getElementById('id_installment_pay_dest');

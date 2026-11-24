@@ -208,6 +208,42 @@ class TreasuryFollowsCurrentBranchTests(TestCase):
         self.assertEqual(list(scoped_treasuries(rq.user)), [self.treasury2])
 
 
+class OpenShiftDefaultTreasuryTests(TestCase):
+    """Opening a shift uses the branch's POS default treasury — no choice needed."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+        cls.extra = make_treasury(cls.w.branch, 'خزينة 2')    # 2 treasuries in the branch -> needs a default
+
+    def _open(self, data=None):
+        from apps.tenant.invoicing.models import POSSession
+        c = login(self.client, self.w.cashier)
+        c.post('/invoicing/pos/open-shift/', data or {'opening_balance': '100'})
+        return POSSession.objects.filter(user=self.w.cashier, status=POSSession.OPEN).first()
+
+    def test_branch_default_used_when_no_treasury_sent(self):
+        self.w.branch.default_pos_treasury = self.extra
+        self.w.branch.save(update_fields=['default_pos_treasury'])
+        page = login(self.client, self.w.cashier).get('/invoicing/pos/open-shift/')
+        self.assertEqual(page.context['default_treasury'], self.extra)
+        self.assertEqual(self._open().treasury, self.extra)
+
+    def test_without_default_a_choice_is_required(self):
+        self.assertIsNone(self._open())
+
+    def test_locked_default_cannot_be_changed(self):
+        from apps.tenant.core.tests.factories import system_settings
+        system_settings(lock_pos_payment_accounts=True)
+        self.w.branch.default_pos_treasury = self.extra
+        self.w.branch.save(update_fields=['default_pos_treasury'])
+        page = login(self.client, self.w.cashier).get('/invoicing/pos/open-shift/')
+        self.assertTrue(page.context['treasury_locked'])
+        self.assertContains(page, '🔒')
+        shift = self._open({'opening_balance': '0', 'treasury_id': self.w.treasury.id})
+        self.assertEqual(shift.treasury, self.extra)
+
+
 class MaintenanceTicketPagesTests(TestCase):
     @classmethod
     def setUpTestData(cls):
