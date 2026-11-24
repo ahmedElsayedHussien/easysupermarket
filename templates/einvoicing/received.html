@@ -1,0 +1,82 @@
+{% extends 'base.html' %}
+{% block title %}الفواتير الواردة من الموردين{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-3">
+        <h2 class="text-neon-blue">📥 الفواتير الواردة من الموردين (منظومة الضرائب)</h2>
+        <a href="{% url 'einvoicing:invoice_history' %}" class="btn btn-ghost">سجل الفواتير المرسلة</a>
+    </div>
+
+    <form method="get" class="card p-3 mb-3 border-neon-gold d-flex flex-wrap align-items-end gap-2" style="flex-direction:row;">
+        <input type="hidden" name="load" value="1">
+        <div>
+            <label class="form-label text-light mb-1" style="font-size:.85rem;">من (تاريخ الإرسال)</label>
+            <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from|date:'Y-m-d' }}">
+        </div>
+        <div>
+            <label class="form-label text-light mb-1" style="font-size:.85rem;">إلى</label>
+            <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to|date:'Y-m-d' }}">
+        </div>
+        <button type="submit" class="btn btn-sm btn-orange"><i class="fas fa-download"></i> جلب من الضرائب</button>
+        <small class="text-muted" style="flex-basis:100%;">
+            الفواتير التي أصدرها الموردون باسم شركتك. تظهر فقط الصالحة والمرفوضة والملغاة (قيد من الضرائب)، والفترة حد أقصى 30 يوماً.
+            الرفض مسموح مرة واحدة فقط وخلال مدة محددة من تاريخ إرسال الفاتورة؛ بعدها يلزم طلب إشعار دائن من المورد.
+        </small>
+    </form>
+
+    {% if error %}<div class="card p-3 mb-3" style="border:1px solid #ef4444; color:#fca5a5;">{{ error }}</div>{% endif %}
+
+    <div class="card p-4 border-neon-blue">
+        <div class="table-responsive">
+            <table class="table table-hover text-light align-middle">
+                <thead>
+                    <tr class="text-neon-blue border-bottom-neon">
+                        <th>المورد</th>
+                        <th>رقم فاتورة المورد</th>
+                        <th>تاريخ الإصدار</th>
+                        <th>الإجمالي</th>
+                        <th>الحالة</th>
+                        <th>إجراء</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in docs %}
+                    <tr>
+                        <td><strong>{{ d.issuerName|default:"-" }}</strong><br><small class="text-muted" dir="ltr">{{ d.issuerId }}</small></td>
+                        <td dir="ltr">{{ d.internalId|default:"-" }}{% if d.publicUrl %} <a href="{{ d.publicUrl }}" target="_blank" rel="noopener" style="color:#00e5ff;" title="عرض على موقع الضرائب"><i class="fas fa-external-link-alt"></i></a>{% endif %}</td>
+                        <td dir="ltr" class="text-nowrap">{{ d.dateTimeIssued|slice:":16"|default:"-" }}</td>
+                        <td class="text-neon-gold fw-bold text-nowrap">{{ d.total|floatformat:2 }}</td>
+                        <td>
+                            {% if d.rejectRequestDate %}<span class="badge bg-warning text-dark">تم طلب الرفض</span>
+                            {% elif d.cancelRequestDate %}<span class="badge bg-warning text-dark">المورد طلب الإلغاء</span>
+                            {% else %}<span class="badge {% if d.status|lower == 'valid' %}bg-success{% elif d.status|lower == 'rejected' %}bg-danger{% else %}bg-secondary{% endif %}">{{ d.status }}</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if d.can_reject %}
+                            <form action="{% url 'einvoicing:reject_received_document' %}" method="post" class="d-flex gap-1 m-0"
+                                  onsubmit="return confirm('رفض فاتورة المورد {{ d.internalId|escapejs }}؟ الرفض مسموح مرة واحدة فقط.');">
+                                {% csrf_token %}
+                                <input type="hidden" name="uuid" value="{{ d.uuid }}">
+                                <input type="hidden" name="internal_id" value="{{ d.internalId }}">
+                                <input type="hidden" name="date_from" value="{{ date_from|date:'Y-m-d' }}">
+                                <input type="hidden" name="date_to" value="{{ date_to|date:'Y-m-d' }}">
+                                <select name="reason" class="form-select form-select-sm" style="width:auto;">
+                                    {% for value, label in reject_reasons %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                                </select>
+                                <button type="submit" class="btn btn-sm btn-danger"><i class="fas fa-times"></i> رفض</button>
+                            </form>
+                            {% else %}<span class="text-muted">—</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center py-5 text-muted">
+                        {% if loaded %}لا توجد فواتير واردة في هذه الفترة.{% else %}اختر الفترة واضغط "جلب من الضرائب".{% endif %}
+                    </td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

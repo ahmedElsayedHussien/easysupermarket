@@ -402,6 +402,20 @@
             {% endif %}
             
             {% if system_setting is None or system_setting.show_nav_tax_settings %}
+            <a href="{% url 'einvoicing:egs_codes' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'egs_codes' %}active{% endif %}">
+                <span class="nav-icon">🏷️</span>
+                <span class="nav-text">{% trans 'تسجيل أكواد الأصناف' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_einvoice_history %}
+            <a href="{% url 'einvoicing:received_documents' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'received_documents' %}active{% endif %}">
+                <span class="nav-icon">📥</span>
+                <span class="nav-text">{% trans 'الفواتير الواردة من الموردين' %}</span>
+            </a>
+            {% endif %}
+
+            {% if system_setting is None or system_setting.show_nav_tax_settings %}
             <a href="{% url 'einvoicing:tax_settings' %}" class="nav-link nav-purple {% if request.resolver_match.url_name == 'tax_settings' %}active{% endif %}">
                 <span class="nav-icon">🧾</span>
                 <span class="nav-text">{% trans 'إعدادات الضرائب' %}</span>

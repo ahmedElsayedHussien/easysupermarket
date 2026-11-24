@@ -227,7 +227,7 @@ class CategoryListView(CustomPermissionRequiredMixin, ListView):
 
 class CategoryCreateView(CustomPermissionRequiredMixin, CreateView):
     model = Category
-    fields = ['name', 'parent', 'is_active', 'description']
+    fields = ['name', 'parent', 'is_active', 'description', 'name_en', 'gpc_code', 'egs_code']
     template_name = 'core/generic_form.html'
     success_url = reverse_lazy('inventory:category_list')
     permission_required = 'inventory.add_category'
@@ -240,7 +240,7 @@ class CategoryCreateView(CustomPermissionRequiredMixin, CreateView):
 
 class CategoryUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = Category
-    fields = ['name', 'parent', 'is_active', 'description']
+    fields = ['name', 'parent', 'is_active', 'description', 'name_en', 'gpc_code', 'egs_code']
     template_name = 'core/generic_form.html'
     success_url = reverse_lazy('inventory:category_list')
     permission_required = 'inventory.change_category'
@@ -295,7 +295,8 @@ def product_template_download(request):
         "الكمية (اختياري)",
         "القسم / الفئة (اختياري)",
         "وحدة القياس (اختياري)",
-        "حد إعادة الطلب (اختياري)"
+        "حد إعادة الطلب (اختياري)",
+        "المخزن (اختياري)",
     ]
 
     ws.append(headers)
@@ -317,7 +318,8 @@ def product_template_download(request):
         100,
         "بقوليات وأرز",
         "كيلو",
-        15
+        15,
+        "",
     ]
     # صف توضيحي 2: منتج بدون باركود (الخانة فارغة تماماً للتأكيد على أن الباركود اختياري)
     sample_row_2 = [
@@ -328,7 +330,8 @@ def product_template_download(request):
         35,
         "حلويات ومخبوزات",
         "قطعة",
-        5
+        5,
+        "",
     ]
 
     for row_data in [sample_row_1, sample_row_2]:
@@ -353,10 +356,37 @@ def product_template_download(request):
         'E': 16, # الكمية
         'F': 22, # القسم
         'G': 18, # وحدة القياس
-        'H': 22  # حد إعادة الطلب
+        'H': 22, # حد إعادة الطلب
+        'I': 26, # المخزن
     }
     for col_letter, width in col_widths.items():
         ws.column_dimensions[col_letter].width = width
+
+    # Sheet listing the warehouses the user may import into + a dropdown on column I.
+    # Empty cell = the warehouse chosen on the import screen.
+    from apps.tenant.core.access import get_allowed_branch_ids
+    whs = Warehouse.objects.filter(is_active=True).select_related('branch').order_by('branch__name', 'name')
+    allowed_ids = get_allowed_branch_ids(request)
+    if allowed_ids is not None:
+        whs = whs.filter(branch_id__in=allowed_ids)
+    ws_wh = wb.create_sheet('المخازن')
+    ws_wh.views.sheetView[0].rightToLeft = True
+    ws_wh.append(['اسم المخزن (يُكتب في عمود المخزن)', 'كود المخزن', 'الفرع'])
+    for col_num in range(1, 4):
+        c = ws_wh.cell(row=1, column=col_num)
+        c.fill, c.font, c.alignment = header_fill, header_font, center_align
+    for wh in whs:
+        ws_wh.append([wh.name, wh.code, wh.branch.name if wh.branch_id else ''])
+    for col_letter, width in (('A', 34), ('B', 16), ('C', 24)):
+        ws_wh.column_dimensions[col_letter].width = width
+    if whs.exists():
+        from openpyxl.worksheet.datavalidation import DataValidation
+        dv = DataValidation(type='list', formula1=f"='المخازن'!$A$2:$A${whs.count() + 1}", allow_blank=True,
+                            showErrorMessage=False)
+        dv.promptTitle = 'المخزن'
+        dv.prompt = 'اختياري: اتركه فارغاً لاستخدام المخزن المختار في شاشة الاستيراد'
+        ws.add_data_validation(dv)
+        dv.add('I2:I5000')
 
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -372,8 +402,20 @@ def product_bulk_import(request):
     """
     شاشة ومعالجة استيراد المنتجات مجمعة من ملف إكسيل.
     الباركود اختياري تماماً.
+
+    الكميات الافتتاحية تدخل:
+      - المخزن المكتوب في عمود "المخزن" بالشيت (اسم أو كود المخزن) إن وُجد للصف،
+      - وإلا المخزن المختار في الشاشة (افتراضياً مخزن الفرع الحالي).
     """
-    warehouses = Warehouse.objects.filter(is_active=True)
+    from apps.tenant.core.access import get_allowed_branch_ids, get_working_branch
+    warehouses = Warehouse.objects.filter(is_active=True).select_related('branch').order_by('branch__name', 'name')
+    allowed_ids = get_allowed_branch_ids(request)
+    if allowed_ids is not None:
+        warehouses = warehouses.filter(branch_id__in=allowed_ids)
+    working_branch = get_working_branch(request)
+    default_warehouse = (warehouses.filter(branch=working_branch).first() if working_branch else None) or warehouses.first()
+    page_ctx = {'warehouses': warehouses, 'default_warehouse': default_warehouse,
+                'title': 'استيراد المنتجات من إكسيل'}
 
     if request.method == 'POST':
         import openpyxl
@@ -389,16 +431,16 @@ def product_bulk_import(request):
 
         if not excel_file:
             messages.error(request, 'يرجى اختيار ملف إكسيل (.xlsx أو .xls) لرفعه.')
-            return render(request, 'inventory/product_bulk_import.html', {'warehouses': warehouses, 'title': 'استيراد المنتجات من إكسيل'})
+            return render(request, 'inventory/product_bulk_import.html', page_ctx)
 
         if not excel_file.name.endswith(('.xlsx', '.xls')):
             messages.error(request, 'صيغة الملف غير مدعومة. يرجى رفع ملف إكسيل بصيغة .xlsx أو .xls')
-            return render(request, 'inventory/product_bulk_import.html', {'warehouses': warehouses, 'title': 'استيراد المنتجات من إكسيل'})
+            return render(request, 'inventory/product_bulk_import.html', page_ctx)
 
         warehouse = None
         if warehouse_id:
             try:
-                warehouse = Warehouse.objects.get(id=warehouse_id, is_active=True)
+                warehouse = warehouses.get(id=warehouse_id)
             except Warehouse.DoesNotExist:
                 warehouse = None
 
@@ -407,7 +449,7 @@ def product_bulk_import(request):
             ws = wb.active
         except Exception as e:
             messages.error(request, f'تعذر قراءة ملف الإكسيل: {str(e)}')
-            return render(request, 'inventory/product_bulk_import.html', {'warehouses': warehouses, 'title': 'استيراد المنتجات من إكسيل'})
+            return render(request, 'inventory/product_bulk_import.html', page_ctx)
 
         UNIT_MAP = {
             'قطعة': 'PIECE', 'قطعه': 'PIECE', 'حبة': 'PIECE', 'حبه': 'PIECE', 'piece': 'PIECE',
@@ -423,7 +465,7 @@ def product_bulk_import(request):
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
             messages.error(request, 'ملف الإكسيل فارغ ولا يحتوي على أي بيانات.')
-            return render(request, 'inventory/product_bulk_import.html', {'warehouses': warehouses, 'title': 'استيراد المنتجات من إكسيل'})
+            return render(request, 'inventory/product_bulk_import.html', page_ctx)
 
         header_row_idx = -1
         col_map = {}
@@ -435,7 +477,10 @@ def product_bulk_import(request):
                 header_row_idx = idx
                 for col_idx, h in enumerate(r_str):
                     h_lower = h.lower()
-                    if 'اسم' in h or 'product' in h_lower or 'item' in h_lower:
+                    is_qty_header = 'كمية' in h or 'رصيد' in h or 'qty' in h_lower or 'quantity' in h_lower
+                    if ('مخزن' in h or 'مستودع' in h or 'warehouse' in h_lower) and not is_qty_header:
+                        col_map['warehouse'] = col_idx
+                    elif 'اسم' in h or 'product' in h_lower or 'item' in h_lower:
                         col_map['name'] = col_idx
                     elif 'باركود' in h or 'barcode' in h_lower:
                         col_map['barcode'] = col_idx
@@ -462,10 +507,39 @@ def product_bulk_import(request):
                 'quantity': 4,
                 'category': 5,
                 'unit': 6,
-                'min_stock': 7
+                'min_stock': 7,
+                'warehouse': 8,
             }
             header_row_idx = 0
 
+        # Per-row warehouse (column "المخزن"): name or code of a warehouse the user may use.
+        wh_lookup = {}
+        for wh in warehouses:
+            for key in (wh.name, wh.code):
+                if key:
+                    wh_lookup[' '.join(str(key).split()).lower()] = wh
+        row_warehouses = {}
+        w_idx = col_map.get('warehouse')
+        if w_idx is not None:
+            unknown = []
+            for row_num, r in enumerate(rows[header_row_idx + 1:], start=header_row_idx + 2):
+                if not r or w_idx >= len(r) or r[w_idx] is None or str(r[w_idx]).strip() == '':
+                    continue
+                key = ' '.join(str(r[w_idx]).split()).lower()
+                if key.endswith('.0') and key[:-2].isdigit():
+                    key = key[:-2]
+                wh = wh_lookup.get(key)
+                if wh is None:
+                    unknown.append(f'الصف {row_num}: "{str(r[w_idx]).strip()}"')
+                else:
+                    row_warehouses[row_num] = wh
+            if unknown:
+                messages.error(request, 'لم يتم استيراد أي صنف: مخازن غير معروفة (أو لا تتبع فروعك) في عمود "المخزن" — '
+                               + '، '.join(unknown[:10]) + (f' ... و{len(unknown) - 10} أخرى' if len(unknown) > 10 else '')
+                               + '. اكتب اسم المخزن أو كوده كما هو في البرنامج، أو اترك الخانة فارغة لاستخدام المخزن المختار.')
+                return render(request, 'inventory/product_bulk_import.html', page_ctx)
+
+        warehouse_costs = {}
         created_count = 0
         updated_count = 0
         skipped_count = 0
@@ -558,6 +632,9 @@ def product_bulk_import(request):
                     # تخطي الصفوف الاسترشادية التوضيحية لو لم يحذفها المستخدم
                     if name in sample_names and row_num <= 4:
                         continue
+
+                    # Warehouse of this row: column "المخزن" (validated above) or the screen's choice
+                    row_wh = row_warehouses.get(row_num, warehouse)
     
                     # الباركود: اختياري تماماً
                     raw_barcode = get_col('barcode')
@@ -671,11 +748,11 @@ def product_bulk_import(request):
                                         update_fields.append('unit')
                                     existing_product.save(update_fields=list(set(update_fields)))
 
-                                    if quantity > Decimal('0') and warehouse:
-                                        unit_cost_used = cost_price if cost_price > 0 else (existing_product.get_average_cost(warehouse) or Decimal('0'))
+                                    if quantity > Decimal('0') and row_wh:
+                                        unit_cost_used = cost_price if cost_price > 0 else (existing_product.get_average_cost(row_wh) or Decimal('0'))
                                         add_inventory_batch(
                                             product=existing_product,
-                                            warehouse=warehouse,
+                                            warehouse=row_wh,
                                             quantity=quantity,
                                             unit_cost=unit_cost_used,
                                             batch_number=f'رصيد {datetime.date.today().strftime("%Y%m%d")}',
@@ -700,11 +777,11 @@ def product_bulk_import(request):
                                     if sale_price > Decimal('0'):
                                         in_sheet_prod.sale_price = sale_price
                                         in_sheet_prod.save(update_fields=['sale_price', 'updated_at'])
-                                    if quantity > Decimal('0') and warehouse:
-                                        unit_cost_used = cost_price if cost_price > 0 else (in_sheet_prod.get_average_cost(warehouse) or Decimal('0'))
+                                    if quantity > Decimal('0') and row_wh:
+                                        unit_cost_used = cost_price if cost_price > 0 else (in_sheet_prod.get_average_cost(row_wh) or Decimal('0'))
                                         add_inventory_batch(
                                             product=in_sheet_prod,
-                                            warehouse=warehouse,
+                                            warehouse=row_wh,
                                             quantity=quantity,
                                             unit_cost=unit_cost_used,
                                             batch_number=f'رصيد {datetime.date.today().strftime("%Y%m%d")}',
@@ -732,10 +809,10 @@ def product_bulk_import(request):
                                     cache_updates.append((existing_products_by_name, norm_name, new_prod))
                                     sheet_marks.append((seen_names_in_sheet, norm_name))
 
-                                    if quantity > Decimal('0') and warehouse:
+                                    if quantity > Decimal('0') and row_wh:
                                         add_inventory_batch(
                                             product=new_prod,
-                                            warehouse=warehouse,
+                                            warehouse=row_wh,
                                             quantity=quantity,
                                             unit_cost=cost_price,
                                             batch_number=f'رصيد {datetime.date.today().strftime("%Y%m%d")}',
@@ -754,13 +831,16 @@ def product_bulk_import(request):
                     updated_count += row_updated
                     skipped_count += row_skipped
                     total_opening_cost += row_cost
+                    if row_cost and row_wh:
+                        warehouse_costs[row_wh.name] = warehouse_costs.get(row_wh.name, Decimal('0')) + row_cost
                     for cache, key, prod in cache_updates:
                         cache[key] = prod
                     for seen, key in sheet_marks:
                         seen.add(key)
 
         # إنشاء قيد افتتاحي متوازن إذا كانت هناك كميات وتكلفة
-        if total_opening_cost > Decimal('0') and warehouse:
+        if total_opening_cost > Decimal('0'):
+            wh_names = '، '.join(sorted(warehouse_costs)) or (warehouse.name if warehouse else '')
             try:
                 inv_acc = _get_system_account('1140')
                 opening_acc = _get_system_account('3999')
@@ -773,11 +853,11 @@ def product_bulk_import(request):
                 )
                 JournalItem.objects.create(
                     entry=je, account=inv_acc, debit=total_opening_cost, credit=Decimal('0'),
-                    description=f'إجمالي تكلفة بضاعة رصيد افتتاحي (استيراد إكسيل) - {warehouse.name}'
+                    description=f'إجمالي تكلفة بضاعة رصيد افتتاحي (استيراد إكسيل) - {wh_names}'
                 )
                 JournalItem.objects.create(
                     entry=je, account=opening_acc, debit=Decimal('0'), credit=total_opening_cost,
-                    description=f'أرصدة افتتاحية رأس مال بضاعة (استيراد إكسيل) - {warehouse.name}'
+                    description=f'أرصدة افتتاحية رأس مال بضاعة (استيراد إكسيل) - {wh_names}'
                 )
                 je.post()
             except Exception as je_err:
@@ -801,10 +881,7 @@ def product_bulk_import(request):
 
         return redirect('inventory:product_list')
 
-    return render(request, 'inventory/product_bulk_import.html', {
-        'warehouses': warehouses,
-        'title': 'استيراد المنتجات من شيت إكسيل'
-    })
+    return render(request, 'inventory/product_bulk_import.html', page_ctx)
 
 
 # --- Opening stock: optional expiry date (only when SystemSetting.enable_expiry_tracking) ---
@@ -919,6 +996,7 @@ class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
         context['warehouses'] = warehouses
         default_wh = warehouses.first()
         context['opening_info'] = get_product_opening_info(self.object, default_wh)
+        context['eta_code_info'] = _eta_code_info(self.object)
         if self.request.POST:
             context['uom_formset'] = ProductUoMFormSet(self.request.POST, instance=self.object)
         else:
@@ -1827,3 +1905,21 @@ def opening_stock_list_view(request):
     }
     return render(request, 'inventory/opening_stock_list.html', context)
 
+
+
+
+def _eta_code_info(product):
+    """Plain sentence: which code the Tax Authority will receive for this product."""
+    from apps.tenant.einvoicing.services import category_code_holder, item_code, pending_category
+    if (product.egs_code or '').strip():
+        if product.egs_status == 'REQUESTED':
+            return {'ok': False, 'text': f'كود EGS خاص {product.egs_code} — في انتظار موافقة الضرائب.'}
+        if product.egs_status != 'FAILED':
+            return {'ok': True, 'text': f'كود EGS خاص بالصنف: {product.egs_code}'}
+    cat = category_code_holder(product)
+    if cat is not None:
+        return {'ok': True, 'text': f'كود الفئة "{cat.name}": {cat.egs_code}'}
+    pend = pending_category(product)
+    if pend is not None:
+        return {'ok': False, 'text': f'كود الفئة "{pend.name}" في انتظار موافقة الضرائب.'}
+    return {'ok': False, 'text': 'لا يوجد كود — سجّل كوداً لفئة الصنف من: منظومة الضرائب ← تسجيل أكواد الأصناف.'}

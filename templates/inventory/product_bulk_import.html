@@ -168,14 +168,23 @@
 
             <div class="row g-3 mb-4">
                 <div class="col-md-6">
-                    <label class="form-label text-white fw-bold">المستودع المستهدف للكميات الافتتاحية:</label>
+                    <label class="form-label text-white fw-bold">المخزن الافتراضي للكميات الافتتاحية:</label>
                     <select name="warehouse" class="form-select bg-dark-glass text-white border-secondary">
-                        <option value="">-- اختياري (حدد المستودع في حال وجود كميات بالشيت) --</option>
-                        {% for wh in warehouses %}
-                        <option value="{{ wh.id }}" {% if forloop.first %}selected{% endif %}>{{ wh.name }}</option>
+                        <option value="">-- بدون مخزن (إنشاء الأصناف فقط بدون رصيد) --</option>
+                        {% regroup warehouses by branch as wh_by_branch %}
+                        {% for group in wh_by_branch %}
+                        <optgroup label="فرع: {{ group.grouper.name|default:'بدون فرع' }}">
+                            {% for wh in group.list %}
+                            <option value="{{ wh.id }}" {% if default_warehouse and wh.id == default_warehouse.id %}selected{% endif %}>{{ wh.name }} — {{ group.grouper.name|default:'' }}</option>
+                            {% endfor %}
+                        </optgroup>
                         {% endfor %}
                     </select>
-                    <small class="text-muted d-block mt-1">إذا تركته فارغاً سيتم إنشاء المنتجات فقط بدون رصيد مخزني.</small>
+                    <small class="text-muted d-block mt-1">
+                        الفرع يتحدد تلقائياً من المخزن. مختار افتراضياً مخزن الفرع الحالي.<br>
+                        <strong style="color:#ff9f43;">أكثر من مخزن في نفس الملف؟</strong> أضف عمود <strong>"المخزن"</strong> في الشيت واكتب فيه اسم المخزن (أو كوده) لكل صف —
+                        القالب فيه العمود جاهزاً بقائمة منسدلة، وورقة "المخازن" بالأسماء المتاحة. الصف الذي يُترك فيه العمود فارغاً يدخل المخزن المختار هنا.
+                    </small>
                 </div>
 
                 <div class="col-md-6">

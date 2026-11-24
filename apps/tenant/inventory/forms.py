@@ -24,7 +24,7 @@ class ProductForm(BaseGlassForm):
     class Meta:
         model = Product
         fields = [
-            'name', 'name_en', 'product_type', 'has_imei', 'has_serial', 'barcode', 'sku', 'gs1_code', 'egs_code',
+            'name', 'name_en', 'product_type', 'has_imei', 'has_serial', 'barcode', 'sku', 'egs_code', 'gpc_code',
             'category', 'sale_price', 'min_sale_price', 'tax_rate', 'withholding_tax_rate',
             'min_stock_level', 'max_stock_level', 'is_active',
             'allow_negative_stock', 'description', 'image'
@@ -34,6 +34,9 @@ class ProductForm(BaseGlassForm):
         super().__init__(*args, **kwargs)
         if 'barcode' in self.fields:
             self.fields['barcode'].required = True
+        if 'egs_code' in self.fields:
+            self.fields['egs_code'].help_text = ('اختياري: اتركه فارغاً — يُرسل الصنف بكود EGS لفئته. '
+                                                 'أكواد الفئات من: منظومة الضرائب ← تسجيل أكواد الأصناف.')
         if 'image' in self.fields:
             self.fields['image'].widget.attrs['accept'] = 'image/*'
             self.fields['image'].help_text = 'تُحوَّل الصورة تلقائياً إلى WebP خفيف (أقصى بُعد 800px).'

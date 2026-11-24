@@ -72,8 +72,13 @@ def get_partner_full_statement(partner, start_date=None, end_date=None):
             uom_name = ''
             if line.uom and getattr(line.uom, 'uom', None):
                 uom_name = line.uom.uom.name
-            elif hasattr(line.product, 'unit') and line.product.unit:
-                uom_name = str(line.product.unit)
+            elif line.product:
+                uom_name = (getattr(line.product, 'pos_unit_name', None)
+                            or line.product.get_unit_display() or '')
+            # Line total from its parts: lines saved before the total field was maintained
+            # (July 2026) hold total_amount = 0 although the amounts are right.
+            line_total = ((line.subtotal or Decimal('0')) + (line.tax_amount or Decimal('0'))
+                          - (line.wht_amount or Decimal('0')))
             lines_data.append({
                 'product_name': line.product.name,
                 'quantity': line.quantity,
@@ -82,7 +87,7 @@ def get_partner_full_statement(partner, start_date=None, end_date=None):
                 'discount_amount': line.discount_amount or Decimal('0'),
                 'discount_pct': line.discount_pct or Decimal('0'),
                 'tax_amount': line.tax_amount or Decimal('0'),
-                'total_amount': line.total_amount,
+                'total_amount': line_total,
             })
         has_lines = bool(lines_data)
 

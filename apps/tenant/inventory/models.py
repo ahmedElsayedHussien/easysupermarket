@@ -74,6 +74,18 @@ class Category(MPTTModel):
     description = models.TextField(blank=True, verbose_name=_('وصف'))
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # --- Category-level EGS code: used by every product of the category (and of its
+    # sub-categories) that has no GS1 / EGS code of its own (einvoicing.services.item_code).
+    name_en = models.CharField(max_length=200, blank=True, default='', verbose_name=_('اسم الفئة بالإنجليزي'))
+    gpc_code = models.CharField(max_length=20, blank=True, default='', verbose_name=_('كود GPC للفئة'))
+    egs_code = models.CharField(max_length=50, blank=True, default='', verbose_name=_('كود EGS للفئة'),
+                                help_text=_('يُسجَّل من: منظومة الضرائب ← تسجيل أكواد الأصناف. أو اكتب كوداً معتمداً لديك بالفعل.'))
+    egs_status = models.CharField(max_length=10, blank=True, default='', verbose_name=_('حالة تسجيل EGS'),
+                                  choices=[('REQUESTED', 'في انتظار موافقة الضرائب'),
+                                           ('APPROVED', 'معتمد من الضرائب'), ('FAILED', 'رفضت الضرائب الطلب')])
+    egs_requested_at = models.DateTimeField(null=True, blank=True, verbose_name=_('تاريخ طلب تسجيل EGS'))
+    egs_message = models.CharField(max_length=500, blank=True, default='', verbose_name=_('رد الضرائب على طلب EGS'))
+
     class MPTTMeta:
         order_insertion_by = ['name']
 
@@ -119,6 +131,21 @@ class Product(models.Model):
     egs_code = models.CharField(
         max_length=50, null=True, blank=True, verbose_name=_('كود EGS')
     )
+    # --- EGS code registration at the Tax Authority (einvoicing.egs) ---
+    EGS_REQUESTED = 'REQUESTED'
+    EGS_APPROVED = 'APPROVED'
+    EGS_FAILED = 'FAILED'
+    EGS_STATUS_CHOICES = [
+        (EGS_REQUESTED, 'في انتظار موافقة الضرائب'),
+        (EGS_APPROVED, 'معتمد من الضرائب'),
+        (EGS_FAILED, 'رفضت الضرائب الطلب'),
+    ]
+    gpc_code = models.CharField(max_length=20, blank=True, default='', verbose_name=_('كود GPC (المستوى الرابع)'),
+                                help_text=_('كود تصنيف المنتج العالمي — مطلوب لتسجيل كود EGS لدى الضرائب.'))
+    egs_status = models.CharField(max_length=10, blank=True, default='', choices=EGS_STATUS_CHOICES,
+                                  verbose_name=_('حالة تسجيل EGS'))
+    egs_requested_at = models.DateTimeField(null=True, blank=True, verbose_name=_('تاريخ طلب تسجيل EGS'))
+    egs_message = models.CharField(max_length=500, blank=True, default='', verbose_name=_('رد الضرائب على طلب EGS'))
     item_code = models.CharField(
         max_length=50, null=True, blank=True, verbose_name=_('كود الصنف الداخلي')
     )
@@ -256,6 +283,28 @@ class Product(models.Model):
         if not branch: return self.sale_price
         pb = self.branch_prices.filter(branch=branch).first()
         return pb.sale_price if pb else self.sale_price
+
+
+
+def is_official_gtin(code):
+    """
+    True for a manufacturer barcode that can be a GS1 code: GTIN-8/12/13/14 digits with a
+    valid check digit, excluding the in-store / variable-weight ranges (EAN-13 starting
+    with 2, UPC-A starting with 2) that a shop or a scale prints itself.
+    """
+    code = (code or '').strip()
+    if not code.isdigit() or len(code) not in (8, 12, 13, 14):
+        return False
+    if (len(code) == 13 and code[0] == '2') or (len(code) == 12 and code[0] == '2'):
+        return False
+    if len(code) == 14 and code[1] == '2':
+        return False
+    if set(code) == {'0'} or '00000000' in code:
+        return False    # placeholder / generated numbers (e.g. 100000000007), not a manufacturer GTIN
+    digits = [int(c) for c in code]
+    body, check = digits[:-1], digits[-1]
+    total = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(reversed(body)))
+    return (10 - total % 10) % 10 == check
 
 
 # ---------------------------------------------------------------------------

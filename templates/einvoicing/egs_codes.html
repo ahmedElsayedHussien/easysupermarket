@@ -1,0 +1,135 @@
+{% extends 'base.html' %}
+{% block title %}تسجيل أكواد الأصناف لدى الضرائب{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-between align-center mb-3">
+        <h2 class="text-neon-blue">🏷️ تسجيل أكواد الأصناف (EGS) لدى الضرائب</h2>
+        <a href="{% url 'einvoicing:tax_settings' %}" class="btn btn-ghost">إعدادات الضرائب</a>
+    </div>
+
+    <div class="card p-3 mb-3 border-neon-gold" style="font-size:.88rem; color:#cbd5e1;">
+        كل صنف يُباع بفاتورة إلكترونية يُرسل بكود EGS مسجل لدى الضرائب (كود فئته، أو كود خاص به). من هنا تسجّل الأكواد:
+        الكود يُكوَّن تلقائياً بالصيغة <code dir="ltr">EG-رقم التسجيل-الكود الداخلي</code>، ويلزم لكل صنف <strong>كود GPC</strong> (8 أرقام، تصنيف المنتج)
+        و<strong>الاسم بالإنجليزي</strong>. الطلب يذهب لموظفي الضرائب للموافقة، ولا تُستخدم الأكواد في الفواتير إلا بعد الاعتماد.
+    </div>
+
+    {% if not company_ready %}
+    <div class="card p-3 mb-3" style="border:1px solid #ef4444; color:#fca5a5;">سجّل أولاً رقم التسجيل الضريبي في <a href="{% url 'einvoicing:tax_settings' %}" style="color:#00e5ff;">إعدادات الضرائب</a>.</div>
+    {% endif %}
+
+    <!-- 1) Category codes: the quick way -->
+    <form method="post" class="card p-3 mb-4 border-neon-purple">
+        {% csrf_token %}<input type="hidden" name="action" value="request_categories">
+        <h4 class="text-neon-purple mb-1">١) أكواد الفئات <small class="text-muted" style="font-size:.8rem;">(الطريقة الأسرع)</small></h4>
+        <p class="text-muted mb-2" style="font-size:.85rem;">سجّل كوداً واحداً لكل فئة: كل صنف ليس له كود EGS خاص يُرسَل بكود فئته (أو أقرب فئة أعلى لها كود)، مع اسم الصنف الحقيقي في الوصف.</p>
+        <div class="table-responsive">
+            <table class="table table-hover text-light align-middle mb-2">
+                <thead><tr class="text-neon-purple">
+                    <th style="width:32px;"></th><th>الفئة</th><th>الاسم بالإنجليزي *</th><th>كود GPC *</th><th>كود EGS</th><th>الحالة</th>
+                </tr></thead>
+                <tbody>
+                {% for c in categories %}
+                <tr>
+                    <td>{% if c.egs_status != 'REQUESTED' and c.egs_status != 'APPROVED' %}<input type="checkbox" name="cat_selected" value="{{ c.id }}">{% endif %}</td>
+                    <td style="padding-inline-start: calc(.5rem + {{ c.level }} * 1.2rem);">{% if c.level %}↳ {% endif %}<strong>{{ c.name }}</strong></td>
+                    <td><input type="text" name="cat_name_en_{{ c.id }}" value="{{ c.name_en }}" class="form-control form-control-sm" dir="ltr" placeholder="English name"></td>
+                    <td><input type="text" name="cat_gpc_{{ c.id }}" value="{{ c.gpc_code }}" class="form-control form-control-sm" dir="ltr" maxlength="8" placeholder="10000000" style="width:110px;"></td>
+                    <td dir="ltr" style="font-family:monospace; font-size:.8rem;">{{ c.egs_code|default:c.proposed_egs }}</td>
+                    <td style="font-size:.8rem;">
+                        {% if c.egs_status %}<span class="badge {% if c.egs_status == 'APPROVED' %}bg-success{% elif c.egs_status == 'FAILED' %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ c.get_egs_status_display }}</span>{% else %}<span class="text-muted">لم يُسجَّل</span>{% endif %}
+                        {% if c.egs_message %}<small class="d-block" style="color:#94a3b8;">{{ c.egs_message }}</small>{% endif %}
+                        {% if c.egs_status == 'REQUESTED' or c.egs_status == 'FAILED' %}
+                        <button type="submit" form="approve-cat-{{ c.id }}" class="btn btn-sm btn-ghost mt-1">✓ معتمد</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-center text-muted">لا توجد فئات.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <button type="submit" class="btn btn-orange btn-sm" {% if not company_ready %}disabled{% endif %}
+                onclick="return confirm('إرسال طلبات أكواد الفئات المحددة للضرائب؟');">📤 طلب تسجيل أكواد الفئات المحددة</button>
+    </form>
+    {% for c in categories %}{% if c.egs_status == 'REQUESTED' or c.egs_status == 'FAILED' %}
+    <form method="post" id="approve-cat-{{ c.id }}" style="display:none;" onsubmit="return confirm('تأكدت من اعتماد الكود على بوابة الضرائب؟');">
+        {% csrf_token %}<input type="hidden" name="action" value="approve_category"><input type="hidden" name="category_id" value="{{ c.id }}">
+    </form>
+    {% endif %}{% endfor %}
+
+    <h4 class="text-neon-blue mb-2">٢) أكواد خاصة بأصناف معينة <small class="text-muted" style="font-size:.8rem;">(اختياري)</small></h4>
+    <form method="get" class="d-flex gap-2 mb-3 flex-wrap">
+        <input type="text" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="بحث بالاسم أو الباركود" style="max-width:260px;">
+        <select name="show" class="form-select form-select-sm" style="width:auto;">
+            <option value="missing" {% if show == 'missing' %}selected{% endif %}>أصناف بدون كود معتمد</option>
+            <option value="pending" {% if show == 'pending' %}selected{% endif %}>طلبات قيد الموافقة / مرفوضة</option>
+        </select>
+        <button class="btn btn-sm btn-ghost">عرض</button>
+    </form>
+    <form method="post" class="mb-3">
+        {% csrf_token %}<input type="hidden" name="action" value="sync">
+        <button type="submit" class="btn btn-sm btn-orange" {% if not company_ready %}disabled{% endif %}><i class="fas fa-sync"></i> تحديث حالات الطلبات من الضرائب</button>
+        <small class="text-muted ms-2">يعرف تلقائياً الأكواد التي اعتمدتها الضرائب أو رفضتها.</small>
+    </form>
+
+    <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="request">
+        <div class="card p-3 border-neon-blue">
+            <div class="table-responsive">
+                <table class="table table-hover text-light align-middle">
+                    <thead>
+                        <tr class="text-neon-blue border-bottom-neon">
+                            <th style="width:32px;"><input type="checkbox" onclick="document.querySelectorAll('.egs-pick').forEach(c => c.checked = this.checked)"></th>
+                            <th>الصنف</th>
+                            <th>الاسم بالإنجليزي *</th>
+                            <th>كود GPC *</th>
+                            <th>كود EGS</th>
+                            <th>الحالة</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in page_obj %}
+                        <tr>
+                            <td>{% if p.egs_status != 'REQUESTED' %}<input type="checkbox" name="selected" value="{{ p.id }}" class="egs-pick">{% endif %}</td>
+                            <td><strong>{{ p.name }}</strong><br><small class="text-muted" dir="ltr">{{ p.barcode|default:p.sku|default:"" }}</small></td>
+                            <td><input type="text" name="name_en_{{ p.id }}" value="{{ p.name_en }}" class="form-control form-control-sm" dir="ltr" placeholder="English name"></td>
+                            <td><input type="text" name="gpc_{{ p.id }}" value="{{ p.gpc_code }}" class="form-control form-control-sm" dir="ltr" maxlength="8" placeholder="10000000" style="width:110px;"></td>
+                            <td dir="ltr" style="font-family:monospace; font-size:.8rem;">{{ p.egs_code|default:p.proposed_egs }}</td>
+                            <td style="font-size:.8rem;">
+                                {% if p.covered_by and not p.egs_status %}<span class="badge bg-success">يُرسل بكود الفئة: {{ p.covered_by.name }}</span>
+                                {% elif p.egs_status %}<span class="badge {% if p.egs_status == 'APPROVED' %}bg-success{% elif p.egs_status == 'FAILED' %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ p.get_egs_status_display }}</span>{% else %}<span class="text-muted">لم يُسجَّل</span>{% endif %}
+                                {% if p.egs_message %}<small class="d-block" style="color:#94a3b8;">{{ p.egs_message }}</small>{% endif %}
+                                {% if p.egs_status == 'REQUESTED' or p.egs_status == 'FAILED' %}
+                                <button type="submit" form="approve-{{ p.id }}" class="btn btn-sm btn-ghost mt-1" title="بعد التأكد من اعتماد الكود على بوابة الضرائب">✓ معتمد</button>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="6" class="text-center py-4 text-muted">لا توجد أصناف تحتاج تسجيل كود.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if page_obj.object_list %}
+            <div class="d-flex justify-between align-center mt-2 flex-wrap gap-2">
+                <button type="submit" class="btn btn-orange" {% if not company_ready %}disabled{% endif %}
+                        onclick="return confirm('إرسال طلبات تسجيل الأكواد المحددة للضرائب؟');">📤 طلب تسجيل الأكواد المحددة (حتى {{ batch_limit }})</button>
+                <span class="text-muted" style="font-size:.85rem;">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
+                    {% if page_obj.has_previous %}<a href="?q={{ q|urlencode }}&show={{ show }}&page={{ page_obj.previous_page_number }}" style="color:#00e5ff;">السابق</a>{% endif %}
+                    {% if page_obj.has_next %}<a href="?q={{ q|urlencode }}&show={{ show }}&page={{ page_obj.next_page_number }}" style="color:#00e5ff;">التالي</a>{% endif %}
+                </span>
+            </div>
+            {% endif %}
+        </div>
+    </form>
+
+    {% for p in page_obj %}{% if p.egs_status == 'REQUESTED' or p.egs_status == 'FAILED' %}
+    <form method="post" id="approve-{{ p.id }}" style="display:none;" onsubmit="return confirm('تأكدت من اعتماد الكود على بوابة الضرائب؟');">
+        {% csrf_token %}<input type="hidden" name="action" value="approve"><input type="hidden" name="product_id" value="{{ p.id }}">
+    </form>
+    {% endif %}{% endfor %}
+</div>
+{% endblock %}

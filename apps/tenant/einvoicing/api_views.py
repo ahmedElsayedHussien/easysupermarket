@@ -17,7 +17,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import TaxIntegrationSettings, EInvoiceLog
-from .services import build_invoice_json
+from .services import ETAValidationError, build_invoice_json
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,11 @@ def get_pending_invoices(request):
     for log in pending_logs:
         try:
             pending_list.append({'id': log.invoice_id, 'data': build_invoice_json(log.invoice_id)})
+        except ETAValidationError as e:
+            log.status = 'ERROR'
+            log.eta_response = {'validation': e.errors}
+            log.save(update_fields=['status', 'eta_response', 'updated_at'])
+            continue
         except Exception:
             logger.exception('Error building ETA JSON for invoice %s', log.invoice_id)
             continue

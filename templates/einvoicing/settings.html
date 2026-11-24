@@ -9,8 +9,22 @@
         <a href="{% url 'core:admin_dashboard' %}" class="btn btn-ghost">العودة للوحة القيادة</a>
     </div>
 
+    {% if readiness_errors %}
+    <div class="card p-3 mb-4" style="border:1px solid #f59e0b; background:rgba(245,158,11,0.08);">
+        <h5 style="color:#fbbf24; margin:0 0 .5rem 0;"><i class="fas fa-exclamation-triangle"></i> بيانات ناقصة — الضرائب سترفض الفواتير حتى تُستكمل:</h5>
+        <ul style="margin:0; color:#fde68a; font-size:.9rem;">
+            {% for err in readiness_errors %}<li>{{ err }}</li>{% endfor %}
+        </ul>
+    </div>
+    {% else %}
+    <div class="card p-3 mb-4" style="border:1px solid #10b981; background:rgba(16,185,129,0.08); color:#6ee7b7;">
+        <i class="fas fa-check-circle"></i> بيانات المُصدِر مكتملة.
+    </div>
+    {% endif %}
+
     <form method="POST" class="needs-validation" novalidate>
         {% csrf_token %}
+        {% if form.non_field_errors %}<div class="text-danger mb-2">{{ form.non_field_errors|join:" " }}</div>{% endif %}
         
         <div class="row">
             <!-- بيانات المصادقة -->
@@ -30,9 +44,15 @@
                     </div>
 
                     <div class="form-group mb-3">
+                        <label class="form-label text-light" for="id_on_behalf_of">{{ form.on_behalf_of.label }}</label>
+                        <input type="text" name="on_behalf_of" id="id_on_behalf_of" class="form-control" value="{{ form.on_behalf_of.value|default_if_none:'' }}" dir="ltr">
+                        <small class="text-muted">{{ form.on_behalf_of.help_text }}</small>
+                    </div>
+
+                    <div class="form-group mb-3">
                         <label class="form-label text-light">كود النشاط (Activity Code)</label>
-                        <input type="text" name="taxpayer_activity_code" class="form-control" value="{{ form.taxpayer_activity_code.value|default_if_none:'4741' }}" required>
-                        <small class="text-muted">الافتراضي هو 4741 الخاص بمحلات السوبر ماركت وتجارة التجزئة.</small>
+                        <input type="text" name="taxpayer_activity_code" class="form-control" value="{{ form.taxpayer_activity_code.value|default_if_none:'' }}" maxlength="4" dir="ltr" required>
+                        <small class="text-muted">كود النشاط المسجل لك في الضرائب (4 أرقام) — راجعه من بطاقتك الضريبية. محلات السوبر ماركت غالباً 4711.</small>
                     </div>
                 </div>
             </div>
@@ -49,8 +69,9 @@
                     </div>
 
                     <div class="form-group mb-3">
-                        <label class="form-label text-light">اسم الشركة</label>
-                        <input type="text" name="company_name" class="form-control" value="{{ form.company_name.value|default_if_none:'' }}" required>
+                        <label class="form-label text-light">اسم المحل (المُصدِر)</label>
+                        <div class="form-control" style="background:rgba(255,255,255,0.04);">{{ issuer_name|default:"— غير مسجل —" }}</div>
+                        <small class="text-muted">يُؤخذ من <a href="{% url 'core:system_settings' %}" style="color:#00e5ff;">الإعدادات العامة ← اسم المؤسسة / المتجر</a>، ويجب أن يطابق الاسم المسجل في الضرائب.</small>
                     </div>
 
                     <div class="form-check form-switch mt-4 mb-3 custom-switch">
@@ -64,6 +85,40 @@
                         <label class="form-check-label ms-2 fw-bold text-danger" for="is_production">العملية الفعلية (Production Mode)</label>
                         <div class="text-muted mt-1" style="font-size: 0.85rem;">حذّر من تفعيله إلا في بيئة الإنتاج.</div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- عنوان المحل المسجل في الضرائب -->
+        <div class="card p-4 mb-4 border-neon-gold">
+            <h4 class="text-neon-gold mb-1">عنوان المحل كما هو مسجل في الضرائب</h4>
+            <p class="text-muted mb-3" style="font-size:.85rem;">يُرسل مع كل فاتورة — يجب أن يطابق بيانات التسجيل في بوابة الضرائب.</p>
+            <div class="row">
+                {% for field in form %}{% if field.name in "branch_code governate region_city street building_number postal_code floor room landmark" %}
+                <div class="col-md-4 mb-3">
+                    <label class="form-label text-light" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    <input type="text" name="{{ field.name }}" id="{{ field.id_for_label }}" class="form-control" value="{{ field.value|default_if_none:'' }}">
+                    {% if field.help_text %}<small class="text-muted d-block">{{ field.help_text }}</small>{% endif %}
+                    {% for err in field.errors %}<small class="text-danger d-block">{{ err }}</small>{% endfor %}
+                </div>
+                {% endif %}{% endfor %}
+            </div>
+        </div>
+
+        <!-- أكواد وحدود -->
+        <div class="card p-4 mb-4 border-neon-blue">
+            <h4 class="text-neon-blue mb-3">أكواد الضرائب وقواعد العميل</h4>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label text-light" for="{{ form.wht_subtype.id_for_label }}">{{ form.wht_subtype.label }}</label>
+                    <input type="text" name="wht_subtype" id="{{ form.wht_subtype.id_for_label }}" class="form-control" value="{{ form.wht_subtype.value|default_if_none:'' }}" dir="ltr">
+                    <small class="text-muted d-block">{{ form.wht_subtype.help_text }}</small>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label text-light" for="{{ form.receiver_id_threshold.id_for_label }}">{{ form.receiver_id_threshold.label }}</label>
+                    <input type="number" step="0.01" min="0" name="receiver_id_threshold" id="{{ form.receiver_id_threshold.id_for_label }}" class="form-control" value="{{ form.receiver_id_threshold.value|default_if_none:'' }}" dir="ltr">
+                    <small class="text-muted d-block">{{ form.receiver_id_threshold.help_text }}</small>
+                    {% for err in form.receiver_id_threshold.errors %}<small class="text-danger d-block">{{ err }}</small>{% endfor %}
                 </div>
             </div>
         </div>
