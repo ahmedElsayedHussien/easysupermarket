@@ -94,7 +94,6 @@ echo.
 
 :: Check existing venv
 if not exist "venv\Scripts\python.exe" goto CREATE_VENV
-if not exist "venv\Scripts\activate.bat" goto CREATE_VENV
 
 :: Check if existing venv is Python 3.11
 "venv\Scripts\python.exe" --version > temp_venv_ver.txt 2>&1
@@ -126,7 +125,6 @@ py -3.11 -m venv venv
 
 :CHECK_VENV_CREATED
 if not exist "venv\Scripts\python.exe" goto VENV_FAILED
-if not exist "venv\Scripts\activate.bat" goto VENV_FAILED
 echo [OK] Virtual environment created successfully.
 goto ACTIVATE_VENV
 
@@ -139,7 +137,7 @@ exit /b 1
 
 :ACTIVATE_VENV
 echo [2/4] Activating virtual environment...
-call venv\Scripts\activate.bat
+rem (no activate.bat: the venv python is called directly, folder-name independent)
 
 :: Check and install requirements
 echo [3/4] Checking required packages...

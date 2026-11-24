@@ -135,6 +135,10 @@ class SystemSetting(models.Model):
     
     # Printing & Branding
     store_name = models.CharField(max_length=200, blank=True, verbose_name=_('اسم المتجر للإيصال'))
+    store_phone = models.CharField(max_length=50, blank=True, verbose_name=_('هاتف المحل'),
+                                   help_text=_('يظهر على الفواتير المطبوعة. فارغ = هاتف الفرع.'))
+    store_address = models.CharField(max_length=255, blank=True, verbose_name=_('عنوان المحل'),
+                                     help_text=_('يظهر على الفواتير المطبوعة. فارغ = عنوان الفرع.'))
     tax_number = models.CharField(max_length=100, blank=True, verbose_name=_('الرقم الضريبي'))
     commercial_register = models.CharField(max_length=100, blank=True, verbose_name=_('السجل التجاري'))
     receipt_footer = models.TextField(blank=True, verbose_name=_('رسالة أسفل الإيصال'))
@@ -251,6 +255,12 @@ class SystemSetting(models.Model):
         if not self.pk and SystemSetting.objects.exists():
             return SystemSetting.objects.first()
         return super().save(*args, **kwargs)
+
+    @property
+    def company_name(self):
+        """Legacy alias used by older views/templates: the organisation name is
+        store_name (Settings > اسم المتجر). Prefer core.company.company_profile."""
+        return self.store_name or ''
 
     @classmethod
     def get_settings(cls):

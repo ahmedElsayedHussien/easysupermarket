@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>فاتورة مبيعات #{{ invoice.invoice_number }} - {{ store_name }}</title>
+    <title>{{ doc.short }} #{{ invoice.invoice_number }} - {{ store_name }}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
@@ -320,6 +320,7 @@
         .corp-meta-table .meta-label {
             color: #64748b;
             font-weight: 600;
+            white-space: nowrap;
         }
         .corp-meta-table .meta-val {
             font-weight: 700;
@@ -521,7 +522,7 @@
     <div class="print-toolbar no-print">
         <div class="toolbar-info">
             <span>📄</span>
-            <span>فاتورة مبيعات #{{ invoice.invoice_number }}</span>
+            <span>{{ doc.short }} #{{ invoice.invoice_number }}</span>
             <span style="font-weight: normal; color: #94a3b8; font-size: 0.85rem;">({{ invoice.created_at|date:"Y-m-d H:i" }})</span>
         </div>
         <div class="toolbar-sizes">
@@ -559,10 +560,19 @@
             <div class="thermal-divider-double"></div>
 
             <table class="thermal-info-table">
+                {% if is_return %}
+                <tr><td colspan="2" class="bold" style="text-align:center;">*** {{ doc.short }} ***</td></tr>
+                {% endif %}
                 <tr>
-                    <td class="bold">رقم الفاتورة:</td>
+                    <td class="bold">{% if is_return %}رقم المرتجع:{% else %}رقم الفاتورة:{% endif %}</td>
                     <td class="text-left bold" style="direction:ltr; font-family:monospace;">{{ invoice.invoice_number }}</td>
                 </tr>
+                {% if is_return and invoice.parent_invoice %}
+                <tr>
+                    <td>الفاتورة الأصلية:</td>
+                    <td class="text-left" style="direction:ltr; font-family:monospace;">{{ invoice.parent_invoice.invoice_number }}</td>
+                </tr>
+                {% endif %}
                 <tr>
                     <td>التاريخ:</td>
                     <td class="text-left" style="direction:ltr; font-family:monospace;">{{ invoice.created_at|date:"Y-m-d H:i" }}</td>
@@ -633,7 +643,7 @@
                 </tr>
                 {% endif %}
                 <tr class="total-highlight">
-                    <td class="extra-bold" style="font-size:13px;">الصافي المطلوب:</td>
+                    <td class="extra-bold" style="font-size:13px;">{% if is_return %}إجمالي المبلغ المرتجع:{% else %}الصافي المطلوب:{% endif %}</td>
                     <td class="text-left extra-bold" style="font-size:14px; font-family:monospace;">{{ invoice.total_amount|floatformat:2 }} ج.م</td>
                 </tr>
                 {% if rounding_amount %}
@@ -694,22 +704,28 @@
 
                 <div class="text-center" style="align-self:center;">
                     <img src="{% if company_logo_url %}{{ company_logo_url }}{% else %}/static/img/logo.png{% endif %}" onerror="this.style.display='none'" style="max-height:65px; object-fit:contain; margin-bottom:4px;" alt="Logo">
-                    <div style="font-size:11px; font-weight:700; color:#1F4E79;">فاتورة مبيعات ضريبية</div>
+                    <div style="font-size:11px; font-weight:700; color:#1F4E79;">{{ doc.tax }}</div>
                 </div>
 
                 <div class="corp-invoice-title-block">
-                    <div class="corp-invoice-badge">فاتورة مبيعات رسمية</div>
+                    <div class="corp-invoice-badge"{% if is_return %} style="background:#b91c1c;"{% endif %}>{{ doc.badge }}</div>
                     <table class="corp-meta-table">
                         <tr>
-                            <td class="meta-label">رقم الفاتورة:</td>
+                            <td class="meta-label">{% if is_return %}رقم المرتجع:{% else %}رقم الفاتورة:{% endif %}</td>
                             <td class="meta-val">{{ invoice.invoice_number }}</td>
                         </tr>
+                        {% if is_return and invoice.parent_invoice %}
+                        <tr>
+                            <td class="meta-label">الفاتورة الأصلية:</td>
+                            <td class="meta-val">{{ invoice.parent_invoice.invoice_number }}</td>
+                        </tr>
+                        {% endif %}
                         <tr>
                             <td class="meta-label">تاريخ الإصدار:</td>
                             <td class="meta-val">{{ invoice.created_at|date:"Y-m-d H:i" }}</td>
                         </tr>
                         <tr>
-                            <td class="meta-label">طريقة الدفع:</td>
+                            <td class="meta-label">{% if is_return %}طريقة الرد:{% else %}طريقة الدفع:{% endif %}</td>
                             <td class="meta-val" style="font-family:inherit;">{{ invoice.get_payment_type_display }}</td>
                         </tr>
                         <tr>
@@ -727,7 +743,7 @@
             <!-- Parties Cards (Customer Details) -->
             <div class="corp-parties-card">
                 <div>
-                    <div class="party-box-title">👤 بيانات العميل / المشتري:</div>
+                    <div class="party-box-title">👤 {{ doc.party }}:</div>
                     <div class="party-box-content">
                         <p><strong>الاسم:</strong> {{ invoice.partner.name|default:"عميل نقدي عام" }}</p>
                         {% if invoice.partner.phone or invoice.partner.mobile %}
@@ -744,8 +760,12 @@
                 <div>
                     <div class="party-box-title">ℹ️ تفاصيل وملاحظات العملية:</div>
                     <div class="party-box-content">
-                        <p><strong>نوع المستند:</strong> فاتورة مبيعات نهائية معتمدة</p>
+                        <p><strong>نوع المستند:</strong> {{ doc.kind }}</p>
+                        {% if is_return %}
+                        <p><strong>رد المبلغ:</strong> {% if invoice.payment_type == 'CREDIT' %}<span style="font-weight:700;">رصيد دائن على حساب العميل</span>{% else %}<span style="font-weight:700;">{{ invoice.get_payment_type_display }}</span>{% endif %}</p>
+                        {% else %}
                         <p><strong>حالة السداد:</strong> {% if invoice.payment_type == 'CREDIT' %}<span style="color:#b91c1c; font-weight:700;">آجل على الحساب</span>{% else %}<span style="color:#059669; font-weight:700;">مسددة بالكامل</span>{% endif %}</p>
+                        {% endif %}
                         {% if invoice.notes %}
                         <p><strong>بيان / ملاحظة:</strong> {{ invoice.notes }}</p>
                         {% endif %}
@@ -789,16 +809,8 @@
 
             <!-- Bottom Summary & Tafqeet -->
             <div class="corp-bottom-grid">
-                <!-- Tafqeet Card -->
-                <div class="corp-tafqeet-card">
-                    <div>
-                        <div style="font-size:11px; font-weight:700; color:#1F4E79; margin-bottom:4px;">المبلغ المطلوب سداده بالحروف:</div>
-                        <div style="font-size:12px; font-weight:800; color:#0f172a; line-height:1.5;">{{ amount_in_words }}</div>
-                    </div>
-                    <div style="margin-top:10px; font-size:10px; color:#64748b; border-top:1px dashed #cbd5e1; padding-top:6px;">
-                        📌 تنويه: تعتبر هذه الفاتورة إشعاراً رسمياً بالبيع والتسليم ونافذة بموجب اللوائح والأنظمة المعمول بها.
-                    </div>
-                </div>
+                {# amount-in-words / notice card removed on request; empty cell keeps the totals in place #}
+                <div></div>
 
                 <!-- Totals Table Card -->
                 <div>
@@ -826,7 +838,7 @@
                         </tr>
                         {% endif %}
                         <tr class="grand-total-row">
-                            <td>الصافي النهائي المطلوب:</td>
+                            <td>{% if is_return %}إجمالي المبلغ المرتجع:{% else %}الصافي النهائي المطلوب:{% endif %}</td>
                             <td class="text-left" style="font-family:monospace; font-size:15px; font-weight:900;">{{ invoice.total_amount|floatformat:2 }} ج.م</td>
                         </tr>
                         {% if rounding_amount %}
@@ -857,12 +869,6 @@
                 </div>
             </div>
 
-            <!-- Footer -->
-            <div class="corp-footer">
-                <p><strong>{{ receipt_footer|default:"شكراً لتعاملكم معنا • نسعد دائماً بخدمتكم" }}</strong></p>
-                <p style="margin-top:2px;">البضاعة المباعة تستبدل أو ترد خلال 14 يوماً من تاريخ الشراء بموجب أصل الفاتورة بحالتها الأصلية.</p>
-                <p style="font-size:9px; color:#94a3b8; margin-top:2px;">تم الاستخراج بواسطة نظام مسار لإدارة السوبرماركت ونقاط البيع Masar ERP</p>
-            </div>
         </div>
         {% endif %}
     </div>

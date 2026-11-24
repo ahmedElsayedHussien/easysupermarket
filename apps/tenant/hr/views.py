@@ -168,9 +168,9 @@ def api_attendance_check(request):
 
     if action == 'check_in':
         with transaction.atomic():
-            if _open_attendance_qs(employee, now_time).select_for_update().exists():
+            if _open_attendance_qs(employee, now_time).select_for_update(of=('self',)).exists():
                 return JsonResponse({'error': 'لديك حضور مفتوح، يجب تسجيل الانصراف أولاً.'}, status=400)
-            attendance, created = Attendance.objects.select_for_update().get_or_create(employee=employee, date=today)
+            attendance, created = Attendance.objects.select_for_update(of=('self',)).get_or_create(employee=employee, date=today)
             if attendance.check_in:
                 return JsonResponse({'error': 'لقد قمت بتسجيل الحضور مسبقاً.'}, status=400)
 
@@ -189,7 +189,7 @@ def api_attendance_check(request):
 
     elif action == 'check_out':
         with transaction.atomic():
-            attendance = _open_attendance_qs(employee, now_time).select_for_update().first()
+            attendance = _open_attendance_qs(employee, now_time).select_for_update(of=('self',)).first()
             if attendance is None:
                 today_att = Attendance.objects.filter(employee=employee, date=today).first()
                 if today_att and today_att.check_out:
@@ -294,7 +294,7 @@ def payroll_process(request):
             continue
 
         with transaction.atomic():
-            existing = Payroll.objects.select_for_update().filter(employee=emp, month=month, year=year).first()
+            existing = Payroll.objects.select_for_update(of=('self',)).filter(employee=emp, month=month, year=year).first()
             if existing and (existing.is_paid or existing.journal_entry_id):
                 skipped.append(display_username(emp.user))
                 continue
@@ -354,7 +354,7 @@ def payroll_confirm(request, pk):
 
     try:
         with transaction.atomic():
-            payroll = Payroll.objects.select_for_update().get(pk=payroll.pk)
+            payroll = Payroll.objects.select_for_update(of=('self',)).get(pk=payroll.pk)
             if payroll.is_paid or payroll.journal_entry_id:
                 messages.info(request, 'هذا المسير معتمد مسبقاً.')
                 return redirect('hr:payroll_list')

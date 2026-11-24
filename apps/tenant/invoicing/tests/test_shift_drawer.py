@@ -212,3 +212,58 @@ class ShiftDrawerTests(TestCase):
         tr.receive_transfer(user=self.w.admin)            # arrives DURING the shift
         r = c.get(f"{reverse('invoicing:pos_close_shift')}?session_id={s.pk}")
         self.assertEqual(r.context['expected_balance'], D('3800'))
+
+
+class ShiftFiguresAgreeTests(TestCase):
+    """Close screen, shift report and live POS stats show the same drawer figures."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+        put_cash(cls.w.treasury, D('1000'))
+
+    def test_three_screens_agree_and_closed_report_keeps_counted_figures(self):
+        from apps.tenant.accounting.models import Voucher
+        from apps.tenant.core.reports_views import get_pos_session_details
+        from apps.tenant.invoicing.views import get_shift_stats_data
+        c = login(self.client, self.w.cashier)
+        c.post(reverse('invoicing:pos_open_shift'), {'treasury_id': self.w.treasury.pk})
+        s = POSSession.objects.get(user=self.w.cashier, status='OPEN')
+        # movements on the drawer: a voucher by ANOTHER user (manager) and a cash drop
+        v = Voucher.objects.create(voucher_type=Voucher.RECEIPT, amount=D('70'), partner=self.w.customer,
+                                   account=self.w.customer.receivable_account, payment_method=Voucher.CASH,
+                                   treasury=self.w.treasury)
+        v.confirm_voucher()
+        main = make_treasury(self.w.branch, 'الرئيسية')
+        tr = InternalTransfer.objects.create(amount=D('300'), from_account_type='TREASURY',
+                                             from_treasury=self.w.treasury, to_account_type='TREASURY',
+                                             to_treasury=main)
+        tr.confirm_transfer(user=self.w.admin)
+
+        close_ctx = c.get(f"{reverse('invoicing:pos_close_shift')}?session_id={s.pk}").context
+        report = get_pos_session_details(s)
+        stats = get_shift_stats_data(s)
+        self.assertEqual(close_ctx['expected_balance'], D('770'))       # 1000 + 70 - 300
+        self.assertEqual(report['expected_balance'], D('770'))
+        self.assertEqual(D(str(stats['cash_in_drawer'])), D('770'))
+        self.assertEqual(report['total_transfers_net'], D('-300'))
+        self.assertEqual(report['total_cash_receipts'], D('70'))
+
+        c.post(reverse('invoicing:pos_close_shift'), {'session_id': s.pk, 'actual_balance': '760'})
+        s.refresh_from_db()
+        report = get_pos_session_details(s)
+        self.assertEqual(report['expected_balance'], D('770'))
+        self.assertEqual(report['actual_balance'], D('760'))
+        self.assertEqual(report['difference'], D('-10'))
+        self.assertEqual(report['post_close_movements'], D('0'))
+        # a voucher linked to the shift AFTER close is reported apart, the count stays
+        late = Voucher.objects.create(voucher_type=Voucher.RECEIPT, amount=D('25'), partner=self.w.customer,
+                                      account=self.w.customer.receivable_account, payment_method=Voucher.CASH,
+                                      treasury=self.w.treasury, pos_session=s)
+        late.confirm_voucher()
+        report = get_pos_session_details(s)
+        self.assertEqual(report['expected_balance'], D('770'))
+        self.assertEqual(report['post_close_movements'], D('25'))
+        r = login(self.client, self.w.admin).get(reverse('core:report_shift_detail', args=[s.pk]))
+        self.assertContains(r, 'بعد إغلاقها')
+        self.assertContains(r, 'تحويلات أموال من/إلى الدرج')

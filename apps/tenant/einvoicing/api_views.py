@@ -105,7 +105,7 @@ def submit_signed_invoice(request, invoice_id):
 
     try:
         with transaction.atomic():
-            log = (EInvoiceLog.objects.select_for_update()
+            log = (EInvoiceLog.objects.select_for_update(of=('self',))
                    .filter(invoice_id=invoice_id).first())
             if log is None:
                 return JsonResponse({'status': 'error', 'message': 'not found'}, status=404)

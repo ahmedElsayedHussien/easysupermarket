@@ -1200,7 +1200,7 @@ class VoucherUpdateView(CustomPermissionRequiredMixin, UpdateView):
         from apps.tenant.services.journal_service import reverse_entry_if_active
         try:
             with transaction.atomic():
-                locked = Voucher.objects.select_for_update().select_related('pos_session', 'journal_entry').get(pk=self.object.pk)
+                locked = Voucher.objects.select_for_update(of=('self',)).select_related('pos_session', 'journal_entry').get(pk=self.object.pk)
                 if locked.status == Voucher.CANCELLED:
                     raise ValidationError('لا يمكن تعديل سند ملغي.')
                 was_posted = (locked.status == Voucher.POSTED)
@@ -2522,7 +2522,7 @@ class FixedAssetDisposalView(CustomPermissionRequiredMixin, View):
 
         with transaction.atomic():
             # Re-fetch under a row lock and re-check: two concurrent submits can't both dispose
-            asset = FixedAsset.objects.select_for_update().get(pk=asset.pk)
+            asset = FixedAsset.objects.select_for_update(of=('self',)).get(pk=asset.pk)
             if asset.status == FixedAsset.AssetStatus.DISPOSED or asset.disposal_entry_id:
                 messages.error(request, 'هذا الأصل تم استبعاده دفترياً بالفعل مسبقاً.')
                 return redirect('accounting:fixed_asset_detail', pk=asset.pk)
@@ -2976,7 +2976,7 @@ class LoanInstallmentPayView(CustomPermissionRequiredMixin, View):
 
         with transaction.atomic():
             # Re-fetch under a row lock and re-check: a double submit can't pay the installment twice
-            installment = LoanInstallment.objects.select_for_update().select_related('loan').get(pk=installment.pk)
+            installment = LoanInstallment.objects.select_for_update(of=('self',)).select_related('loan').get(pk=installment.pk)
             loan = installment.loan
             if installment.is_paid or installment.payment_entry_id:
                 messages.warning(request, f"القسط #{installment.installment_number} مسدد بالفعل مسبقاً.")

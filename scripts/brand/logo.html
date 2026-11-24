@@ -1,0 +1,62 @@
+<!doctype html>
+<html dir="rtl">
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@800;900&family=Inter:wght@600;700&display=block" rel="stylesheet">
+<style>
+  html, body { margin: 0; background: transparent; }
+  body { font-family: 'Tajawal', sans-serif; }
+  .stage { display: inline-flex; align-items: center; gap: 0; padding: 0; }
+  /* lockup: icon on the right (RTL start), wordmark next to it */
+  .lockup { display: inline-flex; align-items: center; gap: 22px; padding: 10px 14px; direction: rtl; }
+  .word { display: flex; flex-direction: column; line-height: 1; }
+  .ar { font-family: 'Tajawal'; font-weight: 900; font-size: 112px; letter-spacing: 0; line-height: 0.95; }
+  .en { font-family: 'Inter'; font-weight: 700; font-size: 25px; letter-spacing: 12.5px; margin-top: 4px; direction: ltr; text-align: right; }
+  .dark .ar { color: #ffffff; } .dark .en { color: #ff8a1f; }
+  .light .ar { color: #111827; } .light .en { color: #ea6a00; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<!-- MARK: an "M" drawn as a route that rises into an arrow -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="g-orange" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff6a00"/>
+      <stop offset="1" stop-color="#ffa23a"/>
+    </linearGradient>
+    <linearGradient id="g-leg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff8a1f"/>
+      <stop offset="1" stop-color="#e85d00"/>
+    </linearGradient>
+    <symbol id="mark" viewBox="0 0 128 112">
+      <!-- left leg + first hump (neutral colour, set per variant) -->
+      <path d="M14 98 L37 44 Q47 22 59 42 L72 62" fill="none" style="stroke:var(--ink,#1f2937)" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+      <!-- rising route (orange) -->
+      <path d="M72 62 L95 33" fill="none" stroke="url(#g-orange)" stroke-width="17" stroke-linecap="round"/>
+      <!-- arrow head -->
+      <path d="M116 8 L86 20 L109 39 Z" fill="url(#g-orange)" stroke="url(#g-orange)" stroke-width="5" stroke-linejoin="round"/>
+      <!-- right leg -->
+      <path d="M96 66 L112 98" fill="none" stroke="url(#g-leg)" stroke-width="17" stroke-linecap="round"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div id="v-dark" class="lockup dark">
+  <svg width="150" height="131" style="--ink:#fff"><use href="#mark" class="m"/></svg>
+  <div class="word"><div class="ar">مسار</div><div class="en">MASAR ERP</div></div>
+</div>
+<br>
+<div id="v-light" class="lockup light">
+  <svg width="150" height="131" style="--ink:#1f2937"><use href="#mark"/></svg>
+  <div class="word"><div class="ar">مسار</div><div class="en">MASAR ERP</div></div>
+</div>
+<br>
+<div id="v-mark" class="stage"><svg width="512" height="448"><use href="#mark"/></svg></div>
+
+<style>
+  #v-dark .ink { stroke: #ffffff; }
+  #v-light .ink, #v-mark .ink { stroke: #1f2937; }
+</style>
+</body>
+</html>

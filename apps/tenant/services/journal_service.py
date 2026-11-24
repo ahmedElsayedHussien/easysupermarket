@@ -279,7 +279,7 @@ def reverse_journal_entry(entry, reason: str = '', user=None, date=None) -> 'Jou
     from django.core.exceptions import ValidationError
     from apps.tenant.accounting.models import JournalEntry, JournalItem
 
-    original = JournalEntry.objects.select_for_update().get(pk=entry.pk)
+    original = JournalEntry.objects.select_for_update(of=('self',)).get(pk=entry.pk)
     if original.status != JournalEntry.POSTED:
         raise ValidationError(f'لا يمكن عكس القيد {original.reference} لأنه غير مرحّل.')
     if original.reversal_of_id:
@@ -329,7 +329,7 @@ def reverse_entry_if_active(entry, reason: str = '', user=None, date=None):
     from apps.tenant.accounting.models import JournalEntry
     if entry is None:
         return None
-    entry = JournalEntry.objects.select_for_update().filter(pk=entry.pk).first()
+    entry = JournalEntry.objects.select_for_update(of=('self',)).filter(pk=entry.pk).first()
     if entry is None:
         return None
     if entry.reversal_of_id or JournalEntry.objects.filter(reversal_of=entry).exists():

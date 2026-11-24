@@ -822,7 +822,7 @@ class Quotation(models.Model):
         restored = []
         with transaction.atomic():
             # Lock the quotation row so two restores cannot run concurrently
-            Quotation.objects.select_for_update().filter(pk=self.pk).first()
+            Quotation.objects.select_for_update(of=('self',)).filter(pk=self.pk).first()
             if not self.has_unrestored_legacy_stock():
                 return restored
             for mv in self.legacy_stock_movements().select_related('product', 'warehouse', 'batch'):
@@ -851,7 +851,7 @@ class Quotation(models.Model):
         from django.db import transaction
 
         with transaction.atomic():
-            locked = Quotation.objects.select_for_update().get(pk=self.pk)
+            locked = Quotation.objects.select_for_update(of=('self',)).get(pk=self.pk)
             if locked.status == self.CONVERTED and locked.converted_invoice_id:
                 return locked.converted_invoice
             if locked.status == self.CANCELLED:

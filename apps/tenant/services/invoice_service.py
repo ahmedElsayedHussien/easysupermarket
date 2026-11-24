@@ -67,7 +67,7 @@ def confirm_invoice(invoice_id: int):
 
     # --- Fetch and lock the invoice ---
     try:
-        invoice = Invoice.objects.select_for_update().get(id=invoice_id)
+        invoice = Invoice.objects.select_for_update(of=('self',)).get(id=invoice_id)
     except Invoice.DoesNotExist:
         raise ValueError(f'الفاتورة رقم {invoice_id} غير موجودة.')
 
@@ -149,7 +149,7 @@ def _process_sale_invoice(invoice, lines):
             if not line.serial_item_id:
                 raise ValueError(f'يجب تحديد السيريال للمنتج "{line.product.name}"')
             # Lock and validate: same product, still in stock, in this invoice's warehouse
-            serial = SerialItem.objects.select_for_update().filter(id=line.serial_item_id).first()
+            serial = SerialItem.objects.select_for_update(of=('self',)).filter(id=line.serial_item_id).first()
             if (
                 serial is None
                 or serial.product_id != line.product_id
@@ -231,7 +231,7 @@ def _consume_from_source_batches(product, warehouse, original_line, quantity, re
     from apps.tenant.inventory.models import InventoryBatch, StockMovement
 
     batches = list(
-        InventoryBatch.objects.select_for_update().filter(
+        InventoryBatch.objects.select_for_update(of=('self',)).filter(
             source_invoice_line=original_line,
             product=product,
             warehouse=warehouse,
@@ -365,7 +365,7 @@ def update_invoice_payment_method(
     from apps.tenant.partners.models import Partner
     from apps.tenant.services.journal_service import reverse_document_entries
 
-    invoice = Invoice.objects.select_for_update().get(id=invoice_id)
+    invoice = Invoice.objects.select_for_update(of=('self',)).get(id=invoice_id)
 
     # Protection Guard: Cannot modify payment method of an invoice that has returns
     if invoice.return_invoices.exclude(status=Invoice.CANCELLED).exists() or any(line.returned_quantity > 0 for line in invoice.lines.all()):
@@ -452,7 +452,7 @@ def cancel_invoice(invoice_id: int, user=None):
     from apps.tenant.services.fifo_engine import add_inventory_batch, consume_fifo_batches
     from apps.tenant.services.journal_service import reverse_document_entries
 
-    invoice = Invoice.objects.select_for_update().get(id=invoice_id)
+    invoice = Invoice.objects.select_for_update(of=('self',)).get(id=invoice_id)
 
     if invoice.status == Invoice.CANCELLED:
         raise ValueError(f'الفاتورة رقم "{invoice.invoice_number}" ملغاة بالفعل.')
@@ -542,7 +542,7 @@ def cancel_invoice(invoice_id: int, user=None):
                     continue
 
                 qty_to_remove = net_unreturned_qty * conv
-                batches = InventoryBatch.objects.select_for_update().filter(source_invoice_line=line).order_by('created_at')
+                batches = InventoryBatch.objects.select_for_update(of=('self',)).filter(source_invoice_line=line).order_by('created_at')
                 from apps.tenant.inventory.models import StockMovement
                 for b in batches:
                     if qty_to_remove <= Decimal('0'):
@@ -582,7 +582,7 @@ def cancel_invoice(invoice_id: int, user=None):
 
                 if line.product.product_type == 'SERIALIZED' and line.serial_item:
                     from apps.tenant.inventory.models import SerialItem
-                    serial = SerialItem.objects.select_for_update().get(pk=line.serial_item_id)
+                    serial = SerialItem.objects.select_for_update(of=('self',)).get(pk=line.serial_item_id)
                     if serial.is_sold or serial.warehouse_id != invoice.warehouse_id:
                         raise ValueError(
                             f'لا يمكن إلغاء المرتجع: السيريال الخاص بالمنتج "{line.product.name}" لم يعد في المستودع.'
@@ -633,7 +633,7 @@ def cancel_invoice(invoice_id: int, user=None):
         for rline in invoice.lines.all():
             pline = None
             if rline.original_line_id:
-                pline = InvoiceLine.objects.select_for_update().filter(
+                pline = InvoiceLine.objects.select_for_update(of=('self',)).filter(
                     id=rline.original_line_id, invoice=invoice.parent_invoice
                 ).first()
             if pline is None:

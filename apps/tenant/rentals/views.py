@@ -398,7 +398,9 @@ def export_detailed_rentals_excel(request):
         bottom=Side(style='thin', color='CBD5E1')
     )
 
-    ws.append(["🚜 Masar ERP — تقرير المعدات المؤجرة التفصيلي"])
+    from apps.tenant.core.company import company_profile
+    _org = company_profile(request)['name']
+    ws.append([(f"🚜 {_org} — " if _org else "🚜 ") + "تقرير المعدات المؤجرة التفصيلي"])
     ws.cell(row=1, column=1).font = title_font
     ws.row_dimensions[1].height = 30
 

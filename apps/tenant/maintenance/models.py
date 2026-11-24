@@ -183,7 +183,7 @@ class MaintenanceTicket(models.Model):
         from apps.tenant.maintenance.services import post_maintenance_journal
         with transaction.atomic():
             # Lock the row and re-check: a double submit must not post twice.
-            locked = type(self).objects.select_for_update().get(pk=self.pk)
+            locked = type(self).objects.select_for_update(of=('self',)).get(pk=self.pk)
             if locked.status == self.STATUS_DELIVERED or locked.journal_entry_id:
                 raise ValueError('هذه التذكرة مسلّمة بالفعل.')
             # Work on fresh values (labor_cost / parts may have changed since the instance was loaded)

@@ -2,6 +2,9 @@ from django.db import connection
 from apps.tenant.core.models import Branch, SystemSetting
 from apps.tenant.core.access import BRANCH_UNASSIGNED_MESSAGE
 
+from apps.tenant.core.company import company_profile
+
+
 def global_context(request):
     if hasattr(request, 'tenant') and request.tenant.schema_name == 'public':
         return {}
@@ -30,6 +33,8 @@ def global_context(request):
         'current_branch': getattr(request, 'branch', None),
         'nav_branches': branches,
         'system_setting': system_setting,
+        # Organisation name / logo for printed documents (core.company)
+        'company': company_profile(request, system_setting),
         'is_admin': is_admin,
         'db_engine_name': db_engine_name,
         # Non-admin account not linked to a branch: sees no branch data.

@@ -206,9 +206,9 @@ class Command(BaseCommand):
         stats = {'merged': 0, 'invoice_lines': 0, 'batches': 0, 'movements': 0, 'adj_lines': 0}
         with transaction.atomic():
             for g in groups:
-                primary = Product.objects.select_for_update().get(pk=g[0].pk)
+                primary = Product.objects.select_for_update(of=('self',)).get(pk=g[0].pk)
                 for d in g[1:]:
-                    dup = Product.objects.select_for_update().get(pk=d.pk)
+                    dup = Product.objects.select_for_update(of=('self',)).get(pk=d.pk)
                     self._merge(primary, dup, stats)
 
         self.stdout.write(self.style.SUCCESS(

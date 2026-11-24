@@ -14,7 +14,7 @@ def post_payroll(payroll):
     from apps.tenant.hr.models import Payroll
 
     # Lock the payroll row and re-check so concurrent confirms cannot post twice
-    locked = Payroll.objects.select_for_update().select_related('employee__user').get(pk=payroll.pk)
+    locked = Payroll.objects.select_for_update(of=('self',)).select_related('employee__user').get(pk=payroll.pk)
     if locked.journal_entry_id:
         payroll.journal_entry = locked.journal_entry
         return locked.journal_entry

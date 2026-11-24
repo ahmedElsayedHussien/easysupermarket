@@ -261,7 +261,7 @@ class Rental(models.Model):
 
         with db_transaction.atomic():
             # Lock the contract row and re-check status to avoid double posting on double submit
-            locked = type(self).objects.select_for_update().get(pk=self.pk)
+            locked = type(self).objects.select_for_update(of=('self',)).get(pk=self.pk)
             if locked.status != self.STATUS_ACTIVE:
                 raise ValidationError('هذه المعدة تم إرجاعها مسبقاً.')
             self.status = locked.status

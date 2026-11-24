@@ -731,7 +731,7 @@ def book_opening_balance(instance, ref_prefix=None):
     ref = f"{ref_prefix}-{instance.pk}"
 
     with transaction.atomic():
-        entry = JournalEntry.objects.select_for_update().filter(reference=ref).first()
+        entry = JournalEntry.objects.select_for_update(of=('self',)).filter(reference=ref).first()
         if entry is not None and entry.status == JournalEntry.POSTED and entry.items.exists():
             return entry
 
@@ -933,7 +933,7 @@ class Expense(models.Model):
         
         with transaction.atomic():
             # Lock the row and re-check status so a double click / concurrent request can't post twice
-            current_status = Expense.objects.select_for_update().filter(pk=self.pk).values_list('status', flat=True).first()
+            current_status = Expense.objects.select_for_update(of=('self',)).filter(pk=self.pk).values_list('status', flat=True).first()
             if current_status is not None:
                 self.status = current_status
             if self.status != self.DRAFT:
@@ -1253,7 +1253,7 @@ class Voucher(models.Model):
         
         with transaction.atomic():
             # Lock the row and re-check status so a voucher can never be posted twice concurrently
-            current_status = Voucher.objects.select_for_update().filter(pk=self.pk).values_list('status', flat=True).first()
+            current_status = Voucher.objects.select_for_update(of=('self',)).filter(pk=self.pk).values_list('status', flat=True).first()
             if current_status is not None:
                 self.status = current_status
             if self.status != self.DRAFT:
@@ -1380,7 +1380,7 @@ class Voucher(models.Model):
         """
         from apps.tenant.services.journal_service import reverse_entry_if_active
         with transaction.atomic():
-            locked = Voucher.objects.select_for_update().select_related('pos_session', 'journal_entry').get(pk=self.pk)
+            locked = Voucher.objects.select_for_update(of=('self',)).select_related('pos_session', 'journal_entry').get(pk=self.pk)
             if locked.status == self.CANCELLED:
                 raise ValidationError("السند ملغي بالفعل.")
             if locked.status == self.POSTED:
@@ -1786,7 +1786,7 @@ class EServiceTransaction(models.Model):
         drawer are serialized, so two cashiers can't spend the same balance.
         """
         ids = sorted({source_account.pk, treasury_account.pk})
-        locked = {a.pk: a for a in Account.objects.select_for_update().filter(pk__in=ids).order_by('pk')}
+        locked = {a.pk: a for a in Account.objects.select_for_update(of=('self',)).filter(pk__in=ids).order_by('pk')}
         principal = self.principal_amount
         if self.transaction_type == self.CASH_IN:
             available = locked[source_account.pk].current_balance
@@ -1821,7 +1821,7 @@ class EServiceTransaction(models.Model):
         from apps.tenant.services.journal_service import delete_orphan_entries, unique_reference
 
         with transaction.atomic():
-            current_status = EServiceTransaction.objects.select_for_update().filter(
+            current_status = EServiceTransaction.objects.select_for_update(of=('self',)).filter(
                 pk=self.pk).values_list('status', flat=True).first()
             if current_status is not None:
                 self.status = current_status
@@ -1902,7 +1902,7 @@ class EServiceTransaction(models.Model):
         if not reason:
             raise ValidationError('برجاء إدخال سبب الإلغاء.')
         with transaction.atomic():
-            locked = EServiceTransaction.objects.select_for_update().select_related(
+            locked = EServiceTransaction.objects.select_for_update(of=('self',)).select_related(
                 'pos_session', 'journal_entry').get(pk=self.pk)
             if locked.status == self.CANCELLED:
                 raise ValidationError('هذه العملية ملغاة بالفعل.')
@@ -2190,7 +2190,7 @@ class InternalTransfer(models.Model):
         from django.core.exceptions import ValidationError
         from django.utils import timezone
         with transaction.atomic():
-            locked = InternalTransfer.objects.select_for_update().get(pk=self.pk)
+            locked = InternalTransfer.objects.select_for_update(of=('self',)).get(pk=self.pk)
             if locked.status != self.IN_TRANSIT:
                 raise ValidationError('لا يمكن استلام إلا تحويل بحالة "مُرسل - بالطريق".')
             amount = locked.amount if received_amount in (None, '') else Decimal(str(received_amount))
@@ -2226,7 +2226,7 @@ class InternalTransfer(models.Model):
         from django.utils import timezone
         from apps.tenant.services.journal_service import reverse_entry_if_active
         with transaction.atomic():
-            locked = InternalTransfer.objects.select_for_update().select_related('send_entry').get(pk=self.pk)
+            locked = InternalTransfer.objects.select_for_update(of=('self',)).select_related('send_entry').get(pk=self.pk)
             if locked.status != self.IN_TRANSIT:
                 raise ValidationError('لا يمكن رفض إلا تحويل بحالة "مُرسل - بالطريق".')
             if locked.send_entry_id:
@@ -2245,7 +2245,7 @@ class InternalTransfer(models.Model):
 
         with transaction.atomic():
             # Lock the transfer row and re-check its status (no double posting)
-            current_status = InternalTransfer.objects.select_for_update().filter(pk=self.pk).values_list('status', flat=True).first()
+            current_status = InternalTransfer.objects.select_for_update(of=('self',)).filter(pk=self.pk).values_list('status', flat=True).first()
             if current_status is not None:
                 self.status = current_status
             if self.status != self.DRAFT:
@@ -2265,7 +2265,7 @@ class InternalTransfer(models.Model):
 
             # Lock the source ledger account row: concurrent transfers out of the same
             # treasury/bank/wallet are serialized, so the balance check below can't be raced.
-            locked_src_acc = Account.objects.select_for_update().get(pk=src_acc.pk)
+            locked_src_acc = Account.objects.select_for_update(of=('self',)).get(pk=src_acc.pk)
 
             src_obj = self.source_object
             if src_obj:
@@ -2325,7 +2325,7 @@ class InternalTransfer(models.Model):
         from apps.tenant.services.journal_service import reverse_entry_if_active
 
         with transaction.atomic():
-            locked = InternalTransfer.objects.select_for_update().select_related('pos_session', 'journal_entry').get(pk=self.pk)
+            locked = InternalTransfer.objects.select_for_update(of=('self',)).select_related('pos_session', 'journal_entry').get(pk=self.pk)
             if locked.status in (self.CANCELLED, self.REJECTED):
                 raise ValidationError("التحويل ملغي بالفعل.")
             if locked.status in (self.POSTED, self.IN_TRANSIT):
@@ -2503,7 +2503,7 @@ class Cheque(models.Model):
         """Lock this cheque row (SELECT ... FOR UPDATE) and refresh its status/entry links."""
         if not self.pk:
             return
-        locked = Cheque.objects.select_for_update().get(pk=self.pk)
+        locked = Cheque.objects.select_for_update(of=('self',)).get(pk=self.pk)
         for f in ('status', 'entry_receive_issue_id', 'entry_deposit_id', 'entry_clearance_id',
                   'entry_bounce_id', 'entry_endorse_id'):
             setattr(self, f, getattr(locked, f))

@@ -359,16 +359,9 @@ def partner_ledger(request, pk):
 
     page_obj = paginator.get_page(1 if print_all else page_number)
 
-    company_name = "EasySupermarket"
-    try:
-        from apps.tenant.core.models import SystemSetting
-        ss = SystemSetting.get_settings()
-        if ss and ss.company_name:
-            company_name = ss.company_name
-    except Exception:
-        pass
-    if hasattr(request, 'tenant') and getattr(request.tenant, 'name', None):
-        company_name = request.tenant.name
+    # Organisation name from Settings (store_name), else the company (tenant) name
+    from apps.tenant.core.company import company_profile
+    company_name = company_profile(request)['name']
 
     context = {
         'partner': partner,
@@ -474,15 +467,9 @@ def partner_ledger_export_excel(request, pk):
     al_left = Alignment(horizontal="left", vertical="center")
 
     # 1. Company Name Header
-    company_name = "EasySupermarket"
-    try:
-        ss = SystemSetting.get_settings()
-        if ss and ss.company_name:
-            company_name = ss.company_name
-    except Exception:
-        pass
-    if hasattr(request, 'tenant') and getattr(request.tenant, 'name', None):
-        company_name = request.tenant.name
+    # Organisation name from Settings (store_name), else the company (tenant) name
+    from apps.tenant.core.company import company_profile
+    company_name = company_profile(request)['name']
 
     total_cols = 15 if show_items else 8
     last_col_letter = openpyxl.utils.get_column_letter(total_cols)

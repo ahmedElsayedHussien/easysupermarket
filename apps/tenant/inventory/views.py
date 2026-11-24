@@ -58,6 +58,7 @@ def stock_list(request):
     return render(request, 'inventory/stock.html', context)
 
 from django.db.models import Q
+from apps.tenant.core.company import company_profile
 
 @login_required
 @custom_permission_required('inventory.view_product', redirect_url='core:main_screen')
@@ -99,7 +100,7 @@ def product_list(request):
         'total_count': paginator.count,
         'title': 'المنتجات',
         'search_query': query,
-        'store_name': getattr(settings, 'company_name', '') or 'مسار',
+        'store_name': company_profile(request)['name'],
     }
     return render(request, 'inventory/products.html', context)
 
@@ -1121,9 +1122,9 @@ def _locked_stock(product, warehouse):
     if product.product_type == 'SERIALIZED':
         from .models import SerialItem
         return Decimal(len(list(
-            SerialItem.objects.select_for_update().filter(product=product, warehouse=warehouse, is_sold=False)
+            SerialItem.objects.select_for_update(of=('self',)).filter(product=product, warehouse=warehouse, is_sold=False)
         )))
-    rows = list(InventoryBatch.objects.select_for_update().filter(product=product, warehouse=warehouse))
+    rows = list(InventoryBatch.objects.select_for_update(of=('self',)).filter(product=product, warehouse=warehouse))
     return sum((b.quantity_remaining for b in rows), Decimal('0'))
 
 
@@ -1163,7 +1164,7 @@ def adjustment_confirm(request, pk):
     try:
         with transaction.atomic():
             # Lock the draft: a second concurrent confirm waits here and then sees POSTED.
-            adj = StockAdjustment.objects.select_for_update().filter(pk=pk, status='DRAFT').first()
+            adj = StockAdjustment.objects.select_for_update(of=('self',)).filter(pk=pk, status='DRAFT').first()
             if adj is None:
                 raise _AdjustmentAbort('هذه التسوية تم ترحيلها بالفعل أو لم تعد مسودة.')
             if not adj.lines.exists():

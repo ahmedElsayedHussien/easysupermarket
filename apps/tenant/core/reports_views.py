@@ -2926,186 +2926,46 @@ class InternalTransfersReportView(CustomPermissionRequiredMixin, TemplateView):
 
 
 def get_pos_session_details(session):
-    from apps.tenant.invoicing.models import Invoice
-    from apps.tenant.accounting.models import Voucher
+    """Shift report figures — the SAME drawer arithmetic as the close screen
+    (invoicing.shift_services.shift_cash_summary)."""
     from decimal import Decimal
-    from django.db.models import Sum, Count, Q, F, Case, When
-    from django.db.models.functions import Coalesce
-
-    posted_invoices = Invoice.objects.filter(
-        pos_session=session,
-        status=Invoice.POSTED
-    ).select_related('partner', 'branch', 'warehouse').order_by('-created_at')
-
-    # احتساب إجماليات الفواتير وطرق الدفع مباشرة في قاعدة البيانات بـ SQL Aggregation
-    inv_agg = posted_invoices.aggregate(
-        total_gross_sales=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.SALE)), Decimal('0.00')),
-        total_returns_amount=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.RETURN_SALE)), Decimal('0.00')),
-        sales_count=Count('id', filter=Q(invoice_type=Invoice.SALE)),
-        returns_count=Count('id', filter=Q(invoice_type=Invoice.RETURN_SALE)),
-        total_cash_sales=Coalesce(Sum(
-            Case(
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CASH), then=F('total_amount') + F('rounding_amount')),  # cash actually collected (POS rounding)
-                default=Decimal('0.00'),
-                output_field=models.DecimalField(max_digits=18, decimal_places=4)
-            )
-        ), Decimal('0.00')),
-        total_cash_refunds=Coalesce(Sum(
-            Case(
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=F('paid_cash')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CASH), then=F('total_amount')),
-                default=Decimal('0.00'),
-                output_field=models.DecimalField(max_digits=18, decimal_places=4)
-            )
-        ), Decimal('0.00')),
-        total_card_sales=Coalesce(Sum(
-            Case(
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_card')),
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CARD), then=F('total_amount')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_card')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CARD), then=-F('total_amount')),
-                default=Decimal('0.00'),
-                output_field=models.DecimalField(max_digits=18, decimal_places=4)
-            )
-        ), Decimal('0.00')),
-        total_ewallet_sales=Coalesce(Sum(
-            Case(
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_ewallet')),
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.EWALLET), then=F('total_amount')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_ewallet')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.EWALLET), then=-F('total_amount')),
-                default=Decimal('0.00'),
-                output_field=models.DecimalField(max_digits=18, decimal_places=4)
-            )
-        ), Decimal('0.00')),
-        total_bank_sales=Coalesce(Sum(
-            Case(
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_bank')),
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.BANK_TRANSFER), then=F('total_amount')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_bank')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.BANK_TRANSFER), then=-F('total_amount')),
-                default=Decimal('0.00'),
-                output_field=models.DecimalField(max_digits=18, decimal_places=4)
-            )
-        ), Decimal('0.00')),
-        total_credit_sales=Coalesce(Sum(
-            Case(
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.SPLIT), then=F('paid_credit')),
-                When(Q(invoice_type=Invoice.SALE, payment_type=Invoice.CREDIT), then=F('total_amount')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.SPLIT), then=-F('paid_credit')),
-                When(Q(invoice_type=Invoice.RETURN_SALE, payment_type=Invoice.CREDIT), then=-F('total_amount')),
-                default=Decimal('0.00'),
-                output_field=models.DecimalField(max_digits=18, decimal_places=4)
-            )
-        ), Decimal('0.00')),
-    )
-
-    total_gross_sales = inv_agg['total_gross_sales']
-    total_returns_amount = inv_agg['total_returns_amount']
-    net_sales_amount = total_gross_sales - total_returns_amount
-    total_cash_sales = inv_agg['total_cash_sales']
-    total_cash_refunds = inv_agg['total_cash_refunds']
-    total_card_sales = inv_agg['total_card_sales']
-    total_ewallet_sales = inv_agg['total_ewallet_sales']
-    total_bank_sales = inv_agg['total_bank_sales']
-    total_credit_sales = inv_agg['total_credit_sales']
-
-    v_base = Voucher.objects.filter(status=Voucher.POSTED).filter(
-        Q(payment_method=Voucher.CASH) | Q(payment_method=Voucher.SPLIT, paid_cash__gt=0)
-    )
-    time_filter = Q(treasury=session.treasury, created_at__gte=session.start_time)
-    if session.end_time:
-        time_filter &= Q(created_at__lte=session.end_time)
-
-    shift_vouchers = v_base.filter(
-        Q(pos_session=session) | (Q(journal_entry__created_by=session.user) & time_filter)
-    ).distinct().select_related('partner').order_by('-created_at')
-
-    # احتساب المقبوضات والمدفوعات النقدية في قاعدة البيانات مباشرة
-    v_cash_expr = Case(
-        When(payment_method=Voucher.SPLIT, then=F('paid_cash')),
-        default=F('amount'),
-        output_field=models.DecimalField(max_digits=18, decimal_places=4)
-    )
-    v_agg = shift_vouchers.aggregate(
-        total_cash_receipts=Coalesce(Sum(v_cash_expr, filter=Q(voucher_type=Voucher.RECEIPT)), Decimal('0.00')),
-        total_cash_payments=Coalesce(Sum(v_cash_expr, filter=Q(voucher_type=Voucher.PAYMENT)), Decimal('0.00')),
-        receipts_count=Count('id', filter=Q(voucher_type=Voucher.RECEIPT)),
-        payments_count=Count('id', filter=Q(voucher_type=Voucher.PAYMENT)),
-    )
-    total_cash_receipts = v_agg['total_cash_receipts']
-    total_cash_payments = v_agg['total_cash_payments']
-
-    # Rentals issued during the shift
-    from apps.tenant.rentals.models import Rental
-    rental_time_filter = Q(created_at__gte=session.start_time)
-    if session.end_time:
-        rental_time_filter &= Q(created_at__lte=session.end_time)
-
-    shift_rentals = Rental.objects.filter(
-        Q(pos_session=session) | (Q(created_by=session.user) & rental_time_filter)
-    ).distinct().select_related('equipment', 'customer').order_by('-created_at')
-
-    rental_agg = shift_rentals.aggregate(
-        total_rentals_amount=Coalesce(Sum('total_amount'), Decimal('0.00')),
-        total_cash_rentals=Coalesce(Sum('total_amount', filter=Q(payment_method=Rental.PAYMENT_CASH)), Decimal('0.00')),
-        total_credit_rentals=Coalesce(Sum('total_amount', filter=~Q(payment_method=Rental.PAYMENT_CASH)), Decimal('0.00')),
-        rentals_count=Count('id'),
-    )
-    total_rentals_amount = rental_agg['total_rentals_amount']
-    total_cash_rentals = rental_agg['total_cash_rentals']
-    total_credit_rentals = rental_agg['total_credit_rentals']
-
-    # E-payment services done on this shift (net drawer cash, mirrors EServiceTransaction.cash_effect)
-    from apps.tenant.accounting.eservice_dashboard_views import eservice_cash_for_session
     from apps.tenant.accounting.models import EServiceTransaction
-    total_eservice_cash = eservice_cash_for_session(session)
+    from apps.tenant.invoicing.shift_services import shift_cash_summary
+
+    d = shift_cash_summary(session)
+    d['posted_invoices'] = d['posted_invoices'].select_related('partner', 'branch', 'warehouse').order_by('-created_at')
+    d['shift_vouchers'] = d['shift_vouchers'].select_related('partner').order_by('-created_at')
+    d['shift_rentals'] = d['shift_rentals'].select_related('equipment', 'customer').order_by('-created_at')
     shift_eservices = (EServiceTransaction.objects.filter(pos_session=session, status=EServiceTransaction.POSTED)
                        .select_related('pos_machine', 'ewallet').order_by('-created_at'))
 
-    expected_balance = (
-        session.opening_balance +
-        total_cash_sales -
-        total_cash_refunds +
-        total_cash_receipts -
-        total_cash_payments +
-        total_cash_rentals +
-        total_eservice_cash
-    )
+    live_expected = d['expected_balance']
+    post_close_movements = Decimal('0')
+    if session.status == 'CLOSED':
+        # A closed shift shows what was counted and booked at close; anything added to
+        # the shift afterwards is reported apart instead of silently moving the figures.
+        expected = session.closing_balance_expected
+        actual = session.closing_balance_actual
+        difference = session.difference
+        post_close_movements = live_expected - expected
+        if abs(post_close_movements) < Decimal('0.01'):
+            post_close_movements = Decimal('0')
+    else:
+        expected = live_expected
+        actual = live_expected
+        difference = Decimal('0')
 
-    actual_balance = session.closing_balance_actual if session.status == 'CLOSED' else expected_balance
-    difference = session.difference if session.status == 'CLOSED' else (actual_balance - expected_balance)
-
-    return {
+    d.update({
         'session': session,
-        'posted_invoices': posted_invoices,
-        'sales_count': inv_agg['sales_count'],
-        'returns_count': inv_agg['returns_count'],
-        'total_gross_sales': total_gross_sales,
-        'total_returns_amount': total_returns_amount,
-        'net_sales_amount': net_sales_amount,
-        'total_cash_sales': total_cash_sales,
-        'total_cash_refunds': total_cash_refunds,
-        'total_card_sales': total_card_sales,
-        'total_ewallet_sales': total_ewallet_sales,
-        'total_bank_sales': total_bank_sales,
-        'total_credit_sales': total_credit_sales,
-        'shift_vouchers': shift_vouchers,
-        'total_cash_receipts': total_cash_receipts,
-        'total_cash_payments': total_cash_payments,
-        'shift_rentals': shift_rentals,
-        'rentals_count': rental_agg['rentals_count'],
-        'total_rentals_amount': total_rentals_amount,
-        'total_cash_rentals': total_cash_rentals,
-        'total_credit_rentals': total_credit_rentals,
-        'total_eservice_cash': total_eservice_cash,
         'shift_eservices': shift_eservices,
         'eservices_count': shift_eservices.count(),
-        'expected_balance': expected_balance,
-        'actual_balance': actual_balance,
+        'expected_balance': expected,
+        'live_expected_balance': live_expected,
+        'post_close_movements': post_close_movements,
+        'actual_balance': actual,
         'difference': difference,
-    }
+    })
+    return d
 
 
 class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
@@ -3432,6 +3292,7 @@ def shift_detail_api(request, pk):
         'total_cash_receipts': float(dt['total_cash_receipts']),
         'total_cash_payments': float(dt['total_cash_payments']),
         'total_eservice_cash': float(dt['total_eservice_cash']),
+        'total_transfers_net': float(dt['total_transfers_net']),
         'expected_balance': float(dt['expected_balance']),
         'actual_balance': float(dt['actual_balance']),
         'difference': float(dt['difference']),
@@ -3829,7 +3690,9 @@ def export_shift_detail_excel(request, pk):
     # 1. Main Title
     ws.merge_cells('A1:F1')
     cell_title = ws['A1']
-    cell_title.value = f"تقرير تسوية وتقفيل الوردية رقم #{session.id} - مسار ERP"
+    from apps.tenant.core.company import company_profile
+    _org = company_profile(request)['name']
+    cell_title.value = f"تقرير تسوية وتقفيل الوردية رقم #{session.id}" + (f" - {_org}" if _org else "")
     cell_title.font = title_font
     cell_title.alignment = align_center
 
@@ -3880,6 +3743,8 @@ def export_shift_detail_excel(request, pk):
         recon_rows.append(["(-) سندات الصرف النقدية والمصروفات", -to_dec(dt['total_cash_payments']), "مصروفات مسددة نقداً"])
     if to_dec(dt['total_eservice_cash']) != 0:
         recon_rows.append(["(±) خدمات الدفع الإلكتروني (صافي نقدي)", to_dec(dt['total_eservice_cash']), "سحب / إيداع / شحن ماكينات"])
+    if to_dec(dt.get('total_transfers_net', 0)) != 0:
+        recon_rows.append(["(±) تحويلات أموال من/إلى الدرج", to_dec(dt['total_transfers_net']), "توريد / تغذية الدرج خلال الوردية"])
     recon_rows.extend([
         ["(=) النقدية المتوقعة بالدرج (دفترياً)", to_dec(dt['expected_balance']), "الرصيد الدفتري المفترض"],
         ["(📥) النقدية الفعلية المسلمة عند الإغلاق", to_dec(dt['actual_balance']), "الجرد الفعلي للكاش"],

@@ -38,7 +38,7 @@ def _offset_deficits(product, warehouse, batch):
     from apps.tenant.inventory.models import InventoryBatch
 
     negative_batches = list(
-        InventoryBatch.objects.select_for_update().filter(
+        InventoryBatch.objects.select_for_update(of=('self',)).filter(
             product=product,
             warehouse=warehouse,
             quantity_remaining__lt=Decimal('0')
@@ -108,7 +108,7 @@ def consume_fifo_batches(
 
     # Lock the batches FIRST (oldest first), then compute availability from the locked rows.
     batches = list(
-        InventoryBatch.objects.select_for_update().filter(
+        InventoryBatch.objects.select_for_update(of=('self',)).filter(
             product=product,
             warehouse=warehouse,
             quantity_remaining__gt=Decimal('0')
@@ -321,7 +321,7 @@ def _transfer_serialized(product, from_warehouse, to_warehouse, quantity, refere
         raise ValueError('كمية التحويل للمنتجات المسلسلة يجب أن تكون عدداً صحيحاً.')
     count = int(quantity)
 
-    qs = SerialItem.objects.select_for_update().filter(
+    qs = SerialItem.objects.select_for_update(of=('self',)).filter(
         product=product, warehouse=from_warehouse, is_sold=False
     )
     if serial_ids:
@@ -402,7 +402,7 @@ def transfer_stock(
 
     # Lock source batches first, then check availability on the locked rows.
     batches = list(
-        InventoryBatch.objects.select_for_update().filter(
+        InventoryBatch.objects.select_for_update(of=('self',)).filter(
             product=product,
             warehouse=from_warehouse,
             quantity_remaining__gt=Decimal('0')

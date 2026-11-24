@@ -189,7 +189,7 @@ def ticket_edit(request, pk):
             field = request.POST.get('field')
             value = request.POST.get('value', '').strip()
             with transaction.atomic():
-                ticket = MaintenanceTicket.objects.select_for_update().get(pk=ticket.pk)
+                ticket = MaintenanceTicket.objects.select_for_update(of=('self',)).get(pk=ticket.pk)
                 if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
                     return JsonResponse({'error': 'لا يمكن تعديل تذكرة مسلّمة.'}, status=400)
                 if field == 'status':
@@ -253,7 +253,7 @@ def add_part(request, pk):
             warehouse = get_object_or_404(wh_qs, id=warehouse_id)
 
             with transaction.atomic():
-                ticket = MaintenanceTicket.objects.select_for_update().get(pk=ticket.pk)
+                ticket = MaintenanceTicket.objects.select_for_update(of=('self',)).get(pk=ticket.pk)
                 if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
                     return JsonResponse({'error': 'لا يمكن إضافة قطع لتذكرة مسلّمة.'}, status=400)
 
@@ -263,7 +263,7 @@ def add_part(request, pk):
                         return JsonResponse({'error': f'يجب تحديد السيريال للقطعة "{product.name}"'}, status=400)
                     if quantity != 1:
                         return JsonResponse({'error': 'كمية القطعة ذات السيريال يجب أن تكون 1.'}, status=400)
-                    serial_item = SerialItem.objects.select_for_update().filter(
+                    serial_item = SerialItem.objects.select_for_update(of=('self',)).filter(
                         pk=serial_item_id, product=product, warehouse=warehouse, is_sold=False,
                     ).first()
                     if serial_item is None:
@@ -306,10 +306,10 @@ def delete_part(request, part_pk):
 
     try:
         with transaction.atomic():
-            ticket = MaintenanceTicket.objects.select_for_update().get(pk=part.ticket_id)
+            ticket = MaintenanceTicket.objects.select_for_update(of=('self',)).get(pk=part.ticket_id)
             if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
                 return JsonResponse({'error': 'لا يمكن حذف قطع من تذكرة مسلّمة.'}, status=400)
-            part = (TicketPart.objects.select_for_update()
+            part = (TicketPart.objects.select_for_update(of=('self',))
                     .select_related('product', 'warehouse').filter(pk=part.pk).first())
             if part is None:
                 return JsonResponse({'error': 'القطعة غير موجودة (ربما حُذفت بالفعل).'}, status=404)
@@ -318,7 +318,7 @@ def delete_part(request, part_pk):
             if part.stock_deducted and product.product_type != 'SERVICE':
                 if product.product_type == 'SERIALIZED':
                     if part.serial_item_id:
-                        serial = SerialItem.objects.select_for_update().get(pk=part.serial_item_id)
+                        serial = SerialItem.objects.select_for_update(of=('self',)).get(pk=part.serial_item_id)
                         serial.is_sold = False
                         serial.warehouse = part.warehouse
                         serial.save()

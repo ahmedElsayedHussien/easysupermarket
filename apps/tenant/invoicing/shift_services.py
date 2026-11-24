@@ -27,6 +27,117 @@ CHARGE_EXPENSE = 'EXPENSE'
 CHARGE_CASHIER = 'CASHIER'
 
 
+def shift_cash_summary(session):
+    """
+    THE drawer arithmetic of a shift — used by the close screen, the shift report and
+    the live POS stats, so the three always show the same figures.
+
+    What moves the drawer (= the shift's treasury) during the shift:
+      invoices of the shift (cash part; returns subtract) · cash vouchers on the drawer
+      (or linked to the shift) · cash rentals on the drawer (or linked to the shift) ·
+      e-payment services of the shift · fund transfers out of / into the drawer.
+    """
+    from django.db import models as m
+    from django.db.models import Case, Count, F, Q, Sum, When
+    from django.db.models.functions import Coalesce
+    from apps.tenant.accounting.eservice_dashboard_views import eservice_cash_for_session
+    from apps.tenant.accounting.models import InternalTransfer, Voucher
+    from apps.tenant.invoicing.models import Invoice
+    from apps.tenant.rentals.models import Rental
+
+    DEC = m.DecimalField(max_digits=18, decimal_places=4)
+    S, R = Invoice.SALE, Invoice.RETURN_SALE
+
+    def signed(paid_field, ptype):
+        """Sale adds, return subtracts (non-cash methods)."""
+        return Coalesce(Sum(Case(
+            When(Q(invoice_type=S, payment_type=Invoice.SPLIT), then=F(paid_field)),
+            When(Q(invoice_type=S, payment_type=ptype), then=F('total_amount')),
+            When(Q(invoice_type=R, payment_type=Invoice.SPLIT), then=-F(paid_field)),
+            When(Q(invoice_type=R, payment_type=ptype), then=-F('total_amount')),
+            default=Decimal('0'), output_field=DEC)), Decimal('0'))
+
+    start, end = session.start_time, session.end_time
+    in_window = Q(created_at__gte=start) & (Q(created_at__lte=end) if end else Q())
+
+    # --- invoices ---
+    invoices = Invoice.objects.filter(pos_session=session, status=Invoice.POSTED)
+    agg = invoices.aggregate(
+        total_gross_sales=Coalesce(Sum('total_amount', filter=Q(invoice_type=S)), Decimal('0')),
+        total_returns_amount=Coalesce(Sum('total_amount', filter=Q(invoice_type=R)), Decimal('0')),
+        sales_count=Count('id', filter=Q(invoice_type=S)),
+        returns_count=Count('id', filter=Q(invoice_type=R)),
+        total_cash_sales=Coalesce(Sum(Case(
+            When(Q(invoice_type=S, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+            When(Q(invoice_type=S, payment_type=Invoice.CASH), then=F('total_amount') + F('rounding_amount')),
+            default=Decimal('0'), output_field=DEC)), Decimal('0')),
+        total_cash_refunds=Coalesce(Sum(Case(
+            When(Q(invoice_type=R, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+            When(Q(invoice_type=R, payment_type=Invoice.CASH), then=F('total_amount')),
+            default=Decimal('0'), output_field=DEC)), Decimal('0')),
+        total_card_sales=signed('paid_card', Invoice.CARD),
+        total_ewallet_sales=signed('paid_ewallet', Invoice.EWALLET),
+        total_bank_sales=signed('paid_bank', Invoice.BANK_TRANSFER),
+        total_credit_sales=signed('paid_credit', Invoice.CREDIT),
+    )
+
+    # --- cash vouchers on the drawer ---
+    vouchers = (Voucher.objects.filter(status=Voucher.POSTED)
+                .filter(Q(payment_method=Voucher.CASH) | Q(payment_method=Voucher.SPLIT, paid_cash__gt=0))
+                .filter(Q(pos_session=session) | (Q(treasury=session.treasury) & in_window))
+                .distinct())
+    v_cash = Case(When(payment_method=Voucher.SPLIT, then=F('paid_cash')), default=F('amount'), output_field=DEC)
+    v_agg = vouchers.aggregate(
+        total_cash_receipts=Coalesce(Sum(v_cash, filter=Q(voucher_type=Voucher.RECEIPT)), Decimal('0')),
+        total_cash_payments=Coalesce(Sum(v_cash, filter=Q(voucher_type=Voucher.PAYMENT)), Decimal('0')),
+        receipts_count=Count('id', filter=Q(voucher_type=Voucher.RECEIPT)),
+        payments_count=Count('id', filter=Q(voucher_type=Voucher.PAYMENT)),
+    )
+
+    # --- rentals of the shift / on the drawer ---
+    rentals = Rental.objects.filter(Q(pos_session=session) | (Q(treasury=session.treasury) & in_window)).distinct()
+    r_agg = rentals.aggregate(
+        total_rentals_amount=Coalesce(Sum('total_amount'), Decimal('0')),
+        total_cash_rentals=Coalesce(Sum('total_amount', filter=Q(payment_method=Rental.PAYMENT_CASH)), Decimal('0')),
+        total_credit_rentals=Coalesce(Sum('total_amount', filter=~Q(payment_method=Rental.PAYMENT_CASH)), Decimal('0')),
+        rentals_count=Count('id'),
+    )
+
+    # --- fund transfers out of / into the drawer during the shift ---
+    # (the cash drop done AT close is created after end_time and not counted: it
+    #  happens after the count)
+    out_qs = InternalTransfer.objects.filter(
+        in_window, from_account_type=InternalTransfer.TREASURY, from_treasury=session.treasury,
+        status__in=[InternalTransfer.POSTED, InternalTransfer.IN_TRANSIT])
+    received_window = Q(received_at__gte=start) & (Q(received_at__lte=end) if end else Q())
+    in_qs = InternalTransfer.objects.filter(
+        to_account_type=InternalTransfer.TREASURY, to_treasury=session.treasury, status=InternalTransfer.POSTED,
+    ).filter(received_window | (Q(received_at__isnull=True) & in_window))
+    transfers_out = out_qs.aggregate(s=Sum('amount'))['s'] or Decimal('0')
+    transfers_in = in_qs.aggregate(s=Sum(Coalesce('received_amount', 'amount')))['s'] or Decimal('0')
+
+    eservice_cash = eservice_cash_for_session(session)
+
+    expected = (session.opening_balance + agg['total_cash_sales'] - agg['total_cash_refunds']
+                + v_agg['total_cash_receipts'] - v_agg['total_cash_payments']
+                + r_agg['total_cash_rentals'] + eservice_cash + transfers_in - transfers_out)
+
+    return {
+        'posted_invoices': invoices,
+        **agg,
+        'net_sales_amount': agg['total_gross_sales'] - agg['total_returns_amount'],
+        'shift_vouchers': vouchers,
+        **v_agg,
+        'shift_rentals': rentals,
+        **r_agg,
+        'total_eservice_cash': eservice_cash,
+        'total_transfers_in': transfers_in,
+        'total_transfers_out': transfers_out,
+        'total_transfers_net': transfers_in - transfers_out,
+        'expected_balance': expected,
+    }
+
+
 def treasury_book_balance(treasury):
     """Ledger balance of the treasury (what its drawer should hold)."""
     if treasury is None:
@@ -109,7 +220,7 @@ def charge_shortage_to_cashier(session, user=None):
     from apps.tenant.invoicing.models import POSSession
     from apps.tenant.services.journal_service import reverse_entry_if_active
     with transaction.atomic():
-        s = POSSession.objects.select_for_update().select_related('treasury', 'user', 'variance_entry').get(pk=session.pk)
+        s = POSSession.objects.select_for_update(of=('self',)).select_related('treasury', 'user', 'variance_entry').get(pk=session.pk)
         if s.status != POSSession.CLOSED:
             raise ValidationError('الوردية لم تُغلق بعد.')
         if (s.difference or ZERO) >= 0 or not s.variance_entry_id:

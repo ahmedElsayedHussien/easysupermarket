@@ -155,8 +155,8 @@ def update_or_create_product_opening_stock(
     if unit_cost < Decimal('0'):
         raise ValidationError('تكلفة الوحدة لا يمكن أن تكون سالبة.')
 
-    prod_locked = Product.objects.select_for_update().get(id=product.id)
-    wh_locked = Warehouse.objects.select_for_update().get(id=warehouse.id)
+    prod_locked = Product.objects.select_for_update(of=('self',)).get(id=product.id)
+    wh_locked = Warehouse.objects.select_for_update(of=('self',)).get(id=warehouse.id)
 
     # Auto-fallback to product purchase price or average cost if unit_cost is zero
     if unit_cost <= Decimal('0'):
@@ -170,7 +170,7 @@ def update_or_create_product_opening_stock(
             unit_cost = fallback_cost.quantize(Decimal('0.01'))
 
     # 1. Look for existing opening batch
-    opening_movement = StockMovement.objects.select_for_update().filter(
+    opening_movement = StockMovement.objects.select_for_update(of=('self',)).filter(
         product=prod_locked,
         warehouse=wh_locked,
         movement_type='OPENING_BALANCE'
@@ -178,10 +178,10 @@ def update_or_create_product_opening_stock(
 
     batch = None
     if opening_movement and opening_movement.batch:
-        batch = InventoryBatch.objects.select_for_update().filter(id=opening_movement.batch_id).first()
+        batch = InventoryBatch.objects.select_for_update(of=('self',)).filter(id=opening_movement.batch_id).first()
 
     if not batch:
-        batch = InventoryBatch.objects.select_for_update().filter(
+        batch = InventoryBatch.objects.select_for_update(of=('self',)).filter(
             product=prod_locked,
             warehouse=wh_locked,
             source_invoice_line__isnull=True

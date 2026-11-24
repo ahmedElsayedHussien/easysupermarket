@@ -95,7 +95,9 @@ class SystemSettingForm(forms.ModelForm):
         model = SystemSetting
         fields = '__all__'
         widgets = {
-            'store_name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'اسم المتجر للإيصال'}),
+            'store_name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'اسم المؤسسة / المتجر'}),
+            'store_phone': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'مثال: 0225000000', 'dir': 'ltr'}),
+            'store_address': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'عنوان المحل'}),
             'tax_number': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'الرقم الضريبي (إن وجد)'}),
             'commercial_register': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'السجل التجاري (إن وجد)'}),
             'receipt_footer': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'placeholder': 'مثال: البضاعة المباعة لا ترد ولا تستبدل إلا خلال 14 يوم...'}),
@@ -134,6 +136,7 @@ class SystemSettingForm(forms.ModelForm):
         }
         help_texts = {
             'low_stock_threshold': 'حد طلب افتراضي للأصناف التي ليس لها حد خاص',
+            'store_name': 'يظهر على الفواتير وعروض الأسعار وكشوف الحساب والتقارير المطبوعة وملفات Excel.',
             'company_logo': 'صورة PNG أو JPG أو WEBP بحجم أقصى 2 ميجابايت.',
             'session_timeout_hours': 'يتم تسجيل خروج المستخدم تلقائياً بعد هذه المدة من آخر دخول.',
             'auto_backup_retention': 'عند تجاوز هذا العدد تُحذف أقدم النسخ التلقائية.',
@@ -142,6 +145,8 @@ class SystemSettingForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         radio_choices = [(True, ''), (False, '')]
+        if 'store_name' in self.fields:
+            self.fields['store_name'].label = 'اسم المؤسسة / المتجر'
         for field_name, field in self.fields.items():
             if field_name.startswith('show_nav_'):
                 field.widget = forms.RadioSelect(choices=radio_choices)

@@ -107,9 +107,9 @@
   <div class="top">
     <div>
       <h2>دفتر الأستاذ العام — {{ selected_account.code }} {{ selected_account.name }}</h2>
-      <div style="font-size:9.5pt">{{ system_setting.store_name|default:"" }}{% if system_setting.tax_number %} · الرقم الضريبي {{ system_setting.tax_number }}{% endif %}</div>
+      <div style="font-size:9.5pt">{{ company.name }}{% if company.tax_number %} · الرقم الضريبي {{ company.tax_number }}{% endif %}</div>
     </div>
-    {% if system_setting.company_logo %}<img src="{{ system_setting.company_logo.url }}" alt="">{% endif %}
+    {% if company.logo_url %}<img src="{{ company.logo_url }}" alt="">{% endif %}
   </div>
   <div class="meta">
     <span>الفترة: {% if start_date %}من {{ start_date }}{% else %}من البداية{% endif %} {% if end_date %}إلى {{ end_date }}{% else %}حتى اليوم{% endif %}</span>

@@ -32,7 +32,7 @@ def next_sequence(key, seed=None):
     from apps.tenant.core.models import DocumentSequence
 
     with transaction.atomic():
-        seq = DocumentSequence.objects.select_for_update().filter(key=key).first()
+        seq = DocumentSequence.objects.select_for_update(of=('self',)).filter(key=key).first()
         if seq is None:
             start = int(seed()) if seed else 0
             try:
@@ -40,7 +40,7 @@ def next_sequence(key, seed=None):
                     seq = DocumentSequence.objects.create(key=key, last_value=start)
             except IntegrityError:
                 pass  # created concurrently by another transaction
-            seq = DocumentSequence.objects.select_for_update().get(key=key)
+            seq = DocumentSequence.objects.select_for_update(of=('self',)).get(key=key)
         seq.last_value += 1
         seq.save(update_fields=['last_value'])
         return seq.last_value

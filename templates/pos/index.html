@@ -3,11 +3,11 @@
 <html lang="{{ LANGUAGE_CODE }}" dir="{{ LANGUAGE_BIDI|yesno:'rtl,ltr' }}">
 <head>
     <meta charset="UTF-8">
-    <title>{% trans 'نقطة البيع' %} - {{ settings.company_name|default:'مسار' }}</title>
+    <title>{% trans 'نقطة البيع' %} - {{ company.name|default:'نقطة البيع' }}</title>
     <!-- Favicon -->
     <link rel="icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
     <link rel="shortcut icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
-    <link rel="apple-touch-icon" href="{% static 'img/logo.png' %}">
+    <link rel="apple-touch-icon" href="{% static 'img/app-icon.png' %}">
     <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
     <link rel="stylesheet" href="{% static 'css/compat.css' %}">
     <link rel="stylesheet" href="{% static 'css/pos.css' %}?v={% now 'U' %}">
@@ -18,7 +18,7 @@
         <div class="pos-nav-left">
             <div class="pos-brand">
                 <a href="/" title="{% trans 'الرئيسية' %}" style="display:flex; align-items:center; text-decoration:none;">
-                    <img src="{% static 'img/logo.png' %}" alt="مسار" class="pos-brand-logo" style="height:38px; max-width:140px; object-fit:contain;">
+                    <img src="{% static 'img/logo-on-dark.png' %}" alt="مسار" class="pos-brand-logo" style="height:38px; max-width:140px; object-fit:contain;">
                 </a>
             </div>
             {% if is_admin %}
