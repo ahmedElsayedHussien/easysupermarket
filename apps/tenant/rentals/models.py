@@ -1,7 +1,16 @@
-from django.db import models
+import datetime
+from decimal import Decimal, InvalidOperation
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import models, transaction
+from django.utils import timezone
+
 from apps.tenant.partners.models import Partner
 from apps.tenant.accounting.models import Treasury, EWallet, JournalEntry
-import datetime
+
+ZERO = Decimal('0')
+
 
 def _get_or_create_account(code, name, account_type, parent_code=None):
     """
@@ -13,7 +22,6 @@ def _get_or_create_account(code, name, account_type, parent_code=None):
     if acc:
         return acc
     try:
-        from django.db import transaction
         from apps.tenant.services.journal_service import _get_system_account
         with transaction.atomic():  # savepoint: a failing seed must not abort the outer transaction
             acc = _get_system_account(code)
@@ -26,7 +34,6 @@ def _get_or_create_account(code, name, account_type, parent_code=None):
         parent = Account.objects.filter(code=parent_code).first()
         if parent is None:
             try:
-                from django.db import transaction
                 from apps.tenant.services.journal_service import _get_system_account
                 with transaction.atomic():
                     parent = _get_system_account(parent_code)
@@ -36,6 +43,15 @@ def _get_or_create_account(code, name, account_type, parent_code=None):
         code=code,
         defaults={'name': name, 'account_type': account_type, 'parent': parent, 'is_active': True},
     )
+    return acc
+
+
+def _money_account(treasury, ewallet):
+    """The ledger account of the cash box / e-wallet that receives or pays (created if missing)."""
+    holder = treasury or ewallet
+    acc = holder.ensure_account() if holder is not None else None
+    if acc is None:
+        raise ValidationError('الخزينة أو المحفظة مش مربوطة بحساب في الشجرة.')
     return acc
 
 
@@ -55,12 +71,12 @@ class Equipment(models.Model):
     daily_rate = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='سعر الإيجار اليومي')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_AVAILABLE, verbose_name='حالة المعدة')
     is_active = models.BooleanField(default=True, verbose_name='نشط')
-    
+
     opening_journal_entry = models.OneToOneField(
         'accounting.JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
         related_name='equipment_opening', verbose_name='قيد الرصيد الافتتاحي'
     )
-    
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -68,22 +84,23 @@ class Equipment(models.Model):
         return f"{self.name} ({self.code})"
 
     def post_opening_balance(self, user=None):
-        from apps.tenant.accounting.models import Account, JournalEntry, JournalItem
-        from apps.tenant.services.journal_service import _get_system_account
-        from django.db import transaction
-        from decimal import Decimal
-        import datetime
+        from apps.tenant.accounting.models import Account
+        from apps.tenant.accounting.posting import post_entry
 
-        cost = Decimal(str(self.purchase_cost))
-        if cost <= 0 or self.opening_journal_entry:
+        cost = Decimal(str(self.purchase_cost or 0))
+        if cost <= 0:
             return
-
         with transaction.atomic():
+            # locked re-check: two saves at once never book the opening balance twice
+            locked = Equipment.objects.select_for_update(of=('self',)).get(pk=self.pk)
+            if locked.opening_journal_entry_id:
+                return
             # 1. Rental equipment is a FIXED asset → 1215 under 1200 (أصول ثابتة).
             #    Older versions created '1110-EQ' under 1110 (cash) by mistake: if it
             #    exists, keep its balance but move it under fixed assets.
             fixed_assets_parent = _get_or_create_account('1200', 'أصول ثابتة', Account.ASSET, '1000')
-            asset_account = Account.objects.filter(code='1215').first()
+            from apps.tenant.accounting.account_mapping import mapped_account
+            asset_account = mapped_account('1215') or Account.objects.filter(code='1215').first()
             if not asset_account:
                 legacy = Account.objects.filter(code='1110-EQ').first()
                 if legacy:
@@ -93,28 +110,17 @@ class Equipment(models.Model):
                     asset_account = legacy
                 else:
                     asset_account = _get_or_create_account('1215', 'معدات التأجير', Account.ASSET, '1200')
-
-            # 2. Get Opening Balance Equity Account
-            # 3999 = Opening balances & capital adjustments (standard chart)
+            # 2. 3999 = Opening balances & capital adjustments (standard chart)
             equity_account = _get_or_create_account('3999', 'أرصدة افتتاحية وتسويات رأس المال', Account.EQUITY, '3000')
-
             if not asset_account or not equity_account:
-                return # Can't post
-
-            # 3. Create Entry
-            entry = JournalEntry.objects.create(
-                date=datetime.date.today(),
-                description=f'رصيد افتتاحي لمعدة الإيجار: {self.name} ({self.code})',
-                created_by=user,
-                status=JournalEntry.DRAFT
-            )
-            
-            JournalItem.objects.create(entry=entry, account=asset_account, debit=cost, credit=0)
-            JournalItem.objects.create(entry=entry, account=equity_account, debit=0, credit=cost)
-            
-            entry.post()
+                return  # Can't post
+            desc = f'رصيد افتتاحي لمعدة الإيجار: {self.name} ({self.code})'
+            entry = post_entry(date=timezone.localdate(), reference=f'OPENING-EQ-{self.pk}', description=desc,
+                               lines=[(asset_account, cost, ZERO, desc), (equity_account, ZERO, cost, desc)],
+                               user=user, source=self)
             self.opening_journal_entry = entry
-            self.save(update_fields=['opening_journal_entry'])
+            Equipment.objects.filter(pk=self.pk).update(opening_journal_entry=entry)
+
 
 class Rental(models.Model):
     PAYMENT_CASH = 'CASH'
@@ -133,22 +139,22 @@ class Rental(models.Model):
 
     equipment = models.ForeignKey(Equipment, on_delete=models.PROTECT, related_name='rentals', verbose_name='المعدة')
     customer = models.ForeignKey(Partner, on_delete=models.PROTECT, limit_choices_to={'partner_type__in': [Partner.CUSTOMER, Partner.BOTH]}, related_name='rentals', verbose_name='العميل')
-    
+
     start_date = models.DateField(default=datetime.date.today, verbose_name='تاريخ بداية الإيجار')
     days_rented = models.PositiveIntegerField(verbose_name='عدد أيام الإيجار', default=1)
     end_date = models.DateField(verbose_name='تاريخ العودة المتوقع', blank=True, null=True)
-    
+
     daily_rate = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='سعر اليوم (وقت الإيجار)')
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='إجمالي المبلغ', blank=True, null=True)
     refund_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='المبلغ المسترد')
     penalty_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='غرامة تأخير / تلف')
-    
+
     payment_method = models.CharField(max_length=10, choices=PAYMENT_CHOICES, default=PAYMENT_CASH, verbose_name='طريقة الدفع')
     treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, blank=True, null=True, verbose_name='الخزينة (للكاش)')
     ewallet = models.ForeignKey(EWallet, on_delete=models.PROTECT, blank=True, null=True, verbose_name='المحفظة (للكاش)')
-    
+
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE, verbose_name='حالة العقد')
-    
+
     accrual_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_accrual', blank=True, null=True, verbose_name='قيد الاستحقاق')
     payment_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_payment', blank=True, null=True, verbose_name='قيد السداد')
     penalty_journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name='rental_penalty', blank=True, null=True, verbose_name='قيد الغرامة')
@@ -157,12 +163,21 @@ class Rental(models.Model):
 
     pos_session = models.ForeignKey('invoicing.POSSession', on_delete=models.SET_NULL, null=True, blank=True, related_name='rentals', verbose_name='وردية نقطة البيع')
 
-    from django.conf import settings
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, verbose_name='بواسطة')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # figures fixed by the accrual entry: never changed once it is posted (fix by a new contract)
+    POSTED_FIELDS = ('equipment_id', 'customer_id', 'start_date', 'days_rented', 'daily_rate', 'total_amount',
+                     'payment_method', 'treasury_id', 'ewallet_id')
+
     def save(self, *args, **kwargs):
+        if self.pk and not self._state.adding:
+            old = Rental.objects.filter(pk=self.pk).values('accrual_journal_entry_id', *self.POSTED_FIELDS).first()
+            if old and old['accrual_journal_entry_id']:
+                if any(old[f] != getattr(self, f) for f in self.POSTED_FIELDS):
+                    raise ValidationError('العقد اترحّل — مبلغه وبياناته المالية متتعدّلش.')
+                return super().save(*args, **kwargs)
         if not self.daily_rate:
             self.daily_rate = self.equipment.daily_rate
         if self.start_date and self.days_rented:
@@ -172,79 +187,69 @@ class Rental(models.Model):
 
     def get_rental_revenue_account(self):
         from apps.tenant.accounting.models import Account
-        # Try to find 'إيراد إيجار معدات'
         acc = Account.objects.filter(name='إيراد إيجار معدات').first()
         if acc:
             return acc
-            
         # Fixed code 4140 under revenue root 4000
         return _get_or_create_account('4140', 'إيرادات تأجير المعدات', Account.REVENUE, '4000')
 
-    def post_rental(self):
-        from apps.tenant.accounting.models import JournalItem, JournalEntry
-        from django.db import transaction as db_transaction
-        from django.core.exceptions import ValidationError
-        
-        if self.accrual_journal_entry:
-            return # Already posted
-            
-        customer_account = self.customer.receivable_account or self.customer.account
-        if not customer_account:
+    def _customer_account(self):
+        acc = self.customer.receivable_account or self.customer.account
+        if not acc:
             raise ValidationError('العميل ليس لديه حساب ذمم مربوط. يُرجى تهيئة الشريك مالياً أولاً من شاشة العملاء.')
-            
-        revenue_account = self.get_rental_revenue_account()
-        if not revenue_account:
-            raise ValidationError('تعذر إنشاء أو العثور على حساب إيرادات التأجير في شجرة الحسابات.')
+        return acc
 
-        with db_transaction.atomic():
-            # 1. Accrual Entry: Dr Customer | Cr Equipment Rental Revenue
-            accrual_entry = JournalEntry.objects.create(
-                date=self.start_date,
-                description=f'إثبات إيراد تأجير المعدة ({self.equipment.name}) للعميل {self.customer.name}',
-                created_by=self.created_by,
-                status=JournalEntry.DRAFT
-            )
-            JournalItem.objects.create(entry=accrual_entry, account=customer_account, debit=self.total_amount, credit=0)
-            JournalItem.objects.create(entry=accrual_entry, account=revenue_account, debit=0, credit=self.total_amount)
-            accrual_entry.post()
-            self.accrual_journal_entry = accrual_entry
-            
-            # 2. Payment Entry if CASH
+    def _post(self, suffix, description, lines, user, date=None):
+        from apps.tenant.accounting.posting import post_entry
+        return post_entry(date=date or timezone.localdate(), reference=f'RNT-{self.pk}-{suffix}',
+                          description=description, lines=lines, user=user or self.created_by, source=self)
+
+    def post_rental(self, user=None):
+        """Book the contract: Dr customer / Cr rental revenue, and for cash Dr cash box / Cr customer.
+        One posting per contract; the equipment must be available (both rows locked)."""
+        with transaction.atomic():
+            locked = Rental.objects.select_for_update(of=('self',)).get(pk=self.pk)
+            if locked.accrual_journal_entry_id:
+                return  # Already posted
+            equipment = Equipment.objects.select_for_update(of=('self',)).get(pk=self.equipment_id)
+            if equipment.status != Equipment.STATUS_AVAILABLE or not equipment.is_active:
+                raise ValidationError(f'المعدة ({equipment.name}) مش متاحة للتأجير دلوقتي.')
+            if not self.days_rented or self.days_rented <= 0:
+                raise ValidationError('عدد أيام الإيجار لازم يكون يوم أو أكتر.')
+            total = Decimal(str(self.total_amount or 0))
+            if total <= 0:
+                raise ValidationError('إجمالي العقد لازم يكون أكبر من صفر.')
+            customer_account = self._customer_account()
+            revenue_account = self.get_rental_revenue_account()
+            if not revenue_account:
+                raise ValidationError('تعذر إنشاء أو العثور على حساب إيرادات التأجير في شجرة الحسابات.')
+            payment_account = None
             if self.payment_method == self.PAYMENT_CASH:
-                if not self.treasury and not self.ewallet:
+                if not self.treasury_id and not self.ewallet_id:
                     raise ValidationError('يجب تحديد خزينة أو محفظة للدفع الكاش.')
-                    
-                payment_account = self.treasury.account if self.treasury else self.ewallet.account
-                
-                payment_entry = JournalEntry.objects.create(
-                    date=self.start_date,
-                    description=f'سداد إيجار المعدة ({self.equipment.name}) نقداً من العميل {self.customer.name}',
-                    created_by=self.created_by,
-                    status=JournalEntry.DRAFT
-                )
-                JournalItem.objects.create(entry=payment_entry, account=payment_account, debit=self.total_amount, credit=0)
-                JournalItem.objects.create(entry=payment_entry, account=customer_account, debit=0, credit=self.total_amount)
-                payment_entry.post()
-                self.payment_journal_entry = payment_entry
-            
-            # Mark equipment as rented
-            self.equipment.status = Equipment.STATUS_RENTED
-            self.equipment.save()
-            
-            self.save()
+                payment_account = _money_account(self.treasury, self.ewallet)
 
-    def return_equipment(self, refund_amount=0, refund_method='none', treasury=None, ewallet=None, penalty_amount=0):
-        from django.core.exceptions import ValidationError
-        from django.db import transaction as db_transaction
-        from apps.tenant.accounting.models import JournalEntry, JournalItem, Account
-        from decimal import Decimal
-        import datetime
-        
-        from decimal import InvalidOperation
+            desc = f'إثبات إيراد تأجير المعدة ({equipment.name}) للعميل {self.customer.name}'
+            self.accrual_journal_entry = self._post('ACR', desc, [(customer_account, total, ZERO, desc),
+                                                                 (revenue_account, ZERO, total, desc)],
+                                                    user, date=self.start_date)
+            if payment_account is not None:
+                desc = f'سداد إيجار المعدة ({equipment.name}) نقداً من العميل {self.customer.name}'
+                self.payment_journal_entry = self._post('PAY', desc, [(payment_account, total, ZERO, desc),
+                                                                     (customer_account, ZERO, total, desc)],
+                                                        user, date=self.start_date)
+            equipment.status = Equipment.STATUS_RENTED
+            equipment.save(update_fields=['status', 'updated_at'])
+            self.equipment = equipment
+            Rental.objects.filter(pk=self.pk).update(accrual_journal_entry=self.accrual_journal_entry,
+                                                     payment_journal_entry=self.payment_journal_entry)
 
+    def return_equipment(self, refund_amount=0, refund_method='none', treasury=None, ewallet=None, penalty_amount=0,
+                         user=None):
+        """The equipment comes back: optional penalty (Dr customer / Cr 4220), optional refund of unused days
+        (Dr revenue / Cr customer), and the net paid / collected in cash. Booked under ``user`` (who received it)."""
         if self.status == self.STATUS_RETURNED:
             raise ValidationError('هذه المعدة تم إرجاعها مسبقاً.')
-
         try:
             refund_amount = Decimal(str(refund_amount if refund_amount not in (None, '') else 0))
             penalty_amount = Decimal(str(penalty_amount if penalty_amount not in (None, '') else 0))
@@ -258,89 +263,56 @@ class Rental(models.Model):
             raise ValidationError('مبلغ المرتجع لا يمكن أن يكون سالباً.')
         if refund_method not in ('none', 'cash', 'account_balance'):
             raise ValidationError('طريقة التسوية غير صالحة.')
+        from apps.tenant.accounting.models import Account
 
-        with db_transaction.atomic():
+        with transaction.atomic():
             # Lock the contract row and re-check status to avoid double posting on double submit
-            locked = type(self).objects.select_for_update(of=('self',)).get(pk=self.pk)
+            locked = Rental.objects.select_for_update(of=('self',)).get(pk=self.pk)
             if locked.status != self.STATUS_ACTIVE:
                 raise ValidationError('هذه المعدة تم إرجاعها مسبقاً.')
-            self.status = locked.status
-            self.refund_journal_entry_id = locked.refund_journal_entry_id
-            self.penalty_journal_entry_id = locked.penalty_journal_entry_id
-            self.settlement_journal_entry_id = locked.settlement_journal_entry_id
-
             total_amount = Decimal(str(locked.total_amount or 0))
             if refund_amount > total_amount:
                 raise ValidationError(f'مبلغ المرتجع ({refund_amount}) لا يمكن أن يتجاوز إجمالي العقد ({total_amount}).')
-
-            self.status = self.STATUS_RETURNED
-            self.equipment.status = Equipment.STATUS_AVAILABLE
-            self.equipment.save()
-
-            self.refund_amount = refund_amount
-            self.penalty_amount = penalty_amount
-            
-            customer_account = self.customer.receivable_account or self.customer.account
-            revenue_account = self.get_rental_revenue_account()
-            
-            # --- 1. Penalty Entry (if any) ---
-            if penalty_amount > 0:
-                penalty_revenue_acc = _get_or_create_account('4220', 'إيرادات غرامات وتأخيرات', Account.REVENUE, '4000')
-                penalty_entry = JournalEntry.objects.create(
-                    date=datetime.date.today(),
-                    description=f'غرامة تأخير/تلف معدة ({self.equipment.name}) على العميل {self.customer.name} | مبلغ الغرامة: {penalty_amount} ج.م',
-                    created_by=self.created_by,
-                    status=JournalEntry.DRAFT
-                )
-                JournalItem.objects.create(entry=penalty_entry, account=customer_account, debit=penalty_amount, credit=0)
-                JournalItem.objects.create(entry=penalty_entry, account=penalty_revenue_acc, debit=0, credit=penalty_amount)
-                penalty_entry.post()
-                self.penalty_journal_entry = penalty_entry
-
-            # --- 2. Refund Entry (if any) ---
-            if refund_amount > 0:
-                reverse_entry = JournalEntry.objects.create(
-                    date=datetime.date.today(),
-                    description=f'تسوية إيراد مبكر وإرجاع معدة ({self.equipment.name}) للعميل {self.customer.name} | مبلغ المرتجع: {refund_amount} ج.م',
-                    created_by=self.created_by,
-                    status=JournalEntry.DRAFT
-                )
-                JournalItem.objects.create(entry=reverse_entry, account=revenue_account, debit=refund_amount, credit=0)
-                JournalItem.objects.create(entry=reverse_entry, account=customer_account, debit=0, credit=refund_amount)
-                reverse_entry.post()
-                self.refund_journal_entry = reverse_entry
-
-            # --- 3. Net Cash Settlement ---
             net_amount = refund_amount - penalty_amount
+            payment_account = None
             if refund_method == 'cash' and net_amount != 0:
                 if not treasury and not ewallet:
                     raise ValidationError('يجب تحديد خزينة أو محفظة للسداد النقدي.')
-                payment_account = treasury.account if treasury else ewallet.account
+                payment_account = _money_account(treasury, ewallet)
 
+            customer_account = self._customer_account()
+            revenue_account = self.get_rental_revenue_account()
+            name = self.equipment.name
+            fields = {'status': self.STATUS_RETURNED, 'refund_amount': refund_amount, 'penalty_amount': penalty_amount}
+
+            if penalty_amount > 0:
+                penalty_revenue_acc = _get_or_create_account('4220', 'إيرادات غرامات وتأخيرات', Account.REVENUE, '4000')
+                desc = f'غرامة تأخير/تلف معدة ({name}) على العميل {self.customer.name} | مبلغ الغرامة: {penalty_amount} ج.م'
+                fields['penalty_journal_entry'] = self._post('PEN', desc, [(customer_account, penalty_amount, ZERO, desc),
+                                                                          (penalty_revenue_acc, ZERO, penalty_amount, desc)],
+                                                             user)
+            if refund_amount > 0:
+                desc = (f'تسوية إيراد مبكر وإرجاع معدة ({name}) للعميل {self.customer.name} | '
+                        f'مبلغ المرتجع: {refund_amount} ج.م')
+                fields['refund_journal_entry'] = self._post('REF', desc, [(revenue_account, refund_amount, ZERO, desc),
+                                                                         (customer_account, ZERO, refund_amount, desc)],
+                                                            user)
+            if payment_account is not None:
                 if net_amount > 0:
-                    cash_entry = JournalEntry.objects.create(
-                        date=datetime.date.today(),
-                        description=f'سداد صافي مستحقات إرجاع معدة ({self.equipment.name}) للعميل {self.customer.name} | الصافي: {net_amount} ج.م',
-                        created_by=self.created_by,
-                        status=JournalEntry.DRAFT
-                    )
-                    JournalItem.objects.create(entry=cash_entry, account=customer_account, debit=net_amount, credit=0)
-                    JournalItem.objects.create(entry=cash_entry, account=payment_account, debit=0, credit=net_amount)
-                    cash_entry.post()
-                    self.settlement_journal_entry = cash_entry
-                elif net_amount < 0:
-                    cash_entry = JournalEntry.objects.create(
-                        date=datetime.date.today(),
-                        description=f'تحصيل صافي غرامة إرجاع معدة ({self.equipment.name}) من العميل {self.customer.name} | الصافي: {abs(net_amount)} ج.م',
-                        created_by=self.created_by,
-                        status=JournalEntry.DRAFT
-                    )
-                    JournalItem.objects.create(entry=cash_entry, account=payment_account, debit=abs(net_amount), credit=0)
-                    JournalItem.objects.create(entry=cash_entry, account=customer_account, debit=0, credit=abs(net_amount))
-                    cash_entry.post()
-                    self.settlement_journal_entry = cash_entry
+                    desc = f'سداد صافي مستحقات إرجاع معدة ({name}) للعميل {self.customer.name} | الصافي: {net_amount} ج.م'
+                    lines = [(customer_account, net_amount, ZERO, desc), (payment_account, ZERO, net_amount, desc)]
+                else:
+                    desc = (f'تحصيل صافي غرامة إرجاع معدة ({name}) من العميل {self.customer.name} | '
+                            f'الصافي: {abs(net_amount)} ج.م')
+                    lines = [(payment_account, abs(net_amount), ZERO, desc), (customer_account, ZERO, abs(net_amount), desc)]
+                fields['settlement_journal_entry'] = self._post('SET', desc, lines, user)
 
-            self.save()
+            Equipment.objects.filter(pk=self.equipment_id).update(status=Equipment.STATUS_AVAILABLE,
+                                                                  updated_at=timezone.now())
+            self.equipment.status = Equipment.STATUS_AVAILABLE
+            Rental.objects.filter(pk=self.pk).update(updated_at=timezone.now(), **fields)
+            for k, v in fields.items():
+                setattr(self, k, v)
 
     def __str__(self):
         return f"عقد إيجار {self.id} - {self.equipment.name}"

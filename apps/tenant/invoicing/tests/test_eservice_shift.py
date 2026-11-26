@@ -123,6 +123,7 @@ class EServiceLiquidityTests(TestCase):
                                         reference='FUND-1', description='capital', status=JournalEntry.POSTED)
         JournalItem.objects.create(entry=e, account=self.w.treasury.account, debit=D('5000'), credit=0)
         JournalItem.objects.create(entry=e, account=account('3100'), debit=0, credit=D('5000'))
+        e.post()
 
     def _post(self, ttype, principal, rev=D('0'), exp=D('0'), machine=None, treasury=None):
         op = T.objects.create(transaction_type=ttype, pos_machine=machine or self.machine,

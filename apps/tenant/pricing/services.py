@@ -47,13 +47,17 @@ def _normalize_uom(product, uom):
     return uom, factor
 
 
+# highest quantity break first; on a tie the newest price list wins (pos.js keeps this order: stable sort)
+_ITEM_ORDER = ('-min_quantity', '-price_list__created_at', '-price_list_id')
+
+
 def _match_item(item_qs, uom):
     """Pick the best item (highest min_quantity) for the requested unit. Returns (item, is_uom_specific)."""
     if uom is not None:
-        uom_item = item_qs.filter(uom=uom).order_by('-min_quantity').first()
+        uom_item = item_qs.filter(uom=uom).order_by(*_ITEM_ORDER).first()
         if uom_item:
             return uom_item, True
-    return item_qs.filter(uom__isnull=True).order_by('-min_quantity').first(), False
+    return item_qs.filter(uom__isnull=True).order_by(*_ITEM_ORDER).first(), False
 
 
 class PricingEngineService:
@@ -91,7 +95,7 @@ class PricingEngineService:
         `unit_price`, which is always the price of one requested uom.
         """
         if as_of_date is None:
-            as_of_date = timezone.now().date()
+            as_of_date = timezone.localdate()
 
         try:
             quantity = Decimal(str(quantity or 1))
@@ -219,7 +223,7 @@ class PricingEngineService:
         else uom_id None (scaled by the unit factor); pick the highest min_quantity <= q.
         """
         if as_of_date is None:
-            as_of_date = timezone.now().date()
+            as_of_date = timezone.localdate()
         if not partner:
             return {}
 
@@ -239,7 +243,8 @@ class PricingEngineService:
         # All items first, then branch prices and unit factors for their products in
         # 2 queries (not one query per product / per unit).
         sources = [(tier_name, list(PriceListItem.objects.filter(price_list__in=lists_qs)
-                                    .select_related('product', 'price_list').order_by('product_id', 'min_quantity')))
+                                    .select_related('product', 'price_list')
+                                    .order_by('product_id', 'min_quantity', '-price_list__created_at', '-price_list_id')))
                    for tier_name, lists_qs in list_sources]
         product_ids = {item.product_id for _, items in sources for item in items}
         branch_prices = Product.branch_price_map(product_ids, branch) if branch else {}

@@ -1,19 +1,50 @@
 {% extends "rep_app/base.html" %}
 {% block content %}
-<div class="card">
-    <div class="row"><h2 style="flex:1; margin:0;">🧾 {{ inv.invoice_number }}</h2><span class="badge">{{ inv.date|date:"j/n/Y" }}</span></div>
-    <p class="muted" style="margin:.3rem 0 0;">العميل: <b>{{ inv.partner.name|default:"عميل نقدي" }}</b></p>
+<div class="card" {% if inv.invoice_type == 'RETURN_SALE' %}style="border-color:var(--bad);"{% endif %}>
+    <div class="row"><h2 style="flex:1; margin:0;">{% if inv.invoice_type == 'RETURN_SALE' %}↩️ مرتجع{% else %}🧾 فاتورة{% endif %} {{ inv.invoice_number }}</h2><span class="badge">{{ inv.date|date:"j/n/Y" }}</span></div>
+    <div style="margin-top:.35rem;"><span class="tag {{ inv.kind_css }}">{{ inv.kind }}</span> <span class="tag pay">{{ inv.pay }}</span></div>
+    <p class="muted" style="margin:.3rem 0 0;">العميل: <b>{{ inv.partner.name|default:"عميل نقدي" }}</b>{% if inv.partner.tax_id %} — رقم التسجيل الضريبي {{ inv.partner.tax_id }}{% endif %}</p>
+    {% if einvoice %}<p class="muted" style="margin:.3rem 0 0;">🏛️ مصلحة الضرايب: <b>{{ einvoice.get_status_display }}</b>{% if einvoice.uuid %} · {{ einvoice.uuid|truncatechars:14 }}{% endif %}</p>{% endif %}
     <div class="list" style="margin-top:.6rem;">
         {% for l in lines %}
-        <div class="item"><div class="grow"><div class="t">{{ l.product.name }}</div><div class="muted num">{{ l.quantity|floatformat:"-3" }} {{ l.display_unit_name }} × {{ l.unit_price|floatformat:2 }}</div></div><b class="num">{{ l.total_amount|floatformat:"2g" }}</b></div>
+        <div class="item"><div class="grow"><div class="t">{{ l.product.name }}</div><div class="muted num">{{ l.quantity|floatformat:"-3" }} {{ l.display_unit_name }} × {{ l.unit_price|floatformat:2 }}{% if l.discount_amount %} — خصم {{ l.discount_amount|floatformat:2 }}{% endif %}{% if l.tax_rate %} · ض {{ l.tax_rate|floatformat:"-2" }}%{% endif %}</div></div><b class="num">{{ l.total_amount|floatformat:"2g" }}</b></div>
         {% endfor %}
     </div>
+        {% if inv.discount_amount %}<div style="display:flex; justify-content:space-between;"><span class="muted">الخصم</span><span class="num bad">{{ inv.discount_amount|floatformat:2 }}</span></div>{% endif %}
+    <div style="display:flex; justify-content:space-between;"><span class="muted">ضريبة القيمة المضافة</span><span class="num">{{ inv.tax_amount|floatformat:2 }}</span></div>
+    {% if inv.wht_amount %}<div style="display:flex; justify-content:space-between;"><span class="muted">خصم وإضافة</span><span class="num bad">−{{ inv.wht_amount|floatformat:2 }}</span></div>{% endif %}
     <div class="grid2" style="margin-top:.6rem;">
         <div class="kpi"><small>الإجمالي</small><b class="num">{{ inv.total_amount|floatformat:"2g" }}</b></div>
-        <div class="kpi"><small>{% if inv.paid_credit %}آجل على العميل{% else %}اتدفع نقدي{% endif %}</small><b class="num {% if inv.paid_credit %}warn{% else %}ok{% endif %}">{% if inv.paid_credit %}{{ inv.paid_credit|floatformat:"2g" }}{% else %}{{ inv.paid_cash|floatformat:"2g" }}{% endif %}</b>{% if inv.paid_credit and inv.paid_cash %}<div class="muted">نقدي {{ inv.paid_cash|floatformat:2 }}</div>{% endif %}</div>
+        {% if inv.invoice_type == 'RETURN_SALE' %}
+        <div class="kpi"><small>{% if inv.payment_type == 'CASH' %}اترد نقدي من خزنتك{% else %}اتخصم من حساب العميل{% endif %}</small><b class="num bad">{{ inv.total_amount|floatformat:"2g" }}</b></div>
+        {% else %}
+        <div class="kpi"><small>{% if inv.paid_credit %}آجل على العميل{% else %}اتدفع نقدي{% endif %}</small><b class="num {% if inv.paid_credit %}warn{% else %}ok{% endif %}">{% if inv.paid_credit %}{{ inv.paid_credit|floatformat:"2g" }}{% else %}{{ inv.paid_cash|floatformat:"2g" }}{% endif %}</b>{% if inv.paid_credit and inv.paid_cash %}<div class="muted">نقدي {{ inv.paid_cash|floatformat:2 }}</div>{% endif %}{% if inv.due_date %}<div class="muted">يستحق {{ inv.due_date|date:"j/n/Y" }}</div>{% endif %}</div>
+        {% endif %}
     </div>
 </div>
 <a class="btn" href="https://wa.me/{% if inv.partner.mobile %}{{ inv.partner.mobile }}{% endif %}?text={{ share|urlencode }}" target="_blank" rel="noopener">📲 ابعتها واتساب</a>
-<a class="btn ghost" href="{% url 'invoicing:receipt' inv.id %}" target="_blank">🖨️ طباعة الإيصال</a>
-<a class="btn ok" href="{% url 'invoicing:rep_app_sell' %}">➕ فاتورة جديدة</a>
+<div class="grid2">
+    <a class="btn ghost" href="{% url 'invoicing:receipt' inv.id %}" target="_blank">🖨️ إيصال حراري</a>
+    <a class="btn ghost" href="{% url 'invoicing:receipt' inv.id %}?size=a4" target="_blank">📄 فاتورة ضريبية A4</a>
+</div>
+{% if inv.status == 'CANCELLED' %}
+<div class="msg error">✖ الفاتورة دي اتلغت — المخزون رجع لنفس الدفعات والقيود اتعكست.{% if inv.notes %}<div style="font-weight:600; margin-top:.3rem; white-space:pre-line;">{{ inv.notes }}</div>{% endif %}</div>
+{% elif cancel_enabled %}
+<details class="card" id="cancelBox">
+    <summary style="font-weight:800; color:var(--bad); cursor:pointer; min-height:28px;">🗑️ إلغاء الفاتورة بالكامل</summary>
+    {% if cancel_block %}
+    <p class="muted" style="margin:.6rem 0 0;">مينفعش: {{ cancel_block }}</p>
+    {% else %}
+    <form method="post" style="margin-top:.6rem;" onsubmit="return confirm('إلغاء {{ inv.invoice_number }} بالكامل؟ المخزون والفلوس هيرجعوا زي ما كانوا ومينفعش ترجع فيه.');">
+        {% csrf_token %}<input type="hidden" name="action" value="cancel">
+        <div class="field"><label>سبب الإلغاء</label><input name="reason" required minlength="3" maxlength="200" placeholder="مثال: العميل رفض الاستلام"></div>
+        <button class="btn" style="background:var(--bad);">🗑️ إلغاء الفاتورة</button>
+    </form>
+    {% endif %}
+</details>
+{% endif %}
+<div class="grid2">
+    <a class="btn ok" href="{% url 'invoicing:rep_app_sell' %}">🛒 فاتورة جديدة</a>
+    <a class="btn ghost" href="{% url 'invoicing:rep_app_sell' %}?mode=return">↩️ مرتجع جديد</a>
+</div>
 {% endblock %}

@@ -429,6 +429,9 @@ def pricelist_item_add(request, pk):
 
         product = get_object_or_404(Product, pk=product_id)
         uom = get_object_or_404(UnitOfMeasure, pk=uom_id) if uom_id else None
+        if uom is not None and not product.uoms.filter(uom=uom).exists():
+            messages.error(request, f'الوحدة "{uom.name}" مش من وحدات الصنف "{product.name}".')
+            return redirect('pricing:pricelist_detail', pk=pricelist.pk)
 
         try:
             min_qty = Decimal(min_qty_str) if min_qty_str else Decimal('1')

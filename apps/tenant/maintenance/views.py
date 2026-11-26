@@ -147,7 +147,7 @@ def ticket_detail(request, pk):
     
     products = Product.objects.filter(is_active=True).exclude(product_type='SERVICE').order_by('name')
     warehouses = Warehouse.objects.filter(is_active=True)
-    treasuries = Treasury.objects.all()
+    treasuries = Treasury.objects.business()
     bank_accounts = BankAccount.objects.all()
     ewallets = EWallet.objects.all()
 
@@ -181,8 +181,8 @@ def ticket_detail(request, pk):
 def ticket_edit(request, pk):
     qs = filter_by_branch(MaintenanceTicket.objects.all(), request)
     ticket = get_object_or_404(qs, pk=pk)
-    if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
-        return JsonResponse({'error': 'لا يمكن تعديل تذكرة مسلّمة.'}, status=400)
+    if ticket.is_closed:
+        return JsonResponse({'error': 'لا يمكن تعديل تذكرة مسلّمة أو ملغاة.'}, status=400)
 
     if request.method == 'POST':
         try:
@@ -190,8 +190,8 @@ def ticket_edit(request, pk):
             value = request.POST.get('value', '').strip()
             with transaction.atomic():
                 ticket = MaintenanceTicket.objects.select_for_update(of=('self',)).get(pk=ticket.pk)
-                if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
-                    return JsonResponse({'error': 'لا يمكن تعديل تذكرة مسلّمة.'}, status=400)
+                if ticket.is_closed:
+                    return JsonResponse({'error': 'لا يمكن تعديل تذكرة مسلّمة أو ملغاة.'}, status=400)
                 if field == 'status':
                     if value == ticket.status:
                         return JsonResponse({'success': True})
@@ -230,8 +230,8 @@ def ticket_edit(request, pk):
 def add_part(request, pk):
     qs = filter_by_branch(MaintenanceTicket.objects.all(), request)
     ticket = get_object_or_404(qs, pk=pk)
-    if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
-        return JsonResponse({'error': 'لا يمكن إضافة قطع لتذكرة مسلّمة.'}, status=400)
+    if ticket.is_closed:
+        return JsonResponse({'error': 'لا يمكن إضافة قطع لتذكرة مسلّمة أو ملغاة.'}, status=400)
 
     if request.method == 'POST':
         try:
@@ -254,8 +254,8 @@ def add_part(request, pk):
 
             with transaction.atomic():
                 ticket = MaintenanceTicket.objects.select_for_update(of=('self',)).get(pk=ticket.pk)
-                if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
-                    return JsonResponse({'error': 'لا يمكن إضافة قطع لتذكرة مسلّمة.'}, status=400)
+                if ticket.is_closed:
+                    return JsonResponse({'error': 'لا يمكن إضافة قطع لتذكرة مسلّمة أو ملغاة.'}, status=400)
 
                 serial_item = None
                 if product.product_type == 'SERIALIZED':
@@ -298,8 +298,7 @@ def add_part(request, pk):
 @require_POST
 @custom_permission_required('maintenance.delete_ticketpart', redirect_url='core:main_screen')
 def delete_part(request, part_pk):
-    """Delete a part and return its stock (FIFO batch at the consumed cost / un-sell the serial)."""
-    from apps.tenant.services.fifo_engine import add_inventory_batch
+    """Delete a part — TicketPart.delete() puts its stock back (same cost / the same serial)."""
 
     qs = filter_by_branch(TicketPart.objects.all(), request, 'ticket__branch')
     part = get_object_or_404(qs, pk=part_pk)
@@ -307,36 +306,13 @@ def delete_part(request, part_pk):
     try:
         with transaction.atomic():
             ticket = MaintenanceTicket.objects.select_for_update(of=('self',)).get(pk=part.ticket_id)
-            if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
-                return JsonResponse({'error': 'لا يمكن حذف قطع من تذكرة مسلّمة.'}, status=400)
+            if ticket.is_closed:
+                return JsonResponse({'error': 'لا يمكن حذف قطع من تذكرة مسلّمة أو ملغاة.'}, status=400)
             part = (TicketPart.objects.select_for_update(of=('self',))
                     .select_related('product', 'warehouse').filter(pk=part.pk).first())
             if part is None:
                 return JsonResponse({'error': 'القطعة غير موجودة (ربما حُذفت بالفعل).'}, status=404)
 
-            product = part.product
-            if part.stock_deducted and product.product_type != 'SERVICE':
-                if product.product_type == 'SERIALIZED':
-                    if part.serial_item_id:
-                        serial = SerialItem.objects.select_for_update(of=('self',)).get(pk=part.serial_item_id)
-                        serial.is_sold = False
-                        serial.warehouse = part.warehouse
-                        serial.save()
-                elif part.quantity and part.quantity > 0:
-                    unit_cost = (Decimal(part.actual_cost or 0) / part.quantity).quantize(Decimal('0.0001'))
-                    # add_inventory_batch overwrites last_purchase_price; a return is not a purchase.
-                    prev_last_price = product.last_purchase_price
-                    add_inventory_batch(
-                        product=product,
-                        warehouse=part.warehouse,
-                        quantity=part.quantity,
-                        unit_cost=unit_cost,
-                        reference=f'صيانة-#{ticket.id}',
-                        movement_type='RETURN_IN',
-                    )
-                    if product.last_purchase_price != prev_last_price:
-                        product.last_purchase_price = prev_last_price
-                        product.save(update_fields=['last_purchase_price', 'updated_at'])
             part.delete()
         return JsonResponse({'success': True})
     except Exception as e:
@@ -351,8 +327,8 @@ def delete_part(request, part_pk):
 def deliver_ticket(request, pk):
     qs = filter_by_branch(MaintenanceTicket.objects.all(), request)
     ticket = get_object_or_404(qs, pk=pk)
-    if ticket.status == MaintenanceTicket.STATUS_DELIVERED:
-        return JsonResponse({'error': 'هذه التذكرة مسلّمة بالفعل.'}, status=400)
+    if ticket.is_closed:
+        return JsonResponse({'error': 'هذه التذكرة مسلّمة أو ملغاة.'}, status=400)
 
     if request.method == 'POST':
         payment_method = request.POST.get('payment_method', MaintenanceTicket.PAYMENT_CASH)
@@ -402,6 +378,12 @@ def deliver_ticket(request, pk):
         else:
             return JsonResponse({'error': 'طريقة الدفع غير صالحة.'}, status=400)
 
+        # cash taken during the cashier's open shift goes in his drawer and counts at the close
+        from apps.tenant.invoicing.models import POSSession
+        session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).select_related('treasury').first()
+        if session is not None and treasury is not None and treasury.pk != session.treasury_id:
+            return JsonResponse({'error': f'عندك وردية مفتوحة على "{session.treasury}" — التحصيل النقدي يتم على '
+                                          'خزينة ورديتك.'}, status=400)
         try:
             ticket.deliver(
                 user=request.user,
@@ -409,12 +391,26 @@ def deliver_ticket(request, pk):
                 treasury=treasury,
                 bank_account=bank_account,
                 ewallet=ewallet,
-                paid_amount=paid_amount
+                paid_amount=paid_amount,
+                pos_session=session if treasury is not None else None,
             )
             return JsonResponse({'success': True, 'redirect': f'/maintenance/{ticket.pk}/'})
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=400)
     return JsonResponse({'error': 'Invalid method'}, status=405)
+
+
+@require_POST
+@custom_permission_required('maintenance.change_maintenanceticket', redirect_url='core:main_screen')
+def cancel_ticket(request, pk):
+    """The device goes back unrepaired: parts back to stock, no entry."""
+    qs = filter_by_branch(MaintenanceTicket.objects.all(), request)
+    ticket = get_object_or_404(qs, pk=pk)
+    try:
+        ticket.cancel(request.user, request.POST.get('reason', ''))
+    except ValueError as e:
+        return JsonResponse({'error': str(e)}, status=400)
+    return JsonResponse({'success': True, 'redirect': f'/maintenance/{ticket.pk}/'})
 
 
 # ---------------------------------------------------------------------------

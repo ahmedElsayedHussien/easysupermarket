@@ -15,7 +15,7 @@ class BaseGlassForm(forms.ModelForm):
 class UnitOfMeasureForm(BaseGlassForm):
     class Meta:
         model = UnitOfMeasure
-        fields = ['name']
+        fields = ['name', 'eta_code']
 
 from .models import Product, ProductUoM
 from django.forms import inlineformset_factory
@@ -27,7 +27,7 @@ class ProductForm(BaseGlassForm):
             'name', 'name_en', 'product_type', 'has_imei', 'has_serial', 'barcode', 'sku', 'egs_code', 'gpc_code',
             'category', 'sale_price', 'min_sale_price', 'tax_rate', 'withholding_tax_rate',
             'min_stock_level', 'max_stock_level', 'is_active',
-            'allow_negative_stock', 'description', 'image'
+            'allow_negative_stock', 'has_expiry', 'eta_tax_subtype', 'description', 'image'
         ]
 
     def __init__(self, *args, **kwargs):

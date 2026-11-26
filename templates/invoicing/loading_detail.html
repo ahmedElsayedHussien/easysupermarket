@@ -11,7 +11,7 @@
             <h1>⬆️ طلب تحميل {{ order.number }}</h1>
             <span class="st {{ order.status }}">{{ order.get_status_display }}</span>
             <span style="margin-inline-start:auto;" class="no-print">
-                <button class="vn-btn" onclick="window.print()">🖨️ طباعة إذن الصرف</button>
+                {% if order.status == 'APPROVED' or order.status == 'ISSUED' %}<a class="vn-btn" target="_blank" href="{% url 'invoicing:loading_print' order.id %}">🖨️ طباعة إذن الصرف</a>{% endif %}
                 <a class="vn-btn" href="{% url 'invoicing:loading_list' %}">↩</a>
             </span>
         </div>
@@ -26,6 +26,7 @@
             {% if order.transfer %}<div>التحويل المخزني<b><a href="{% url 'inventory:stock_transfer_detail' order.transfer.id %}" style="color:var(--neon-cyan);">{{ order.transfer.number }}</a></b></div>{% endif %}
         </div>
         {% if order.notes %}<p class="note">📝 {{ order.notes }}</p>{% endif %}
+        <p class="note">الخطوات: ١) راجع الكميات مع المتاح في المخزن واعتمد (ممكن تقلّل) ← ٢) اطبع إذن الصرف وسلّم البضاعة للمندوب يوقّع ← ٣) «صرف وترحيل» فتنتقل الكميات لعربيته ويقدر يبيع منها.</p>
     </div>
 
     <form method="post" class="vn-panel">
@@ -37,7 +38,7 @@
                 <tr><td>{{ l.product.name }}</td><td>{{ l.uom_name }}</td><td>{{ l.requested_qty|floatformat:"-3" }}</td>
                     <td>{% if order.status == 'PENDING' and can_approve %}<input class="qty-in" type="number" name="qty_{{ l.id }}" min="0" max="{{ l.requested_qty|stringformat:'s' }}" step="any" value="{{ l.requested_qty|stringformat:'s' }}">
                         {% elif l.approved_qty is not None %}<strong>{{ l.approved_qty|floatformat:"-3" }}</strong>{% else %}—{% endif %}</td>
-                    <td>{{ l.available|floatformat:"-3" }}</td><td>{{ l.in_van|floatformat:"-3" }}</td></tr>
+                    <td>{% if order.status == 'PENDING' and l.available < l.requested_base %}<span class="warn">{{ l.available|floatformat:"-3" }} ⚠ مش كفاية</span>{% else %}{{ l.available|floatformat:"-3" }}{% endif %}</td><td>{{ l.in_van|floatformat:"-3" }}</td></tr>
                 {% endfor %}
             </tbody>
         </table>

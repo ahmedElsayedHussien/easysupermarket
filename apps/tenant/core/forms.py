@@ -80,6 +80,8 @@ class SystemSettingForm(forms.ModelForm):
         'login_lockout_minutes': (1, 1440),
         'auto_backup_retention': (1, 365),
         'pos_price_margin_percent': (0, 100),
+        'rep_price_margin_percent': (0, 100),
+        'rep_return_without_invoice_max': (0, None),
         'max_pos_discount_percentage': (0, 100),
         'large_amount_requires_customer': (0, None),
     }
@@ -93,7 +95,8 @@ class SystemSettingForm(forms.ModelForm):
 
     class Meta:
         model = SystemSetting
-        fields = '__all__'
+        # the lock date moves only through accounting.periods (checks + history), never as a plain field
+        exclude = ['accounting_lock_date']
         widgets = {
             'store_name': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'اسم المؤسسة / المتجر'}),
             'store_phone': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'مثال: 0225000000', 'dir': 'ltr'}),
@@ -111,6 +114,11 @@ class SystemSettingForm(forms.ModelForm):
             'allow_pos_price_modification': forms.CheckboxInput(attrs=_CHECK),
             'show_pos_cost': forms.CheckboxInput(attrs=_CHECK),
             'pos_price_margin_percent': _num(step='0.01'),
+            'rep_allow_price_edit': forms.CheckboxInput(attrs=_CHECK),
+            'rep_price_margin_percent': _num(step='0.01'),
+            'rep_allow_return_without_invoice': forms.CheckboxInput(attrs=_CHECK),
+            'rep_allow_cancel_invoice': forms.CheckboxInput(attrs=_CHECK),
+            'rep_return_without_invoice_max': _num(step='0.01'),
             'max_pos_discount_percentage': _num(step='0.01'),
             'apply_vat_by_default': forms.CheckboxInput(attrs=_CHECK),
             'pos_cash_rounding': forms.Select(attrs=_SELECT),
@@ -196,12 +204,14 @@ class BranchForm(forms.ModelForm):
     """Branch create / update, incl. the per-branch POS payment defaults."""
     POS_FIELDS = ('default_pos_treasury', 'default_pos_bank_account',
                   'default_pos_instapay_account', 'default_pos_ewallet')
+    ETA_FIELDS = ('eta_branch_code', 'eta_governate', 'eta_region_city', 'eta_street', 'eta_building_number')
 
     class Meta:
         model = Branch
         fields = ['name', 'code', 'address', 'phone', 'is_active',
                   'default_pos_treasury', 'default_pos_bank_account',
-                  'default_pos_instapay_account', 'default_pos_ewallet']
+                  'default_pos_instapay_account', 'default_pos_ewallet',
+                  'eta_branch_code', 'eta_governate', 'eta_region_city', 'eta_street', 'eta_building_number']
         widgets = {
             'name': forms.TextInput(attrs={'class': 'form-control'}),
             'code': forms.TextInput(attrs={'class': 'form-control'}),
@@ -212,6 +222,11 @@ class BranchForm(forms.ModelForm):
             'default_pos_bank_account': forms.Select(attrs=_SELECT),
             'default_pos_instapay_account': forms.Select(attrs=_SELECT),
             'default_pos_ewallet': forms.Select(attrs=_SELECT),
+            'eta_branch_code': forms.TextInput(attrs={'class': 'form-control'}),
+            'eta_governate': forms.TextInput(attrs={'class': 'form-control'}),
+            'eta_region_city': forms.TextInput(attrs={'class': 'form-control'}),
+            'eta_street': forms.TextInput(attrs={'class': 'form-control'}),
+            'eta_building_number': forms.TextInput(attrs={'class': 'form-control'}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -219,7 +234,7 @@ class BranchForm(forms.ModelForm):
         from apps.tenant.accounting.models import Treasury
         treasury = self.fields['default_pos_treasury']
         if self.instance.pk:
-            treasury.queryset = Treasury.objects.filter(branch=self.instance).order_by('name')
+            treasury.queryset = Treasury.objects.business().filter(branch=self.instance).order_by('name')
             treasury.help_text = 'خزائن هذا الفرع فقط. اتركه فارغاً لاستخدام الافتراضي العام.'
         else:
             treasury.queryset = Treasury.objects.none()
@@ -230,7 +245,19 @@ class BranchForm(forms.ModelForm):
 
     @property
     def general_fields(self):
-        return [self[n] for n in self.Meta.fields if n not in self.POS_FIELDS]
+        return [self[n] for n in self.Meta.fields if n not in self.POS_FIELDS and n not in self.ETA_FIELDS]
+
+    @property
+    def eta_fields(self):
+        return [self[n] for n in self.ETA_FIELDS]
+
+    def clean(self):
+        data = super().clean()
+        if (data.get('eta_branch_code') or '').strip():
+            missing = [self.fields[f].label for f in self.ETA_FIELDS[1:] if not (data.get(f) or '').strip()]
+            if missing:
+                raise forms.ValidationError('الفرع ليه كود عند الضرائب — لازم عنوانه المسجل كامل: ' + '، '.join(missing))
+        return data
 
     @property
     def pos_fields(self):

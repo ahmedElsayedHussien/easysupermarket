@@ -24,7 +24,19 @@ logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
-def confirm_invoice(invoice_id: int):
+def check_rep_cash_box(invoice, treasury_id):
+    """A sales rep's cash box is used only by that rep's own sales / sales returns (never POS shifts,
+    purchases or anyone else's invoice)."""
+    from apps.tenant.accounting.models import is_rep_cash_box
+    if not is_rep_cash_box(treasury_id):
+        return
+    rep = invoice.sales_rep if invoice.sales_rep_id else None
+    if (rep is None or rep.treasury_id != int(treasury_id) or invoice.pos_session_id
+            or invoice.invoice_type not in ('SALE', 'RETURN_SALE')):
+        raise ValueError('دي خزنة مندوب — بتتحرك بس من مبيعات المندوب وتحصيلاته وتوريده. اختار خزنة تانية.')
+
+
+def _confirm_invoice_core(invoice_id: int):
     """
     Confirms/posts a DRAFT invoice, triggering all financial and inventory effects.
 
@@ -77,9 +89,14 @@ def confirm_invoice(invoice_id: int):
             f'لا يمكن ترحيل الفاتورة "{invoice.invoice_number}" '
             f'لأنها في حالة "{invoice.get_status_display()}" وليست مسودة.'
         )
+    check_rep_cash_box(invoice, invoice.treasury_id)
+    if invoice.invoice_type == Invoice.PURCHASE:
+        _check_expiry_dates(invoice)
 
     # --- Validate lines exist ---
-    lines = list(invoice.lines.select_related('product', 'uom', 'original_line', 'original_line__uom').all())
+    from apps.tenant.services.fifo_engine import lock_order
+    # product-id order = the same lock order for every document (no dead-lock between two postings)
+    lines = lock_order(list(invoice.lines.select_related('product', 'uom', 'original_line', 'original_line__uom').all()))
     if not lines:
         raise ValueError(
             f'الفاتورة "{invoice.invoice_number}" لا تحتوي على بنود.'
@@ -129,7 +146,7 @@ def _process_sale_invoice(invoice, lines):
     """
     Internal handler for SALE invoice confirmation.
     """
-    from apps.tenant.services.fifo_engine import consume_fifo_batches
+    from apps.tenant.services.fifo_engine import _negative_stock_allowed, consume_fifo_batches
     from apps.tenant.services.journal_service import post_sale_invoice
     from apps.tenant.invoicing.models import Invoice
 
@@ -150,7 +167,7 @@ def _process_sale_invoice(invoice, lines):
     for line in lines:
         if line.product.product_type == 'SERVICE':
             continue  # Services have no stock limits
-        base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
+        base_quantity = line.base_quantity
         needed[line.product_id] = needed.get(line.product_id, Decimal('0')) + base_quantity
         base_quantity = needed[line.product_id]
         available = available_map.get(line.product_id, Decimal('0'))
@@ -204,7 +221,7 @@ def _process_sale_invoice(invoice, lines):
             total_cogs += line.cogs_amount
             continue
 
-        base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
+        base_quantity = line.base_quantity
         is_return_purchase = (invoice.invoice_type == Invoice.RETURN_PURCHASE)
         notes_text = f'مرتجع مشتريات - فاتورة {invoice.invoice_number}' if is_return_purchase else f'بيع - فاتورة {invoice.invoice_number}'
         m_type = 'RETURN_OUT' if is_return_purchase else 'OUT'
@@ -223,6 +240,9 @@ def _process_sale_invoice(invoice, lines):
                 reference=invoice.invoice_number,
                 notes=notes_text,
                 movement_type=m_type,
+                allow_negative=_negative_stock_allowed(line.product, allow_negative_global),
+                # a SALE never takes expired batches unless the seller is allowed to
+                skip_expired=(not is_return_purchase and not _may_sell_expired(invoice)),
             )
 
         # Sum COGS from all consumed batches for this line
@@ -312,7 +332,7 @@ def _process_purchase_invoice(invoice, lines):
                 line.serial_item.save()
             continue
 
-        conversion_factor = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+        conversion_factor = line.factor
         base_quantity = line.quantity * conversion_factor
         is_return_sale = (invoice.invoice_type == Invoice.RETURN_SALE)
         m_type = 'RETURN_IN' if is_return_sale else 'IN'
@@ -325,7 +345,7 @@ def _process_purchase_invoice(invoice, lines):
                 if orig_line is None:
                     orig_line = invoice.parent_invoice.lines.filter(product=line.product).first()
                 if orig_line and orig_line.quantity > 0 and orig_line.cogs_amount > 0:
-                    orig_conv = orig_line.uom.conversion_factor if getattr(orig_line, 'uom', None) else Decimal('1')
+                    orig_conv = orig_line.factor
                     orig_base_qty = orig_line.quantity * orig_conv
                     unit_cost = (orig_line.cogs_amount / orig_base_qty).quantize(Decimal('0.0001'))
         else:
@@ -336,7 +356,10 @@ def _process_purchase_invoice(invoice, lines):
             warehouse=invoice.warehouse,
             quantity=base_quantity,
             unit_cost=unit_cost,
-            expiry_date=None if is_return_sale else getattr(line, 'expiry_date', None),
+            expiry_date=(_returned_goods_expiry(invoice, line.product) if is_return_sale
+                         else getattr(line, 'expiry_date', None)),
+            # a customer return is its own batch, so it is never mistaken for a cancelled sale
+            batch_number=f'مرتجع {invoice.invoice_number}' if is_return_sale else (getattr(line, 'batch_number', '') or ''),
             invoice_line=line,
             reference=invoice.invoice_number,
             movement_type=m_type,
@@ -430,6 +453,7 @@ def update_invoice_payment_method(
         invoice.journal_entry = None
 
     # 2. Update payment fields on invoice
+    check_rep_cash_box(invoice, treasury_id)
     invoice.payment_type = payment_type
     invoice.treasury_id = treasury_id
     invoice.bank_account_id = bank_account_id
@@ -462,7 +486,7 @@ def update_invoice_payment_method(
 
 
 @transaction.atomic
-def cancel_invoice(invoice_id: int, user=None):
+def _cancel_invoice_core(invoice_id: int, user=None):
     """
     Cancels an invoice (DRAFT or POSTED).
 
@@ -508,9 +532,11 @@ def cancel_invoice(invoice_id: int, user=None):
         invoice.journal_entry = None
 
         # 2. Reverse Inventory Effects
-        lines = list(invoice.lines.select_related('product', 'serial_item', 'uom').all())
+        from apps.tenant.services.fifo_engine import lock_order
+        lines = lock_order(list(invoice.lines.select_related('product', 'serial_item', 'uom').all()))
 
         if invoice.invoice_type == Invoice.SALE:
+            consumed = _consumed_batches(invoice)
             for line in lines:
                 if line.product.product_type == 'SERVICE':
                     continue
@@ -525,8 +551,13 @@ def cancel_invoice(invoice_id: int, user=None):
                 if net_unreturned_qty <= Decimal('0'):
                     continue
 
-                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                conv = line.factor
                 base_qty = net_unreturned_qty * conv
+                # back into the very batches the sale consumed (same cost & expiry): a cancellation
+                # undoes the sale; only a customer RETURN makes a new ("مرتجع") batch
+                base_qty -= _restore_consumed(invoice, line.product, base_qty, consumed)
+                if base_qty <= Decimal('0'):
+                    continue
                 unit_cost = (line.cogs_amount / (line.quantity * conv)).quantize(Decimal('0.0001')) if (line.cogs_amount > 0 and line.quantity > 0) else (line.product.get_average_cost(invoice.warehouse) or Decimal('0'))
 
                 add_inventory_batch(
@@ -536,7 +567,7 @@ def cancel_invoice(invoice_id: int, user=None):
                     unit_cost=unit_cost,
                     invoice_line=line,
                     reference=f'إلغاء فاتورة مبيعات {invoice.invoice_number}',
-                    movement_type='RETURN_IN',
+                    movement_type='CANCEL_IN',
                     update_last_purchase_price=False,
                 )
 
@@ -548,7 +579,7 @@ def cancel_invoice(invoice_id: int, user=None):
             for line in lines:
                 if line.product.product_type == 'SERVICE':
                     continue
-                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                conv = line.factor
                 net_unreturned_qty = line.quantity - line.returned_quantity
                 if net_unreturned_qty <= Decimal('0'):
                     continue
@@ -569,7 +600,7 @@ def cancel_invoice(invoice_id: int, user=None):
                     line.serial_item.delete()
                     continue
 
-                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                conv = line.factor
                 net_unreturned_qty = line.quantity - line.returned_quantity
                 if net_unreturned_qty <= Decimal('0'):
                     continue
@@ -625,14 +656,28 @@ def cancel_invoice(invoice_id: int, user=None):
                     serial.save(update_fields=['is_sold', 'warehouse', 'updated_at'])
                     continue
 
-                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                conv = line.factor
                 base_qty = line.quantity * conv
-                consume_fifo_batches(
-                    product=line.product,
-                    warehouse=invoice.warehouse,
-                    quantity_needed=base_qty,
-                    reference=f'إلغاء مرتجع مبيعات {invoice.invoice_number}'
-                )
+                from apps.tenant.inventory.models import StockMovement
+                for b in InventoryBatch.objects.select_for_update(of=('self',)).filter(
+                        source_invoice_line=line, quantity_remaining__gt=0).order_by('id'):
+                    take = min(b.quantity_remaining, base_qty)
+                    if take <= Decimal('0'):
+                        break
+                    b.quantity_remaining -= take
+                    b.save(update_fields=['quantity_remaining', 'updated_at'])
+                    StockMovement.objects.create(
+                        product=line.product, warehouse=invoice.warehouse, batch=b, movement_type='CANCEL_OUT',
+                        quantity=take, unit_cost=b.unit_cost, reference=f'إلغاء مرتجع {invoice.invoice_number}'[:100],
+                        notes=f'إلغاء مرتجع مبيعات {invoice.invoice_number} — من دفعة المرتجع نفسها')
+                    base_qty -= take
+                if base_qty > Decimal('0'):          # part of the return batch was already sold again
+                    consume_fifo_batches(
+                        product=line.product,
+                        warehouse=invoice.warehouse,
+                        quantity_needed=base_qty,
+                        reference=f'إلغاء مرتجع مبيعات {invoice.invoice_number}'
+                    )
 
         elif invoice.invoice_type == Invoice.RETURN_PURCHASE:
             for line in lines:
@@ -646,7 +691,7 @@ def cancel_invoice(invoice_id: int, user=None):
                     line.serial_item.save(update_fields=['is_returned', 'is_sold', 'warehouse', 'updated_at'])
                     continue
 
-                conv = line.uom.conversion_factor if getattr(line, 'uom', None) else Decimal('1')
+                conv = line.factor
                 base_qty = line.quantity * conv
                 unit_cost = line.product.get_average_cost(invoice.warehouse) or line.product.last_purchase_price
                 add_inventory_batch(
@@ -683,3 +728,86 @@ def cancel_invoice(invoice_id: int, user=None):
     return invoice
 
 
+def _consumed_batches(invoice):
+    """{product_id: [[batch, qty still to give back], ...]} — the batches the sale's FIFO consumption
+    took from (its OUT stock movements, newest first)."""
+    from apps.tenant.inventory.models import StockMovement
+    out = {}
+    for m in (StockMovement.objects.filter(reference=invoice.invoice_number, movement_type='OUT',
+                                           warehouse=invoice.warehouse, batch__isnull=False)
+              .select_related('batch').order_by('-id')):
+        out.setdefault(m.product_id, []).append([m.batch, m.quantity])
+    return out
+
+
+def _restore_consumed(invoice, product, qty, consumed):
+    """Give ``qty`` back to the batches the sale consumed; returns what was given back."""
+    from apps.tenant.inventory.models import InventoryBatch, StockMovement
+    given = Decimal('0')
+    for slot in consumed.get(product.id, []):
+        if qty - given <= Decimal('0'):
+            break
+        batch, left = slot
+        take = min(left, qty - given)
+        if take <= Decimal('0'):
+            continue
+        b = InventoryBatch.objects.select_for_update(of=('self',)).get(pk=batch.pk)
+        b.quantity_remaining += take
+        b.save(update_fields=['quantity_remaining', 'updated_at'])
+        StockMovement.objects.create(
+            product=product, warehouse=invoice.warehouse, batch=b, movement_type='CANCEL_IN', quantity=take,
+            unit_cost=b.unit_cost, reference=f'إلغاء {invoice.invoice_number}'[:100],
+            notes=f'إلغاء فاتورة مبيعات {invoice.invoice_number} — رجوع لنفس الدفعة')
+        slot[1] = left - take
+        given += take
+    return given
+
+
+def _queue_einvoice(invoice):
+    """Keep the Tax-Authority queue in step with the invoice (explicit call, no signal)."""
+    from apps.tenant.einvoicing.signals import create_einvoice_log
+    create_einvoice_log(type(invoice), invoice)
+
+
+def confirm_invoice(invoice_id: int):
+    """Post a DRAFT invoice (see _confirm_invoice_core), then queue it for the e-invoice system."""
+    from django.db import transaction
+    with transaction.atomic():
+        invoice = _confirm_invoice_core(invoice_id)
+        _queue_einvoice(invoice)
+    return invoice
+
+
+def cancel_invoice(invoice_id: int, user=None):
+    """Cancel an invoice (see _cancel_invoice_core), then update its e-invoice queue entry."""
+    from django.db import transaction
+    with transaction.atomic():
+        invoice = _cancel_invoice_core(invoice_id, user=user)
+        _queue_einvoice(invoice)
+    return invoice
+
+
+def _may_sell_expired(invoice):
+    user = invoice.cashier if getattr(invoice, 'cashier_id', None) else None
+    return bool(user and user.has_perm('inventory.sell_expired_batch'))
+
+
+def _check_expiry_dates(invoice):
+    """A purchase of a product that has an expiry date must say it (the batch keeps it for FEFO)."""
+    missing = [l.product.name for l in invoice.lines.select_related('product')
+               if getattr(l.product, 'has_expiry', False) and not getattr(l, 'expiry_date', None)]
+    if missing:
+        raise ValueError('اكتب تاريخ الصلاحية للأصناف: ' + '، '.join(missing)
+                         + ' (لو العمود مش ظاهر فعّل تتبع الصلاحية من الإعدادات).')
+
+
+def _returned_goods_expiry(return_invoice, product):
+    """Expiry date for goods a customer gives back: the NEAREST expiry of the batches the original sale
+    took them from (FEFO then never treats them as fresh). None when the sale is unknown or had none."""
+    from apps.tenant.inventory.models import StockMovement
+    parent = return_invoice.parent_invoice if getattr(return_invoice, 'parent_invoice_id', None) else None
+    if parent is None:
+        return None
+    return (StockMovement.objects.filter(reference=parent.invoice_number, movement_type='OUT', product=product,
+                                         batch__expiry_date__isnull=False)
+            .order_by('batch__expiry_date').values_list('batch__expiry_date', flat=True).first())

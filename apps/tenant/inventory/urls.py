@@ -19,6 +19,7 @@ urlpatterns = [
     path('transfers/', stock_transfer_views.stock_transfer_list, name='stock_transfer_list'),
     path('transfers/<int:pk>/', stock_transfer_views.stock_transfer_detail, name='stock_transfer_detail'),
     path('api/stock-level/', views.api_stock_level, name='api_stock_level'),
+    path('api/warehouse-stock/', stock_transfer_views.warehouse_stock_api, name='api_warehouse_stock'),
     path('api/products/', views.api_products, name='api_products'),
     path('valuation-report/', views.valuation_report, name='valuation_report'),
     path('expiry-report/', views.expiry_report, name='expiry_report'),

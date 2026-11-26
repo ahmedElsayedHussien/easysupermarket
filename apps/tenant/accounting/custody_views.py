@@ -148,7 +148,32 @@ def tax_settlement_view(request):
 def fiscal_years_view(request):
     """إقفال السنوات المالية."""
     from apps.tenant.accounting import fiscal_year as fy
-    from apps.tenant.accounting.models import FiscalYearClose
+    from apps.tenant.accounting import periods
+    from apps.tenant.accounting.models import FiscalYearClose, PeriodClose
+    if request.method == 'POST' and request.POST.get('action') in ('close_period', 'reopen_period'):
+        from django.utils.dateparse import parse_date
+        try:
+            if request.POST['action'] == 'close_period':
+                if not request.user.has_perm('accounting.add_periodclose'):
+                    raise ValidationError('عفواً، لا تملك صلاحية إقفال الفترات.')
+                until = parse_date(request.POST.get('until') or '')
+                if until is None:
+                    raise ValidationError('اختار التاريخ اللي هتقفل لحده.')
+                periods.close_until(until, request.user, request.POST.get('note', ''))
+                messages.success(request, f'الدفاتر اتقفلت لحد {until:%d/%m/%Y} — مفيش ترحيل بتاريخ قبله.')
+            else:
+                if not request.user.has_perm('accounting.reopen_periodclose'):
+                    raise ValidationError('عفواً، إعادة فتح الفترات للمدير بس.')
+                raw = request.POST.get('to') or ''
+                to = parse_date(raw) if raw else None
+                if raw and to is None:
+                    raise ValidationError('تاريخ غير صالح.')
+                periods.reopen_to(to, request.user, request.POST.get('reason', ''))
+                messages.success(request, 'اتفتحت الفترة' + (f' — الدفاتر مقفولة دلوقتي لحد {to:%d/%m/%Y}.'
+                                                            if to else ' — مفيش قفل خالص دلوقتي.'))
+        except ValidationError as e:
+            messages.error(request, ' '.join(e.messages))
+        return redirect('accounting:fiscal_years')
     if request.method == 'POST':
         if not request.user.has_perm('accounting.add_fiscalyearclose'):
             messages.error(request, 'عفواً، إقفال السنوات للمدير بس.')
@@ -167,6 +192,10 @@ def fiscal_years_view(request):
             messages.error(request, 'سنة غير صالحة.')
         return redirect('accounting:fiscal_years')
     return render(request, 'accounting/fiscal_years.html', {
-        'title': 'إقفال السنة المالية', 'rows': fy.years_overview(),
+        'title': 'إقفال الفترات والسنين', 'rows': fy.years_overview(),
         'can_close': request.user.has_perm('accounting.add_fiscalyearclose'),
+        'lock_date': periods.current_lock(),
+        'period_log': PeriodClose.objects.select_related('user')[:20],
+        'can_close_period': request.user.has_perm('accounting.add_periodclose'),
+        'can_reopen_period': request.user.has_perm('accounting.reopen_periodclose'),
     })

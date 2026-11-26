@@ -101,7 +101,8 @@ def shift_cash_summary(session):
     What moves the drawer (= the shift's treasury) during the shift:
       invoices of the shift (cash part; returns subtract) · cash vouchers on the drawer
       (or linked to the shift) · cash rentals on the drawer (or linked to the shift) ·
-      e-payment services of the shift · fund transfers out of / into the drawer.
+      e-payment services of the shift · maintenance tickets paid in cash into the drawer ·
+      fund transfers out of / into the drawer.
     """
     from django.db import models as m
     from django.db.models import Case, Count, F, Q, Sum, When
@@ -137,7 +138,9 @@ def shift_cash_summary(session):
     rentals = Rental.objects.filter(Q(pos_session=session) | (Q(treasury=session.treasury) & in_window)).distinct()
     r_agg = rentals.aggregate(
         total_rentals_amount=Coalesce(Sum('total_amount'), Decimal('0')),
-        total_cash_rentals=Coalesce(Sum('total_amount', filter=Q(payment_method=Rental.PAYMENT_CASH)), Decimal('0')),
+        # cash INTO THIS drawer only (a rental paid by e-wallet in the shift is not drawer cash)
+        total_cash_rentals=Coalesce(Sum('total_amount', filter=Q(payment_method=Rental.PAYMENT_CASH,
+                                                                 treasury=session.treasury)), Decimal('0')),
         total_credit_rentals=Coalesce(Sum('total_amount', filter=~Q(payment_method=Rental.PAYMENT_CASH)), Decimal('0')),
         rentals_count=Count('id'),
     )
@@ -157,9 +160,28 @@ def shift_cash_summary(session):
 
     eservice_cash = eservice_cash_for_session(session)
 
+    # --- maintenance tickets delivered with cash into the drawer (cash / the paid part of a split) ---
+    from apps.tenant.maintenance.models import MaintenanceTicket
+    delivered_window = Q(delivered_at__gte=start) & (Q(delivered_at__lte=end) if end else Q())
+    maintenance_cash = (MaintenanceTicket.objects.filter(
+        status=MaintenanceTicket.STATUS_DELIVERED, treasury=session.treasury,
+        payment_method__in=[MaintenanceTicket.PAYMENT_CASH, MaintenanceTicket.PAYMENT_SPLIT])
+        .filter(Q(pos_session=session) | (Q(pos_session__isnull=True) & delivered_window))
+        .aggregate(s=Sum('paid_amount'))['s'] or Decimal('0'))
+
+    # --- rental returns settled in cash from / into the drawer during the shift (refund − penalty) ---
+    from apps.tenant.accounting.models import JournalItem
+    drawer_acc = session.treasury.account_id if session.treasury_id else None
+    rs = (JournalItem.objects.filter(account_id=drawer_acc, entry__status='POSTED',
+                                     entry__rental_settlement__isnull=False)
+          .filter(Q(entry__created_at__gte=start) & (Q(entry__created_at__lte=end) if end else Q()))
+          .aggregate(d=Sum('debit'), c=Sum('credit'))) if drawer_acc else {'d': None, 'c': None}
+    rental_settlements = (rs['d'] or Decimal('0')) - (rs['c'] or Decimal('0'))
+
     expected = (session.opening_balance + agg['total_cash_sales'] - agg['total_cash_refunds']
                 + v_agg['total_cash_receipts'] - v_agg['total_cash_payments']
-                + r_agg['total_cash_rentals'] + eservice_cash + transfers_in - transfers_out)
+                + r_agg['total_cash_rentals'] + rental_settlements + eservice_cash + maintenance_cash
+                + transfers_in - transfers_out)
 
     return {
         'posted_invoices': invoices,
@@ -170,6 +192,8 @@ def shift_cash_summary(session):
         'shift_rentals': rentals,
         **r_agg,
         'total_eservice_cash': eservice_cash,
+        'total_cash_maintenance': maintenance_cash,
+        'total_rental_settlements': rental_settlements,
         'total_transfers_in': transfers_in,
         'total_transfers_out': transfers_out,
         'total_transfers_net': transfers_in - transfers_out,
@@ -198,19 +222,10 @@ def open_session_on_treasury(treasury, exclude_user=None):
 
 
 def _post(reference, description, lines, user, session):
-    from django.contrib.contenttypes.models import ContentType
-    from apps.tenant.accounting.models import JournalEntry, JournalItem
-    from apps.tenant.services.journal_service import unique_reference
-    entry = JournalEntry.objects.create(
-        date=timezone.localdate(), reference=unique_reference(reference), description=description,
-        status=JournalEntry.DRAFT, created_by=user if getattr(user, 'pk', None) else None,
-        content_type=ContentType.objects.get_for_model(session), object_id=session.pk,
-    )
-    for account, debit, credit, desc in lines:
-        JournalItem.objects.create(entry=entry, account=account, debit=debit, credit=credit,
-                                   description=desc[:500])
-    entry.post()
-    return entry
+    """A posted entry dated today, linked to ``session`` (any document) — see accounting.posting."""
+    from apps.tenant.accounting.posting import post_entry
+    return post_entry(date=timezone.localdate(), reference=reference, description=description, lines=lines,
+                      user=user, source=session)
 
 
 def _cashier_name(session):

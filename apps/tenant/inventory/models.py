@@ -208,6 +208,25 @@ class Product(models.Model):
     allow_negative_stock = models.BooleanField(
         default=False, verbose_name=_('السماح بمخزون سالب')
     )
+    has_expiry = models.BooleanField(
+        default=False, verbose_name=_('له تاريخ صلاحية'),
+        help_text=_('فاتورة الشراء بتطلب تاريخ الصلاحية، والصرف بيطلّع الأقرب انتهاءً الأول (FEFO).'))
+    ETA_SUBTYPE_CHOICES = [
+        ('', 'تلقائي حسب النسبة (14% = V009 · 0% = V003)'),
+        ('V001', 'V001 — تصدير للخارج'),
+        ('V002', 'V002 — تصدير لمناطق حرة / أخرى'),
+        ('V003', 'V003 — سلعة أو خدمة معفاة'),
+        ('V004', 'V004 — سلعة أو خدمة غير خاضعة'),
+        ('V005', 'V005 — إعفاءات دبلوماسية'),
+        ('V006', 'V006 — إعفاءات دفاع وأمن قومي'),
+        ('V007', 'V007 — إعفاءات اتفاقيات'),
+        ('V008', 'V008 — إعفاءات خاصة وأخرى'),
+        ('V009', 'V009 — سلع عامة (14%)'),
+        ('V010', 'V010 — نسب ضريبة أخرى'),
+    ]
+    eta_tax_subtype = models.CharField(
+        max_length=10, blank=True, default='', choices=ETA_SUBTYPE_CHOICES,
+        verbose_name=_('الكود الفرعي للقيمة المضافة (الفاتورة الإلكترونية)'))
     description = models.TextField(blank=True, verbose_name=_('وصف'))
     image = models.ImageField(
         upload_to='products/', null=True, blank=True, verbose_name=_('صورة')
@@ -222,6 +241,10 @@ class Product(models.Model):
         indexes = [
             models.Index(fields=['name']),
             models.Index(fields=['is_active']),
+        ]
+        permissions = [
+            ('sell_below_min_price', 'البيع بأقل من أدنى سعر بيع'),
+            ('sell_expired_batch', 'بيع دفعات منتهية الصلاحية'),
         ]
 
     def __str__(self):
@@ -325,6 +348,9 @@ def is_official_gtin(code):
 
 class UnitOfMeasure(models.Model):
     name = models.CharField(max_length=50, verbose_name=_('اسم الوحدة'))
+    eta_code = models.CharField(max_length=10, blank=True, default='',
+                                verbose_name=_('كود الوحدة في الفاتورة الإلكترونية'),
+                                help_text=_('مثال: EA قطعة · KGM كيلو · LTR لتر · BX كرتونة · PK عبوة. فاضي = يتعرف من الاسم.'))
 
     class Meta:
         verbose_name = _('وحدة قياس')
@@ -422,11 +448,12 @@ class InventoryBatch(models.Model):
     class Meta:
         verbose_name = _('دفعة مخزون')
         verbose_name_plural = _('دفعات المخزون')
-        # CRITICAL: This ordering ensures FIFO - oldest batches are consumed first
-        ordering = ['created_at']
+        # FEFO: the nearest expiry goes first; no / equal expiry → FIFO (oldest first)
+        ordering = [F('expiry_date').asc(nulls_last=True), 'created_at', 'id']
         indexes = [
             models.Index(fields=['quantity_remaining', 'created_at']),
             models.Index(fields=['product', 'quantity_remaining']),
+            models.Index(fields=['product', 'warehouse', 'quantity_remaining']),
         ]
 
     def __str__(self):
@@ -509,6 +536,8 @@ class StockMovement(models.Model):
         ('OPENING_BALANCE', 'رصيد افتتاحي'),
         ('RETURN_IN', 'مرتجع وارد'),
         ('RETURN_OUT', 'مرتجع صادر'),
+        ('CANCEL_IN', 'إلغاء بيع — رجوع للدفعة الأصلية'),
+        ('CANCEL_OUT', 'إلغاء مرتجع — خروج من دفعة المرتجع'),
     ]
 
     product = models.ForeignKey(
@@ -545,7 +574,15 @@ class StockMovement(models.Model):
         max_length=100, blank=True, verbose_name=_('المرجع')
     )
     notes = models.TextField(blank=True, verbose_name=_('ملاحظات'))
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name='+', verbose_name=_('بواسطة'))
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_('تاريخ الحركة'))
+
+    def save(self, *args, **kwargs):
+        if self.created_by_id is None and self._state.adding:
+            from apps.tenant.core.audit import _current_user
+            self.created_by = _current_user()          # the user of the current request (None for jobs)
+        super().save(*args, **kwargs)
 
     class Meta:
         verbose_name = _('حركة مخزون')
@@ -724,6 +761,13 @@ class SerialItem(models.Model):
         verbose_name = _('منتج بسيريال')
         verbose_name_plural = _('المنتجات بالسيريال')
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['imei_1'], condition=models.Q(imei_1__isnull=False) & ~models.Q(imei_1=''),
+                                    name='unique_non_empty_imei_1'),
+            models.UniqueConstraint(fields=['serial_number'],
+                                    condition=models.Q(serial_number__isnull=False) & ~models.Q(serial_number=''),
+                                    name='unique_non_empty_serial'),
+        ]
 
     def __str__(self):
         return f"{self.product.name} - {self.serial_number} ({self.get_condition_display()})"

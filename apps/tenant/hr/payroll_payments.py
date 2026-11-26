@@ -35,6 +35,10 @@ def parse_source(value, user):
 
 def _source_account(treasury, bank, amount):
     from apps.tenant.invoicing.shift_services import open_session_on_treasury, treasury_book_balance
+    if treasury is not None and bank is not None:
+        raise ValidationError('اختار خزينة أو بنك — مش الاتنين.')
+    if treasury is None and bank is None:
+        raise ValidationError('اختار الخزينة أو البنك.')
     if treasury is not None:
         if open_session_on_treasury(treasury) is not None:
             raise ValidationError(f'الخزينة "{treasury}" عليها وردية مفتوحة — اصرف من خزينة تانية أو بعد التقفيل.')

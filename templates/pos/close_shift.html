@@ -57,7 +57,7 @@
             </div>
         </div>
 
-        {% if total_cash_rentals or total_eservice_cash %}
+        {% if total_cash_rentals or total_eservice_cash or total_cash_maintenance or total_rental_settlements %}
         <div class="row mb-4">
             {% if total_eservice_cash %}
             <div class="col-md-6 mb-3 mb-md-0">
@@ -73,6 +73,22 @@
                 <div class="p-3 rounded" style="background: rgba(46, 213, 115, 0.1); border: 1px solid rgba(46, 213, 115, 0.3);">
                     <span class="d-block mb-1" style="color: var(--status-success); font-size: 0.9rem;">🧰 إيجارات نقدية</span>
                     <span class="fs-4 fw-bold" style="color: var(--status-success);">+ {{ total_cash_rentals|floatformat:2 }} ج.م</span>
+                </div>
+            </div>
+            {% endif %}
+            {% if total_rental_settlements %}
+            <div class="col-md-6 mt-3">
+                <div class="p-3 rounded" style="background: rgba(255, 165, 2, 0.1); border: 1px solid rgba(255, 165, 2, 0.3);">
+                    <span class="d-block mb-1" style="color: #ffa502; font-size: 0.9rem;">🧰 تسويات إرجاع معدات (نقدي)</span>
+                    <span class="fs-4 fw-bold" style="color: #ffa502;"><bdi dir="ltr">{% if total_rental_settlements > 0 %}+{% endif %}{{ total_rental_settlements|floatformat:2 }}</bdi> ج.م</span>
+                </div>
+            </div>
+            {% endif %}
+            {% if total_cash_maintenance %}
+            <div class="col-md-6 mt-3">
+                <div class="p-3 rounded" style="background: rgba(46, 213, 115, 0.1); border: 1px solid rgba(46, 213, 115, 0.3);">
+                    <span class="d-block mb-1" style="color: var(--status-success); font-size: 0.9rem;">🔧 تحصيل صيانة نقدي</span>
+                    <span class="fs-4 fw-bold" style="color: var(--status-success);">+ {{ total_cash_maintenance|floatformat:2 }} ج.م</span>
                 </div>
             </div>
             {% endif %}

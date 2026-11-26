@@ -47,6 +47,8 @@ SECTIONS = [
     ]),
     ('📦', 'المخزون والأصناف', [
         ('inventory.view_product', 'عرض الأصناف ولوحة المخزون'),
+        ('inventory.sell_below_min_price', 'البيع بأقل من أدنى سعر بيع (نقطة البيع والمندوب)'),
+        ('inventory.sell_expired_batch', 'بيع دفعات منتهية الصلاحية (من غير الصلاحية دي المنتهي ميتباعش)'),
         ('inventory.add_product', 'إضافة أصناف واستيرادها من إكسيل'),
         ('inventory.change_product', 'تعديل الأصناف وإدخال أرصدة أول المدة'),
         ('inventory.view_inventorybatch', 'عرض أرصدة المخزون والتحويلات المخزنية وتقارير التقييم والصلاحية'),
@@ -108,6 +110,12 @@ SECTIONS = [
         ('accounting.add_fiscalyearclose', 'إقفال / إعادة فتح سنة مالية'),
         ('accounting.view_taxsettlement', 'عرض التسوية الضريبية وأرصدة الضرائب'),
         ('accounting.add_taxsettlement', 'إقفال ضريبة القيمة المضافة وسداد الضرائب'),
+        ('accounting.view_intermediarycompany', 'عرض شركات التحصيل الوسيطة (فوري، أمان…) وأرصدتها'),
+        ('accounting.add_intermediarycompany', 'إضافة / إيقاف شركة تحصيل وسيطة'),
+        ('accounting.add_intermediarysettlement', 'تسوية الشركة الوسيطة (تحويلها للبنك ورسومها)'),
+        ('accounting.change_accountmapping', 'ربط الحسابات: تغيير الحساب اللي كل عملية بتترحّل عليه'),
+        ('accounting.add_periodclose', 'إقفال الدفاتر لحد تاريخ (إقفال الشهور)'),
+        ('accounting.reopen_periodclose', 'إعادة فتح فترة مقفولة (بسبب مكتوب)'),
         ('accounting.view_bankreconciliation', 'عرض التسويات البنكية'),
         ('accounting.add_bankreconciliation', 'بدء تسوية بنكية'),
         ('accounting.change_bankreconciliation', 'تعليم الحركات وإنهاء / فتح / حذف التسويات البنكية'),
@@ -226,8 +234,8 @@ _INVENTORY = ['inventory.view_product', 'inventory.add_product', 'inventory.chan
               'inventory.change_category', 'inventory.view_unitofmeasure', 'inventory.add_unitofmeasure',
               'inventory.view_warehouse', 'invoicing.view_invoice', 'invoicing.add_purchase_invoice',
               'partners.view_partner', 'core.view_inventory_reports', 'core.view_purchases_reports',
-              'invoicing.view_loadingorder', 'invoicing.issue_loadingorder', 'invoicing.view_unloadingorder',
-              'invoicing.receive_unloadingorder']
+              'invoicing.view_loadingorder', 'invoicing.approve_loadingorder', 'invoicing.issue_loadingorder',
+              'invoicing.view_unloadingorder', 'invoicing.receive_unloadingorder']
 _ACCOUNTANT = ([p for p in ALL_PERMS if p.startswith('accounting.') and '.delete_' not in p]
                + ['invoicing.view_invoice', 'invoicing.change_invoice', 'partners.view_partner',
                   'partners.change_partner', 'einvoicing.view_einvoicelog', 'einvoicing.change_einvoicelog',
@@ -236,7 +244,8 @@ _ACCOUNTANT = ([p for p in ALL_PERMS if p.startswith('accounting.') and '.delete
                   'invoicing.view_salesrep', 'invoicing.view_repcashhandover', 'invoicing.add_repcashhandover'])
 # A sales rep works only from his phone screen (invoicing.rep_app) and may add a customer there.
 _SALES_REP = ['invoicing.use_rep_app', 'partners.add_partner']
-_ADMIN_ONLY = {'core.view_systemsetting', 'core.view_auditlog', 'accounting.add_fiscalyearclose', 'core.add_branch', 'core.change_branch', 'core.delete_branch',
+_ADMIN_ONLY = {'core.view_systemsetting', 'core.view_auditlog', 'accounting.add_fiscalyearclose',
+               'accounting.change_accountmapping', 'accounting.reopen_periodclose', 'core.add_branch', 'core.change_branch', 'core.delete_branch',
                'einvoicing.change_taxintegrationsettings'}
 _MANAGER = [p for p in ALL_PERMS if p not in _ADMIN_ONLY]
 

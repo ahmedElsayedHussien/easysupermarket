@@ -24,6 +24,37 @@
 {% block content %}
 <div class="fy">
     <div class="fy-panel">
+        <h1>🗓️ إقفال الشهور</h1>
+        <p class="note">الدفاتر مقفولة لحد: <strong>{% if lock_date %}{{ lock_date|date:"d/m/Y" }}{% else %}مفيش قفل{% endif %}</strong> — أي ترحيل أو تعديل بتاريخ قبله أو فيه مرفوض. الإقفال بيترفض لو فيه قيود مسودة في الفترة أو القيود مش متوازنة.</p>
+        {% if can_close_period %}
+        <form method="post" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;margin-top:.75rem;">{% csrf_token %}
+            <input type="hidden" name="action" value="close_period">
+            <label style="flex:1;min-width:150px;"><span class="sub">اقفل لحد تاريخ</span><input type="date" name="until" class="form-control" required></label>
+            <label style="flex:2;min-width:200px;"><span class="sub">ملاحظة</span><input name="note" class="form-control" maxlength="255"></label>
+            <button class="fy-btn" onclick="return confirm('إقفال الدفاتر لحد التاريخ ده؟');">إقفال</button>
+        </form>
+        {% endif %}
+        {% if can_reopen_period and lock_date %}
+        <form method="post" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;margin-top:.6rem;">{% csrf_token %}
+            <input type="hidden" name="action" value="reopen_period">
+            <label style="flex:1;min-width:150px;"><span class="sub">ارجع القفل لحد (فاضي = فتح الكل)</span><input type="date" name="to" class="form-control"></label>
+            <label style="flex:2;min-width:200px;"><span class="sub">سبب إعادة الفتح (إجباري)</span><input name="reason" class="form-control" required minlength="3" maxlength="255"></label>
+            <button class="fy-btn ghost" onclick="return confirm('إعادة فتح فترة مقفولة؟');">إعادة فتح</button>
+        </form>
+        {% endif %}
+        {% if period_log %}
+        <table class="tbl" style="margin-top:.75rem;">
+            <thead><tr><th>التاريخ</th><th>العملية</th><th>كانت مقفولة لحد</th><th>بقت مقفولة لحد</th><th>بواسطة</th><th>السبب / ملاحظة</th></tr></thead>
+            <tbody>{% for p in period_log %}
+                <tr><td>{{ p.created_at|date:"Y-m-d H:i" }}</td>
+                    <td><span class="st {% if p.action == 'CLOSE' %}c{% else %}o{% endif %}">{{ p.get_action_display }}</span></td>
+                    <td>{{ p.previous_lock_date|date:"d/m/Y"|default:"—" }}</td><td>{{ p.lock_date|date:"d/m/Y"|default:"—" }}</td>
+                    <td>{% if p.user %}{{ p.user|display_name }}{% else %}—{% endif %}</td><td>{{ p.note|default:"—" }}</td></tr>
+            {% endfor %}</tbody>
+        </table>
+        {% endif %}
+    </div>
+    <div class="fy-panel">
         <h1>📕 إقفال السنة المالية</h1>
         <p class="note">بعد ما السنة تخلص: قيد إقفال بتاريخ 31/12 بيصفّر الإيرادات والمصروفات، وصافي الربح أو الخسارة بيروح لـ«أرباح محتجزة» (3200)، والدفاتر بتتقفل لحد آخر السنة فمحدش يقدر يسجل فيها تاني. السنين بتتقفل بالترتيب، وتقدر تفتح آخر سنة مقفولة لو محتاج تصحيح.</p>
     </div>

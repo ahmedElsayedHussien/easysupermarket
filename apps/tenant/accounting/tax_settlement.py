@@ -40,17 +40,9 @@ def position(as_of=None):
 
 def _post(obj, label, lines, user):
     """Posted entry dated on the settlement date (the closing belongs to its period)."""
-    from django.contrib.contenttypes.models import ContentType
-    from apps.tenant.services.journal_service import unique_reference
-    entry = JournalEntry.objects.create(
-        date=obj.date, reference=unique_reference(f'TAX-{obj.kind}-{obj.pk}'), description=label,
-        status=JournalEntry.DRAFT, created_by=user if getattr(user, 'pk', None) else None,
-        content_type=ContentType.objects.get_for_model(obj), object_id=obj.pk,
-    )
-    for account, debit, credit, desc in lines:
-        JournalItem.objects.create(entry=entry, account=account, debit=debit, credit=credit, description=desc[:500])
-    entry.post()
-    return entry
+    from apps.tenant.accounting.posting import post_entry
+    return post_entry(date=obj.date, reference=f'TAX-{obj.kind}-{obj.pk}', description=label, lines=lines,
+                      user=user, source=obj)
 
 
 def close_vat(period_end, user=None):

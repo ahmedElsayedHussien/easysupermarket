@@ -98,6 +98,14 @@ class Branch(models.Model):
     default_pos_ewallet = models.ForeignKey('accounting.EWallet', on_delete=models.SET_NULL, null=True, blank=True,
                                             related_name='default_for_branch_pos', verbose_name=_('المحفظة الافتراضية بالفرع'))
 
+    # The branch as registered at the Tax Authority (e-invoice issuer). Empty = the main settings.
+    eta_branch_code = models.CharField(max_length=20, blank=True, default='', verbose_name=_('كود الفرع لدى الضرائب'),
+                                       help_text=_('فاضي = كود وعنوان إعدادات الفاتورة الإلكترونية (المركز الرئيسي).'))
+    eta_governate = models.CharField(max_length=100, blank=True, default='', verbose_name=_('المحافظة (الضرائب)'))
+    eta_region_city = models.CharField(max_length=100, blank=True, default='', verbose_name=_('المدينة / المنطقة (الضرائب)'))
+    eta_street = models.CharField(max_length=200, blank=True, default='', verbose_name=_('الشارع (الضرائب)'))
+    eta_building_number = models.CharField(max_length=50, blank=True, default='', verbose_name=_('رقم المبنى (الضرائب)'))
+
     is_active = models.BooleanField(default=True, verbose_name=_('نشط'))
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -122,14 +130,30 @@ class SystemSetting(models.Model):
         help_text=_('عند التفعيل يظهر عمود آخر شراء وتكلفة الوحدة في شاشة نقطة البيع والسلة. أوقفه لإخفاء التكلفة عن الكاشير والعملاء.')
     )
     pos_price_margin_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.0'), verbose_name=_('هامش التعديل المسموح للسعر (%)'))
+    rep_allow_price_edit = models.BooleanField(
+        default=False, verbose_name=_('السماح للمندوب بتعديل سعر البيع من الموبايل'),
+        help_text=_('أدنى سعر بيع للصنف بيفضل شغال دايماً. في المرتجع المندوب يقدر ينزّل السعر بس.'))
+    rep_price_margin_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0'),
+        verbose_name=_('هامش تعديل السعر المسموح للمندوب (%) — 0 = من غير حد'))
+    rep_allow_return_without_invoice = models.BooleanField(
+        default=True, verbose_name=_('السماح للمندوب باستلام مرتجع بدون فاتورة بيع'),
+        help_text=_('لعميل مسجّل بس، بسعر ميزيدش عن سعر البيع الحالي، والفاتورة بتتعلّم «بدون فاتورة» للمراجعة.'))
+    rep_allow_cancel_invoice = models.BooleanField(
+        default=False, verbose_name=_('السماح للمندوب بإلغاء فواتيره'),
+        help_text=_('فواتيره هو بس، بتاعة النهارده، بسبب مكتوب. بيرجّع المخزون لنفس الدفعات ويعكس القيود. '
+                    'الفاتورة اللي اتبعتت للضرايب أو عليها مرتجع إلغاؤها من الإدارة.'))
+    rep_return_without_invoice_max = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0'),
+        verbose_name=_('أقصى قيمة لمرتجع المندوب بدون فاتورة — 0 = من غير حد'))
     max_pos_discount_percentage = models.DecimalField(
-        max_digits=5, decimal_places=2, default=100,
+        max_digits=5, decimal_places=2, default=Decimal('100'),
         validators=[MinValueValidator(0), MaxValueValidator(100)],
         verbose_name=_('الحد الأقصى لنسبة الخصم في نقطة البيع (%)'),
         help_text=_('أقصى نسبة خصم إجمالية مسموحة لكل صنف وللفاتورة لغير المديرين (0 - 100). المديرون مستثنون.'),
     )
     apply_vat_by_default = models.BooleanField(default=True, verbose_name=_('تطبيق الضريبة الافتراضي'))
-    large_amount_requires_customer = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text=_('0 تعني غير مفعل'), verbose_name=_('إلزام اختيار عميل للمبالغ الأكبر من'))
+    large_amount_requires_customer = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'), help_text=_('0 تعني غير مفعل'), verbose_name=_('إلزام اختيار عميل للمبالغ الأكبر من'))
     
     # POS Payment Accounts Defaults & Security
     default_pos_treasury = models.ForeignKey('accounting.Treasury', on_delete=models.SET_NULL, null=True, blank=True, related_name='default_for_pos', verbose_name=_('الخزينة الافتراضية لنقطة البيع'))
@@ -263,9 +287,12 @@ class SystemSetting(models.Model):
         ]
         
     def save(self, *args, **kwargs):
-        # Ensure only one instance exists
-        if not self.pk and SystemSetting.objects.exists():
-            return SystemSetting.objects.first()
+        # A singleton: always row 1. A second, new instance used to be dropped silently (its values
+        # lost without a word) — now it's an error; edit SystemSetting.get_settings() instead.
+        if self.pk is None:
+            if SystemSetting.objects.exists():
+                raise ValueError('إعدادات النظام صف واحد بس — عدّل SystemSetting.get_settings() بدل ما تعمل جديد.')
+            self.pk = 1
         return super().save(*args, **kwargs)
 
     @property
@@ -326,6 +353,15 @@ class AuditLog(models.Model):
         verbose_name_plural = _('سجل التعديلات')
         ordering = ['-created_at', '-id']
         indexes = [models.Index(fields=['content_type', 'object_id'], name='audit_object_idx')]
+
+    def save(self, *args, **kwargs):
+        # append-only: a log line is written once (core.audit) and never changed
+        if not self._state.adding:
+            raise ValueError('سجل التعديلات مينفعش يتعدّل بعد ما اتكتب.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError('سجل التعديلات مينفعش يتمسح.')
 
     def __str__(self):
         return f'{self.get_action_display()} {self.object_repr}'

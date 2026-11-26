@@ -10,11 +10,11 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import DecimalField, Sum, Value
+from django.db.models import DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from .models import EmployeeLoan, PayrollLoanDeduction
+from .models import EmployeeLoan, Payroll, PayrollLoanDeduction
 
 ZERO = Decimal('0')
 CENT = Decimal('0.01')
@@ -23,7 +23,9 @@ EMPLOYEES_ACCOUNT_CODE = '1135'   # ذمم الموظفين والعهد
 
 def with_balances(queryset):
     """Loans with the deducted total computed by the database (remaining = amount - it)."""
-    return queryset.annotate(_deducted=Coalesce(Sum('deductions__amount'), Value(ZERO),
+    # instalments of CONFIRMED payrolls only: a draft payroll can still be recalculated or dropped
+    return queryset.annotate(_deducted=Coalesce(Sum('deductions__amount', filter=Q(deductions__payroll__is_paid=True)),
+                                                Value(ZERO),
                                                 output_field=DecimalField(max_digits=12, decimal_places=2)))
 
 
@@ -129,6 +131,8 @@ def apply_to_payroll(payroll, dues, net_before_loans):
     """Rebuild the payroll's loan deductions from ``dues`` [(loan, amount)], never taking the
     net below zero (what does not fit stays on the loan for the next months).
     Returns the total deducted."""
+    if Payroll.objects.filter(pk=payroll.pk, is_paid=True).exists():
+        raise ValidationError(Payroll.LOCKED_MSG)
     payroll.loan_deductions.all().delete()
     room = max(net_before_loans, ZERO)
     total = ZERO

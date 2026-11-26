@@ -64,6 +64,7 @@ class PayrollProcessTests(TestCase):
         self.assertTrue(p.journal_entry.is_balanced())
         from apps.tenant.accounting.models import JournalEntry
         self.assertEqual(JournalEntry.objects.filter(payroll=p).count(), 1)
+        self.assertEqual(p.journal_entry.status, JournalEntry.POSTED)        # a draft never reaches the ledger
 
 
 class AttendanceTests(TestCase):
@@ -384,7 +385,16 @@ class EmployeeLoanTests(TestCase):
         self.assertEqual(p.net_salary, D('2700.00'))
         p2 = self.payroll()                       # recalculation does not deduct twice
         self.assertEqual(p2.loan_deduction, D('300.00'))
-        self.assertEqual(loan.remaining, D('600.00'))
+        self.assertEqual(loan.remaining, D('900.00'))      # a draft payroll repays nothing yet
+        self.client.post(reverse('hr:payroll_confirm', args=[p2.id]))
+        self.assertEqual(loan.remaining, D('600.00'))      # confirmed: the instalment counts
+        p2.refresh_from_db()
+        p2.net_salary = D('1')
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):           # a confirmed payroll is frozen
+            p2.save()
+        with self.assertRaises(ValidationError):
+            p2.delete()
 
     def test_confirm_posts_loan_credit_and_balances(self):
         from apps.tenant.core.tests.factories import account
@@ -739,6 +749,24 @@ class EmployeeFileTests(TestCase):
         self.assertTrue(items.filter(account=account('1135'), credit=D('1000')).exists())
         self.worker.refresh_from_db()
         self.assertFalse(self.worker.is_active)
+        self.assertEqual(EmployeeLoan.objects.get().status, EmployeeLoan.SETTLED)
+
+    def test_end_of_service_loans_bigger_than_dues_are_collected(self):
+        from apps.tenant.core.tests.factories import account
+        from apps.tenant.hr.models import EmployeeLoan, EmployeeProfile, EndOfService
+        from apps.tenant.hr.loan_services import create_cash_loan
+        EmployeeProfile.objects.create(employee=self.emp, hire_date=datetime.date(2024, 1, 1))
+        create_cash_loan(self.emp, D('5000'), 5, 2025, 1, self.w.treasury, user=self.w.admin)
+        url = reverse('hr:end_of_service', args=[self.emp.id])
+        self.client.post(url, {'termination_date': '2025-06-30', 'reason': 'استقالة', 'severance': '1000',
+                               'leave_days': '0', 'source': f't:{self.w.treasury.id}'})
+        eos = EndOfService.objects.get()
+        self.assertEqual((eos.loans_deducted, eos.loans_collected, eos.net_amount),
+                         (D('1000.00'), D('4000.00'), D('0.00')))       # dues cover 1000, he pays in 4000
+        items = eos.journal_entry.items
+        self.assertTrue(items.filter(account=account('1135'), credit=D('5000')).exists())     # the loan is closed
+        self.assertTrue(items.filter(account=self.w.treasury.account, debit=D('4000')).exists())
+        self.assertTrue(eos.journal_entry.is_balanced())
         self.assertEqual(EmployeeLoan.objects.get().status, EmployeeLoan.SETTLED)
 
     def test_my_portal_requests_and_manager_approval(self):

@@ -2,6 +2,7 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.urls import reverse_lazy
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST
 from django.contrib.auth.mixins import LoginRequiredMixin
 from apps.tenant.core.mixins import CustomPermissionRequiredMixin
 from apps.tenant.core.decorators import custom_permission_required, is_admin_user
@@ -215,7 +216,39 @@ class JournalEntryDetailView(CustomPermissionRequiredMixin, DetailView):
         context.update(_lock_context())
         from apps.tenant.core.settings_helpers import is_date_locked
         context['entry_locked'] = is_date_locked(self.object.date)
+        e = self.object
+        context['can_reverse'] = (e.status == JournalEntry.POSTED and not e.content_type_id
+                                  and not e.reversal_of_id and e.reversing_entry is None)
         return context
+
+
+@login_required
+@require_POST
+def journal_reverse(request, pk):
+    """Manual entries only: a document's entry is reversed by cancelling the document itself."""
+    from django.utils.dateparse import parse_date
+    from apps.tenant.services.journal_service import reverse_journal_entry
+    if not is_admin_user(request.user):
+        messages.error(request, 'عفواً، عكس القيود للأدمن والمديرين بس.')
+        return redirect('core:main_screen')
+    entry = get_object_or_404(JournalEntry, pk=pk)
+    reason = (request.POST.get('reason') or '').strip()
+    raw = request.POST.get('date') or ''
+    date = parse_date(raw) if raw else None
+    try:
+        if entry.content_type_id:
+            raise ValidationError('القيد ده تبع مستند — اتلغي من المستند نفسه (إلغاء الفاتورة/السند) مش من هنا.')
+        if len(reason) < 3:
+            raise ValidationError('اكتب سبب عكس القيد.')
+        if raw and date is None:
+            raise ValidationError('تاريخ غير صالح.')
+        with transaction.atomic():
+            rev = reverse_journal_entry(entry, reason=reason, user=request.user, date=date)
+    except ValidationError as e:
+        messages.error(request, ' '.join(e.messages))
+        return redirect('accounting:journal_detail', pk=pk)
+    messages.success(request, f'اتعمل القيد العكسي {rev.reference}.')
+    return redirect('accounting:journal_detail', pk=rev.pk)
 
 # Treasury Views
 class TreasuryListView(CustomPermissionRequiredMixin, ListView):

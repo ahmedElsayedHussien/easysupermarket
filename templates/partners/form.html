@@ -77,7 +77,36 @@
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">الرقم الضريبي (اختياري)</label>
-                    <input type="text" name="tax_id" class="form-control" value="{{ partner.tax_id|default:'' }}" placeholder="للشركات والموردين">
+                    <input type="text" name="tax_id" class="form-control" value="{{ partner.tax_id|default:'' }}" placeholder="9 أرقام — للشركات">
+                </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-12"><small class="text-muted">🧾 عنوان الفاتورة الإلكترونية — مطلوب للعميل اللي ليه رقم ضريبي (شركة)</small></div>
+                <div class="col-md-3"><label class="form-label">المحافظة</label>
+                    <input type="text" name="eta_governate" class="form-control" maxlength="100" value="{{ partner.eta_governate|default:'' }}"></div>
+                <div class="col-md-3"><label class="form-label">المدينة / المنطقة</label>
+                    <input type="text" name="eta_region_city" class="form-control" maxlength="100" value="{{ partner.eta_region_city|default:'' }}"></div>
+                <div class="col-md-4"><label class="form-label">الشارع</label>
+                    <input type="text" name="address" class="form-control" value="{{ partner.address|default:'' }}"></div>
+                <div class="col-md-2"><label class="form-label">رقم المبنى</label>
+                    <input type="text" name="eta_building_number" class="form-control" maxlength="50" value="{{ partner.eta_building_number|default:'' }}"></div>
+            </div>
+
+            <div class="row g-3 mb-3" style="border:1px dashed var(--border-bright); border-radius:10px; padding:.6rem .4rem; margin:0 0 1rem;">
+                <div class="col-12"><strong>🧾 ضرايب فواتيره</strong>
+                    <small class="text-muted d-block">فواتير المندوب بتتحسب ضرايبها من هنا بس — المندوب مش بيقدر يغيّرها. الصنف المعفي (ضريبته 0%) بيفضل معفي.</small></div>
+                <div class="col-md-6">
+                    <label class="form-check-label" style="display:flex; gap:.4rem; align-items:center;">
+                        <input type="checkbox" name="subject_to_vat" {% if not partner or partner.subject_to_vat %}checked{% endif %}> يخضع لضريبة القيمة المضافة</label>
+                    <div class="input-group mt-1"><input type="number" name="vat_rate" class="form-control" min="0" max="100" step="0.01"
+                        value="{% if partner %}{{ partner.vat_rate|stringformat:'s' }}{% else %}14{% endif %}"><span class="input-group-text">%</span></div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-check-label" style="display:flex; gap:.4rem; align-items:center;">
+                        <input type="checkbox" name="subject_to_withholding_tax" {% if partner.subject_to_withholding_tax %}checked{% endif %}> يخضع للخصم والإضافة</label>
+                    <div class="input-group mt-1"><input type="number" name="wht_rate" class="form-control" min="0" max="100" step="0.01"
+                        value="{% if partner %}{{ partner.wht_rate|stringformat:'s' }}{% else %}1{% endif %}"><span class="input-group-text">%</span></div>
                 </div>
             </div>
 

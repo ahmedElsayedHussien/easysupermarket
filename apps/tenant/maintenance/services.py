@@ -42,13 +42,7 @@ def post_maintenance_journal(ticket, user) -> JournalEntry:
     acc_cogs_m     = _get_system_account('5105')   # تكلفة قطع الغيار المستهلكة
     acc_inventory  = _get_system_account('1140')   # المخزون
 
-    je = JournalEntry.objects.create(
-        date=ticket.delivered_at.date(),
-        reference=f'صيانة-#{ticket.id}',
-        description=f'تسليم تذكرة صيانة #{ticket.id} — {ticket.device_model} ({ticket.get_payment_method_display()})',
-        created_by=user,
-        status=JournalEntry.POSTED,
-    )
+    je = None   # lines are collected below and posted at the end (accounting.posting)
 
     lines = []
 
@@ -60,27 +54,27 @@ def post_maintenance_journal(ticket, user) -> JournalEntry:
         paid_acc = ticket.treasury.account if (ticket.treasury and ticket.treasury.account) else customer_acc
         if total > 0:
             lines.append(JournalItem(
-                entry=je, account=paid_acc, debit=total, credit=Decimal('0'),
+                account=paid_acc, debit=total, credit=Decimal('0'),
                 description=f'تحصيل نقدي صيانة #{ticket.id}'
             ))
     elif pm == ticket.PAYMENT_BANK_TRANSFER:
         paid_acc = ticket.bank_account.account if (ticket.bank_account and ticket.bank_account.account) else customer_acc
         if total > 0:
             lines.append(JournalItem(
-                entry=je, account=paid_acc, debit=total, credit=Decimal('0'),
+                account=paid_acc, debit=total, credit=Decimal('0'),
                 description=f'تحصيل بنكي/انستا باي صيانة #{ticket.id}'
             ))
     elif pm == ticket.PAYMENT_EWALLET:
         paid_acc = ticket.ewallet.account if (ticket.ewallet and ticket.ewallet.account) else customer_acc
         if total > 0:
             lines.append(JournalItem(
-                entry=je, account=paid_acc, debit=total, credit=Decimal('0'),
+                account=paid_acc, debit=total, credit=Decimal('0'),
                 description=f'تحصيل محفظة إلكترونية صيانة #{ticket.id}'
             ))
     elif pm == ticket.PAYMENT_CREDIT:
         if total > 0:
             lines.append(JournalItem(
-                entry=je, account=customer_acc, debit=total, credit=Decimal('0'),
+                account=customer_acc, debit=total, credit=Decimal('0'),
                 description=f'إثبات مستحق آجل صيانة #{ticket.id} على العميل {ticket.customer.name}'
             ))
     elif pm == ticket.PAYMENT_SPLIT:
@@ -99,26 +93,25 @@ def post_maintenance_journal(ticket, user) -> JournalEntry:
 
         if paid > 0:
             lines.append(JournalItem(
-                entry=je, account=fin_acc, debit=paid, credit=Decimal('0'),
+                account=fin_acc, debit=paid, credit=Decimal('0'),
                 description=f'تحصيل فوري سداد جزئي صيانة #{ticket.id}'
             ))
         if rem > 0:
             lines.append(JournalItem(
-                entry=je, account=customer_acc, debit=rem, credit=Decimal('0'),
+                account=customer_acc, debit=rem, credit=Decimal('0'),
                 description=f'متبقي آجل صيانة #{ticket.id} على العميل {ticket.customer.name}'
             ))
     else:
         paid_acc = ticket.treasury.account if (ticket.treasury and ticket.treasury.account) else customer_acc
         if total > 0:
             lines.append(JournalItem(
-                entry=je, account=paid_acc, debit=total, credit=Decimal('0'),
+                account=paid_acc, debit=total, credit=Decimal('0'),
                 description=f'تحصيل صيانة #{ticket.id}'
             ))
 
     # Debit for consumed inventory cost (COGS)
     if parts_c > 0:
         lines.append(JournalItem(
-            entry=je,
             account=acc_cogs_m,
             debit=parts_c,
             credit=Decimal('0'),
@@ -128,7 +121,6 @@ def post_maintenance_journal(ticket, user) -> JournalEntry:
     # --- CREDIT SIDE (الجانب الدائن) ---
     if labor > 0:
         lines.append(JournalItem(
-            entry=je,
             account=acc_revenue_m,
             debit=Decimal('0'),
             credit=labor,
@@ -136,7 +128,6 @@ def post_maintenance_journal(ticket, user) -> JournalEntry:
         ))
     if parts_s > 0:
         lines.append(JournalItem(
-            entry=je,
             account=acc_revenue_s,
             debit=Decimal('0'),
             credit=parts_s,
@@ -144,12 +135,14 @@ def post_maintenance_journal(ticket, user) -> JournalEntry:
         ))
     if parts_c > 0:
         lines.append(JournalItem(
-            entry=je,
             account=acc_inventory,
             debit=Decimal('0'),
             credit=parts_c,
             description='خصم تكلفة قطع الغيار من المخزون'
         ))
 
-    JournalItem.objects.bulk_create(lines)
-    return je
+    from apps.tenant.accounting.posting import post_entry
+    return post_entry(
+        date=ticket.delivered_at.date(), reference=f'صيانة-#{ticket.id}',
+        description=f'تسليم تذكرة صيانة #{ticket.id} — {ticket.device_model} ({ticket.get_payment_method_display()})',
+        lines=[(i.account, i.debit, i.credit, i.description) for i in lines], user=user, source=ticket)

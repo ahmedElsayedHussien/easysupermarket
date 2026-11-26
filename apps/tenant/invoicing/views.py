@@ -164,13 +164,13 @@ def pos_view(request):
     
     if is_admin:
         # Admin sees everything
-        treasuries = Treasury.objects.all()
+        treasuries = Treasury.objects.business()
         bank_accounts = BankAccount.objects.all()
         ewallets = EWallet.objects.all()
         branches = Branch.objects.filter(is_active=True)
     else:
         # Non-admin sees only their branch's data
-        treasuries = Treasury.objects.filter(branch=current_branch) if current_branch else Treasury.objects.none()
+        treasuries = Treasury.objects.business().filter(branch=current_branch) if current_branch else Treasury.objects.none()
         bank_accounts = BankAccount.objects.all()
         ewallets = EWallet.objects.all()
         branches = Branch.objects.filter(id=current_branch.id) if current_branch else Branch.objects.none()
@@ -258,7 +258,7 @@ def pos_open_shift(request):
         return redirect('core:main_screen')
     from django.db.models import Q as _Q
     from apps.tenant.core.settings_helpers import get_pos_defaults, setting
-    treasuries = Treasury.objects.filter(_Q(branch=user_branch) | _Q(branch__isnull=True))
+    treasuries = Treasury.objects.business().filter(_Q(branch=user_branch) | _Q(branch__isnull=True))
 
     # Default drawer = the branch's POS default treasury (branch settings, then the
     # global default if it belongs to this branch); a branch with a single treasury
@@ -461,7 +461,7 @@ def _deposit_targets(session):
     """Where the drawer cash can be dropped at close: other treasuries (any branch —
     another branch makes it a two-step transfer), bank accounts and e-wallets."""
     from apps.tenant.accounting.models import BankAccount, EWallet, Treasury
-    treasuries = Treasury.objects.exclude(pk=session.treasury_id).select_related('branch').order_by('branch__name', 'name')
+    treasuries = Treasury.objects.business().exclude(pk=session.treasury_id).select_related('branch').order_by('branch__name', 'name')
     return {
         'deposit_treasuries': treasuries,
         'deposit_banks': BankAccount.objects.all().order_by('pk'),
@@ -534,10 +534,12 @@ def purchase_invoice_view(request):
 
     
     from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
-    treasuries = Treasury.objects.all()
+    treasuries = Treasury.objects.business()
     bank_accounts = BankAccount.objects.all()
     ewallets = EWallet.objects.all()
-    expiry_tracking_enabled = bool(setting_value('enable_expiry_tracking', False))
+    # the expiry column shows when tracking is on, or as soon as one product needs its expiry date
+    expiry_tracking_enabled = bool(setting_value('enable_expiry_tracking', False)) or \
+        Product.objects.filter(has_expiry=True, is_active=True).exists()
 
     if request.method == 'POST':
         from django.db import transaction
@@ -623,8 +625,8 @@ def purchase_invoice_view(request):
                 # Default payment accounts of the invoice branch (then global defaults).
                 branch_defaults = get_pos_defaults(branch)
                 if payment_type == 'CASH' and not treasury_id:
-                    def_t = (branch_defaults['treasury'] or Treasury.objects.filter(branch=branch).first()
-                             or Treasury.objects.first())
+                    def_t = (branch_defaults['treasury'] or Treasury.objects.business().filter(branch=branch).first()
+                             or Treasury.objects.business().first())
                     treasury_id = def_t.id if def_t else None
                 elif payment_type in ['BANK_TRANSFER', 'CARD'] and not bank_account_id:
                     def_b = branch_defaults['bank_account'] or BankAccount.objects.first()
@@ -1539,7 +1541,8 @@ def complete_sale(request):
                                     'يتطلب ذلك صلاحية مدير.', status=403
                                 )
                         unit_price = client_price
-                if min_price > 0 and unit_price < min_price:
+                below_min_ok = request.user.has_perm('inventory.sell_below_min_price')
+                if min_price > 0 and unit_price < min_price and not below_min_ok:
                     raise _SaleAbort(
                         f'سعر الصنف "{product.name}" ({unit_price:.2f}) أقل من أدنى سعر بيع مسموح ({min_price:.2f}).'
                     )
@@ -1552,7 +1555,7 @@ def complete_sale(request):
                         f'الخصم على الصنف "{product.name}" ({discount_pct:.2f}%) يتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
                         'يتطلب ذلك صلاحية مدير.', status=403
                     )
-                if discount_pct > 0 and not can_override_discount and min_price > 0:
+                if discount_pct > 0 and not can_override_discount and min_price > 0 and not below_min_ok:
                     net_unit = unit_price * (Decimal('1') - discount_pct / Decimal('100'))
                     if net_unit < min_price:
                         raise _SaleAbort(
@@ -1889,7 +1892,7 @@ def process_invoice_return(request, invoice_id):
         # Defaults of the branch the refund belongs to (the original invoice's branch).
         branch_defaults = get_pos_defaults(original_invoice.branch if original_invoice.branch_id else None)
         if req_cash > 0 and not treasury_id:
-            def_t = branch_defaults['treasury'] or Treasury.objects.first()
+            def_t = branch_defaults['treasury'] or Treasury.objects.business().first()
             treasury_id = def_t.id if def_t else None
 
         if (req_card > 0 or req_bank > 0) and not bank_account_id:

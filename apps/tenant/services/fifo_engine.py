@@ -22,11 +22,27 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _negative_stock_allowed(product) -> bool:
-    """Global SystemSetting OR the product's own allow_negative_stock flag."""
+class InsufficientStockError(ValueError):
+    """Not enough (sellable) stock for a consumption or a transfer."""
+
+
+def global_negative_stock_allowed() -> bool:
+    """The SystemSetting flag — read it ONCE per document and pass it down (allow_negative=…)."""
     from apps.tenant.core.models import SystemSetting
-    allow_global = getattr(SystemSetting.get_settings(), 'allow_negative_stock', False)
+    return bool(getattr(SystemSetting.get_settings(), 'allow_negative_stock', False))
+
+
+def _negative_stock_allowed(product, allow_global=None) -> bool:
+    """Global SystemSetting OR the product's own allow_negative_stock flag."""
+    if allow_global is None:
+        allow_global = global_negative_stock_allowed()
     return bool(allow_global or getattr(product, 'allow_negative_stock', False))
+
+
+def lock_order(items, key=lambda x: x.product_id):
+    """Documents touching several products lock their batches in product-id order: two documents
+    posted at the same moment then wait for each other instead of dead-locking (PostgreSQL)."""
+    return sorted(items, key=lambda x: (key(x) or 0))
 
 
 def _offset_deficits(product, warehouse, batch):
@@ -61,6 +77,12 @@ def _offset_deficits(product, warehouse, batch):
     return batch
 
 
+def _fefo():
+    """Consumption order: nearest expiry first (FEFO), no expiry last; same expiry → oldest first (FIFO)."""
+    from django.db.models import F
+    return (F('expiry_date').asc(nulls_last=True), 'created_at', 'id')
+
+
 @transaction.atomic
 def consume_fifo_batches(
     product,
@@ -70,6 +92,7 @@ def consume_fifo_batches(
     notes: str = '',
     movement_type: str = 'OUT',
     allow_negative: Optional[bool] = None,
+    skip_expired: bool = False,
 ) -> List[dict]:
     """
     Consume inventory from the oldest available batches (FIFO order).
@@ -106,23 +129,32 @@ def consume_fifo_batches(
     if quantity_needed < Decimal('0'):
         raise ValueError(f'الكمية المطلوب صرفها لا يمكن أن تكون سالبة. المُدخل: {quantity_needed}')
 
-    # Lock the batches FIRST (oldest first), then compute availability from the locked rows.
+    # Lock the batches FIRST (FEFO order), then compute availability from the locked rows.
     batches = list(
         InventoryBatch.objects.select_for_update(of=('self',)).filter(
             product=product,
             warehouse=warehouse,
             quantity_remaining__gt=Decimal('0')
-        ).order_by('created_at', 'id')
+        ).order_by(*_fefo())
     )
+    expired_qty = Decimal('0')
+    if skip_expired:
+        import datetime
+        today = datetime.date.today()
+        expired_qty = sum((b.quantity_remaining for b in batches if b.expiry_date and b.expiry_date < today),
+                          Decimal('0'))
+        batches = [b for b in batches if not (b.expiry_date and b.expiry_date < today)]
     total_available = sum((b.quantity_remaining for b in batches), Decimal('0'))
 
     if allow_negative is None:
         allow_negative = _negative_stock_allowed(product)
 
-    if total_available < quantity_needed and not allow_negative:
-        raise ValueError(
+    if total_available < quantity_needed and (not allow_negative or expired_qty > 0):
+        extra = (f' — ومنه {expired_qty.normalize():f} منتهي الصلاحية مينفعش يتباع '
+                 '(اعمله تسوية هالك، أو محتاج صلاحية «بيع دفعات منتهية»)') if expired_qty else ''
+        raise InsufficientStockError(
             f'المخزون غير كافٍ للمنتج "{product.name}" في مستودع "{warehouse.name}". '
-            f'المتاح: {total_available}, المطلوب: {quantity_needed}'
+            f'المتاح: {total_available}, المطلوب: {quantity_needed}{extra}'
         )
 
     consumptions = []
@@ -364,6 +396,7 @@ def transfer_stock(
     quantity: Decimal,
     reference: str = '',
     serial_ids=None,
+    skip_expired: bool = False,
 ) -> bool:
     """
     Transfers stock between two warehouses using FIFO for the source.
@@ -406,11 +439,15 @@ def transfer_stock(
             product=product,
             warehouse=from_warehouse,
             quantity_remaining__gt=Decimal('0')
-        ).order_by('created_at', 'id')
+        ).order_by(*_fefo())
     )
+    if skip_expired:            # e.g. loading a sales rep's van: expired goods stay in the warehouse
+        import datetime
+        today = datetime.date.today()
+        batches = [b for b in batches if not (b.expiry_date and b.expiry_date < today)]
     available = sum((b.quantity_remaining for b in batches), Decimal('0'))
     if available < quantity:
-        raise ValueError(
+        raise InsufficientStockError(
             f'المخزون غير كافٍ للتحويل. المتاح في "{from_warehouse.name}": {available}, '
             f'المطلوب: {quantity}'
         )

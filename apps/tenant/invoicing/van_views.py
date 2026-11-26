@@ -60,7 +60,8 @@ def loading_detail(request, pk):
             if action == 'approve' and request.user.has_perm('invoicing.approve_loadingorder'):
                 van.approve_loading(order, {l.id: request.POST.get(f'qty_{l.id}', l.requested_qty)
                                             for l in order.lines.all()}, request.user)
-                messages.success(request, f'اتعمد طلب التحميل {order.number} — مستني الصرف من المخزن.')
+                messages.success(request, f'اتعمد طلب التحميل {order.number}: اطبع إذن الصرف، سلّم البضاعة '
+                                          'للمندوب، وبعدين دوس «صرف وترحيل للعربية».')
             elif action == 'issue' and request.user.has_perm('invoicing.issue_loadingorder'):
                 order = van.issue_loading(order, request.user)
                 messages.success(request, f'اتصرف الطلب واترحل على عربية المندوب ({order.transfer.number}).')
@@ -74,16 +75,32 @@ def loading_detail(request, pk):
             _error(request, e)
         return redirect('invoicing:loading_detail', pk=order.pk)
     lines = list(order.lines.select_related('product', 'uom__uom'))
-    available = van.van_stock(order.from_warehouse, [l.product_id for l in lines])
+    available = van.van_stock(order.from_warehouse, [l.product_id for l in lines], sellable=True)
     van_has = van.van_stock(order.to_warehouse, [l.product_id for l in lines])
     for l in lines:
         l.available = available.get(l.product_id) or 0
         l.in_van = van_has.get(l.product_id) or 0
+        l.requested_base = l.requested_qty * l.conversion_factor
     return render(request, 'invoicing/loading_detail.html', {
         'title': f'طلب تحميل {order.number}', 'order': order, 'lines': lines,
         'can_approve': request.user.has_perm('invoicing.approve_loadingorder'),
         'can_issue': request.user.has_perm('invoicing.issue_loadingorder'),
     })
+
+
+@login_required
+@custom_permission_required('invoicing.view_loadingorder', redirect_url='core:main_screen')
+def loading_print(request, pk):
+    """إذن الصرف المطبوع: بيتطبع بعد الاعتماد ويتسلّم مع البضاعة (المندوب يوقّع بالاستلام)."""
+    from apps.tenant.core.company import company_profile
+    order = get_object_or_404(_scoped(LoadingOrder.objects.select_related(
+        'rep__employee__user', 'from_warehouse', 'to_warehouse', 'approved_by', 'issued_by'), request), pk=pk)
+    if order.status not in (LoadingOrder.APPROVED, LoadingOrder.ISSUED):
+        messages.error(request, 'الطلب لازم يتعمد الأول قبل ما يتطبع.')
+        return redirect('invoicing:loading_detail', pk=order.pk)
+    lines = [l for l in order.lines.select_related('product', 'uom__uom') if (l.final_qty or 0) > 0]
+    return render(request, 'invoicing/loading_print.html', {'order': order, 'lines': lines,
+                                                            'company': company_profile(request)})
 
 
 @login_required
@@ -147,12 +164,17 @@ def handover_list(request):
             treasury = filter_by_branch(Treasury.objects.all(), request).filter(pk=int(dest[2:])).first()
         elif dest.startswith('b:') and dest[2:].isdigit():
             bank = BankAccount.objects.filter(pk=int(dest[2:])).first()
+        inter = None
+        if dest.startswith('i:') and dest[2:].isdigit():
+            from apps.tenant.accounting.models import IntermediaryCompany
+            inter = IntermediaryCompany.objects.filter(pk=int(dest[2:]), is_active=True).first()
         try:
             if rep is None:
                 raise ValidationError('اختار المندوب.')
             h = van.post_handover(rep, request.POST.get('amount'), request.user, treasury=treasury, bank_account=bank,
                                   charge_shortage=bool(request.POST.get('charge_shortage')),
-                                  notes=request.POST.get('notes', ''))
+                                  notes=request.POST.get('notes', ''), intermediary=inter,
+                                  reference=request.POST.get('reference', ''))
             msg = f'اتسجل التوريد {h.number}: {h.amount:.2f}'
             if h.shortage_charged:
                 msg += f' — وعجز {h.shortage_charged:.2f} اتحمّل على المندوب (هيتخصم من مرتبه)'
@@ -162,7 +184,7 @@ def handover_list(request):
         return redirect('invoicing:handover_list')
     cash = van.cash_balances(reps)
     balances = [{'rep': r, 'balance': cash.get(r.id, van.ZERO)} for r in reps]
-    qs = _scoped(RepCashHandover.objects.select_related('rep__employee__user', 'treasury', 'bank_account',
+    qs = _scoped(RepCashHandover.objects.select_related('rep__employee__user', 'treasury', 'bank_account', 'intermediary',
                                                         'created_by', 'journal_entry'), request)
     rep_id = request.GET.get('rep') or ''
     if rep_id.isdigit():
@@ -174,5 +196,7 @@ def handover_list(request):
         'treasuries': filter_by_branch(Treasury.objects.all(), request).exclude(
             Q(pk__in=rep_treasuries) | Q(sales_reps__isnull=False)).distinct(),
         'banks': BankAccount.objects.all(),
+        'intermediaries': __import__('apps.tenant.accounting.models', fromlist=['IntermediaryCompany'])
+        .IntermediaryCompany.objects.filter(is_active=True),
         'can_add': request.user.has_perm('invoicing.add_repcashhandover'),
     })

@@ -30,6 +30,9 @@
       <span class="badge bg-success fs-6">{{ ticket.get_status_display }}</span>
     {% elif ticket.status == 'DELIVERED' %}
       <span class="badge bg-dark fs-6">{{ ticket.get_status_display }}</span>
+    {% elif ticket.status == 'CANCELLED' %}
+      <span class="badge bg-danger fs-6">{{ ticket.get_status_display }}</span>
+      <small class="text-muted ms-2">{{ ticket.cancelled_at|date:"Y/m/d H:i" }}{% if ticket.cancel_reason %} — {{ ticket.cancel_reason }}{% endif %}</small>
     {% endif %}
     {% if ticket.parent_ticket %}
       <span class="ms-2 badge bg-info">
@@ -51,7 +54,7 @@
       <div class="card bg-dark-glass border-0 mb-4">
         <div class="card-header d-flex justify-between align-center">
           <strong><i class="fas fa-info-circle"></i> بيانات التذكرة</strong>
-          {% if ticket.status != 'DELIVERED' %}
+          {% if not ticket.is_closed %}
           <button class="btn btn-sm" style="background:#ff7300;color:#fff;box-shadow:0 0 8px rgba(255,115,0,0.4);" onclick="document.getElementById('editPanel').classList.toggle('d-none')">
             <i class="fas fa-edit"></i> تعديل
           </button>
@@ -119,7 +122,7 @@
       </div>
 
       <!-- Inline Edit Panel -->
-      {% if ticket.status != 'DELIVERED' %}
+      {% if not ticket.is_closed %}
       <div id="editPanel" class="card bg-dark-glass border-0 mb-4 d-none">
         <div class="card-header"><strong><i class="fas fa-edit"></i> تعديل التذكرة</strong></div>
         <div class="card-body">
@@ -128,7 +131,7 @@
               <label class="form-label text-muted">الحالة</label>
               <select id="statusSelect" class="form-select bg-dark-glass text-white">
                 {% for val, label in status_choices %}
-                {% if val != 'DELIVERED' %}
+                {% if val != 'DELIVERED' and val != 'CANCELLED' %}
                 <option value="{{ val }}" {% if ticket.status == val %}selected{% endif %}>{{ label }}</option>
                 {% endif %}
                 {% endfor %}
@@ -179,7 +182,7 @@
                 <th>سعر البيع</th>
                 <th>التكلفة الفعلية</th>
                 <th>الإجمالي</th>
-                {% if ticket.status != 'DELIVERED' %}<th></th>{% endif %}
+                {% if not ticket.is_closed %}<th></th>{% endif %}
               </tr>
             </thead>
             <tbody id="partsTableBody">
@@ -193,7 +196,7 @@
                 <td>{{ part.selling_price }} ج</td>
                 <td><small class="text-muted">{{ part.actual_cost }} ج</small></td>
                 <td class="fw-bold">{{ part.quantity|floatformat:2 }} × {{ part.selling_price }} = <span>{{ part.selling_price }}</span></td>
-                {% if ticket.status != 'DELIVERED' %}
+                {% if not ticket.is_closed %}
                 <td>
                   <button onclick="deletePart({{ part.id }})" class="btn btn-sm btn-danger">
                     <i class="fas fa-trash"></i>
@@ -210,7 +213,7 @@
       </div>
 
       <!-- Add Part Form -->
-      {% if ticket.status != 'DELIVERED' %}
+      {% if not ticket.is_closed %}
       <div class="card bg-dark-glass border-0">
         <div class="card-header"><strong><i class="fas fa-plus"></i> إضافة قطعة غيار</strong></div>
         <div class="card-body">
@@ -291,7 +294,14 @@
       </div>
 
       <!-- Deliver Section -->
-      {% if ticket.status != 'DELIVERED' %}
+      {% if ticket.status == 'CANCELLED' %}
+      <div class="card border-0" style="background:rgba(239,68,68,0.08);border:1px solid #ef4444 !important;">
+        <div class="card-body text-center py-3">
+          <div class="fw-bold fs-5 text-white">التذكرة ملغاة — الجهاز رجع من غير إصلاح</div>
+          <div class="text-muted small mt-1">القطع رجعت المخزن ومفيش قيد.{% if ticket.cancelled_by %} ألغاها: {{ ticket.cancelled_by|display_name }}{% endif %}</div>
+        </div>
+      </div>
+      {% elif ticket.status != 'DELIVERED' %}
       <div class="card bg-dark-glass border-0 shadow">
         <div class="card-header border-bottom border-secondary">
           <strong><i class="fas fa-handshake text-warning me-1"></i> تسليم الجهاز وتحديد السداد</strong>
@@ -390,6 +400,9 @@
 
           <button onclick="deliverTicket()" class="btn w-100 mt-2" style="background:#ff7300;color:#fff;font-weight:bold;padding:12px;box-shadow:0 0 10px rgba(255,115,0,0.4);">
             <i class="fas fa-check-circle me-1"></i> تأكيد التسليم وترحيل القيد المحاسبي
+          </button>
+          <button onclick="cancelTicket()" class="btn btn-outline-danger w-100 mt-2">
+            <i class="fas fa-ban me-1"></i> إلغاء التذكرة (الجهاز يرجع من غير إصلاح — القطع ترجع المخزن)
           </button>
         </div>
       </div>
@@ -652,6 +665,17 @@ function toggleSplitDestDropdown() {
 }
 
 // ---- Deliver Ticket ----
+async function cancelTicket() {
+  const reason = prompt('سبب الإلغاء (مثلاً: العميل رفض التكلفة / الجهاز مش قابل للإصلاح):');
+  if (!reason || !reason.trim()) return;
+  const fd = new FormData();
+  fd.append('reason', reason.trim());
+  fd.append('csrfmiddlewaretoken', CSRF);
+  const res = await fetch("{% url 'maintenance:cancel_ticket' ticket.pk %}", {method: 'POST', body: fd});
+  const data = await res.json();
+  if (data.success) { window.location.href = data.redirect; } else { alert(data.error || 'حصل خطأ'); }
+}
+
 async function deliverTicket() {
   const method = document.getElementById('deliveryPaymentMethod')?.value;
   if (!method) return;

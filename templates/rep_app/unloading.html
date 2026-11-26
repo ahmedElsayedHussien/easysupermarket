@@ -36,7 +36,7 @@
     <h2>📋 طلبات التفريغ</h2>
     <div class="list">
         {% for o in orders %}
-        <div class="item"><div class="grow"><div class="t">{{ o.number }}</div><div class="muted">{{ o.date|date:"j/n" }} — {{ o.n }} صنف</div></div><span class="badge {{ o.status }}">{{ o.get_status_display }}</span></div>
+        <a class="item" href="{% url 'invoicing:rep_app_unloading_order' o.id %}"><div class="grow"><div class="t">{{ o.number }}</div><div class="muted">{{ o.date|date:"j/n" }} — {{ o.n }} صنف</div></div><span class="badge {{ o.status }}">{{ o.get_status_display }}</span><span class="muted">‹</span></a>
         {% empty %}<p class="muted">مفيش طلبات.</p>{% endfor %}
     </div>
 </div>

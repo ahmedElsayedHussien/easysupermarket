@@ -26,7 +26,7 @@ OPEN_DAY = TODAY - datetime.timedelta(days=5)
 
 def _entry(date, ref, amount=D('100')):
     e = JournalEntry.objects.create(date=date, reference=ref, description='test', status=JournalEntry.DRAFT)
-    JournalItem.objects.create(entry=e, account=account('1110'), debit=amount, credit=0)
+    JournalItem.objects.create(entry=e, account=account('1195'), debit=amount, credit=0)
     JournalItem.objects.create(entry=e, account=account('3100'), debit=0, credit=amount)
     e.post()
     return e
@@ -76,7 +76,7 @@ class PeriodLockTests(TestCase):
         with self.assertRaises(ValidationError):
             e.delete()
         with self.assertRaises(ValidationError):
-            JournalItem.objects.create(entry=e, account=account('1110'), debit=D('1'), credit=0)
+            JournalItem.objects.create(entry=e, account=account('1195'), debit=D('1'), credit=0)
         item.debit = D('5')
         with self.assertRaises(ValidationError):
             item.save()
@@ -92,7 +92,7 @@ class PeriodLockTests(TestCase):
         with self.assertRaises(ValidationError):
             e.items.all().delete()
         with self.assertRaises(ValidationError):
-            JournalItem.objects.bulk_create([JournalItem(entry=e, account=account('1110'), debit=D('1'), credit=0)])
+            JournalItem.objects.bulk_create([JournalItem(entry=e, account=account('1195'), debit=D('1'), credit=0)])
         # moving an open entry INTO the closed period is refused too
         open_entry = _entry(OPEN_DAY, 'T-OPEN2')
         with self.assertRaises(ValidationError):
@@ -179,7 +179,7 @@ class PeriodLockTests(TestCase):
             'date': LOCKED_DAY.isoformat(), 'description': 'manual',
             'items-TOTAL_FORMS': '2', 'items-INITIAL_FORMS': '0',
             'items-MIN_NUM_FORMS': '0', 'items-MAX_NUM_FORMS': '1000',
-            'items-0-account': account('1110').pk, 'items-0-debit': '10', 'items-0-credit': '0',
+            'items-0-account': account('1195').pk, 'items-0-debit': '10', 'items-0-credit': '0',
             'items-1-account': account('3100').pk, 'items-1-debit': '0', 'items-1-credit': '10',
         })
         self.assertEqual(r.status_code, 200)

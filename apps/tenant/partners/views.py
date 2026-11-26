@@ -1,5 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from .models import Partner, Payment
 from apps.tenant.core.decorators import custom_permission_required
@@ -78,10 +78,22 @@ def customer_list(request):
 from django.contrib import messages
 from apps.tenant.pricing.models import CustomerSector
 
+def _identity_fields(request):
+    """Tax / national id (9 / 14 digits, dashes removed) + the card's e-invoice address. ValidationError if bad."""
+    tax_id, national_id = Partner.clean_identity(request.POST.get('tax_id'), request.POST.get('national_id'))
+
+    def g(key, n):
+        return (request.POST.get(key) or '').strip()[:n]
+    return {'tax_id': tax_id, 'national_id': national_id or None, 'address': g('address', 2000),
+            'eta_governate': g('eta_governate', 100), 'eta_region_city': g('eta_region_city', 100),
+            'eta_building_number': g('eta_building_number', 50)}
+
+
 @login_required
 @custom_permission_required('partners.add_partner', redirect_url='core:main_screen')
 def partner_create(request):
     from decimal import Decimal, InvalidOperation
+    from django.core.exceptions import ValidationError
     from django.utils import timezone
     import datetime
 
@@ -93,8 +105,11 @@ def partner_create(request):
         phone = request.POST.get('phone')
         mobile = request.POST.get('mobile')
         email = request.POST.get('email')
-        national_id = request.POST.get('national_id')
-        tax_id = request.POST.get('tax_id')
+        try:
+            identity = _identity_fields(request)
+        except ValidationError as e:
+            messages.error(request, ' '.join(e.messages))
+            return redirect(request.path)
         partner_type = request.POST.get('partner_type')
         sector_id = request.POST.get('sector')
         opening_balance = request.POST.get('opening_balance', '0').strip()
@@ -123,6 +138,11 @@ def partner_create(request):
         elif op_balance > 0:
             op_date = timezone.now().date()
 
+        taxes = _tax_fields(request)
+        if taxes is None:
+            messages.error(request, 'نسبة الضريبة لازم تكون رقم بين 0 و 100.')
+            return redirect(request.path)
+
         sector = None
         if partner_type in ['CUSTOMER', 'BOTH'] and sector_id:
             try:
@@ -135,13 +155,13 @@ def partner_create(request):
             phone=phone,
             mobile=mobile,
             email=email,
-            national_id=national_id,
-            tax_id=tax_id,
             partner_type=partner_type,
+            **identity,
             sector=sector,
             opening_balance=op_balance,
             opening_balance_type=opening_balance_type,
-            opening_balance_date=op_date
+            opening_balance_date=op_date,
+            **taxes,
         )
         messages.success(request, 'تم إضافة الشريك وتسجيل رصيد أول مدة بنجاح!')
         if partner_type == 'SUPPLIER':
@@ -159,6 +179,7 @@ def partner_create(request):
 @custom_permission_required('partners.change_partner', redirect_url='core:main_screen')
 def partner_edit(request, pk):
     from decimal import Decimal, InvalidOperation
+    from django.core.exceptions import ValidationError
     from django.utils import timezone
     from django.db.models import Q
     import datetime
@@ -198,9 +219,20 @@ def partner_edit(request, pk):
         partner.phone = request.POST.get('phone')
         partner.mobile = request.POST.get('mobile')
         partner.email = request.POST.get('email')
-        partner.national_id = request.POST.get('national_id')
-        partner.tax_id = request.POST.get('tax_id')
+        try:
+            identity = _identity_fields(request)
+        except ValidationError as e:
+            messages.error(request, ' '.join(e.messages))
+            return redirect(request.path)
+        for k, v in identity.items():
+            setattr(partner, k, v)
         partner.partner_type = request.POST.get('partner_type')
+        taxes = _tax_fields(request)
+        if taxes is None:
+            messages.error(request, 'نسبة الضريبة لازم تكون رقم بين 0 و 100.')
+            return redirect(request.path)
+        for k, v in taxes.items():
+            setattr(partner, k, v)
 
         sector_id = request.POST.get('sector')
         if partner.partner_type in ['CUSTOMER', 'BOTH'] and sector_id:
@@ -982,3 +1014,18 @@ def aging_report(request):
         'not_on_invoices': sum((r['not_on_invoices'] for r in rows), Decimal('0')),
         'detail': detail,
     })
+
+
+def _tax_fields(request):
+    """The customer's taxes from the form (None when a rate is not a number between 0 and 100)."""
+    out = {'subject_to_vat': bool(request.POST.get('subject_to_vat')),
+           'subject_to_withholding_tax': bool(request.POST.get('subject_to_withholding_tax'))}
+    for field, default in (('vat_rate', '14'), ('wht_rate', '1')):
+        try:
+            v = Decimal(str(request.POST.get(field) or default).strip())
+        except (InvalidOperation, ValueError):
+            return None
+        if not v.is_finite() or v < 0 or v > 100:
+            return None
+        out[field] = v
+    return out

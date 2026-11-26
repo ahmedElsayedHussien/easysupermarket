@@ -88,7 +88,7 @@ class RentalCreateView(CustomPermissionRequiredMixin, CreateView):
         try:
             with transaction.atomic():
                 rental.save()
-                rental.post_rental()
+                rental.post_rental(user=self.request.user)
             messages.success(self.request, 'تم إنشاء عقد الإيجار وتسجيل القيود المحاسبية بنجاح.')
             return redirect(f"{self.success_url}?print_contract={rental.id}")
         except Exception as e:
@@ -106,7 +106,7 @@ class RentalReturnView(CustomPermissionRequiredMixin, View):
     def get(self, request, pk):
         rental = get_object_or_404(Rental, pk=pk)
         from apps.tenant.accounting.models import Treasury, EWallet
-        treasuries = Treasury.objects.all()
+        treasuries = Treasury.objects.business()
         ewallets = EWallet.objects.all()
         
         return render(request, 'rentals/rental_return.html', {
@@ -124,7 +124,7 @@ class RentalReturnView(CustomPermissionRequiredMixin, View):
         ewallet_id = request.POST.get('ewallet')
         
         from apps.tenant.accounting.models import Treasury, EWallet
-        treasury = Treasury.objects.filter(pk=treasury_id).first() if treasury_id else None
+        treasury = Treasury.objects.business().filter(pk=treasury_id).first() if treasury_id else None
         ewallet = EWallet.objects.filter(pk=ewallet_id).first() if ewallet_id else None
         
         try:
@@ -133,7 +133,8 @@ class RentalReturnView(CustomPermissionRequiredMixin, View):
                 refund_method=refund_method,
                 treasury=treasury,
                 ewallet=ewallet,
-                penalty_amount=penalty_amount
+                penalty_amount=penalty_amount,
+                user=request.user,
             )
             messages.success(request, 'تم تسجيل عودة المعدة بنجاح وأصبحت متاحة للإيجار.')
             return redirect('rentals:rental_list')

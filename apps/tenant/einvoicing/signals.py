@@ -1,6 +1,3 @@
-from django.db.models.signals import post_save
-from django.dispatch import receiver
-
 from apps.tenant.invoicing.models import Invoice
 
 from .models import EInvoiceLog
@@ -11,9 +8,9 @@ NOT_SENT = ('WAITING_APPROVAL', 'PENDING', 'SIGNED', 'ERROR', 'INVALID')
 SENT = ('SUBMITTED', 'VALID')
 
 
-@receiver(post_save, sender=Invoice)
-def create_einvoice_log(sender, instance, created, **kwargs):
+def create_einvoice_log(sender, instance, created=False, **kwargs):
     """
+    Called explicitly by invoice_service.confirm_invoice / cancel_invoice (no signal).
     Queue documents for the Tax Authority and keep the queue in step with the invoice:
       - POSTED sales invoice with tax            -> invoice (I)
       - POSTED sales return of a queued invoice   -> credit note (C) referencing it

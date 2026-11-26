@@ -253,12 +253,12 @@ def update_or_create_product_opening_stock(
         ).order_by('-id').first()
 
         je = None
-        if dedicated_entry:
-            # Update dedicated entry
+        if dedicated_entry and dedicated_entry.status == JournalEntry.DRAFT:
+            # Update the dedicated entry while it is still a draft (a posted one is corrected by the
+            # delta adjustment entry below — a posted entry is never rewritten)
             dedicated_entry.date = today
             dedicated_entry.description = f'رصيد أول المدة لصنف {prod_locked.name} ({new_quantity} وحدة) - {wh_locked.name}'
-            dedicated_entry.status = JournalEntry.POSTED
-            dedicated_entry.save(update_fields=['date', 'description', 'status', 'updated_at'])
+            dedicated_entry.save(update_fields=['date', 'description', 'updated_at'])
             dedicated_entry.items.all().delete()
             if new_total_val > Decimal('0'):
                 JournalItem.objects.create(
@@ -269,6 +269,8 @@ def update_or_create_product_opening_stock(
                     entry=dedicated_entry, account=opening_equity_acc, debit=Decimal('0'), credit=new_total_val,
                     description=f'تسوية رصيد أول المدة رأس المال - {prod_locked.name}'
                 )
+            if new_total_val > Decimal('0'):
+                dedicated_entry.post(user)        # lines first, then the checked posting
             je = dedicated_entry
         else:
             # Post an adjustment journal entry for the delta

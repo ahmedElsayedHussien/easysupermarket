@@ -542,7 +542,7 @@ class VoucherForm(OpenPeriodDateMixin, BaseGlassForm):
             if sum_paid <= 0:
                 raise forms.ValidationError({'paid_cash': 'يجب إدخال مبالغ السداد المقسم بحيث تساوي إجمالي مبلغ السند.'})
 
-            if abs(sum_paid - amount) > Decimal('0.05'):
+            if sum_paid != amount:
                 raise forms.ValidationError(f'إجمالي مبالغ السداد المقسم ({sum_paid}) لا يساوي إجمالي مبلغ السند ({amount}).')
 
             defaults = pos_defaults_for(self.user)

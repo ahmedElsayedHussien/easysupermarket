@@ -1,0 +1,57 @@
+{% load user_tags %}<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>إذن تحميل {{ order.number }}</title>
+<style>
+    @page { size: A4; margin: 14mm; }
+    body { font-family: "Segoe UI", Tahoma, sans-serif; color: #111; margin: 0; font-size: 13px; }
+    .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111; padding-bottom: 8px; }
+    .head h1 { margin: 0; font-size: 20px; }
+    .head .co { font-size: 15px; font-weight: 700; }
+    .meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 16px; margin: 12px 0; }
+    .meta div span { color: #555; }
+    table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+    th, td { border: 1px solid #333; padding: 6px 8px; text-align: center; }
+    th { background: #eee; }
+    td:nth-child(2) { text-align: right; }
+    .chk { width: 70px; }
+    .sign { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 46px; text-align: center; }
+    .sign div { border-top: 1px solid #333; padding-top: 6px; }
+    .stamp { display: inline-block; border: 2px solid #111; padding: 2px 10px; font-weight: 800; }
+    .tools { margin: 10px 0; }
+    @media print { .tools { display: none; } }
+</style>
+</head>
+<body>
+<div class="tools"><button onclick="window.print()">🖨️ طباعة</button> <a href="{% url 'invoicing:loading_detail' order.id %}">↩ رجوع</a></div>
+<div class="head">
+    <div><div class="co">{{ company.name|default:"" }}</div><h1>إذن صرف — طلب تحميل عربية مندوب</h1></div>
+    <div style="text-align:left;"><div class="stamp">{{ order.number }}</div><div style="margin-top:4px;">{{ order.get_status_display }}</div></div>
+</div>
+<div class="meta">
+    <div><span>المندوب:</span> <b>{{ order.rep }}</b></div>
+    <div><span>من مخزن:</span> <b>{{ order.from_warehouse.name }}</b></div>
+    <div><span>لعربية:</span> <b>{{ order.to_warehouse.name }}</b></div>
+    <div><span>تاريخ الطلب:</span> {{ order.date|date:"Y-m-d" }}</div>
+    <div><span>اعتمده:</span> {% if order.approved_by %}{{ order.approved_by|display_name }} — {{ order.approved_at|date:"Y-m-d H:i" }}{% else %}—{% endif %}</div>
+    <div><span>صرفه:</span> {% if order.issued_by %}{{ order.issued_by|display_name }} — {{ order.issued_at|date:"Y-m-d H:i" }}{% else %}—{% endif %}</div>
+</div>
+<table>
+    <thead><tr><th>#</th><th>الصنف</th><th>الباركود</th><th>الوحدة</th><th>المطلوب</th><th>المعتمد للصرف</th><th class="chk">اتسلّم ✓</th></tr></thead>
+    <tbody>
+        {% for l in lines %}
+        <tr><td>{{ forloop.counter }}</td><td>{{ l.product.name }}</td><td>{{ l.product.barcode|default:"" }}</td><td>{{ l.uom_name }}</td>
+            <td>{{ l.requested_qty|floatformat:"-3" }}</td><td><b>{{ l.final_qty|floatformat:"-3" }}</b></td><td></td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if order.notes %}<p>ملاحظات: {{ order.notes }}</p>{% endif %}
+<div class="sign">
+    <div>أمين المخزن</div>
+    <div>المندوب (استلمت البضاعة كاملة)</div>
+    <div>المعتمد</div>
+</div>
+<script>window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });</script>
+</body>
+</html>

@@ -20,7 +20,7 @@ from apps.tenant.core.usernames import display_username
 # Auto-generate invoice numbers
 # ---------------------------------------------------------------------------
 
-def _generate_invoice_number(invoice_type: str) -> str:
+def _generate_invoice_number(invoice_type: str, year: int = None) -> str:
     """
     Generates a sequential invoice number per type and year.
     Format: SALE-2024-00001, PUR-2024-00001, etc.
@@ -38,7 +38,7 @@ def _generate_invoice_number(invoice_type: str) -> str:
         'RETURN_PURCHASE': 'RPUR',
     }
     prefix = prefix_map.get(invoice_type, 'INV')
-    year = datetime.date.today().year
+    year = year or datetime.date.today().year
     full_prefix = f'{prefix}-{year}-'
     num = next_sequence(
         f'INVOICE:{full_prefix}',
@@ -350,19 +350,32 @@ class Invoice(models.Model):
     def __str__(self):
         return f'{self.invoice_number} | {self.get_invoice_type_display()} | {self.total_amount}'
 
+    # figures and parties of a posted invoice: changed only by cancelling it (reversal) or a return
+    LOCKED_WHEN_POSTED = ('invoice_type', 'partner_id', 'branch_id', 'warehouse_id', 'date', 'subtotal',
+                          'discount_amount', 'tax_amount', 'wht_amount', 'total_amount')
+    POSTED_LOCKED_MSG = 'الفاتورة مرحّلة ومينفعش تتعدّل — الغيها أو اعمل مرتجع.'
+
+    def _check_posted_unchanged(self, update_fields=None):
+        fields = [f for f in self.LOCKED_WHEN_POSTED
+                  if update_fields is None or f in update_fields or f.removesuffix('_id') in update_fields]
+        if not fields:
+            return
+        orig = Invoice.objects.filter(pk=self.pk).values('status', *fields).first()
+        if orig and orig['status'] == self.POSTED and any(orig[f] != getattr(self, f) for f in fields):
+            raise ValidationError(self.POSTED_LOCKED_MSG)
+
     def save(self, *args, **kwargs):
         """Auto-generate invoice number if not set."""
-        if self.pk:
-            orig = Invoice.objects.get(pk=self.pk)
-            if orig.status == self.POSTED and self.status == self.POSTED:
-                pass
+        if self.pk and not self._state.adding:
+            self._check_posted_unchanged(kwargs.get('update_fields'))
 
         if not self.invoice_number:
             from django.db import transaction
             # Allocate the number and INSERT in one transaction so the sequence
             # row lock is held until the invoice is committed.
             with transaction.atomic():
-                self.invoice_number = _generate_invoice_number(self.invoice_type)
+                self.invoice_number = _generate_invoice_number(
+                    self.invoice_type, (self.date or datetime.date.today()).year)
                 super().save(*args, **kwargs)
             return
         super().save(*args, **kwargs)
@@ -493,6 +506,10 @@ class InvoiceLine(models.Model):
     unit_price = models.DecimalField(
         max_digits=15, decimal_places=4, verbose_name='سعر الوحدة'
     )
+    discount_fixed = models.DecimalField(
+        max_digits=18, decimal_places=4, null=True, blank=True,
+        verbose_name='خصم بمبلغ ثابت (لو متحدد بيتاخد بدل النسبة)'
+    )
     discount_pct = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة الخصم %'
@@ -503,6 +520,10 @@ class InvoiceLine(models.Model):
         on_delete=models.SET_NULL,
         verbose_name='وحدة القياس'
     )
+    # the unit's factor when the line was written: returns / cancellations / reports use THIS one even if
+    # the product's unit is changed or deleted later (null = old line, falls back to the unit)
+    conversion_factor = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True,
+                                            verbose_name='معامل التحويل وقت البيع')
     # Optional expiry date entered on the purchase screen (SystemSetting.enable_expiry_tracking);
     # copied onto the InventoryBatch created when the purchase is confirmed.
     expiry_date = models.DateField(null=True, blank=True, verbose_name='تاريخ الصلاحية')
@@ -553,6 +574,39 @@ class InvoiceLine(models.Model):
         return f'{self.product.name} × {self.quantity} @ {self.unit_price}'
 
     @property
+    def factor(self):
+        """Base units per one unit of this line (the factor saved on the line, else its unit's)."""
+        if self.conversion_factor:
+            return self.conversion_factor
+        return (self.uom.conversion_factor or Decimal('1')) if self.uom_id and self.uom else Decimal('1')
+
+    @property
+    def base_quantity(self):
+        return (self.quantity or Decimal('0')) * self.factor
+
+    # after posting only these are written (COGS by the FIFO engine, returned qty by returns)
+    POSTED_WRITABLE = frozenset({'cogs_amount', 'returned_quantity'})
+
+    def _invoice_status(self):
+        if not self.invoice_id:
+            return None
+        return Invoice.objects.filter(pk=self.invoice_id).values_list('status', flat=True).first()
+
+    def _check_invoice_open(self, update_fields=None):
+        if getattr(self, '_allow_posted_edit', False):
+            return
+        if self._invoice_status() != Invoice.POSTED:
+            return
+        if not self._state.adding and update_fields is not None and set(update_fields) <= self.POSTED_WRITABLE:
+            return
+        raise ValidationError(Invoice.POSTED_LOCKED_MSG)
+
+    def delete(self, *args, **kwargs):
+        if not getattr(self, '_allow_posted_edit', False) and self._invoice_status() == Invoice.POSTED:
+            raise ValidationError(Invoice.POSTED_LOCKED_MSG)
+        return super().delete(*args, **kwargs)
+
+    @property
     def display_unit_name(self):
         if getattr(self, '_custom_display_unit_name', None):
             return self._custom_display_unit_name
@@ -576,12 +630,21 @@ class InvoiceLine(models.Model):
         wht_amount = subtotal × wht_rate/100
         total_amount = subtotal + tax_amount - wht_amount
         """
+        update_fields = kwargs.get('update_fields')
+        self._check_invoice_open(update_fields)
+        if update_fields is not None:            # a partial write (cogs / returned qty): figures stay as stored
+            return super().save(*args, **kwargs)
+        self.conversion_factor = (self.uom.conversion_factor or Decimal('1')) if self.uom_id and self.uom \
+            else Decimal('1')
         qty = self.quantity or Decimal('0')
         price = self.unit_price or Decimal('0')
         disc_pct = self.discount_pct or Decimal('0')
 
         gross = qty * price
-        self.discount_amount = (gross * disc_pct / Decimal('100')).quantize(Decimal('0.0001'))
+        if self.discount_fixed is not None:      # an exact amount (e.g. 50 EGP) — the % is display only
+            self.discount_amount = min(max(self.discount_fixed, Decimal('0')), gross).quantize(Decimal('0.0001'))
+        else:
+            self.discount_amount = (gross * disc_pct / Decimal('100')).quantize(Decimal('0.0001'))
         self.subtotal = (gross - self.discount_amount).quantize(Decimal('0.0001'))
         
         # Calculate taxes
@@ -612,11 +675,11 @@ class InvoiceLine(models.Model):
                     )
                     if not allow_negative:
                         available = self.product.get_stock(self.invoice.warehouse)
-                        if self.quantity > available:
+                        if self.base_quantity > available:       # stock is kept in base units
                             from apps.tenant.core.decorators import is_admin_user
                             is_manager = bool(self.invoice.cashier) and is_admin_user(self.invoice.cashier)
                             if not is_manager:
-                                raise ValidationError(f'الكمية المطلوبة ({self.quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {self.product.name} وغير مسموح بالسحب بالسالب.')
+                                raise ValidationError(f'الكمية المطلوبة ({self.base_quantity}) تتجاوز المخزون المتاح ({available}) للمنتج {self.product.name} وغير مسموح بالسحب بالسالب.')
         except ValidationError:
             raise
         except (Invoice.DoesNotExist, AttributeError, TypeError) as exc:
@@ -1272,6 +1335,11 @@ class UnloadingOrderLine(models.Model):
                                     verbose_name='سليم (بالوحدة الأساسية)')
     damaged_qty = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'),
                                       verbose_name='تالف (بالوحدة الأساسية)')
+    # what the rep asked for (sound/damaged above become the counted quantities on receipt)
+    requested_sound = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True,
+                                          verbose_name='سليم — طلب المندوب')
+    requested_damaged = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True,
+                                            verbose_name='تالف — طلب المندوب')
 
     class Meta:
         verbose_name = 'بند طلب تفريغ'
@@ -1296,6 +1364,9 @@ class RepCashHandover(models.Model):
                                  related_name='+', verbose_name='الخزنة المستلمة')
     bank_account = models.ForeignKey('accounting.BankAccount', on_delete=models.PROTECT, null=True, blank=True,
                                      related_name='+', verbose_name='البنك المستلم')
+    intermediary = models.ForeignKey('accounting.IntermediaryCompany', on_delete=models.PROTECT, null=True, blank=True,
+                                     related_name='handovers', verbose_name='ورّد عن طريق شركة وسيطة')
+    reference = models.CharField(max_length=100, blank=True, default='', verbose_name='رقم العملية (فوري / أمان…)')
     notes = models.CharField(max_length=255, blank=True, default='', verbose_name='ملاحظات')
     journal_entry = models.ForeignKey('accounting.JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
                                       related_name='+', verbose_name='القيد')
@@ -1307,6 +1378,9 @@ class RepCashHandover(models.Model):
         verbose_name = 'توريد نقدية مندوب'
         verbose_name_plural = 'توريدات المناديب'
         ordering = ['-date', '-id']
+        constraints = [models.UniqueConstraint(   # one Fawry / Aman receipt = one hand-over
+            fields=['intermediary', 'reference'], condition=models.Q(intermediary__isnull=False) & ~models.Q(reference=''),
+            name='uniq_intermediary_handover_ref')]
 
     def __str__(self):
         return self.number

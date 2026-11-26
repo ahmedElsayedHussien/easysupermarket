@@ -21,6 +21,8 @@
         body { padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
         .top { position: sticky; top: 0; z-index: 10; background: var(--accent); color: var(--accent-ink); padding: .7rem 1rem; display: flex; align-items: center; gap: .6rem; }
         .top h1 { font-size: 1.05rem; margin: 0; font-weight: 800; flex: 1; }
+        .top .back { color: var(--accent-ink); text-decoration: none; font-weight: 800; font-size: .9rem; background: rgba(0,0,0,.18); border-radius: 10px; padding: .4rem .75rem; white-space: nowrap; }
+        .top .back:active { background: rgba(0,0,0,.3); }
         .top .chip { background: rgba(255,255,255,.2); border-radius: 999px; padding: .2rem .7rem; font-size: .8rem; font-weight: 700; white-space: nowrap; }
         main { padding: .8rem; max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: .8rem; }
         .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: .9rem; }
@@ -58,14 +60,55 @@
         nav.bottom a { text-decoration: none; color: var(--muted); text-align: center; padding: .45rem 0 .5rem; font-size: .72rem; font-weight: 700; }
         nav.bottom a span { display: block; font-size: 1.35rem; }
         nav.bottom a.on { color: var(--accent); }
+
+        /* ---- phone-first ---- */
+        [hidden] { display: none !important; }
+        .tag { display: inline-block; font-size: .7rem; font-weight: 800; padding: .1rem .5rem; border-radius: 999px; background: var(--chip); color: var(--muted); }
+        .tag.sale { background: rgba(18,146,79,.12); color: var(--ok); }
+        .tag.ret { background: rgba(214,40,57,.12); color: var(--bad); }
+        .tag.pay { background: var(--chip); color: var(--ink); }
+        .tag.void { background: var(--ink); color: var(--bg); }                                           /* flex/grid must not show hidden blocks */
+        html { -webkit-text-size-adjust: 100%; }
+        a, button, .item, .tile, nav.bottom a { touch-action: manipulation; }          /* no double-tap zoom delay */
+        input, select, textarea { font-size: 16px !important; min-height: 46px; }       /* <16px = iPhone zooms in */
+        input[type=search] { -webkit-appearance: none; }
+        .btn { min-height: 48px; }
+        .btn.sm { min-height: 40px; }
+        button, .btn, .tile, .item { user-select: none; -webkit-user-select: none; }
+        .btn:active, .tile:active { transform: scale(.98); }
+        .top { padding: .55rem .7rem; padding-top: max(.55rem, env(safe-area-inset-top)); }
+        .top h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .top .back { min-height: 40px; display: inline-flex; align-items: center; }
+        .top .chips { display: flex; gap: .3rem; min-width: 0; }
+        .top .chip { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; }
+        @media (max-width: 480px) {
+            .top .chip.who { display: none; }                                         /* the name is on his home page */
+            .top h1 { font-size: .98rem; }
+            main { padding: .6rem; gap: .65rem; }
+            .card { padding: .8rem; border-radius: 12px; }
+        }
+        nav.bottom a { min-height: 56px; }
+        .offline { position: fixed; top: 0; inset-inline: 0; z-index: 50; background: var(--bad); color: #fff; text-align: center; font-weight: 800; font-size: .85rem; padding: .45rem; padding-top: max(.45rem, env(safe-area-inset-top)); }
+        .scan-btn { flex: 0 0 auto; width: 48px; min-height: 46px; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); font-size: 1.3rem; }
+        .scanner { position: fixed; inset: 0; z-index: 60; background: #000; display: flex; flex-direction: column; }
+        .scanner video { flex: 1; width: 100%; object-fit: cover; }
+        .scanner .frame { position: absolute; top: 50%; left: 50%; width: 72vw; height: 30vw; transform: translate(-50%, -50%); border: 3px solid var(--accent); border-radius: 12px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.45); }
+        .scanner .bar { padding: .8rem; padding-bottom: max(.8rem, env(safe-area-inset-bottom)); display: flex; gap: .6rem; align-items: center; color: #fff; background: rgba(0,0,0,.6); }
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
     <header class="top">
+        {% if request.resolver_match.url_name != 'rep_app_home' %}
+        <a class="back" href="{% url 'invoicing:rep_app_home' %}" title="رجوع للوحتي">→ لوحتي</a>
+        {% endif %}
         <h1>{% block heading %}{{ title }}{% endblock %}</h1>
-        <span class="chip">🚚 {{ rep_name }}</span>
+        <span class="chips">
+            <span class="chip" title="فرعك">🏢 {% if rep_branch %}{{ rep_branch.name }}{% else %}بدون فرع{% endif %}</span>
+            <span class="chip who">🚚 {{ rep_name }}</span>
+        </span>
     </header>
+    <div class="offline" id="offline" hidden>📡 مفيش نت — استنى لحد ما يرجع قبل ما تحفظ</div>
     <main>
         {% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}
         {% block content %}{% endblock %}
@@ -82,6 +125,60 @@
     function money(v) { return (Math.round(parseFloat(v || 0) * 100) / 100).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
     function esc(t) { var d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; }
     if ('serviceWorker' in navigator) { navigator.serviceWorker.register('{% url "core:pwa_sw" %}', {scope: '/'}).catch(function () {}); }
+
+    // ---- connection banner (mobile data drops) ----
+    (function () {
+        var b = document.getElementById('offline');
+        function upd() { b.hidden = navigator.onLine !== false; }
+        window.addEventListener('online', upd); window.addEventListener('offline', upd); upd();
+    })();
+
+    // ---- one tap = one submit (slow mobile networks) ----
+    document.addEventListener('submit', function (e) {
+        var f = e.target;
+        if (e.defaultPrevented) return;
+        if (f.dataset.sent) { e.preventDefault(); return; }
+        if (navigator.onLine === false) { e.preventDefault(); alert('مفيش نت دلوقتي — استنى لحد ما يرجع.'); return; }
+        f.dataset.sent = '1';
+        f.querySelectorAll('button:not([type=button])').forEach(function (b) { b.disabled = true; b.dataset.label = b.textContent; b.textContent = '⏳ لحظة…'; });
+    });
+    window.addEventListener('pageshow', function () {           // back button: re-enable forms
+        document.querySelectorAll('form[data-sent]').forEach(function (f) {
+            delete f.dataset.sent;
+            f.querySelectorAll('button[data-label]').forEach(function (b) { b.disabled = false; b.textContent = b.dataset.label; });
+        });
+    });
+
+    // ---- barcode scan with the phone camera (Android Chrome; needs https) ----
+    var CAN_SCAN = 'BarcodeDetector' in window && window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+    function scanInto(input) {
+        var box = document.createElement('div'), stream = null, timer = null, done = false;
+        box.className = 'scanner';
+        box.innerHTML = '<video playsinline muted></video><div class="frame"></div><div class="bar"><span style="flex:1;">وجّه الكاميرا على الباركود</span><button type="button" class="btn ghost sm">إلغاء</button></div>';
+        document.body.appendChild(box);
+        function close() { done = true; clearInterval(timer); if (stream) stream.getTracks().forEach(function (t) { t.stop(); }); box.remove(); }
+        box.querySelector('button').onclick = close;
+        var detector = new BarcodeDetector({formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code']});
+        navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}}).then(function (s) {
+            stream = s; var v = box.querySelector('video'); v.srcObject = s; v.play();
+            timer = setInterval(function () {
+                if (done || v.readyState < 2) return;
+                detector.detect(v).then(function (codes) {
+                    if (done || !codes.length) return;
+                    if (navigator.vibrate) navigator.vibrate(80);
+                    close();
+                    input.value = codes[0].rawValue;
+                    input.dispatchEvent(new Event('input', {bubbles: true}));
+                }).catch(function () {});
+            }, 250);
+        }).catch(function () { close(); alert('مقدرتش أفتح الكاميرا — اسمح للمتصفح باستخدامها.'); });
+    }
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('[data-scan]').forEach(function (btn) {
+            if (!CAN_SCAN) { btn.remove(); return; }
+            btn.addEventListener('click', function () { scanInto(document.getElementById(btn.dataset.scan)); });
+        });
+    });
     </script>
     {% block scripts %}{% endblock %}
 </body>

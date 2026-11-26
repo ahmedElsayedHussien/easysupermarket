@@ -86,6 +86,10 @@ def ensure_open_period(date):
 class JournalEntryQuerySet(models.QuerySet):
     LOCKED_FIELDS = frozenset({'date', 'status'})
 
+    def _raise_if_any_posted(self):
+        if self.filter(status='POSTED', items__isnull=False).exists():
+            raise ValidationError(JournalEntry.POSTED_LOCKED_MSG)
+
     def _raise_if_any_locked(self):
         lock = _lock_date()
         if not lock:
@@ -95,11 +99,13 @@ class JournalEntryQuerySet(models.QuerySet):
             raise _period_locked_error(locked_date)
 
     def delete(self):
+        self._raise_if_any_posted()
         self._raise_if_any_locked()
         return super().delete()
 
     def update(self, **kwargs):
         if self.LOCKED_FIELDS & set(kwargs):
+            self._raise_if_any_posted()
             self._raise_if_any_locked()
             if 'date' in kwargs:
                 ensure_open_period(kwargs['date'])
@@ -107,6 +113,10 @@ class JournalEntryQuerySet(models.QuerySet):
 
 
 class JournalItemQuerySet(models.QuerySet):
+    def _raise_if_any_posted(self):
+        if self.filter(entry__status='POSTED').exists():
+            raise ValidationError(JournalEntry.POSTED_LOCKED_MSG)
+
     def _raise_if_any_locked(self):
         lock = _lock_date()
         if not lock:
@@ -116,10 +126,12 @@ class JournalItemQuerySet(models.QuerySet):
             raise _period_locked_error(locked_date)
 
     def delete(self):
+        self._raise_if_any_posted()
         self._raise_if_any_locked()
         return super().delete()
 
     def update(self, **kwargs):
+        self._raise_if_any_posted()
         self._raise_if_any_locked()
         if 'entry' in kwargs or 'entry_id' in kwargs:
             target = kwargs.get('entry', kwargs.get('entry_id'))
@@ -131,6 +143,9 @@ class JournalItemQuerySet(models.QuerySet):
 
     def bulk_create(self, objs, *args, **kwargs):
         objs = list(objs)
+        entry_ids = {o.entry_id for o in objs if o.entry_id}
+        if JournalEntry.objects.filter(pk__in=entry_ids, status='POSTED').exists():
+            raise ValidationError(JournalEntry.POSTED_LOCKED_MSG)
         if _lock_date():
             entry_ids = {o.entry_id for o in objs if o.entry_id}
             for d in JournalEntry.objects.filter(pk__in=entry_ids).values_list('date', flat=True):
@@ -258,8 +273,8 @@ class Account(MPTTModel):
         total_debit = sums['d'] or Decimal('0')
         total_credit = sums['c'] or Decimal('0')
         if self.normal_balance == 'DEBIT':
-            return (total_debit - total_credit).quantize(Decimal('0.01'))
-        return (total_credit - total_debit).quantize(Decimal('0.01'))
+            return (total_debit - total_credit).quantize(Decimal('0.0001'))
+        return (total_credit - total_debit).quantize(Decimal('0.0001'))
 
     @property
     def has_children(self):
@@ -331,6 +346,9 @@ class JournalEntry(models.Model):
         related_name='reversed_by',
         verbose_name='قيد عكسي لـ'
     )
+    posted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                  verbose_name='رحّله')
+    posted_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الترحيل')
 
     objects = JournalEntryQuerySet.as_manager()
 
@@ -338,6 +356,7 @@ class JournalEntry(models.Model):
         verbose_name = 'قيد يومية'
         verbose_name_plural = 'قيود اليومية'
         ordering = ['-date', '-created_at']
+        indexes = [models.Index(fields=['status', 'date'], name='je_status_date_idx')]   # reports / balances
 
     def _check_period_lock(self, update_fields=None):
         """
@@ -363,7 +382,29 @@ class JournalEntry(models.Model):
         ensure_open_period(old['date'])
         ensure_open_period(self.date)
 
+    POSTED_LOCKED_MSG = 'القيد مرحّل ومينفعش يتعدّل أو يتمسح — صحّحه بقيد عكسي.'
+
     def save(self, *args, **kwargs):
+        if not getattr(self, '_posting', False):
+            if self._state.adding:
+                # an entry is always created as a draft: it becomes POSTED only through post(), which
+                # checks it (balanced, > 0, leaf accounts, open period)
+                self.status = self.DRAFT
+            else:
+                old = JournalEntry.objects.filter(pk=self.pk).values('status', 'date').first()
+                if old and old['status'] == self.POSTED:
+                    has_items = JournalItem.objects.filter(entry_id=self.pk).exists()
+                    if has_items and (self.status != self.POSTED or self.date != old['date']):
+                        raise ValidationError(self.POSTED_LOCKED_MSG)
+                elif old and self.status == self.POSTED:
+                    # legacy "status = POSTED; save()": keep the other changes, then post properly
+                    self.status = self.DRAFT
+                    self._save_core(*args, **kwargs)
+                    self.post()
+                    return
+        self._save_core(*args, **kwargs)
+
+    def _save_core(self, *args, **kwargs):
         self._check_period_lock(kwargs.get('update_fields'))
         if not self.reference:
             year = self.date.year if self.date else datetime.date.today().year
@@ -375,6 +416,8 @@ class JournalEntry(models.Model):
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
+        if self.pk and JournalEntry.objects.filter(pk=self.pk, status=self.POSTED, items__isnull=False).exists():
+            raise ValidationError(self.POSTED_LOCKED_MSG)
         if self.pk and _lock_date():
             stored = JournalEntry.objects.filter(pk=self.pk).values_list('date', flat=True).first()
             ensure_open_period(stored if stored is not None else self.date)
@@ -428,21 +471,46 @@ class JournalEntry(models.Model):
                     f' الفرق: {diff:.4f}'
                 )
 
-    def post(self):
+    def post(self, user=None):
         """
-        Post the journal entry after validating balance.
-        Raises ValidationError if the entry is not balanced or its date is in the
-        closed accounting period.
+        The ONLY way an entry becomes POSTED. Refused when: already posted, empty (total 0), not balanced,
+        a line is on a group (parent) account, or its date is in the closed period. Records who / when.
         """
-        ensure_open_period(self.date)
-        debit, credit = self.get_totals()   # one query (was up to 4)
-        if abs(debit - credit) >= Decimal('0.0001'):
-            diff = debit - credit
-            raise ValidationError(
-                f'القيد غير متوازن. إجمالي المدين: {debit:.4f}, إجمالي الدائن: {credit:.4f}. الفرق: {diff:.4f}'
-            )
-        self.status = self.POSTED
-        self.save(update_fields=['status', 'updated_at'])
+        from django.utils import timezone
+        with transaction.atomic():
+            current = JournalEntry.objects.select_for_update(of=('self',)).filter(pk=self.pk) \
+                .values_list('status', flat=True).first()
+            if current == self.POSTED:
+                raise ValidationError(f'القيد {self.reference} مرحّل بالفعل.')
+            ensure_open_period(self.date)
+            debit, credit = self.get_totals()   # one query
+            if debit <= 0 or credit <= 0:
+                raise ValidationError(f'القيد {self.reference} فاضي — لازم مدين ودائن أكبر من صفر.')
+            if abs(debit - credit) >= Decimal('0.0001'):
+                diff = debit - credit
+                raise ValidationError(
+                    f'القيد غير متوازن. إجمالي المدين: {debit:.4f}, إجمالي الدائن: {credit:.4f}. الفرق: {diff:.4f}'
+                )
+            groups = list(Account.objects.filter(journal_items__entry=self, children__isnull=False)
+                          .distinct().values_list('code', 'name'))
+            if groups:
+                raise ValidationError('مينفعش ترحيل على حساب رئيسي (تجميعي) — اختار حساب فرعي: '
+                                      + '، '.join(f'{c} {n}' for c, n in groups))
+            inactive = list(Account.objects.filter(journal_items__entry=self, is_active=False)
+                            .distinct().values_list('code', 'name'))
+            if inactive:
+                raise ValidationError('مينفعش ترحيل على حساب موقوف: ' + '، '.join(f'{c} {n}' for c, n in inactive))
+            self.status = self.POSTED
+            self.posted_at = timezone.now()
+            if user is not None and getattr(user, 'pk', None):
+                self.posted_by = user
+            elif self.posted_by_id is None and self.created_by_id:
+                self.posted_by_id = self.created_by_id
+            self._posting = True
+            try:
+                self.save(update_fields=['status', 'posted_at', 'posted_by', 'updated_at'])
+            finally:
+                self._posting = False
         return self
 
 
@@ -519,11 +587,20 @@ class JournalItem(models.Model):
             old_entry_date = JournalItem.objects.filter(pk=self.pk).values_list('entry__date', flat=True).first()
             ensure_open_period(old_entry_date)
 
+    def _check_entry_open(self):
+        entry_ids = {self.entry_id}
+        if self.pk and not self._state.adding:
+            entry_ids.add(JournalItem.objects.filter(pk=self.pk).values_list('entry_id', flat=True).first())
+        if JournalEntry.objects.filter(pk__in=[e for e in entry_ids if e], status=JournalEntry.POSTED).exists():
+            raise ValidationError(JournalEntry.POSTED_LOCKED_MSG)
+
     def save(self, *args, **kwargs):
+        self._check_entry_open()
         self._check_period_lock()
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
+        self._check_entry_open()
         self._check_period_lock()
         return super().delete(*args, **kwargs)
 
@@ -548,7 +625,22 @@ class PaymentMethod(models.Model):
         return self.name
 
 
+class TreasuryQuerySet(models.QuerySet):
+    def business(self):
+        """Treasuries for POS, purchases, defaults…: a sales rep's cash box (invoicing.SalesRep.treasury)
+        is his own and only moves through his sales, collections and hand-overs."""
+        return self.filter(sales_reps__isnull=True)
+
+
+def is_rep_cash_box(treasury_id):
+    if not treasury_id:
+        return False
+    from apps.tenant.invoicing.models import SalesRep
+    return SalesRep.objects.filter(treasury_id=treasury_id).exists()
+
+
 class Treasury(models.Model):
+    objects = TreasuryQuerySet.as_manager()
     name = models.CharField(max_length=100, verbose_name='اسم الخزينة')
     branch = models.ForeignKey('core.Branch', on_delete=models.PROTECT, verbose_name='الفرع')
     opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
@@ -596,13 +688,13 @@ class Treasury(models.Model):
         return self.account
 
     def save(self, *args, **kwargs):
+        created = self._state.adding
         super().save(*args, **kwargs)
-        if not self.account_id:
-            self.ensure_account()
+        # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
+        self.ensure_account()
+        if created and (self.opening_balance or 0) > 0 and self.account_id:
+            _book_opening_balance_safely(self)
 
-
-from django.db.models.signals import post_save
-from django.dispatch import receiver
 
 class BankAccount(models.Model):
     name = models.CharField(max_length=100, verbose_name='اسم الحساب البنكي')
@@ -650,9 +742,12 @@ class BankAccount(models.Model):
         return self.account
 
     def save(self, *args, **kwargs):
+        created = self._state.adding
         super().save(*args, **kwargs)
-        if not self.account_id:
-            self.ensure_account()
+        # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
+        self.ensure_account()
+        if created and (self.opening_balance or 0) > 0 and self.account_id:
+            _book_opening_balance_safely(self)
 
 class EWallet(models.Model):
     name = models.CharField(max_length=100, verbose_name='اسم المحفظة')
@@ -700,9 +795,12 @@ class EWallet(models.Model):
         return self.account
 
     def save(self, *args, **kwargs):
+        created = self._state.adding
         super().save(*args, **kwargs)
-        if not self.account_id:
-            self.ensure_account()
+        # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
+        self.ensure_account()
+        if created and (self.opening_balance or 0) > 0 and self.account_id:
+            _book_opening_balance_safely(self)
 
 
 OPENING_REFERENCE_PREFIXES = {
@@ -767,7 +865,7 @@ def book_opening_balance(instance, ref_prefix=None):
 
 
 def _book_opening_balance_safely(instance):
-    """Called from post_save: never breaks the save of the treasury/bank/wallet itself."""
+    """Called from save(): never breaks the save of the treasury/bank/wallet itself."""
     try:
         book_opening_balance(instance)
     except Exception:
@@ -776,101 +874,6 @@ def _book_opening_balance_safely(instance):
             type(instance).__name__, instance.pk,
         )
 
-
-@receiver(post_save, sender=Treasury)
-def create_treasury_account(sender, instance, created, **kwargs):
-    updated = False
-    has_valid_account = instance.account and getattr(instance.account, 'code', None) not in ['1100', '1110', '1120']
-    
-    if not has_valid_account:
-        from apps.tenant.services.journal_service import _get_system_account
-        try:
-            parent_code = '1120' if 'بنك' in instance.name else '1110'
-            parent_acc = _get_system_account(parent_code)
-            
-            acc, _ = Account.objects.get_or_create(
-                code=f"{parent_acc.code}-{instance.id}",
-                defaults={
-                    'name': instance.name,
-                    'account_type': parent_acc.account_type,
-                    'parent': parent_acc,
-                    'allow_reconcile': True
-                }
-            )
-            instance.account = acc
-            updated = True
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Error creating treasury account: {str(e)}")
-            pass
-            
-    if updated and instance.account:
-        Treasury.objects.filter(id=instance.id).update(account=instance.account)
-
-    if created and instance.opening_balance > 0 and instance.account:
-        _book_opening_balance_safely(instance)
-
-@receiver(post_save, sender=BankAccount)
-def create_bank_account(sender, instance, created, **kwargs):
-    updated = False
-    has_valid_account = instance.account and getattr(instance.account, 'code', None) not in ['1100', '1120']
-    
-    if not has_valid_account:
-        from apps.tenant.services.journal_service import _get_system_account
-        try:
-            parent_acc = _get_system_account('1120')
-            acc, _ = Account.objects.get_or_create(
-                code=f"{parent_acc.code}-{instance.id}",
-                defaults={
-                    'name': instance.name,
-                    'account_type': parent_acc.account_type,
-                    'parent': parent_acc,
-                    'allow_reconcile': True
-                }
-            )
-            instance.account = acc
-            updated = True
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Error creating bank account: {str(e)}")
-            pass
-            
-    if updated and instance.account:
-        BankAccount.objects.filter(id=instance.id).update(account=instance.account)
-
-    if created and instance.opening_balance > 0 and instance.account:
-        _book_opening_balance_safely(instance)
-
-@receiver(post_save, sender=EWallet)
-def create_ewallet_account(sender, instance, created, **kwargs):
-    updated = False
-    has_valid_account = instance.account and getattr(instance.account, 'code', None) not in ['1100', '1160']
-    
-    if not has_valid_account:
-        from apps.tenant.services.journal_service import _get_system_account
-        try:
-            parent_acc = _get_system_account('1160')
-            acc, _ = Account.objects.get_or_create(
-                code=f"{parent_acc.code}-{instance.id}",
-                defaults={
-                    'name': instance.name,
-                    'account_type': parent_acc.account_type,
-                    'parent': parent_acc,
-                    'allow_reconcile': True
-                }
-            )
-            instance.account = acc
-            updated = True
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Error creating ewallet account: {str(e)}")
-            pass
-            
-    if updated and instance.account:
-        EWallet.objects.filter(id=instance.id).update(account=instance.account)
-
-    if created and instance.opening_balance > 0 and instance.account:
-        _book_opening_balance_safely(instance)
 
 # ---------------------------------------------------------------------------
 # Expenses
@@ -1012,6 +1015,7 @@ class Expense(models.Model):
                 description=f"سداد مصروف {self.expense_account.name}"
             )
             
+            entry.post(self.created_by)
             self.status = self.POSTED
             self.journal_entry = entry
             self.save()
@@ -1191,8 +1195,8 @@ class Voucher(models.Model):
                     self.treasury = self.pos_session.treasury
                 elif defaults['treasury']:
                     self.treasury = defaults['treasury']
-                elif Treasury.objects.exists():
-                    self.treasury = Treasury.objects.first()
+                elif Treasury.objects.business().exists():
+                    self.treasury = Treasury.objects.business().first()
                 if self.treasury and self.pk:
                     Voucher.objects.filter(pk=self.pk).update(treasury=self.treasury)
 
@@ -1270,12 +1274,12 @@ class Voucher(models.Model):
 
             if self.payment_method == self.SPLIT:
                 split_sum = (self.paid_cash or Decimal('0')) + (self.paid_card or Decimal('0')) + (self.paid_ewallet or Decimal('0')) + (self.paid_bank or Decimal('0'))
-                if abs(split_sum - self.amount) > Decimal('0.05'):
+                if split_sum != self.amount:
                     raise ValidationError(f"إجمالي مبالغ السداد المقسم ({split_sum}) لا يساوي إجمالي مبلغ السند ({self.amount}).")
 
                 if self.paid_cash > 0:
                     if not self.treasury:
-                        self.treasury = self._pos_defaults()['treasury'] or Treasury.objects.first()
+                        self.treasury = self._pos_defaults()['treasury'] or Treasury.objects.business().first()
                         if self.treasury and self.pk:
                             Voucher.objects.filter(pk=self.pk).update(treasury=self.treasury)
                     if not self.treasury or not self.treasury.ensure_account():
@@ -1471,7 +1475,17 @@ class POSMachine(models.Model):
                     and self.current_balance < self.min_balance_alert)
 
 
-@receiver(post_save, sender=POSMachine)
+
+    def save(self, *args, **kwargs):
+        created = self._state.adding
+        super().save(*args, **kwargs)
+        if not getattr(self, '_ledger_setup', False):
+            self._ledger_setup = True          # the setup saves the account link once more
+            try:
+                create_pos_machine_account(POSMachine, self, created)   # explicit — no post_save signal
+            finally:
+                self._ledger_setup = False
+
 def create_pos_machine_account(sender, instance, created, **kwargs):
     """Auto-create a ledger account under 1170 for each POS machine."""
     updated = False
@@ -2174,17 +2188,10 @@ class InternalTransfer(models.Model):
         return self._system_account(self.SHORTAGE_ACCOUNT_CODE, 'عجز وزيادة الخزينة (الورديات)', Account.EXPENSE, '5000')
 
     def _post_entry(self, reference, description, lines, date=None):
-        """lines: [(account, debit, credit)] -> a POSTED balanced journal entry."""
-        from apps.tenant.services.journal_service import unique_reference
-        entry = JournalEntry.objects.create(
-            date=date or datetime.date.today(), reference=unique_reference(reference),
-            description=description, status=JournalEntry.POSTED,
-        )
-        for account, debit, credit in lines:
-            if debit or credit:
-                JournalItem.objects.create(entry=entry, account=account, debit=debit, credit=credit)
-        entry.post()
-        return entry
+        """lines: [(account, debit, credit)] -> a POSTED balanced journal entry (accounting.posting)."""
+        from apps.tenant.accounting.posting import post_entry
+        return post_entry(date=date or datetime.date.today(), reference=reference, description=description,
+                          lines=[(a, d, c, description) for a, d, c in lines], source=self)
 
     def receive_transfer(self, user=None, received_amount=None, note=''):
         """
@@ -2541,7 +2548,8 @@ class Cheque(models.Model):
     @staticmethod
     def get_notes_receivable_account():
         """1180 - أوراق قبض (حافظة الشيكات)"""
-        acc = Account.objects.filter(code='1180').first()
+        from apps.tenant.accounting.account_mapping import mapped_account
+        acc = mapped_account('1180') or Account.objects.filter(code='1180').first()
         if not acc:
             curr_assets = Account.objects.filter(code='1100').first()
             acc = Account.objects.create(code='1180', name='أوراق قبض (حافظة الشيكات)', account_type=Account.ASSET, parent=curr_assets, allow_reconcile=True)
@@ -2550,7 +2558,8 @@ class Cheque(models.Model):
     @staticmethod
     def get_under_collection_account():
         """1185 - شيكات برسم التحصيل (الحساب الوسيط بالبنك)"""
-        acc = Account.objects.filter(code='1185').first()
+        from apps.tenant.accounting.account_mapping import mapped_account
+        acc = mapped_account('1185') or Account.objects.filter(code='1185').first()
         if not acc:
             curr_assets = Account.objects.filter(code='1100').first()
             acc = Account.objects.create(code='1185', name='شيكات برسم التحصيل', account_type=Account.ASSET, parent=curr_assets, allow_reconcile=True)
@@ -2559,7 +2568,8 @@ class Cheque(models.Model):
     @staticmethod
     def get_notes_payable_account():
         """2170 - أوراق دفع (شيكات صادرة برسم السداد)"""
-        acc = Account.objects.filter(code='2170').first()
+        from apps.tenant.accounting.account_mapping import mapped_account
+        acc = mapped_account('2170') or Account.objects.filter(code='2170').first()
         if not acc:
             curr_liab = Account.objects.filter(code='2100').first()
             acc = Account.objects.create(code='2170', name='أوراق دفع (شيكات برسم السداد)', account_type=Account.LIABILITY, parent=curr_liab, allow_reconcile=True)
@@ -3641,3 +3651,98 @@ class FiscalYearClose(models.Model):
 
     def __str__(self):
         return f'إقفال {self.year}'
+
+
+class IntermediaryCompany(models.Model):
+    """شركة تحصيل وسيطة (فوري، أمان، بساطة…): المندوب بيورّد فيها المبلغ كامل، والفلوس بتفضل على حسابها
+    (1157) لحد ما تحوّل للبنك ناقص نسبتها — والمحاسب يسوّيها (IntermediarySettlement)."""
+    name = models.CharField(max_length=100, unique=True, verbose_name='اسم الشركة')
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+                                verbose_name='حساب المستحقات')
+    is_active = models.BooleanField(default=True, verbose_name='نشطة')
+    notes = models.CharField(max_length=255, blank=True, default='', verbose_name='ملاحظات')
+
+    class Meta:
+        verbose_name = 'شركة تحصيل وسيطة'
+        verbose_name_plural = 'شركات التحصيل الوسيطة'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def ensure_account(self):
+        if self.account_id:
+            return self.account
+        from apps.tenant.services.journal_service import _get_system_account
+        parent = _get_system_account('1157')
+        acc, _ = Account.objects.get_or_create(code=f'1157-{self.pk}', defaults={
+            'name': f'مستحقات {self.name}', 'account_type': parent.account_type, 'parent': parent,
+            'allow_reconcile': True})
+        self.account = acc
+        self.save(update_fields=['account'])
+        return acc
+
+
+class IntermediarySettlement(models.Model):
+    """تحويل الشركة الوسيطة للبنك ناقص عمولتها وضريبة القيمة المضافة على العمولة (14% — شركات الدفع مش بنوك):
+    Dr البنك (الصافي) + Dr عمولات التحصيل 5306 + Dr ض.ق.م مدخلات 1190 (لو الشركة مسجلة؛ وإلا تتحمّل على 5306)
+    / Cr مستحقات الشركة (المبلغ كله)."""
+    company = models.ForeignKey(IntermediaryCompany, on_delete=models.PROTECT, related_name='settlements',
+                                verbose_name='الشركة')
+    date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
+    gross = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ المسدد من مستحقاتها')
+    fee = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='عمولة التحصيل')
+    vat = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'),
+                              verbose_name='ضريبة القيمة المضافة على العمولة')
+    vat_recoverable = models.BooleanField(default=True, verbose_name='الضريبة مدخلات (الشركة مسجلة في القيمة المضافة)')
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='+', verbose_name='البنك')
+    reference = models.CharField(max_length=100, blank=True, default='', verbose_name='رقم التحويل / الكشف')
+    journal_entry = models.ForeignKey(JournalEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                      verbose_name='القيد')
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                   verbose_name='سجلها')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'تسوية شركة وسيطة'
+        verbose_name_plural = 'تسويات الشركات الوسيطة'
+        ordering = ['-date', '-id']
+
+    @property
+    def net(self):
+        return self.gross - self.fee - self.vat
+
+
+class AccountMapping(models.Model):
+    """ربط عملية محاسبية (معرّفة بكود حسابها الافتراضي) بحساب فرعي تاني — see accounting.account_mapping."""
+    code = models.CharField(max_length=20, unique=True, verbose_name='العملية (كود الحساب الافتراضي)')
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='+', verbose_name='الحساب المربوط')
+    updated_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                   verbose_name='عدّله')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'ربط حساب'
+        verbose_name_plural = 'ربط الحسابات'
+
+    def __str__(self):
+        return f'{self.code} → {self.account}'
+
+
+class PeriodClose(models.Model):
+    """سجل إقفال / إعادة فتح الفترات (accounting.periods) — مين وإمتى وليه."""
+    CLOSE, REOPEN = 'CLOSE', 'REOPEN'
+    ACTION_CHOICES = [(CLOSE, 'إقفال'), (REOPEN, 'إعادة فتح')]
+    action = models.CharField(max_length=10, choices=ACTION_CHOICES, verbose_name='العملية')
+    lock_date = models.DateField(null=True, blank=True, verbose_name='الدفاتر مقفولة لحد')
+    previous_lock_date = models.DateField(null=True, blank=True, verbose_name='كانت مقفولة لحد')
+    note = models.CharField(max_length=255, blank=True, default='', verbose_name='السبب / ملاحظة')
+    user = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                             verbose_name='بواسطة')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'إقفال فترة'
+        verbose_name_plural = 'إقفال الفترات'
+        ordering = ['-created_at', '-id']
+        permissions = [('reopen_periodclose', 'إعادة فتح فترة محاسبية مقفولة')]

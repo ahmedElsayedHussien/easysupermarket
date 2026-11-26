@@ -80,7 +80,7 @@ class SettingsScreenTests(TestCase):
             self.assertIn(f'name="{name}"', html, f'field {name} is not rendered (would be reset on save)')
         for name in REMOVED_NAV:
             self.assertNotIn(f'show_nav_{name}', html)
-        self.assertIn('type="date"', html)
+        self.assertIn(reverse('accounting:fiscal_years'), html)        # lock date: read-only + link
         self.assertIn('الافتراضي العام (يُستخدم عند عدم تحديد افتراضي للفرع)', html)
         self.assertIn(reverse('core:branch_list'), html)
         self.assertIn('حد طلب افتراضي للأصناف التي ليس لها حد خاص', html)
@@ -106,7 +106,7 @@ class SettingsScreenTests(TestCase):
             'weekly_off_days': ['4', '5'],
             'pos_cash_rounding': '0.25',
             'receipt_paper_width': '58',
-            'accounting_lock_date': '2026-06-30',
+            'accounting_lock_date': '2026-06-30',      # ignored: moves only via accounting.periods
             'stagnant_stock_days': '90',
             'expiry_warning_days': '45',
             'dormant_debt_days': '120',
@@ -130,7 +130,7 @@ class SettingsScreenTests(TestCase):
         self.assertEqual(s.weekly_off_days, '4,5')
         self.assertEqual(s.pos_cash_rounding, D('0.25'))
         self.assertEqual(s.receipt_paper_width, '58')
-        self.assertEqual(s.accounting_lock_date, datetime.date(2026, 6, 30))
+        self.assertIsNone(s.accounting_lock_date)
         self.assertEqual(s.stagnant_stock_days, 90)
         self.assertEqual(s.dormant_debt_days, 120)
         self.assertEqual(s.credit_limit_warning_percent, 75)
@@ -153,7 +153,7 @@ class SettingsScreenTests(TestCase):
         self.assertEqual(sorted(form['weekly_off_days'].value()), ['4', '5'])
         self.assertEqual(str(form['pos_cash_rounding'].value()), '0.25')
         html = resp.content.decode()
-        self.assertIn('value="2026-06-30"', html)
+        self.assertIn('مفيش فترة مقفولة', html)                    # lock date shown read-only
         self.assertIn('/media/company/', html)
 
         # Clearing every day off stores an empty CSV.

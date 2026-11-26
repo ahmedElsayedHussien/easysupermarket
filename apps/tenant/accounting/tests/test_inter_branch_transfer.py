@@ -39,6 +39,7 @@ class InterBranchTransferTests(TestCase):
         e = JournalEntry.objects.create(date=datetime.date.today(), reference='SEED-CASH', description='seed', status=JournalEntry.POSTED)
         JournalItem.objects.create(entry=e, account=self.w.treasury.account, debit=D('1000'), credit=0)
         JournalItem.objects.create(entry=e, account=account('3100'), debit=0, credit=D('1000'))
+        e.post()
         self.t = InternalTransfer.objects.create(
             amount=D('300'), from_account_type='TREASURY', from_treasury=self.w.treasury,
             to_account_type='TREASURY', to_treasury=self.treasury2, created_by=self.sender,

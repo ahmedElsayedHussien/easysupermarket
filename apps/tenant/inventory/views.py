@@ -110,16 +110,22 @@ def product_list(request):
     return render(request, 'inventory/products.html', context)
 
 @login_required
+@custom_permission_required('inventory.view_inventorybatch', redirect_url='core:main_screen')
 def api_stock_level(request):
-    product_id = request.GET.get('product_id')
-    warehouse_id = request.GET.get('warehouse_id')
-    
-    try:
-        product = Product.objects.get(id=product_id)
-        wh = Warehouse.objects.get(id=warehouse_id) if warehouse_id else None
-        return JsonResponse({'stock': str(product.get_stock(wh))})
-    except Product.DoesNotExist:
-        return JsonResponse({'error': 'Product not found'}, status=404)
+    """Stock of one product in ONE warehouse of the user's branch scope (admins: any branch).
+    A warehouse is required: without it the figure would be the company-wide total."""
+    from apps.tenant.core.access import filter_by_branch
+    product_id = request.GET.get('product_id') or ''
+    warehouse_id = request.GET.get('warehouse_id') or ''
+    if not product_id.isdigit() or not warehouse_id.isdigit():
+        return JsonResponse({'error': 'اختار الصنف والمستودع.'}, status=400)
+    wh = filter_by_branch(Warehouse.objects.filter(is_active=True), request).filter(id=int(warehouse_id)).first()
+    if wh is None:
+        return JsonResponse({'error': 'المستودع غير موجود.'}, status=404)
+    product = Product.objects.filter(id=int(product_id)).first()
+    if product is None:
+        return JsonResponse({'error': 'الصنف غير موجود.'}, status=404)
+    return JsonResponse({'stock': str(product.get_stock(wh))})
 
 @login_required
 @custom_permission_required('inventory.view_inventorybatch', redirect_url='core:main_screen')
@@ -1255,25 +1261,15 @@ def _locked_stock(product, warehouse):
 
 
 def _post_adjustment_journal(adj, user, reference, description, items):
-    """items: list of (account, debit, credit, description)."""
-    je = JournalEntry.objects.create(
-        date=adj.date,
-        reference=reference,
-        description=description,
-        status=JournalEntry.DRAFT,
-        created_by=user,
-        content_type=ContentType.objects.get_for_model(StockAdjustment),
-        object_id=adj.id
-    )
-    for acc, debit, credit, desc in items:
-        JournalItem.objects.create(entry=je, account=acc, debit=debit, credit=credit, description=desc)
+    """items: list of (account, debit, credit, description) — posted through accounting.posting."""
+    from apps.tenant.accounting.posting import post_entry
     try:
-        je.post()
+        return post_entry(date=adj.date, reference=reference, description=description, lines=items, user=user,
+                          source=adj)
     except ValidationError as e:
         raise _AdjustmentAbort(
             f'حدث خطأ محاسبي أثناء ترحيل القيد: {e.message if hasattr(e, "message") else str(e)}'
         )
-    return je
 
 
 @login_required
@@ -1295,6 +1291,14 @@ def adjustment_confirm(request, pk):
                 raise _AdjustmentAbort('هذه التسوية تم ترحيلها بالفعل أو لم تعد مسودة.')
             if not adj.lines.exists():
                 raise _AdjustmentAbort('لا يمكن ترحيل تسوية لا تحتوي على أي أصناف!')
+            if adj.adjustment_type == 'STOCKTAKE' and not request.user.has_perm('inventory.perform_stocktake'):
+                raise _AdjustmentAbort('اعتماد الجرد الفعلي محتاج صلاحية «الجرد الفعلي واعتماد فروقاته».')
+            # serial-tracked goods are counted by their serials, never by batches
+            serial_lines = [l.product.name for l in adj.lines.select_related('product')
+                            if l.product.product_type == 'SERIALIZED' and adj.adjustment_type != 'STOCKTAKE']
+            if serial_lines:
+                raise _AdjustmentAbort('الأصناف بالسيريال مالهاش تسوية كمية — سوّي السيريالات نفسها: '
+                                       + '، '.join(serial_lines))
 
             ref = f'تسوية {adj.id}'
             total_cost = Decimal('0')
@@ -1304,10 +1308,15 @@ def adjustment_confirm(request, pk):
             def _base_cost(line, factor):
                 if line.unit_cost > Decimal('0') and factor > Decimal('0'):
                     return (line.unit_cost / factor)
-                return line.product.get_average_cost(adj.warehouse) or line.product.last_purchase_price or Decimal('0')
+                cost = line.product.get_average_cost(adj.warehouse) or line.product.last_purchase_price or Decimal('0')
+                if cost <= Decimal('0'):
+                    # goods at cost 0 would make every later sale of them look like pure profit
+                    raise _AdjustmentAbort(f'الصنف "{line.product.name}" مالوش تكلفة (لا متوسط ولا آخر سعر شراء) — '
+                                           'اكتب تكلفة الوحدة في سطر التسوية.')
+                return cost
 
             if adj.adjustment_type == 'STOCKTAKE':
-                for line in adj.lines.select_related('product', 'uom'):
+                for line in adj.lines.select_related('product', 'uom').order_by('product_id', 'id'):
                     factor = line.factor
                     if line.product.product_type == 'SERVICE':
                         continue
@@ -1380,8 +1389,12 @@ def adjustment_confirm(request, pk):
                     )
 
             elif adj.adjustment_type == 'OUT':
-                for line in adj.lines.select_related('product', 'uom'):
+                for line in adj.lines.select_related('product', 'uom').order_by('product_id', 'id'):
                     base_qty = line.quantity * line.factor
+                    if base_qty <= Decimal('0'):
+                        raise _AdjustmentAbort(f'كمية النقص للصنف "{line.product.name}" لازم تكون أكبر من صفر.')
+                    if line.product.product_type == 'SERVICE':
+                        continue
                     try:
                         consumptions = consume_fifo_batches(
                             product=line.product,
@@ -1409,9 +1422,13 @@ def adjustment_confirm(request, pk):
             else:
                 # IN or OPENING: add_inventory_batch offsets any prior deficit batches
                 m_type = 'ADJUSTMENT_IN' if adj.adjustment_type == 'IN' else 'OPENING_BALANCE'
-                for line in adj.lines.select_related('product', 'uom'):
+                for line in adj.lines.select_related('product', 'uom').order_by('product_id', 'id'):
                     factor = line.factor
                     base_qty = line.quantity * factor
+                    if line.product.product_type == 'SERVICE':
+                        continue                                  # a service has no stock to add (nor its value)
+                    if base_qty <= Decimal('0'):
+                        raise _AdjustmentAbort(f'كمية الزيادة للصنف "{line.product.name}" لازم تكون أكبر من صفر.')
                     cost_per_base_unit = _base_cost(line, factor)
                     add_inventory_batch(
                         product=line.product,

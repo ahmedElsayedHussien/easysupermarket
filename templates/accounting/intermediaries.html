@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block extra_css %}{% include "invoicing/_van_css.html" %}{% endblock %}
+
+{% block content %}
+<div class="vn">
+    <div class="vn-panel">
+        <div class="vn-head"><h1>🏪 شركات التحصيل الوسيطة</h1>
+            <span class="st PENDING" style="margin-inline-start:auto;">معاهم لسه: {{ total_held|floatformat:"2g" }}</span></div>
+        <p class="note">المندوب بيورّد المبلغ كامل في فوري / أمان / بساطة (من «توريدات المناديب») فبيتسجل على حساب الشركة.
+            لما الشركة تحوّل للبنك ناقص عمولتها سجّل التسوية هنا: البنك بالصافي + العمولة مصروف (5306) + ضريبة 14% على العمولة
+            «مدخلات» (1190) لو الشركة مسجلة في القيمة المضافة — شركات الدفع مش بنوك فعمولتها مش معفاة.</p>
+    </div>
+
+    <div class="vn-panel">
+        <h2>🏢 الشركات</h2>
+        {% if companies %}
+        <table class="tbl">
+            <thead><tr><th>الشركة</th><th>الحساب</th><th>اتورّد فيها</th><th>معاها لسه (مستحقات)</th><th></th></tr></thead>
+            <tbody>
+                {% for c in companies %}
+                <tr {% if not c.is_active %}style="opacity:.5;"{% endif %}>
+                    <td><strong>{{ c.name }}</strong>{% if c.notes %}<div class="note">{{ c.notes }}</div>{% endif %}</td>
+                    <td>{{ c.account.code|default:"—" }}</td>
+                    <td>{{ c.paid_in|floatformat:"2g" }}</td>
+                    <td><strong {% if c.held %}style="color:var(--neon-gold);"{% endif %}>{{ c.held|floatformat:"2g" }}</strong></td>
+                    <td>{% if can_add %}<form method="post" style="display:inline;">{% csrf_token %}<input type="hidden" name="action" value="toggle"><input type="hidden" name="company" value="{{ c.id }}">
+                        <button class="vn-btn">{% if c.is_active %}إيقاف{% else %}تفعيل{% endif %}</button></form>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}<p class="note">لسه مفيش شركات — ضيف فوري أو أمان من تحت.</p>{% endif %}
+        {% if can_add %}
+        <form method="post" class="frm" style="margin-top:.8rem;">
+            {% csrf_token %}<input type="hidden" name="action" value="add">
+            <label>اسم الشركة<input name="name" required maxlength="100" placeholder="مثال: فوري"></label>
+            <label>ملاحظات<input name="notes" maxlength="255" placeholder="نسبة العمولة، رقم الحساب…"></label>
+            <div><button class="vn-btn primary">➕ إضافة شركة</button></div>
+        </form>
+        {% endif %}
+    </div>
+
+    {% if can_settle and companies %}
+    <form method="post" class="vn-panel">
+        {% csrf_token %}<input type="hidden" name="action" value="settle">
+        <h2>🏦 تسوية: الشركة حوّلت للبنك</h2>
+        <div class="frm">
+            <label>الشركة<select name="company" id="stCompany" required><option value="">— اختار —</option>{% for c in companies %}{% if c.is_active %}<option value="{{ c.id }}" data-held="{{ c.held|stringformat:'s' }}">{{ c.name }} (معاها {{ c.held|floatformat:2 }})</option>{% endif %}{% endfor %}</select></label>
+            <label>المبلغ اللي اتسوّى (قبل الرسوم)<input type="number" name="gross" id="stGross" min="0.01" step="0.01" required></label>
+            <label>عمولة التحصيل (قبل الضريبة)<input type="number" name="fee" id="stFee" min="0" step="0.01" value="0"></label>
+            <label>ضريبة {{ vat_rate|floatformat:"-2" }}% على العمولة<input type="number" name="vat" id="stVat" min="0" step="0.01" value="0"></label>
+            <label>البنك<select name="bank" required><option value="">— اختار —</option>{% for b in banks %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}</select></label>
+            <label>رقم التحويل / الكشف<input name="reference" maxlength="100"></label>
+        </div>
+        <label style="display:flex; gap:.4rem; align-items:center; margin-top:.6rem; color:var(--text-primary); font-size:.85rem;">
+            <input type="checkbox" name="vat_recoverable" {% if vat_registered %}checked{% endif %}> الشركة مسجلة في القيمة المضافة — الضريبة «مدخلات» (1190) تتخصم في الإقرار</label>
+        <p class="note">مش مسجلة؟ شيل العلامة: العمولة + الضريبة يتحمّلوا كلهم على «رسوم تحصيل الشركات الوسيطة». لو فوري بتسوّي الضريبة مع فاتورتها الشهرية مش من التحويل، خلي الضريبة صفر.</p>
+        <p class="note" id="stNet">اللي وصل البنك: —</p>
+        <div class="actions"><button class="vn-btn primary" onclick="return confirm('تسجيل التسوية؟');">💾 تسجيل التسوية</button></div>
+    </form>
+    <script>
+    (function () {
+        var c = document.getElementById('stCompany'), g = document.getElementById('stGross'), f = document.getElementById('stFee'),
+            t = document.getElementById('stVat'), n = document.getElementById('stNet'), RATE = {{ vat_rate|stringformat:'s' }};
+        function upd() { var v = (parseFloat(g.value) || 0) - (parseFloat(f.value) || 0) - (parseFloat(t.value) || 0); n.textContent = 'اللي وصل البنك: ' + v.toFixed(2); }
+        c.addEventListener('change', function () { var o = c.selectedOptions[0]; if (o && o.dataset.held && !g.value) g.value = o.dataset.held; upd(); });
+        f.addEventListener('input', function () { t.value = ((parseFloat(f.value) || 0) * RATE / 100).toFixed(2); upd(); });
+        g.addEventListener('input', upd); t.addEventListener('input', upd);
+    })();
+    </script>
+    {% endif %}
+
+    <div class="cols" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:1rem;">
+        <div class="vn-panel">
+            <h2>⬆️ توريدات المناديب عن طريقهم</h2>
+            {% if handovers %}
+            <table class="tbl"><thead><tr><th>الرقم</th><th>المندوب</th><th>الشركة</th><th>رقم العملية</th><th>المبلغ</th></tr></thead><tbody>
+            {% for h in handovers %}<tr><td>{{ h.number }}<div class="note">{{ h.date|date:"j/n" }}</div></td><td>{{ h.rep }}</td><td>{{ h.intermediary.name }}</td><td>{{ h.reference }}</td><td>{{ h.amount|floatformat:"2g" }}</td></tr>{% endfor %}
+            </tbody></table>
+            {% else %}<p class="note">مفيش.</p>{% endif %}
+        </div>
+        <div class="vn-panel">
+            <h2>🏦 التسويات</h2>
+            {% if settlements %}
+            <table class="tbl"><thead><tr><th>التاريخ</th><th>الشركة</th><th>المبلغ</th><th>العمولة</th><th>ضريبتها</th><th>وصل البنك</th></tr></thead><tbody>
+            {% for s in settlements %}<tr><td>{{ s.date|date:"j/n/Y" }}{% if s.reference %}<div class="note">{{ s.reference }}</div>{% endif %}</td><td>{{ s.company.name }}</td><td>{{ s.gross|floatformat:"2g" }}</td><td class="warn">{{ s.fee|floatformat:"2g" }}</td><td>{{ s.vat|floatformat:"2g" }}{% if s.vat %}<div class="note">{% if s.vat_recoverable %}مدخلات{% else %}مصروف{% endif %}</div>{% endif %}</td><td><strong>{{ s.net|floatformat:"2g" }}</strong><div class="note">{{ s.bank_account.name }}</div></td></tr>{% endfor %}
+            </tbody></table>
+            {% else %}<p class="note">مفيش تسويات لسه.</p>{% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

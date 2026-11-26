@@ -2,11 +2,27 @@
 {% block head %}
 <style>
     .tabs2 { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
-    .results { max-height: 240px; overflow: auto; }
-    .ln { display: flex; gap: .4rem; align-items: center; padding: .5rem 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-    .ln input[type=number] { width: 80px; padding: .5rem; text-align: center; }
-    .ln select { width: auto; padding: .45rem; }
-    .x { background: none; border: 0; color: var(--bad); font-size: 1.1rem; }
+    .route { display: grid; grid-template-columns: 1fr auto 1fr; gap: .5rem; align-items: center; }
+    .route .wh { background: var(--chip); border-radius: 12px; padding: .6rem .7rem; text-align: center; }
+    .route .wh small { display: block; color: var(--muted); font-size: .74rem; font-weight: 700; }
+    .route .wh b { font-size: .95rem; }
+    .route .arrow { font-size: 1.4rem; color: var(--accent); font-weight: 900; }
+    .filters { display: flex; gap: .4rem; align-items: center; margin-top: .6rem; }
+    .filters input { flex: 1; }
+    .toggle { white-space: nowrap; min-height: 46px; padding: .6rem .7rem; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); font-weight: 800; font-family: inherit; font-size: .82rem; }
+    .toggle.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .cat { font-size: .78rem; font-weight: 800; color: var(--muted); padding: .7rem 0 .2rem; border-bottom: 1px dashed var(--line); }
+    .pr { padding: .6rem 0; border-bottom: 1px solid var(--line); }
+    .pr.picked { background: rgba(255,115,0,.06); margin: 0 -.9rem; padding: .6rem .9rem; }
+    .pr .nm { font-weight: 800; font-size: .92rem; }
+    .pr .st { display: flex; gap: .8rem; font-size: .78rem; color: var(--muted); margin-top: .15rem; flex-wrap: wrap; }
+    .pr .st b { color: var(--ink); }
+    .pr .in { display: flex; gap: .4rem; margin-top: .45rem; align-items: center; }
+    .pr .in input { width: 110px; padding: .55rem; text-align: center; font-size: 1rem; }
+    .pr .in select { width: auto; padding: .5rem; font-size: .9rem; }
+    .pr .over { color: var(--bad); font-size: .78rem; font-weight: 700; margin-top: .25rem; }
+    .sendbar { position: sticky; bottom: calc(70px + env(safe-area-inset-bottom)); background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: .7rem; box-shadow: 0 -4px 18px rgba(0,0,0,.08); display: flex; gap: .6rem; align-items: center; }
+    .sendbar .cnt { font-weight: 800; white-space: nowrap; }
 </style>
 {% endblock %}
 {% block content %}
@@ -16,53 +32,124 @@
 </div>
 {% if not rep.van_warehouse %}
 <div class="msg error">الإدارة لسه ما حددتلكش مخزن عربية.</div>
+{% elif not source %}
+<div class="msg error">مفيش مخزن متحدد تحمّل منه — كلّم الإدارة.</div>
 {% else %}
-<form method="post" class="card" id="frm">
+<form method="post" id="frm">
     {% csrf_token %}
-    <h2>⬆️ طلب تحميل جديد {% if source %}<span class="muted">من {{ source.name }}</span>{% endif %}</h2>
-    <input id="q" type="search" placeholder="ابحث عن الصنف…" autocomplete="off">
-    <div id="results" class="results list"></div>
-    <div id="lines" style="margin-top:.4rem;"></div>
-    <div class="field" style="margin-top:.6rem;"><label>ملاحظات</label><input name="notes" maxlength="300"></div>
-    <button class="btn" id="send" disabled>📤 ابعت الطلب للاعتماد</button>
+    <div class="card">
+        <h2>⬆️ طلب تحميل جديد</h2>
+        <div class="route">
+            <div class="wh"><small>📦 من مخزن (المرسل)</small><b>{{ source.name }}</b></div>
+            <div class="arrow">←</div>
+            <div class="wh"><small>🚚 لعربيتك (المستلم)</small><b>{{ rep.van_warehouse.name }}</b></div>
+        </div>
+        <div class="filters">
+            <input id="q" type="search" placeholder="ابحث بالاسم أو الباركود…" autocomplete="off" enterkeyhint="search">
+            <button type="button" class="scan-btn" data-scan="q" aria-label="امسح باركود">📷</button>
+            <button type="button" class="toggle" id="onlyPicked">المختار بس</button>
+        </div>
+    </div>
+
+    <div class="card" id="list">
+        {% for p in catalog_json %}
+        {% ifchanged p.category %}<div class="cat" data-cat>{{ p.category|default:"بدون تصنيف" }}</div>{% endifchanged %}
+        <div class="pr" data-name="{{ p.name|lower }} {{ p.barcode|lower }}" data-barcode="{{ p.barcode|lower }}" data-avail="{{ p.available }}">
+            <input type="hidden" name="product_id" value="{{ p.id }}">
+            <div class="nm">{{ p.name }}</div>
+            <div class="st"><span>المتاح في المخزن: <b class="av">{{ p.available }}</b> <span class="avu">{{ p.unit }}</span></span>
+                <span>في عربيتك: <b>{{ p.in_van }}</b> {{ p.unit }}</span></div>
+            <div class="in">
+                <input type="number" name="qty" min="0" step="any" inputmode="decimal" placeholder="الكمية">
+                {% if p.uoms|length > 1 %}
+                <select name="uom_id">{% for u in p.uoms %}<option value="{{ u.id }}" data-factor="{{ u.factor }}">{{ u.name }}{% if u.factor != '1' %} ({{ u.factor }} {{ p.unit }}){% endif %}</option>{% endfor %}</select>
+                {% else %}<input type="hidden" name="uom_id" value=""><span class="muted">{{ p.unit }}</span>{% endif %}
+            </div>
+            <div class="over" hidden>⚠ أكتر من المتاح في المخزن — المخزن هيعتمد المتاح بس</div>
+        </div>
+        {% empty %}<p class="muted">مفيش أصناف ليها رصيد في {{ source.name }}.</p>{% endfor %}
+    </div>
+
+    <div class="card">
+        <div class="field" style="margin:0;"><label>ملاحظات للمخزن</label><input name="notes" maxlength="300"></div>
+    </div>
+
+    <div class="sendbar">
+        <span class="cnt"><span id="cnt">0</span> صنف</span>
+        <button class="btn" id="send" disabled>📤 ابعت الطلب للاعتماد</button>
+    </div>
 </form>
 {% endif %}
 <div class="card">
     <h2>📋 طلباتي</h2>
     <div class="list">
         {% for o in orders %}
-        <a class="item" href="{% url 'invoicing:rep_app_loading_order' o.id %}"><div class="grow"><div class="t">{{ o.number }}</div><div class="muted">{{ o.date|date:"j/n" }} — {{ o.n }} صنف</div></div><span class="badge {{ o.status }}">{{ o.get_status_display }}</span></a>
+        <a class="item" href="{% url 'invoicing:rep_app_loading_order' o.id %}"><div class="grow"><div class="t">{{ o.number }}</div><div class="muted">{{ o.date|date:"j/n" }} — {{ o.n }} صنف</div></div><span class="badge {{ o.status }}">{{ o.get_status_display }}</span><span class="muted">‹</span></a>
         {% empty %}<p class="muted">مفيش طلبات.</p>{% endfor %}
     </div>
 </div>
 {% endblock %}
 {% block scripts %}
-{{ catalog_json|json_script:"catalog-data" }}
 <script>
-var CATALOG = JSON.parse(document.getElementById('catalog-data').textContent), picked = [];
-var q = document.getElementById('q');
-q && q.addEventListener('input', function () {
-    var s = this.value.trim().toLowerCase(), box = document.getElementById('results');
-    if (!s) { box.innerHTML = ''; return; }
-    var hits = CATALOG.filter(function (p) { return p.name.toLowerCase().indexOf(s) >= 0 || (p.barcode || '').toLowerCase() === s; }).slice(0, 30);
-    box.innerHTML = hits.length ? hits.map(function (p) {
-        return '<div class="item" onclick="pick(' + p.id + ')"><div class="grow"><div class="t">' + esc(p.name) + '</div><div class="muted">متاح في المخزن: ' + esc(p.qty) + ' ' + esc(p.uoms[0].name) + '</div></div><b>＋</b></div>';
-    }).join('') : '<p class="muted">مش موجود في المخزن.</p>';
-});
-function pick(id) {
-    if (!picked.some(function (x) { return x === id; })) picked.push(id);
-    q.value = ''; document.getElementById('results').innerHTML = ''; draw();
-}
-function drop(id) { picked = picked.filter(function (x) { return x !== id; }); draw(); }
-function draw() {
-    document.getElementById('lines').innerHTML = picked.map(function (id) {
-        var p = CATALOG.find(function (x) { return x.id === id; });
-        return '<div class="ln"><input type="hidden" name="product_id" value="' + p.id + '"><b style="flex:1; min-width:140px;">' + esc(p.name) + '</b>' +
-            '<input type="number" name="qty" min="0" step="any" inputmode="decimal" required placeholder="الكمية">' +
-            '<select name="uom_id">' + p.uoms.map(function (u) { return '<option value="' + u.id + '">' + esc(u.name) + '</option>'; }).join('') + '</select>' +
-            '<button type="button" class="x" onclick="drop(' + p.id + ')">✕</button></div>';
-    }).join('');
-    document.getElementById('send').disabled = !picked.length;
-}
+(function () {
+    var list = document.getElementById('list');
+    if (!list) return;
+    var rows = Array.prototype.slice.call(list.querySelectorAll('.pr')), onlyPicked = false;
+
+    function factorOf(row) {
+        var sel = row.querySelector('select[name=uom_id]');
+        return sel ? parseFloat(sel.selectedOptions[0].dataset.factor) || 1 : 1;
+    }
+    function update(row) {
+        var qty = parseFloat(row.querySelector('input[name=qty]').value) || 0, f = factorOf(row);
+        var avail = parseFloat(row.dataset.avail) || 0;
+        var sel = row.querySelector('select[name=uom_id]');
+        row.querySelector('.av').textContent = +(avail / f).toFixed(3);                 // available in the chosen unit
+        row.querySelector('.avu').textContent = sel ? sel.selectedOptions[0].textContent.split(' (')[0] : row.querySelector('.avu').textContent;
+        row.classList.toggle('picked', qty > 0);
+        row.querySelector('.over').hidden = !(qty * f > avail);
+    }
+    function refresh() {
+        var q = document.getElementById('q').value.trim().toLowerCase(), n = 0;
+        rows.forEach(function (r) {
+            var picked = (parseFloat(r.querySelector('input[name=qty]').value) || 0) > 0;
+            if (picked) n++;
+            r.hidden = (q && r.dataset.name.indexOf(q) < 0) || (onlyPicked && !picked);
+        });
+        list.querySelectorAll('[data-cat]').forEach(function (c) {          // hide empty category headers
+            var el = c.nextElementSibling, any = false;
+            while (el && !el.hasAttribute('data-cat')) { if (!el.hidden) any = true; el = el.nextElementSibling; }
+            c.hidden = !any;
+        });
+        document.getElementById('cnt').textContent = n;
+        document.getElementById('send').disabled = n === 0;
+    }
+    rows.forEach(function (r) {
+        r.querySelector('input[name=qty]').addEventListener('input', function () { update(r); refresh(); });
+        var sel = r.querySelector('select[name=uom_id]');
+        if (sel) sel.addEventListener('change', function () { update(r); });
+    });
+    document.getElementById('q').addEventListener('input', function () {
+        refresh();
+        var code = this.value.trim().toLowerCase();                 // scanned / typed barcode → jump to its quantity
+        var hit = code && rows.filter(function (r) { return r.dataset.barcode && r.dataset.barcode === code; });
+        if (hit && hit.length === 1) { var qi = hit[0].querySelector('input[name=qty]'); hit[0].scrollIntoView({block: 'center'}); qi.focus(); }
+    });
+    document.getElementById('onlyPicked').addEventListener('click', function () {
+        onlyPicked = !onlyPicked; this.classList.toggle('on', onlyPicked); refresh();
+    });
+    document.getElementById('frm').addEventListener('submit', function (e) {
+        var n = 0;
+        rows.forEach(function (r) {                    // send only the picked rows
+            var picked = (parseFloat(r.querySelector('input[name=qty]').value) || 0) > 0;
+            r.querySelectorAll('input, select').forEach(function (i) { i.disabled = !picked; });
+            if (picked) n++;
+        });
+        if (!n || !confirm('إرسال طلب تحميل بـ ' + n + ' صنف للاعتماد؟')) {
+            e.preventDefault();
+            rows.forEach(function (r) { r.querySelectorAll('input, select').forEach(function (i) { i.disabled = false; }); });
+        }
+    });
+})();
 </script>
 {% endblock %}

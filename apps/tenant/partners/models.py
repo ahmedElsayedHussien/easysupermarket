@@ -41,10 +41,19 @@ class Partner(models.Model):
     tax_id = models.CharField(
         max_length=50, blank=True, verbose_name='الرقم الضريبي'
     )
+    # The customer decides the taxes of his invoices (a sales rep can't switch them off or on).
+    subject_to_vat = models.BooleanField(default=True, verbose_name='يخضع لضريبة القيمة المضافة')
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('14'),
+                                   verbose_name='نسبة القيمة المضافة %')
     subject_to_withholding_tax = models.BooleanField(
         default=False, verbose_name='يخضع لضريبة الخصم والإضافة'
     )
-    address = models.TextField(blank=True, verbose_name='العنوان')
+    wht_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1'),
+                                   verbose_name='نسبة الخصم والإضافة %')
+    address = models.TextField(blank=True, verbose_name='العنوان (الشارع)')
+    eta_governate = models.CharField(max_length=100, blank=True, default='', verbose_name='المحافظة')
+    eta_region_city = models.CharField(max_length=100, blank=True, default='', verbose_name='المدينة / المنطقة')
+    eta_building_number = models.CharField(max_length=50, blank=True, default='', verbose_name='رقم المبنى')
     sector = models.ForeignKey(
         'pricing.CustomerSector',
         on_delete=models.SET_NULL,
@@ -132,92 +141,75 @@ class Partner(models.Model):
     def __str__(self):
         return f'{self.name} [{self.get_partner_type_display()}]'
 
+    @staticmethod
+    def clean_identity(tax_id, national_id):
+        """(tax_id, national_id) without spaces / dashes; ValidationError when not 9 / 14 digits."""
+        from django.core.exceptions import ValidationError
+        tax_id = ''.join(ch for ch in (tax_id or '') if ch not in ' -')
+        national_id = ''.join(ch for ch in (national_id or '') if ch not in ' -')
+        if tax_id and not (tax_id.isdigit() and len(tax_id) == 9):
+            raise ValidationError('الرقم الضريبي لازم يكون 9 أرقام.')
+        if national_id and not (national_id.isdigit() and len(national_id) == 14):
+            raise ValidationError('الرقم القومي لازم يكون 14 رقم.')
+        return tax_id, national_id
+
+    def save(self, *args, **kwargs):
+        created = self._state.adding
+        super().save(*args, **kwargs)
+        # explicit (no signal): sub-accounts under 1130 / 2110 + the opening-balance entry
+        create_partner_account(Partner, self, created)
+
     @property
     def customer_balance(self):
-        """
-        صافي رصيد العميل (مديونية العميل لنا):
-        رصيد أول مدة (مدين بالموجب، دائن بالسالب)
-        + المبيعات الآجلة + الجزء الآجل من السداد المقسم - المرتجعات الآجلة - مقبوضات السندات والدفعات.
-        موجب: العميل مدين لنا بمبلغ.
-        سالب: العميل دائن (له رصيد لدينا أو دفع مقدماً).
-        """
-        if hasattr(self, '_cached_customer_balance'):
-            return self._cached_customer_balance
-
-        from decimal import Decimal
-        from django.db.models import Sum
-
-        net_opening = Decimal('0')
-        if self.is_customer and self.opening_balance:
-            if self.partner_type == self.CUSTOMER or self.opening_balance_type == self.OPENING_DEBIT:
-                if self.opening_balance_type == self.OPENING_DEBIT:
-                    net_opening = self.opening_balance
-                else:
-                    net_opening = -self.opening_balance
-
-        inv = _credit_invoice_sums(self, 'SALE', 'RETURN_SALE')   # one query for the four figures
-        sales, split_sales, returns, split_returns = inv['doc'], inv['doc_split'], inv['ret'], inv['ret_split']
-
-        receipts = self.payments.filter(payment_type='RECEIPT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
-        voucher_receipts = self.vouchers.filter(voucher_type='RECEIPT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
-
-        # شيكات القبض المستلمة من العميل (غير المرتدة والملغاة)
-        chq_receipts = self.cheques.filter(
-            cheque_type='RECEIVABLE'
-        ).exclude(
-            status__in=['BOUNCED', 'RETURNED_TO_DRAWER']
-        ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
-
-        res = net_opening + (sales + split_sales) - (returns + split_returns) - (receipts + voucher_receipts + chq_receipts)
-        self._cached_customer_balance = res
-        return res
+        """رصيد العميل من دفتر الأستاذ (حسابه 1130-x): مدين − دائن. موجب = عليه لنا، سالب = له رصيد عندنا.
+        قيد يدوي على حسابه (إعدام دين، خصم مسموح به، مقاصة…) بيتحسب — زي ميزان المراجعة بالظبط."""
+        if not hasattr(self, '_cached_customer_balance'):
+            from .balances import ledger_balance_map
+            self._cached_customer_balance, self._cached_supplier_balance = ledger_balance_map([self])[self.pk]
+        return self._cached_customer_balance
 
     @property
     def supplier_balance(self):
-        """
-        صافي رصيد المورد (مستحقات المورد علينا):
-        رصيد أول مدة (دائن بالموجب، مدين بالسالب)
-        + المشتريات الآجلة + الجزء الآجل من السداد المقسم - مرتجعات المشتريات الآجلة - مدفوعات السندات والدفعات وشيكات الدفع.
-        موجب: نحن مدينون للمورد (المورد دائن لنا).
-        سالب: نحن دائنون للمورد (دفعنا له بالزيادة).
-        """
-        if hasattr(self, '_cached_supplier_balance'):
-            return self._cached_supplier_balance
+        """رصيد المورد من دفتر الأستاذ (حسابه 2110-x): دائن − مدين. موجب = له علينا، سالب = دفعنا له زيادة."""
+        if not hasattr(self, '_cached_supplier_balance'):
+            from .balances import ledger_balance_map
+            self._cached_customer_balance, self._cached_supplier_balance = ledger_balance_map([self])[self.pk]
+        return self._cached_supplier_balance
 
-        from decimal import Decimal
+    def document_balances(self):
+        """(customer, supplier) balance re-added from the documents (the old way) — only to CHECK the ledger
+        (manage.py partner_ledger_check). The ledger is the reference."""
         from django.db.models import Sum
-
-        net_opening = Decimal('0')
-        if self.is_supplier and self.opening_balance:
-            if self.partner_type == self.SUPPLIER or self.opening_balance_type == self.OPENING_CREDIT:
-                if self.opening_balance_type == self.OPENING_CREDIT:
-                    net_opening = self.opening_balance
-                else:
-                    net_opening = -self.opening_balance
-
-        inv = _credit_invoice_sums(self, 'PURCHASE', 'RETURN_PURCHASE')   # one query for the four figures
-        purchases, split_purchases, pur_returns, split_pur_returns = (inv['doc'], inv['doc_split'], inv['ret'],
-                                                                      inv['ret_split'])
-
-        payments = self.payments.filter(payment_type='PAYMENT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
-        voucher_payments = self.vouchers.filter(voucher_type='PAYMENT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
-
-        # شيكات الدفع الصادرة للمورد (غير الملغاة)
-        chq_payments = self.cheques.filter(
-            cheque_type='PAYABLE', status__in=['ISSUED', 'CLEARED']
-        ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
-
-        # شحن ماكينات خدمات الدفع آجل من المندوب (يزيد مستحقات المورد)
         from apps.tenant.accounting.models import EServiceTransaction
-        es = self.eservice_recharges.filter(
-            transaction_type=EServiceTransaction.MERCHANT_RECHARGE, paid_on_credit=True,
-            status=EServiceTransaction.POSTED,
-        ).aggregate(p=Sum('principal_amount'), f=Sum('commission_expense'))
-        credit_recharges = (es['p'] or Decimal('0')) + (es['f'] or Decimal('0'))
-
-        res = net_opening + (purchases + split_purchases + credit_recharges) - (pur_returns + split_pur_returns) - (payments + voucher_payments + chq_payments)
-        self._cached_supplier_balance = res
-        return res
+        Z = Decimal('0')
+        cust = supp = Z
+        if self.is_customer:
+            opening = Z
+            if self.opening_balance and (self.partner_type == self.CUSTOMER
+                                         or self.opening_balance_type == self.OPENING_DEBIT):
+                opening = self.opening_balance if self.opening_balance_type == self.OPENING_DEBIT else -self.opening_balance
+            inv = _credit_invoice_sums(self, 'SALE', 'RETURN_SALE')
+            receipts = (self.payments.filter(payment_type='RECEIPT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Z) \
+                + (self.vouchers.filter(voucher_type='RECEIPT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Z) \
+                + (self.cheques.filter(cheque_type='RECEIVABLE').exclude(status__in=['BOUNCED', 'CANCELLED'])
+                   .aggregate(s=Sum('amount'))['s'] or Z)
+            cust = opening + inv['doc'] + inv['doc_split'] - inv['ret'] - inv['ret_split'] - receipts
+        if self.is_supplier:
+            opening = Z
+            if self.opening_balance and (self.partner_type == self.SUPPLIER
+                                         or self.opening_balance_type == self.OPENING_CREDIT):
+                opening = self.opening_balance if self.opening_balance_type == self.OPENING_CREDIT else -self.opening_balance
+            inv = _credit_invoice_sums(self, 'PURCHASE', 'RETURN_PURCHASE')
+            paid = (self.payments.filter(payment_type='PAYMENT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Z) \
+                + (self.vouchers.filter(voucher_type='PAYMENT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Z) \
+                + (self.cheques.filter(cheque_type='PAYABLE', status__in=['ISSUED', 'CLEARED'])
+                   .aggregate(s=Sum('amount'))['s'] or Z)
+            es = self.eservice_recharges.filter(transaction_type=EServiceTransaction.MERCHANT_RECHARGE,
+                                                paid_on_credit=True, status=EServiceTransaction.POSTED).aggregate(
+                p=Sum('principal_amount'), f=Sum('commission_expense'))
+            supp = opening + inv['doc'] + inv['doc_split'] + (es['p'] or Z) + (es['f'] or Z) \
+                - inv['ret'] - inv['ret_split'] - paid
+        return cust, supp
 
     @property
     def outstanding_balance(self):
@@ -258,72 +250,64 @@ class Partner(models.Model):
             partner_acc = self.payable_account or self.account
 
         with transaction.atomic():
+            if self.pk:
+                # lock the partner row and re-read its entry link: two saves at once can't book two entries
+                Partner.objects.select_for_update(of=('self',)).filter(pk=self.pk).first()
+                self.refresh_from_db(fields=['opening_journal_entry'])
             self._sync_opening_journal_entry_locked(partner_acc)
 
     def _sync_opening_journal_entry_locked(self, partner_acc):
+        """Keep the opening-balance entry in step with the partner card. A posted entry is never rewritten
+        or deleted: when the opening balance changes the old entry is reversed and a new one is posted."""
         from apps.tenant.accounting.models import JournalEntry, JournalItem
-        from apps.tenant.services.journal_service import _get_system_account
+        from apps.tenant.services.journal_service import _get_system_account, reverse_entry_if_active, unique_reference
         from django.utils import timezone
 
-        if not self.opening_balance or self.opening_balance <= Decimal('0') or not partner_acc:
-            if self.opening_journal_entry:
-                old_entry = self.opening_journal_entry
-                Partner.objects.filter(id=self.id).update(opening_journal_entry=None)
-                self.opening_journal_entry = None
-                old_entry.delete()
+        amt = self.opening_balance or Decimal('0')
+        wanted = amt > Decimal('0') and partner_acc is not None
+        equity_acc = (_get_system_account('3999') or _get_system_account('3100')) if wanted else None
+        if wanted and not equity_acc:
             return
-
-        equity_acc = _get_system_account('3999') or _get_system_account('3100')
-        if not equity_acc:
-            return
-
         op_date = self.opening_balance_date or (self.created_at.date() if self.created_at else timezone.now().date())
-        ref = f"OPENING-PRT-{self.id}"
-
-        entry = self.opening_journal_entry
-        if not entry:
-            entry = JournalEntry.objects.filter(reference=ref).first()
-
-        if not entry:
-            entry = JournalEntry.objects.create(
-                date=op_date,
-                reference=ref,
-                description=f"رصيد افتتاحي - {self.name} ({self.get_partner_type_display()})",
-                status=JournalEntry.POSTED
-            )
-        else:
-            entry.date = op_date
-            entry.description = f"رصيد افتتاحي - {self.name} ({self.get_partner_type_display()})"
-            entry.status = JournalEntry.POSTED
-            entry.save()
-            entry.items.all().delete()
-
-        amt = self.opening_balance
         if self.opening_balance_type == self.OPENING_DEBIT:
-            # Dr Partner Account | Cr Equity Account
-            JournalItem.objects.create(entry=entry, account=partner_acc, debit=amt, credit=0, description=f"رصيد افتتاحي مدين - {self.name}")
-            JournalItem.objects.create(entry=entry, account=equity_acc, debit=0, credit=amt, description=f"تسوية رصيد افتتاحي - {self.name}")
+            lines = [(partner_acc, amt, Decimal('0'), f"رصيد افتتاحي مدين - {self.name}"),
+                     (equity_acc, Decimal('0'), amt, f"تسوية رصيد افتتاحي - {self.name}")]
         else:
-            # Dr Equity Account | Cr Partner Account
-            JournalItem.objects.create(entry=entry, account=equity_acc, debit=amt, credit=0, description=f"تسوية رصيد افتتاحي - {self.name}")
-            JournalItem.objects.create(entry=entry, account=partner_acc, debit=0, credit=amt, description=f"رصيد افتتاحي دائن - {self.name}")
+            lines = [(equity_acc, amt, Decimal('0'), f"تسوية رصيد افتتاحي - {self.name}"),
+                     (partner_acc, Decimal('0'), amt, f"رصيد افتتاحي دائن - {self.name}")]
 
-        if self.opening_journal_entry_id != entry.id:
-            Partner.objects.filter(id=self.id).update(opening_journal_entry=entry)
-            self.opening_journal_entry = entry
+        old = self.opening_journal_entry
+        if old is not None and wanted and old.status == JournalEntry.POSTED and old.date == op_date:
+            have = sorted((i.account_id, i.debit, i.credit) for i in old.items.all())
+            if have == sorted((a.id, d, c) for a, d, c, _ in lines):
+                return                                           # unchanged: nothing to book
+        if old is not None:
+            reverse_entry_if_active(old, reason=f'تعديل رصيد أول المدة - {self.name}')
+            Partner.objects.filter(id=self.id).update(opening_journal_entry=None)
+            self.opening_journal_entry = None
+        if not wanted:
+            return
+        entry = JournalEntry.objects.create(
+            date=op_date, reference=unique_reference(f"OPENING-PRT-{self.id}"),
+            description=f"رصيد افتتاحي - {self.name} ({self.get_partner_type_display()})", status=JournalEntry.DRAFT)
+        for account, debit, credit, desc in lines:
+            JournalItem.objects.create(entry=entry, account=account, debit=debit, credit=credit, description=desc)
+        entry.post()
+        Partner.objects.filter(id=self.id).update(opening_journal_entry=entry)
+        self.opening_journal_entry = entry
 
 
 # ---------------------------------------------------------------------------
-# Payment
+# Payment (legacy: receipts / payments are accounting.Voucher now — kept for old rows)
 # ---------------------------------------------------------------------------
 
-def _generate_payment_reference():
+def _generate_payment_reference(year=None):
     """
     Generates a unique payment reference like PAY-2024-00001 (race-safe).
     Must be called inside the transaction that saves the Payment (see Payment.save).
     """
     from apps.tenant.core.sequences import next_sequence, max_numeric_suffix
-    year = datetime.date.today().year
+    year = year or datetime.date.today().year
     prefix = f'PAY-{year}-'
     num = next_sequence(f'partner_payment:{prefix}', seed=lambda: max_numeric_suffix(Payment.objects.all(), 'reference', prefix))
     return f'{prefix}{num:05d}'
@@ -412,14 +396,29 @@ class Payment(models.Model):
     def __str__(self):
         return f'{self.reference} - {self.partner.name} - {self.amount}'
 
+    LOCKED_MSG = 'الدفعة مرحّلة ومينفعش تتعدّل أو تتمسح.'
+
     def save(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        if self.pk and not self._state.adding:
+            old = Payment.objects.filter(pk=self.pk).values('status', 'amount', 'partner_id', 'date',
+                                                             'payment_type').first()
+            if old and old['status'] == self.POSTED and any(
+                    old[f] != getattr(self, f) for f in ('status', 'amount', 'partner_id', 'date', 'payment_type')):
+                raise ValidationError(self.LOCKED_MSG)
         if not self.reference:
             from django.db import transaction
             with transaction.atomic():
-                self.reference = _generate_payment_reference()
+                self.reference = _generate_payment_reference((self.date or datetime.date.today()).year)
                 super().save(*args, **kwargs)
             return
         super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        if Payment.objects.filter(pk=self.pk, status=self.POSTED).exists():
+            raise ValidationError(self.LOCKED_MSG)
+        return super().delete(*args, **kwargs)
 
     def clean(self):
         from django.core.exceptions import ValidationError
@@ -427,13 +426,10 @@ class Payment(models.Model):
             raise ValidationError('المبلغ يجب أن يكون أكبر من صفر.')
 
 
-from django.db.models.signals import post_save
-from django.dispatch import receiver
 import logging
 
 partner_logger = logging.getLogger(__name__)
 
-@receiver(post_save, sender=Partner)
 def create_partner_account(sender, instance, created, **kwargs):
     from apps.tenant.accounting.models import Account
     from apps.tenant.services.journal_service import _get_system_account

@@ -1,0 +1,116 @@
+{% extends "rep_app/base.html" %}
+{% block head %}
+<style>
+    .daynav { display: grid; grid-template-columns: 52px 1fr 52px; gap: .4rem; align-items: center; }
+    .daynav a, .daynav span.off { display: flex; align-items: center; justify-content: center; min-height: 48px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); text-decoration: none; color: var(--ink); font-size: 1.3rem; font-weight: 900; }
+    .daynav span.off { opacity: .35; }
+    .daynav form { margin: 0; }
+    .daynav input { text-align: center; font-weight: 800; }
+    .k3 { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+    .k3 .kpi b { display: block; }
+    .k3 .kpi .muted { font-size: .74rem; }
+    .flow .r { display: flex; justify-content: space-between; padding: .38rem 0; font-size: .9rem; border-bottom: 1px dashed var(--line); }
+    .flow .r:last-child { border-bottom: 0; }
+    .flow .r.end { font-weight: 900; font-size: 1.05rem; border-top: 2px solid var(--line); border-bottom: 0; margin-top: .2rem; padding-top: .55rem; }
+    .flow .in { color: var(--ok); } .flow .out { color: var(--bad); }
+    .tabs3 { display: flex; gap: .35rem; overflow-x: auto; scrollbar-width: none; margin-bottom: .4rem; }
+    .tabs3::-webkit-scrollbar { display: none; }
+    .tabs3 button { flex: 0 0 auto; min-height: 38px; padding: 0 .85rem; border-radius: 999px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); font-weight: 800; font-family: inherit; font-size: .82rem; }
+    .tabs3 button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+    .it { display: grid; grid-template-columns: 1fr auto auto; gap: .6rem; align-items: center; padding: .5rem 0; border-bottom: 1px solid var(--line); font-size: .86rem; }
+    .it:last-child { border-bottom: 0; }
+    .it .n { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="daynav">
+    <a href="?date={{ prev|date:'Y-m-d' }}" aria-label="اليوم اللي قبله">›</a>
+    <form method="get"><input type="date" name="date" value="{{ d|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" onchange="this.form.submit()"></form>
+    {% if next %}<a href="?date={{ next|date:'Y-m-d' }}" aria-label="اليوم اللي بعده">‹</a>{% else %}<span class="off">‹</span>{% endif %}
+</div>
+<p class="muted" style="margin:-.2rem 0 0; text-align:center;">{% if d == today %}النهارده{% else %}{{ d|date:"l j F Y" }}{% endif %}</p>
+
+<div class="k3">
+    <div class="kpi"><small>🛒 المبيعات</small><b class="num">{{ a.sales|floatformat:"2g" }}</b><div class="muted">{{ a.sales_n }} فاتورة · {{ a.customers }} عميل</div></div>
+    <div class="kpi"><small>↩️ المرتجعات</small><b class="num bad">{{ a.ret|floatformat:"2g" }}</b><div class="muted">{{ a.ret_n }} مرتجع</div></div>
+    <div class="kpi"><small>📈 صافي البيع</small><b class="num">{{ a.net|floatformat:"2g" }}</b></div>
+    <div class="kpi"><small>💰 تحصيلات</small><b class="num ok">{{ collected|floatformat:"2g" }}</b><div class="muted">{{ receipts|length }} سند</div></div>
+    <div class="kpi"><small>📒 بيع آجل</small><b class="num warn">{{ a.sales_credit|floatformat:"2g" }}</b><div class="muted">على العملاء</div></div>
+    <div class="kpi"><small>💵 معاك دلوقتي</small><b class="num">{{ cash_now|floatformat:"2g" }}</b><div class="muted">لازم تورّدها</div></div>
+</div>
+
+<div class="card flow">
+    <h2>💵 خزنتك في اليوم ده</h2>
+    <div class="r"><span>رصيد أول اليوم</span><b class="num">{{ opening|floatformat:"2g" }}</b></div>
+    <div class="r"><span>+ بيع نقدي</span><span class="num in">{{ a.sales_cash|floatformat:"2g" }}</span></div>
+    <div class="r"><span>+ تحصيل من العملاء</span><span class="num in">{{ collected|floatformat:"2g" }}</span></div>
+    <div class="r"><span>− رد نقدي في مرتجعات</span><span class="num out">{{ a.ret_cash|floatformat:"2g" }}</span></div>
+    <div class="r"><span>− وردته للشركة</span><span class="num out">{{ handed|floatformat:"2g" }}</span></div>
+    {% if shortage %}<div class="r"><span>− عجز اتحمّل عليك</span><span class="num out">{{ shortage|floatformat:"2g" }}</span></div>{% endif %}
+    <div class="r end"><span>رصيد آخر اليوم</span><span class="num">{{ closing|floatformat:"2g" }}</span></div>
+    {% if a.ret_credit %}<p class="muted" style="margin:.5rem 0 0;">مرتجعات اتخصمت من حسابات العملاء (مش من خزنتك): {{ a.ret_credit|floatformat:"2g" }}</p>{% endif %}
+</div>
+
+<div class="card">
+    <h2>🧾 فواتير اليوم ({{ invoices|length }})</h2>
+    {% if invoices %}
+    <div class="tabs3" id="tabs">
+        <button type="button" class="on" data-f="">الكل</button>
+        <button type="button" data-f="sale">بيع</button>
+        <button type="button" data-f="ret">مرتجع</button>
+        <button type="button" data-f="آجل">آجل</button>
+        <button type="button" data-f="نقدي">نقدي</button>
+        <button type="button" data-f="void">ملغي</button>
+    </div>
+    <div class="list" id="invs">
+        {% for i in invoices %}
+        <a class="item" href="{% url 'invoicing:rep_app_invoice' i.id %}" data-k="{{ i.kind_css }}" data-p="{{ i.pay }}">
+            <div class="grow"><div class="t">{{ i.partner.name|default:"عميل نقدي" }}</div>
+                <div class="muted">{{ i.invoice_number }} · {{ i.created_at|date:"H:i" }}</div>
+                <div style="margin-top:.25rem;"><span class="tag {{ i.kind_css }}">{{ i.kind }}</span> <span class="tag pay">{{ i.pay }}</span></div></div>
+            <b class="num {% if i.kind_css == 'ret' %}bad{% endif %}" {% if i.kind_css == 'void' %}style="text-decoration:line-through; opacity:.55;"{% endif %}>{% if i.kind_css == 'ret' %}−{% endif %}{{ i.total_amount|floatformat:"2g" }}</b></a>
+        {% endfor %}
+    </div>
+    {% else %}<p class="muted">مفيش فواتير في اليوم ده.</p>{% endif %}
+</div>
+
+{% if items %}
+<div class="card">
+    <h2>📦 الأصناف</h2>
+    <div class="it muted" style="font-weight:800;"><span>الصنف</span><span>باع / رجع</span><span>القيمة</span></div>
+    {% for it in items %}
+    <div class="it"><span class="n">{{ it.product__name }}</span><span class="num">{{ it.sold }}{% if it.back != '0' %} / <span class="bad">{{ it.back }}</span>{% endif %}</span><b class="num">{{ it.amount|floatformat:"2g" }}</b></div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if receipts %}
+<div class="card">
+    <h2>💰 التحصيلات</h2>
+    <div class="list">{% for v in receipts %}<div class="item"><div class="grow"><div class="t">{{ v.partner.name|default:"—" }}</div><div class="muted">{{ v.voucher_number }}</div></div><b class="num ok">{{ v.amount|floatformat:"2g" }}</b></div>{% endfor %}</div>
+</div>
+{% endif %}
+
+{% if handovers %}
+<div class="card">
+    <h2>🏦 التوريدات</h2>
+    <div class="list">{% for h in handovers %}<div class="item"><div class="grow"><div class="t">{{ h.number }}</div><div class="muted">{% if h.treasury %}{{ h.treasury.name }}{% else %}{{ h.bank_account.name }}{% endif %}{% if h.shortage_charged %} — <span class="bad">عجز {{ h.shortage_charged|floatformat:2 }}</span>{% endif %}</div></div><b class="num">{{ h.amount|floatformat:"2g" }}</b></div>{% endfor %}</div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+    var tabs = document.getElementById('tabs');
+    if (!tabs) return;
+    tabs.addEventListener('click', function (e) {
+        var b = e.target.closest('button'); if (!b) return;
+        tabs.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+        var f = b.dataset.f;
+        document.querySelectorAll('#invs .item').forEach(function (el) {
+            el.hidden = f && el.dataset.k !== f && el.dataset.p !== f;
+        });
+    });
+})();
+</script>
+{% endblock %}

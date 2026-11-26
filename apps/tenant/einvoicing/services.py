@@ -68,7 +68,12 @@ def issuer_name(settings_obj):
     return (company_profile()['name'] or (settings_obj.company_name or '')).strip()
 
 
-def issuer_address(settings_obj):
+def issuer_address(settings_obj, branch=None):
+    """Issuer address: the invoice's branch when it has its own Tax Authority code, else the main settings."""
+    if branch is not None and (getattr(branch, 'eta_branch_code', '') or '').strip():
+        return {'branchID': branch.eta_branch_code.strip(), 'country': 'EG',
+                'governate': branch.eta_governate.strip(), 'regionCity': branch.eta_region_city.strip(),
+                'street': branch.eta_street.strip(), 'buildingNumber': branch.eta_building_number.strip()}
     addr = {
         'branchID': (settings_obj.branch_code or '0').strip(),
         'country': 'EG',
@@ -106,6 +111,9 @@ def settings_errors(settings_obj):
 
 def unit_type(line):
     if line.uom_id and getattr(line.uom, 'uom', None):
+        code = (getattr(line.uom.uom, 'eta_code', '') or '').strip().upper()
+        if code:
+            return code                                   # set on the unit itself
         name = ' '.join((line.uom.uom.name or '').split())
         if name in UNIT_NAME_TYPES:
             return UNIT_NAME_TYPES[name]
@@ -163,8 +171,10 @@ def vat_subtype(rate):
 
 
 def issue_datetime(invoice):
-    """Actual issue moment in UTC (ETA rejects dates in the future)."""
-    moment = invoice.created_at or timezone.now()
+    """Issue moment in UTC: when the invoice was POSTED (its e-invoice queue entry is made then) — a draft
+    started days earlier must not look late. Never in the future (the ETA rejects it)."""
+    log = EInvoiceLog.objects.filter(invoice_id=invoice.pk).values_list('created_at', flat=True).first()
+    moment = log or invoice.created_at or timezone.now()
     if timezone.is_naive(moment):
         moment = timezone.make_aware(moment)
     moment = min(moment, timezone.now())
@@ -174,16 +184,25 @@ def issue_datetime(invoice):
 def _receiver(invoice, settings_obj, total_amount, errors):
     partner = invoice.partner
     name = (getattr(partner, 'name', '') or '').strip() or 'عميل نقدي'
-    tax_id = (getattr(partner, 'tax_id', '') or '').strip() if partner else ''
-    national_id = (getattr(partner, 'national_id', '') or '').strip() if partner else ''
+    tax_id = ''.join(ch for ch in (getattr(partner, 'tax_id', '') or '') if ch.isdigit()) if partner else ''
+    national_id = ''.join(ch for ch in (getattr(partner, 'national_id', '') or '') if ch.isdigit()) if partner else ''
+    if tax_id and len(tax_id) != 9:
+        errors.append(f'الرقم الضريبي للعميل "{name}" لازم يكون 9 أرقام (المكتوب: {partner.tax_id}).')
+    if not tax_id and national_id and len(national_id) != 14:
+        errors.append(f'الرقم القومي للعميل "{name}" لازم يكون 14 رقم (المكتوب: {partner.national_id}).')
     if tax_id:
+        # the COMPANY receiver's own address (never ours): from its card
         address = {
             'country': 'EG',
-            'governate': settings_obj.governate.strip() or 'Cairo',
-            'regionCity': settings_obj.region_city.strip() or 'Cairo',
-            'street': ((getattr(partner, 'address', '') or '').strip() or settings_obj.street.strip())[:200],
-            'buildingNumber': '0',
+            'governate': (getattr(partner, 'eta_governate', '') or '').strip(),
+            'regionCity': (getattr(partner, 'eta_region_city', '') or '').strip(),
+            'street': (getattr(partner, 'address', '') or '').strip()[:200],
+            'buildingNumber': (getattr(partner, 'eta_building_number', '') or '').strip() or '0',
         }
+        missing = [label for key, label in (('governate', 'المحافظة'), ('regionCity', 'المدينة / المنطقة'),
+                                            ('street', 'الشارع')) if not address[key]]
+        if missing:
+            errors.append(f'العميل "{name}" شركة (ليه رقم ضريبي): كمّل عنوانه في بطاقته — ' + '، '.join(missing) + '.')
         return {'type': 'B', 'id': tax_id, 'name': name, 'address': address}
     receiver = {'type': 'P', 'name': name, 'address': {'country': 'EG'}}
     if national_id:
@@ -194,9 +213,14 @@ def _receiver(invoice, settings_obj, total_amount, errors):
     return receiver
 
 
+# a credit note can reference the original while it is Valid at the ETA (incl. a declined cancel / a pending
+# rejection request, both still Valid there) — never an Invalid / Rejected / Cancelled one
+PARENT_OK_STATES = ('VALID', 'CANCEL_DECLINED', 'REJECT_REQUESTED')
+
+
 def build_invoice_json(invoice_id):
     """ETA document (dict) for a SALE invoice (I) or a sales return (credit note C)."""
-    invoice = Invoice.objects.select_related('partner', 'parent_invoice').get(id=invoice_id)
+    invoice = Invoice.objects.select_related('partner', 'parent_invoice', 'branch').get(id=invoice_id)
     settings_obj = get_settings()
     errors = settings_errors(settings_obj)
     if settings_obj is None:
@@ -229,11 +253,14 @@ def build_invoice_json(invoice_id):
         net_total = q5(line.subtotal)
         discount = q5(max(sales_total - net_total, ZERO))
         net_total = q5(sales_total - discount)               # keep the ETA identity exact
-        t1 = q5(line.tax_amount)
-        t4 = q5(line.wht_amount)
+        # the ETA re-computes each tax from netTotal at 5 decimals: send exactly that (the booked 4-decimal
+        # amount can differ by 0.0001 on fractional quantities / fixed discounts → TaxAmountMismatch)
+        t1 = q5(net_total * q5(line.tax_rate) / 100)
+        t4 = q5(net_total * q5(line.wht_rate) / 100)
         total = q5(net_total + t1 - t4)
 
-        taxable = [{'taxType': 'T1', 'amount': num(t1), 'subType': vat_subtype(line.tax_rate),
+        taxable = [{'taxType': 'T1', 'amount': num(t1),
+                    'subType': (getattr(product, 'eta_tax_subtype', '') or vat_subtype(line.tax_rate)),
                     'rate': num(line.tax_rate)}]
         if t4 > 0:
             taxable.append({'taxType': 'T4', 'amount': num(t4),
@@ -253,7 +280,8 @@ def build_invoice_json(invoice_id):
             'netTotal': num(net_total),
             'itemsDiscount': 0,
             'unitValue': {'currencySold': 'EGP', 'amountEGP': num(unit_value)},
-            'discount': {'rate': num(line.discount_pct or 0), 'amount': num(discount)},
+            # rate from the amount itself (exact also for a fixed-amount discount)
+            'discount': {'rate': num(q5(discount * 100 / sales_total) if sales_total else ZERO), 'amount': num(discount)},
             'taxableItems': taxable,
         })
         sums['sales'] += sales_total
@@ -271,8 +299,10 @@ def build_invoice_json(invoice_id):
     references = []
     if document_type == 'C':
         parent_log = getattr(invoice.parent_invoice, 'einvoice_log', None) if invoice.parent_invoice_id else None
-        if parent_log is None or not parent_log.uuid:
-            errors.append('المرتجع لا يُرسل إلا بعد قبول الفاتورة الأصلية لدى الضرائب (لها رقم UUID).')
+        if parent_log is None or not parent_log.uuid or parent_log.status not in PARENT_OK_STATES:
+            errors.append('المرتجع لا يُرسل إلا لما الفاتورة الأصلية تبقى مقبولة (Valid) لدى الضرائب'
+                          + (f' — حالتها دلوقتي: {parent_log.get_status_display()}.' if parent_log is not None
+                             and parent_log.uuid else ' (لها رقم UUID).'))
         else:
             references = [parent_log.uuid]
 
@@ -284,7 +314,7 @@ def build_invoice_json(invoice_id):
         tax_totals.append({'taxType': 'T4', 'amount': num(sums['t4'])})
 
     document = {
-        'issuer': {'address': issuer_address(settings_obj), 'type': 'B',
+        'issuer': {'address': issuer_address(settings_obj, invoice.branch), 'type': 'B',
                    'id': settings_obj.company_id.strip(), 'name': issuer_name(settings_obj)},
         'receiver': receiver,
         'documentType': document_type,
@@ -532,7 +562,8 @@ def cancel_on_eta(log, reason, settings_obj=None):
                or f'رفضت الضرائب طلب الإلغاء (HTTP {resp.status_code} {code}): {resp.text[:300]}')
         raise Exception(msg + _cid(resp))
     log.status = 'CANCEL_REQUESTED'
-    log.eta_response = {'cancel_reason': reason}
+    prev = log.eta_response if isinstance(log.eta_response, dict) else {}
+    log.eta_response = {**prev, 'cancel_reason': reason, 'cancel_correlationId': correlation_id(resp)}
     log.save(update_fields=['status', 'eta_response', 'updated_at'])
     return log.status
 

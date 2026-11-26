@@ -248,6 +248,35 @@
                             {% for err in form.max_pos_discount_percentage.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
                         </div>
 
+                        <div style="border-top:1px dashed var(--border-bright); margin:1rem 0 .8rem; padding-top:.8rem;"><strong>🚚 المناديب (البيع من الموبايل)</strong>
+                            <small class="text-muted d-block">أقصى خصم للمندوب هو نفس «أقصى خصم» اللي فوق.</small></div>
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.rep_allow_price_edit }}
+                            <label class="form-check-label ms-2" for="{{ form.rep_allow_price_edit.id_for_label }}">{{ form.rep_allow_price_edit.label }}</label>
+                            {% if form.rep_allow_price_edit.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.rep_allow_price_edit.help_text }}</small>{% endif %}
+                            {% for err in form.rep_allow_price_edit.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+                        <div class="form-group mb-3 ms-4" id="repMarginContainer">
+                            <label class="form-label text-muted" for="{{ form.rep_price_margin_percent.id_for_label }}">{{ form.rep_price_margin_percent.label }}</label>
+                            {{ form.rep_price_margin_percent }}
+                            {% for err in form.rep_price_margin_percent.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.rep_allow_return_without_invoice }}
+                            <label class="form-check-label ms-2" for="{{ form.rep_allow_return_without_invoice.id_for_label }}">{{ form.rep_allow_return_without_invoice.label }}</label>
+                            {% if form.rep_allow_return_without_invoice.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.rep_allow_return_without_invoice.help_text }}</small>{% endif %}
+                        </div>
+                        <div class="form-check form-switch mb-3 custom-switch">
+                            {{ form.rep_allow_cancel_invoice }}
+                            <label class="form-check-label ms-2" for="{{ form.rep_allow_cancel_invoice.id_for_label }}">{{ form.rep_allow_cancel_invoice.label }}</label>
+                            {% if form.rep_allow_cancel_invoice.help_text %}<small class="text-muted d-block mt-1 ms-4">{{ form.rep_allow_cancel_invoice.help_text }}</small>{% endif %}
+                        </div>
+                        <div class="form-group mb-3 ms-4" id="repNoInvMax">
+                            <label class="form-label text-muted" for="{{ form.rep_return_without_invoice_max.id_for_label }}">{{ form.rep_return_without_invoice_max.label }}</label>
+                            {{ form.rep_return_without_invoice_max }}
+                            {% for err in form.rep_return_without_invoice_max.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                        </div>
+
                         <div class="form-check form-switch mb-3 custom-switch">
                             {{ form.apply_vat_by_default }}
                             <label class="form-check-label ms-2" for="{{ form.apply_vat_by_default.id_for_label }}">تطبيق الضريبة الافتراضي على الفواتير</label>
@@ -368,10 +397,9 @@
                         </div>
 
                         <div class="form-group mb-3">
-                            <label class="form-label text-muted" for="{{ form.accounting_lock_date.id_for_label }}">{{ form.accounting_lock_date.label }}</label>
-                            {{ form.accounting_lock_date }}
-                            {% if form.accounting_lock_date.help_text %}<small class="text-muted d-block mt-1">{{ form.accounting_lock_date.help_text }}</small>{% endif %}
-                            {% for err in form.accounting_lock_date.errors %}<small class="text-danger d-block field-error">{{ err }}</small>{% endfor %}
+                            <label class="form-label text-muted">تاريخ قفل الدفاتر</label>
+                            <div class="form-control" style="opacity:.8;">{% if form.instance.accounting_lock_date %}{{ form.instance.accounting_lock_date|date:"d/m/Y" }}{% else %}مفيش فترة مقفولة{% endif %}</div>
+                            <small class="text-muted d-block mt-1">الإقفال وإعادة الفتح من <a href="{% url 'accounting:fiscal_years' %}">إقفال الفترات والسنين</a> (بفحص المسودات وسجل مين وإمتى).</small>
                         </div>
 
                         <div class="alert mb-0 p-3" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.35); color: #fca5a5; border-radius: 10px;">
@@ -1103,6 +1131,16 @@ document.addEventListener('DOMContentLoaded', function() {
         allowEditCheckbox.addEventListener('change', toggleMargin);
         toggleMargin();
     }
+
+    // sales reps: the margin only matters once price editing is switched on
+    const repEdit = document.getElementById('{{ form.rep_allow_price_edit.id_for_label }}');
+    const repMargin = document.getElementById('repMarginContainer');
+    function toggleRepMargin() { if (repEdit && repMargin) repMargin.style.display = repEdit.checked ? 'block' : 'none'; }
+    if (repEdit) { repEdit.addEventListener('change', toggleRepMargin); toggleRepMargin(); }
+    const repNoInv = document.getElementById('{{ form.rep_allow_return_without_invoice.id_for_label }}');
+    const repNoInvMax = document.getElementById('repNoInvMax');
+    function toggleNoInv() { if (repNoInv && repNoInvMax) repNoInvMax.style.display = repNoInv.checked ? 'block' : 'none'; }
+    if (repNoInv) { repNoInv.addEventListener('change', toggleNoInv); toggleNoInv(); }
 
     // Open the tab that holds the first validation error.
     const firstError = document.querySelector('.field-error');

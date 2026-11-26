@@ -20,6 +20,7 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='1150', defaults={'name': 'عهد نقدية', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1152', defaults={'name': 'مصروفات مدفوعة مقدماً', 'account_type': Account.ASSET, 'parent': curr_assets})
     Account.objects.get_or_create(code='1155', defaults={'name': 'ضريبة خصم من المنبع لنا (مدينة)', 'account_type': Account.ASSET, 'parent': curr_assets})
+    Account.objects.get_or_create(code='1157', defaults={'name': 'مستحقات شركات التحصيل الوسيطة (فوري، أمان…)', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1160', defaults={'name': 'المحافظ الإلكترونية', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1170', defaults={'name': 'ماكينات الدفع الإلكتروني (POS)', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
     Account.objects.get_or_create(code='1180', defaults={'name': 'أوراق قبض - حافظة الشيكات', 'account_type': Account.ASSET, 'parent': curr_assets, 'allow_reconcile': True})
@@ -100,6 +101,7 @@ def setup_chart_of_accounts_data():
     
     admin_exp, _ = Account.objects.get_or_create(code='5300', defaults={'name': 'مصاريف إدارية وعمولات بنكية', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5305', defaults={'name': 'عمولات ماكينات الدفع والمحافظ والبنوك', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': False})
+    Account.objects.get_or_create(code='5306', defaults={'name': 'رسوم تحصيل الشركات الوسيطة', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5310', defaults={'name': 'مصاريف صيانة ونظافة المقرات', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
     Account.objects.get_or_create(code='5320', defaults={'name': 'مصاريف دعاية وإعلان وتسويق', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})
     Account.objects.get_or_create(code='5330', defaults={'name': 'مصاريف ضيافة ومستلزمات', 'account_type': Account.EXPENSE, 'parent': admin_exp, 'allow_direct_payment': True})

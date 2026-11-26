@@ -1,4 +1,5 @@
 from django.urls import path
+from . import intermediary_views
 from . import views
 from . import liquidity_views
 from . import accounting_dashboard_views
@@ -13,6 +14,7 @@ urlpatterns = [
     path('journals/', views.JournalEntryListView.as_view(), name='journal_list'),
     path('journals/create/', views.ManualJournalEntryCreateView.as_view(), name='journal_create'),
     path('journals/<int:pk>/', views.JournalEntryDetailView.as_view(), name='journal_detail'),
+    path('journals/<int:pk>/reverse/', views.journal_reverse, name='journal_reverse'),
     
     # Reports & Chart of Accounts
     path('chart-of-accounts/', views.chart_of_accounts, name='chart_of_accounts'),
@@ -94,6 +96,8 @@ urlpatterns = [
     path('bank-reconciliation/', bank_rec_views.bank_reconciliation_list, name='bank_reconciliation_list'),
     path('bank-reconciliation/<int:pk>/', bank_rec_views.bank_reconciliation_detail, name='bank_reconciliation_detail'),
     path('tax-settlement/', custody_views.tax_settlement_view, name='tax_settlement'),
+    path('intermediaries/', intermediary_views.intermediaries, name='intermediaries'),
+    path('account-mapping/', intermediary_views.account_mapping_view, name='account_mapping'),
     path('fiscal-years/', custody_views.fiscal_years_view, name='fiscal_years'),
     path('custody/', custody_views.custody_list, name='custody_list'),
     path('custody/<int:pk>/', custody_views.custody_detail, name='custody_detail'),

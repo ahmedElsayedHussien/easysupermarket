@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -14,7 +16,7 @@ class Attendance(models.Model):
     )
 
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='attendances', verbose_name=_('الموظف'))
-    date = models.DateField(default=timezone.now, verbose_name=_('التاريخ'))
+    date = models.DateField(default=timezone.localdate, verbose_name=_('التاريخ'))
     check_in = models.DateTimeField(null=True, blank=True, verbose_name=_('وقت الحضور'))
     check_out = models.DateTimeField(null=True, blank=True, verbose_name=_('وقت الانصراف'))
     delay_hours = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), verbose_name=_('ساعات التأخير'))
@@ -45,8 +47,8 @@ class Attendance(models.Model):
         return f"حضور {display_username(self.employee.user)} - {self.date}"
 
 class Payroll(models.Model):
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='payrolls', verbose_name=_('الموظف'))
-    month = models.IntegerField(verbose_name=_('الشهر'))
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name='payrolls', verbose_name=_('الموظف'))
+    month = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(12)], verbose_name=_('الشهر'))
     year = models.IntegerField(verbose_name=_('السنة'))
     total_worked_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'), verbose_name=_('إجمالي ساعات العمل'))
     total_delay_hours = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), verbose_name=_('إجمالي ساعات التأخير'))
@@ -81,6 +83,31 @@ class Payroll(models.Model):
     def __str__(self):
         return f"راتب {display_username(self.employee.user)} - {self.month}/{self.year}"
 
+    # figures behind the accrual entry: never changed once the payroll is confirmed
+    LOCKED_FIELDS = ('employee_id', 'month', 'year', 'base_pay', 'overtime_pay', 'deductions', 'net_salary',
+                     'absence_deduction', 'delay_deduction', 'loan_deduction', 'social_insurance',
+                     'employer_insurance', 'income_tax', 'commission_pay')
+    LOCKED_MSG = 'المسير اتعمد واترحّل قيده — أرقامه متتعدّلش ومينفعش يتمسح.'
+
+    def _confirmed_in_db(self, fields=()):
+        if not self.pk:
+            return None
+        return Payroll.objects.filter(pk=self.pk).values('is_paid', 'journal_entry_id', *fields).first()
+
+    def save(self, *args, **kwargs):
+        if self.pk and not self._state.adding:
+            old = self._confirmed_in_db(self.LOCKED_FIELDS)
+            if old and (old['is_paid'] or old['journal_entry_id']) and any(
+                    old[f] != getattr(self, f) for f in self.LOCKED_FIELDS):
+                raise ValidationError(self.LOCKED_MSG)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        old = self._confirmed_in_db()
+        if old and (old['is_paid'] or old['journal_entry_id']):
+            raise ValidationError(self.LOCKED_MSG)
+        return super().delete(*args, **kwargs)
+
 
 class EmployeeLoan(models.Model):
     """سلفة موظف تُخصم أقساطها من المسير شهرياً.
@@ -105,7 +132,8 @@ class EmployeeLoan(models.Model):
     installments_count = models.PositiveIntegerField(default=1, verbose_name=_('عدد الأقساط'))
     monthly_installment = models.DecimalField(max_digits=12, decimal_places=2, verbose_name=_('القسط الشهري'))
     start_year = models.PositiveIntegerField(verbose_name=_('سنة أول قسط'))
-    start_month = models.PositiveSmallIntegerField(verbose_name=_('شهر أول قسط'))
+    start_month = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(12)],
+                                                   verbose_name=_('شهر أول قسط'))
     reason = models.CharField(max_length=255, blank=True, default='', verbose_name=_('السبب'))
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=ACTIVE, verbose_name=_('الحالة'))
     treasury = models.ForeignKey('accounting.Treasury', on_delete=models.PROTECT, null=True, blank=True,
@@ -131,7 +159,7 @@ class EmployeeLoan(models.Model):
         if '_deducted' in self.__dict__:          # annotated by hr.loan_services.with_balances()
             return self._deducted or Decimal('0')
         from django.db.models import Sum
-        return self.deductions.aggregate(s=Sum('amount'))['s'] or Decimal('0')
+        return self.deductions.filter(payroll__is_paid=True).aggregate(s=Sum('amount'))['s'] or Decimal('0')
 
     @property
     def remaining(self):
@@ -217,6 +245,10 @@ class LeaveRequest(models.Model):
     def __str__(self):
         return f'{self.leave_type} — {display_username(self.employee.user)} ({self.start_date} → {self.end_date})'
 
+    def clean(self):
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValidationError({'end_date': 'تاريخ النهاية قبل البداية.'})
+
 
 def _default_brackets():
     # Law 30/2023 (annual, after the personal exemption): upper limit, rate %. None = no limit.
@@ -243,6 +275,10 @@ class PayrollTaxSettings(models.Model):
     class Meta:
         verbose_name = _('إعدادات ضرائب وتأمينات المرتبات')
         verbose_name_plural = _('إعدادات ضرائب وتأمينات المرتبات')
+
+    def save(self, *args, **kwargs):
+        self.pk = 1                                 # one settings row
+        return super().save(*args, **kwargs)
 
     @classmethod
     def get(cls):
@@ -403,6 +439,8 @@ class EndOfService(models.Model):
     leave_days = models.DecimalField(max_digits=6, decimal_places=1, default=Decimal('0'), verbose_name=_('أيام إجازة متبقية'))
     leave_encashment = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'), verbose_name=_('بدل الإجازات'))
     loans_deducted = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'), verbose_name=_('سلف مخصومة'))
+    loans_collected = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'),
+                                          verbose_name=_('سلف ورّدها الموظف (أكبر من مستحقاته)'))
     net_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'), verbose_name=_('الصافي'))
     assets_returned = models.BooleanField(default=False, verbose_name=_('العهد العينية رجعت'))
     treasury = models.ForeignKey('accounting.Treasury', on_delete=models.PROTECT, null=True, blank=True, related_name='+',

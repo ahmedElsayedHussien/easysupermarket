@@ -11,13 +11,14 @@ from django.db.models import DecimalField, F, Sum
 from .models import StockMovement, StockTransfer, StockTransferLine
 
 
-def post_transfer(from_wh, to_wh, items, user=None, notes='', date=None):
+def post_transfer(from_wh, to_wh, items, user=None, notes='', date=None, skip_expired=False):
     """items: [{'product', 'uom' (ProductUoM|None), 'factor', 'qty' (in uom), 'base_qty'}].
     Raises ValueError('"<product>": <reason>') and moves nothing when one line can't move."""
     from apps.tenant.services.fifo_engine import transfer_stock
     if from_wh.pk == to_wh.pk:
         raise ValueError('لا يمكن التحويل من وإلى نفس المستودع.')
-    items = [i for i in items if i['base_qty'] > 0]
+    from apps.tenant.services.fifo_engine import lock_order
+    items = lock_order([i for i in items if i['base_qty'] > 0], key=lambda i: i['product'].pk)
     if not items:
         raise ValueError('مفيش كميات تتحوّل.')
     with transaction.atomic():
@@ -27,7 +28,8 @@ def post_transfer(from_wh, to_wh, items, user=None, notes='', date=None):
         for item in items:
             product = item['product']
             try:
-                transfer_stock(product, from_wh, to_wh, item['base_qty'], reference=doc.number)
+                transfer_stock(product, from_wh, to_wh, item['base_qty'], reference=doc.number,
+                               skip_expired=skip_expired)
             except ValueError as e:
                 raise ValueError(f'"{product.name}": {e}')
             cost = StockMovement.objects.filter(reference=doc.number, product=product,

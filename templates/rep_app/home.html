@@ -12,15 +12,21 @@
 </div>
 <div class="tiles">
     <a class="tile" href="{% url 'invoicing:rep_app_sell' %}"><span>🛒</span>فاتورة بيع</a>
+    <a class="tile" href="{% url 'invoicing:rep_app_sell' %}?mode=return"><span>↩️</span>مرتجع من عميل</a>
     <a class="tile" href="{% url 'invoicing:rep_app_customers' %}"><span>💰</span>تحصيل من عميل</a>
     <a class="tile" href="{% url 'invoicing:rep_app_loading' %}"><span>⬆️</span>طلب تحميل</a>
     <a class="tile" href="{% url 'invoicing:rep_app_unloading' %}"><span>⬇️</span>طلب تفريغ</a>
+    <a class="tile" href="{% url 'invoicing:rep_app_stock' %}"><span>🚚</span>بضاعة عربيتي</a>
+    <a class="tile" href="{% url 'invoicing:rep_app_day' %}"><span>📅</span>يوميتي</a>
+    <a class="tile" href="{% url 'invoicing:rep_app_customers' %}#new"><span>👤</span>عميل جديد</a>
 </div>
 <div class="card">
-    <h2>🧾 آخر فواتيري</h2>
+    <div class="row" style="margin-bottom:.4rem;"><h2 style="flex:1; margin:0;">🧾 آخر فواتيري</h2><a class="btn ghost sm" href="{% url 'invoicing:rep_app_day' %}">📅 يوميتي وكل فواتيري</a></div>
     <div class="list">
         {% for i in recent %}
-        <a class="item" href="{% url 'invoicing:rep_app_invoice' i.id %}"><div class="grow"><div class="t">{{ i.partner.name|default:"عميل نقدي" }}</div><div class="muted">{{ i.invoice_number }} — {{ i.date|date:"j/n" }}</div></div><b class="num">{{ i.total_amount|floatformat:"2g" }}</b></a>
+        <a class="item" href="{% url 'invoicing:rep_app_invoice' i.id %}"><div class="grow"><div class="t">{{ i.partner.name|default:"عميل نقدي" }}</div><div class="muted">{{ i.invoice_number }} — {{ i.date|date:"j/n" }}</div>
+            <div style="margin-top:.25rem;"><span class="tag {{ i.kind_css }}">{{ i.kind }}</span> <span class="tag pay">{{ i.pay }}</span></div></div>
+            <b class="num {% if i.kind_css == 'ret' %}bad{% endif %}" {% if i.kind_css == 'void' %}style="text-decoration:line-through; opacity:.55;"{% endif %}>{% if i.kind_css == 'ret' %}−{% endif %}{{ i.total_amount|floatformat:"2g" }}</b></a>
         {% empty %}<p class="muted">لسه مفيش فواتير.</p>{% endfor %}
     </div>
 </div>

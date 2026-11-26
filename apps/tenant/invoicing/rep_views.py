@@ -9,7 +9,7 @@ from django.db.models import Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from apps.tenant.core.access import filter_by_branch
+from apps.tenant.core.access import allowed_branches, filter_by_branch
 from apps.tenant.core.decorators import custom_permission_required
 from apps.tenant.core.models import Employee
 from apps.tenant.inventory.models import InventoryBatch, Warehouse
@@ -39,6 +39,21 @@ def _pick(model, request, field):
     return model.objects.filter(pk=int(v)).first() if v.isdigit() else None
 
 
+def _rep_candidates(request):
+    """Active employees who are not reps yet (incl. ones not linked to a branch: the rep's branch is chosen
+    on creation)."""
+    from django.db.models import Q
+    used = SalesRep.objects.values('employee_id')
+    qs = Employee.objects.filter(user__is_active=True).exclude(id__in=used)
+    return qs.filter(Q(branch__in=allowed_branches(request)) | Q(branch__isnull=True))
+
+
+def _source_warehouses():
+    """Warehouses a rep can load from: active, not a rep's van."""
+    vans = SalesRep.objects.exclude(van_warehouse=None).values('van_warehouse')
+    return Warehouse.objects.filter(is_active=True).exclude(pk__in=vans).order_by('branch__name', 'name')
+
+
 def _reps(request):
     return filter_by_branch(SalesRep.objects.select_related('employee__user', 'employee__branch', 'van_warehouse'),
                             request, 'employee__branch')
@@ -51,36 +66,45 @@ def rep_list(request):
         if not request.user.has_perm('invoicing.add_salesrep'):
             messages.error(request, 'عفواً، لا تملك صلاحية إضافة مناديب.')
             return redirect('invoicing:rep_list')
-        emp = filter_by_branch(Employee.objects.all(), request).filter(pk=request.POST.get('employee') or 0).first()
-        if emp is None or SalesRep.objects.filter(employee=emp).exists():
-            messages.error(request, 'اختار موظف مش مندوب بالفعل.')
-        else:
-            try:
+        from django.db import transaction
+        emp = _rep_candidates(request).filter(pk=request.POST.get('employee') or 0).first()
+        branch = allowed_branches(request).filter(pk=request.POST.get('branch') or 0).first()
+        source = _source_warehouses().filter(pk=request.POST.get('source_warehouse') or 0).first()
+        try:
+            if emp is None:
+                raise ValidationError('اختار موظف مش مندوب بالفعل.')
+            if branch is None:
+                raise ValidationError('اختار فرع المندوب.')
+            if source is None or source.branch_id != branch.id:
+                raise ValidationError(f'اختار المخزن اللي هيحمّل منه من مخازن فرع {branch.name}.')
+            with transaction.atomic():
+                emp.branch = branch                       # the rep belongs to the chosen branch
+                emp.save(update_fields=['branch'])
                 rep = SalesRep.objects.create(
-                    employee=emp, van_warehouse=_pick(Warehouse, request, 'van_warehouse'),
-                    treasury=_pick(Treasury, request, 'treasury'),
-                    source_warehouse=_pick(Warehouse, request, 'source_warehouse'),
+                    employee=emp, source_warehouse=source,
                     commission_rate=Decimal(request.POST.get('commission_rate') or '0'),
                     monthly_target=Decimal(request.POST.get('monthly_target') or '0'))
-                van.ensure_rep_setup(rep, create_van=request.POST.get('van_warehouse') == 'new',
-                                     create_treasury=request.POST.get('treasury') == 'new')
-                messages.success(request, 'اتضاف المندوب. خلّي دوره «مندوب مبيعات» من شاشة المستخدمين عشان يدخل على واجهة الموبايل.')
-            except InvalidOperation:
-                messages.error(request, 'نسبة أو تارجت غير صالح.')
+                van.ensure_rep_setup(rep, create_van=True, create_treasury=True)   # in the rep's branch
+            messages.success(request, f'اتضاف المندوب {rep} على فرع {branch.name}: اتعمل له «{rep.van_warehouse.name}» '
+                                      f'و«{rep.treasury.name}»، وبيحمّل من {source.name}.'
+                             + ('' if emp.role == 'SALES_REP' else
+                                ' خلّي دوره «مندوب مبيعات» من شاشة المستخدمين عشان يدخل على واجهة الموبايل.'))
+        except ValidationError as e:
+            messages.error(request, ' '.join(e.messages))
+        except InvalidOperation:
+            messages.error(request, 'نسبة أو تارجت غير صالح.')
         return redirect('invoicing:rep_list')
     year, month = _period(request)
     reps = list(_reps(request))
     perf = svc.month_performance(reps, year, month)
     rows = sorted(perf.values(), key=lambda r: -r['net'])
     totals = {k: sum((r[k] for r in rows), Decimal('0')) for k in ('net', 'target', 'commission')}
-    used = SalesRep.objects.values_list('employee_id', flat=True)
     return render(request, 'invoicing/rep_list.html', {
         'title': 'مناديب المبيعات', 'rows': rows, 'totals': totals, 'year': year, 'month': month,
         'month_name': AR_MONTHS[month - 1], 'months': list(enumerate(AR_MONTHS, start=1)),
-        'employees': filter_by_branch(Employee.objects.filter(user__is_active=True).exclude(id__in=used)
-                                      .select_related('user'), request),
-        'warehouses': filter_by_branch(Warehouse.objects.filter(is_active=True), request),
-        'treasuries': filter_by_branch(Treasury.objects.all(), request),
+        'employees': _rep_candidates(request).select_related('user', 'branch'),
+        'branches': allowed_branches(request),
+        'source_warehouses': _source_warehouses().filter(branch__in=allowed_branches(request)).select_related('branch'),
         'can_add': request.user.has_perm('invoicing.add_salesrep'),
     })
 
@@ -105,6 +129,7 @@ def rep_detail(request, pk):
                 rep.save()
                 van.ensure_rep_setup(rep, create_van=request.POST.get('van_warehouse') == 'new',
                                      create_treasury=request.POST.get('treasury') == 'new')
+                van.sync_rep_branch(rep)
                 messages.success(request, 'اتحفظت إعدادات المندوب.')
             elif action == 'approve' and request.user.has_perm('invoicing.add_repcommission'):
                 c = svc.approve_commission(rep, int(request.POST.get('year')), int(request.POST.get('month')),

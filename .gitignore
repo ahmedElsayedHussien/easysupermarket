@@ -31,3 +31,7 @@ staticfiles/
 
 # Stray Python 3.14 environment (official env is venv/, Python 3.11)
 .venv/
+
+# Local Signer run log
+local_signer/signer.log
+local_signer/dist/signer.log

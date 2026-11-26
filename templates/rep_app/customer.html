@@ -8,7 +8,10 @@
         <div class="kpi"><small>حد الائتمان</small><b class="num">{% if p.credit_limit %}{{ p.credit_limit|floatformat:"2g" }}{% else %}مفتوح{% endif %}</b></div>
     </div>
 </div>
-<a class="btn" href="{% url 'invoicing:rep_app_sell' %}?customer={{ p.id }}">🛒 بيع للعميل ده</a>
+<div class="grid2">
+    <a class="btn" href="{% url 'invoicing:rep_app_sell' %}?customer={{ p.id }}">🛒 بيع له</a>
+    <a class="btn ghost" href="{% url 'invoicing:rep_app_sell' %}?customer={{ p.id }}&mode=return">↩️ مرتجع منه</a>
+</div>
 <form method="post" class="card">
     {% csrf_token %}
     <h2>💰 تحصيل نقدي</h2>

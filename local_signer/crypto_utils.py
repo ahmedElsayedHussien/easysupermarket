@@ -153,7 +153,11 @@ def sign_document(serialized_str, dll_path, pin):
         raise RuntimeError("لم يتم العثور على توكن (ePass2003). تأكد من توصيل الفلاشة.")
 
     session = pkcs11.openSession(slots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION)
-    session.login(pin)
+    try:
+        session.login(pin)          # a wrong PIN raises here: the session is still closed below
+    except Exception:
+        session.closeSession()
+        raise
     try:
         key_obj, cert_obj = _find_key_and_cert(session)
         cert_der = bytes(session.getAttributeValue(cert_obj, [CKA_VALUE], True)[0])

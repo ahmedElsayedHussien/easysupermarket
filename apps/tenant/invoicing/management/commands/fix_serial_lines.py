@@ -47,11 +47,12 @@ class Command(BaseCommand):
                     if i == 0:
                         line.serial_item = s
                         line.quantity = Decimal('1')
+                        line._allow_posted_edit = True        # repair: totals unchanged
                         line.save()
                         fixed += 1
                         self.stdout.write(f'  Fixed line {line.id} -> serial {s.id}')
                     else:
-                        InvoiceLine.objects.create(
+                        new_line = InvoiceLine(
                             invoice=line.invoice,
                             product=line.product,
                             serial_item=s,
@@ -63,6 +64,8 @@ class Command(BaseCommand):
                             uom=line.uom,
                             returned_quantity=Decimal('0'),
                         )
+                        new_line._allow_posted_edit = True
+                        new_line.save()
                         fixed += 1
                         self.stdout.write(f'  Created new line for serial {s.id}')
 

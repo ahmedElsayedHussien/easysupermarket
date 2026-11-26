@@ -68,6 +68,10 @@ def _get_system_account(code: str):
         ValueError: If the account does not exist
     """
     from apps.tenant.accounting.models import Account
+    from apps.tenant.accounting.account_mapping import mapped_account
+    acc = mapped_account(code)               # the admin may have pointed this operation to another account
+    if acc:
+        return acc
     acc = Account.objects.filter(code=code, is_active=True).first()
     if acc:
         return acc
@@ -255,7 +259,7 @@ def delete_orphan_entries(reference: str) -> int:
     """
     from apps.tenant.accounting.models import JournalEntry
     qs = JournalEntry.objects.filter(
-        reference=reference, reversal_of__isnull=True, reversed_by__isnull=True
+        reference=reference, reversal_of__isnull=True, reversed_by__isnull=True, status=JournalEntry.DRAFT
     )
     count = 0
     for entry in qs:
@@ -405,7 +409,7 @@ def _branch_treasury(branch):
     if branch is None:
         return None
     from apps.tenant.accounting.models import Treasury
-    return _single(Treasury.objects.filter(branch=branch).order_by('pk'))
+    return _single(Treasury.objects.business().filter(branch=branch).order_by('pk'))
 
 
 def _invoice_cash_account(invoice):

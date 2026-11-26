@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block extra_css %}{% include "invoicing/_van_css.html" %}{% endblock %}
+
+{% block content %}
+<div class="vn">
+    <div class="vn-panel">
+        <div class="vn-head"><h1>🔗 ربط الحسابات</h1>
+            <span class="st {% if changed %}APPROVED{% else %}PENDING{% endif %}" style="margin-inline-start:auto;">{{ changed }} عملية متغيرة</span></div>
+        <p class="note">كل عملية في البرنامج (المبيعات، ضريبة المخرجات، ذمم الموظفين، رسوم التحصيل…) بتترحّل على حسابها الافتراضي.
+            لو عايز عملية تترحّل على حساب تاني اختاره هنا — حساب <b>فرعي</b> من <b>نفس النوع</b> بس. التغيير بيسري على القيود الجديدة؛ القديمة زي ما هي.</p>
+    </div>
+    {% for g in groups %}{% if g.rows %}
+    <div class="vn-panel">
+        <h2>{{ g.title }}</h2>
+        <table class="tbl">
+            <thead><tr><th>العملية (الحساب الافتراضي)</th><th>بتترحّل دلوقتي على</th><th>تغيير</th></tr></thead>
+            <tbody>
+            {% for r in g.rows %}
+            <tr>
+                <td><strong>{{ r.code }}</strong> {% if r.default %}{{ r.default.name }}{% else %}<span class="note">مش موجود في الشجرة لسه</span>{% endif %}</td>
+                <td>{% if r.mapped %}<strong style="color:var(--neon-cyan);">{{ r.mapped.code }} {{ r.mapped.name }}</strong>{% else %}<span class="note">الافتراضي</span>{% endif %}</td>
+                <td>{% if r.default %}
+                    <form method="post" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;">{% csrf_token %}
+                        <input type="hidden" name="code" value="{{ r.code }}">
+                        <select name="account" style="max-width:280px;">{% for a in r.choices %}<option value="{{ a.id }}" {% if r.mapped and r.mapped.id == a.id or not r.mapped and a.code == r.code %}selected{% endif %}>{{ a.code }} — {{ a.name }}</option>{% endfor %}</select>
+                        <button class="vn-btn primary" name="action" value="map">حفظ</button>
+                        {% if r.mapped %}<button class="vn-btn" name="action" value="reset">↺ الافتراضي</button>{% endif %}
+                    </form>{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}{% endfor %}
+</div>
+{% endblock %}

@@ -2,7 +2,7 @@
 {% block content %}
 <div class="card">
     <h2>🚚 بضاعة العربية {% if rep.van_warehouse %}({{ rep.van_warehouse.name }}){% endif %}</h2>
-    <input id="q" type="search" placeholder="ابحث…" oninput="filter(this.value)">
+    <div class="row"><input id="q" type="search" placeholder="ابحث بالاسم أو الباركود…" oninput="filter(this.value)" enterkeyhint="search"><button type="button" class="scan-btn" data-scan="q" aria-label="امسح باركود">📷</button></div>
     <div class="list" id="list" style="margin-top:.4rem;">
         {% for p in products %}
         <div class="item" data-n="{{ p.name|lower }} {{ p.barcode }}"><div class="grow"><div class="t">{{ p.name }}</div><div class="muted">{{ p.barcode }}</div></div><b class="num">{{ p.qty }} <span class="muted">{{ p.uoms.0.name }}</span></b></div>

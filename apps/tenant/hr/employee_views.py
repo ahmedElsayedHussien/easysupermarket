@@ -166,28 +166,41 @@ def post_end_of_service(emp, termination_date, reason, severance, leave_days, tr
     severance = Decimal(severance or 0).quantize(Decimal('0.01'))
     leave_days = Decimal(leave_days or 0)
     encash = (leave_days * p['daily_rate']).quantize(Decimal('0.01'))
+    if severance < 0 or leave_days < 0:
+        raise ValidationError('المكافأة وأيام الإجازة مينفعش يكونوا بالسالب.')
     gross = severance + encash
-    loans = min(p['loans_left'], gross)
+    loans = min(p['loans_left'], gross)              # taken out of what he is owed
+    collected = p['loans_left'] - loans              # the rest: he pays it in now (a loan is never left behind)
     net = gross - loans
-    if net > 0 and treasury is None and bank is None:
-        raise ValidationError('اختار الخزينة أو البنك اللي هيتصرف منه صافي المخالصة.')
+    if (net > 0 or collected > 0) and treasury is None and bank is None:
+        raise ValidationError('اختار الخزينة أو البنك اللي هيتصرف منه صافي المخالصة.' if net > 0 else
+                              f'الموظف عليه سلف {p["loans_left"]:.2f} أكتر من مستحقاته — اختار الخزينة أو البنك '
+                              f'اللي هيورّد فيه الفرق ({collected:.2f}).')
+    if treasury is not None and bank is not None:
+        raise ValidationError('اختار خزينة أو بنك — مش الاتنين.')
     with transaction.atomic():
         eos = EndOfService.objects.create(
             employee=emp, termination_date=termination_date, reason=(reason or '')[:150], years_of_service=p['years'],
-            severance=severance, leave_days=leave_days, leave_encashment=encash, loans_deducted=loans, net_amount=net,
+            severance=severance, leave_days=leave_days, leave_encashment=encash, loans_deducted=loans,
+            loans_collected=collected, net_amount=net,
             assets_returned=True, treasury=treasury, bank_account=bank, created_by=user)
-        if gross > 0:
+        if gross > 0 or collected > 0:
             label = f'مخالصة نهاية خدمة {_employee_name(emp)}'
-            lines = [(_get_system_account('5210'), gross, ZERO, label)]
-            if loans > 0:
-                lines.append((_get_system_account('1135'), ZERO, loans, f'{label} - سلف مخصومة'))
+            lines = []
+            if gross > 0:
+                lines.append((_get_system_account('5210'), gross, ZERO, label))
+            if collected > 0:
+                holder = treasury or bank
+                lines.append((holder.ensure_account(), collected, ZERO, f'{label} - سلف ورّدها الموظف'))
+            if loans + collected > 0:
+                lines.append((_get_system_account('1135'), ZERO, loans + collected, f'{label} - إقفال السلف'))
             if net > 0:
                 lines.append((_source_account(treasury, bank, net), ZERO, net, f'{label} - الصافي'))
             from apps.tenant.invoicing.shift_services import _post as post_entry
             eos.journal_entry = post_entry(f'EOS-{eos.pk}', label, lines, user, eos)
             eos.save(update_fields=['journal_entry'])
-        # loans covered by the settlement are closed; the user can no longer log in
-        if loans > 0:
+        # every loan is closed (covered by the settlement or paid in now); the user can no longer log in
+        if loans + collected > 0:
             EmployeeLoan.objects.filter(employee=emp, status=EmployeeLoan.ACTIVE).update(status=EmployeeLoan.SETTLED)
         emp.user.is_active = False
         emp.user.save(update_fields=['is_active'])

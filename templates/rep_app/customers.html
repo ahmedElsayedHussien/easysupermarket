@@ -2,22 +2,22 @@
 {% block content %}
 <form method="get" class="card">
     <div class="row"><input type="search" name="q" value="{{ q }}" placeholder="ابحث باسم العميل أو الموبايل…"><button class="btn sm">🔍</button></div>
-    {% if not q %}<p class="muted" style="margin:.5rem 0 0;">بيظهر هنا العملاء اللي بعتلهم قبل كده — ابحث عشان تلاقي أي عميل.</p>{% endif %}
+    <p class="muted" style="margin:.5rem 0 0;">{{ total }} عميل{% if total > rows|length %} — بيظهر أول {{ rows|length }}، ابحث عشان توصل لأي عميل{% endif %}. ⭐ = بعتله قبل كده.</p>
 </form>
 <div class="card">
     <div class="list">
         {% for r in rows %}
-        <a class="item" href="{% url 'invoicing:rep_app_customer' r.p.id %}"><div class="grow"><div class="t">{{ r.p.name }}</div><div class="muted">{{ r.p.mobile|default:r.p.phone }}</div></div>
+        <a class="item" href="{% url 'invoicing:rep_app_customer' r.p.id %}"><div class="grow"><div class="t">{% if r.p.mine %}⭐ {% endif %}{{ r.p.name }}</div><div class="muted">{{ r.p.mobile|default:r.p.phone }}</div></div>
             <span class="num {% if r.balance > 0 %}warn{% else %}muted{% endif %}">{{ r.balance|floatformat:"2g" }}</span></a>
         {% empty %}<p class="muted">مفيش عملاء.</p>{% endfor %}
     </div>
 </div>
 {% if can_add %}
-<form method="post" class="card">
+<form method="post" class="card" id="new">
     {% csrf_token %}
     <h2>➕ عميل جديد</h2>
     <div class="field"><label>الاسم</label><input name="name" required maxlength="300"></div>
-    <div class="field"><label>الموبايل</label><input name="mobile" inputmode="tel" maxlength="30"></div>
+    <div class="field"><label>الموبايل</label><input name="mobile" type="tel" inputmode="tel" maxlength="30"></div>
     <div class="field"><label>العنوان</label><input name="address"></div>
     <button class="btn">إضافة</button>
 </form>

@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.dateparse import parse_date
 
@@ -186,3 +186,26 @@ def stock_transfer_detail(request, pk):
     return render(request, 'inventory/stock_transfer_detail.html', {
         'title': f'تحويل مخزني {doc.number}', 'doc': doc, 'lines': lines,
     })
+
+
+@login_required
+@custom_permission_required('inventory.change_inventorybatch', redirect_url='core:main_screen')
+def warehouse_stock_api(request):
+    """Every product with stock in a source warehouse of the current branch (for the transfer screen):
+    [{id, name, barcode, category, available_stock (base unit), unit_display, uoms}] — 2 queries."""
+    from django.http import JsonResponse
+    from .models import InventoryBatch
+    wh = _source_warehouses(request).filter(pk=request.GET.get('warehouse_id') or 0).first()
+    if wh is None:
+        return JsonResponse({'products': []})
+    stock = dict(InventoryBatch.objects.filter(warehouse=wh, quantity_remaining__gt=0).order_by()
+                 .values('product_id').annotate(q=Sum('quantity_remaining')).values_list('product_id', 'q'))
+    products = (Product.objects.filter(id__in=list(stock), is_active=True).exclude(product_type='SERVICE')
+                .select_related('category').prefetch_related('uoms__uom').order_by('category__name', 'name'))
+    out = []
+    for p in products:
+        uoms = [{'id': 'base', 'name': p.pos_unit_name, 'factor': 1.0}] + [
+            {'id': u.id, 'name': u.uom.name, 'factor': float(u.conversion_factor or 1)} for u in p.uoms.all() if not u.is_base]
+        out.append({'id': p.id, 'name': p.name, 'barcode': p.barcode or '', 'category': p.category.name if p.category_id else '',
+                    'available_stock': float(stock[p.id]), 'unit_display': p.pos_unit_name, 'uoms': uoms})
+    return JsonResponse({'warehouse': wh.name, 'products': out})

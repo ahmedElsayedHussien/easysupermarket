@@ -139,7 +139,7 @@ def main_screen(request):
 
     # A sales rep works from his phone screen (invoicing.rep_app).
     emp = getattr(request.user, 'employee_profile', None)
-    if emp is not None and emp.role == 'SALES_REP' and request.user.has_perm('invoicing.use_rep_app'):
+    if emp is not None and emp.role == 'SALES_REP':
         return redirect('invoicing:rep_app_home')
 
     now = timezone.localtime()

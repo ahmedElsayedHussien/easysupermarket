@@ -146,3 +146,40 @@ class PricingViewsTestCase(TestCase):
         resp = sector_list(req)
         self.assertEqual(resp.status_code, 200)
 
+
+
+
+class PricingIntegrityTests(TestCase):
+    """Duplicates blocked even without a unit; units must be the product's; ties resolved by the newest list."""
+    @classmethod
+    def setUpTestData(cls):
+        from apps.tenant.core.tests.factories import build_world
+        cls.w = build_world()
+
+    def test_rules(self):
+        import datetime
+        from decimal import Decimal as D
+        from django.core.exceptions import ValidationError
+        from django.db import IntegrityError, transaction
+        from apps.tenant.inventory.models import UnitOfMeasure
+        from apps.tenant.pricing.models import CustomerSector, PriceList, PriceListItem
+        from apps.tenant.pricing.services import PricingEngineService
+        sector = CustomerSector.objects.create(name='جملة')
+        old = PriceList.objects.create(name='قديمة', list_type=PriceList.SECTOR, sector=sector)
+        PriceListItem.objects.create(price_list=old, product=self.w.product, custom_price=D('8'))
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            PriceListItem.objects.create(price_list=old, product=self.w.product, custom_price=D('7'))
+        meter = UnitOfMeasure.objects.create(name='متر')
+        bad = PriceListItem(price_list=old, product=self.w.product, uom=meter, custom_price=D('1'))
+        with self.assertRaisesMessage(ValidationError, 'مش من وحدات الصنف'):
+            bad.clean()
+        new = PriceList.objects.create(name='عرض', list_type=PriceList.SECTOR, sector=sector)
+        PriceListItem.objects.create(price_list=new, product=self.w.product, custom_price=D('6'))
+        self.w.customer.sector = sector
+        self.w.customer.save()
+        price = PricingEngineService.get_effective_price(self.w.product, self.w.customer)['price']
+        self.assertEqual(price, D('6'))                              # same quantity break: newest list wins
+        new.list_type = PriceList.GENERAL
+        new.save()
+        new.refresh_from_db()
+        self.assertIsNone(new.sector)                                # old target cleared on type change

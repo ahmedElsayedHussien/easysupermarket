@@ -15,6 +15,9 @@ openpyxl==3.1.5
 et_xmlfile==2.0.0
 pillow==13.0.0
 requests==2.34.2
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.12
 certifi==2026.11.20
 charset-normalizer==3.5.3
 idna==3.20

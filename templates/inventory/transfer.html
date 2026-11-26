@@ -20,6 +20,16 @@
   .st-remove { background: none; border: 1px solid var(--lq-border); color: var(--lq-text-2); border-radius: 6px; cursor: pointer; padding: 0.25rem 0.55rem; }
   .st-remove:hover { border-color: var(--st-critical); color: var(--st-critical); }
   .st-footer { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
+  .wh-stock { border: 1px solid var(--lq-border); border-radius: 10px; margin-bottom: 0.9rem; display: none; }
+  .wh-stock-head { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--lq-border); }
+  .wh-stock-head b { color: var(--lq-text); }
+  .wh-stock-head input { flex: 1; min-width: 180px; }
+  .wh-stock-list { max-height: 300px; overflow-y: auto; }
+  .wh-item { display: grid; grid-template-columns: 1fr auto auto; gap: 0.8rem; align-items: center; padding: 0.45rem 0.8rem; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.88rem; }
+  .wh-item.added { opacity: 0.45; }
+  .wh-item small { color: var(--lq-muted); }
+  .wh-item .q { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .wh-cat { padding: 0.35rem 0.8rem; font-size: 0.75rem; font-weight: 700; color: var(--lq-muted); background: rgba(255,255,255,0.03); }
   .st-note { background: rgba(0,229,255,0.07); border: 1px solid rgba(0,229,255,0.25); border-radius: 8px; padding: 0.55rem 0.8rem; color: #7dd3fc; font-size: 0.85rem; display: none; }
 </style>
 
@@ -70,6 +80,15 @@
       <div class="st-search" style="margin-bottom: 0.9rem;">
         <input type="text" id="productSearch" class="form-control" placeholder="🔍 ابحث باسم الصنف أو امسح الباركود ثم Enter... (اختر مستودع المصدر أولاً)">
         <div class="st-results" id="searchResults" role="listbox"></div>
+      </div>
+
+      <div class="wh-stock" id="whStock">
+        <div class="wh-stock-head">
+          <b>📦 أصناف <span id="whName"></span> <small id="whCount" style="color:var(--lq-muted)"></small></b>
+          <input type="text" id="whFilter" class="form-control" placeholder="فلتر بالاسم أو الباركود…">
+          <button type="button" class="lq-btn" id="whAddAll">➕ أضف الكل بكل الكمية</button>
+        </div>
+        <div class="wh-stock-list" id="whList"></div>
       </div>
 
       <div class="lq-scroll">
@@ -217,8 +236,54 @@
   results.addEventListener('click', function (e) { var b = e.target.closest('button[data-i]'); if (b) pick(+b.dataset.i); });
   document.addEventListener('click', function (e) { if (!e.target.closest('.st-search')) closeResults(); });
 
+  // ---- the source warehouse's stock, listed as soon as it is chosen ----
+  var whBox = document.getElementById('whStock'), whList = document.getElementById('whList'), whFilter = document.getElementById('whFilter');
+  var whItems = [];
+  function inLines(id) { return !!body.querySelector('tr.st-row[data-product="' + id + '"]'); }
+  function renderStock() {
+    var q = whFilter.value.trim().toLowerCase(), lastCat = null, html = '';
+    whItems.forEach(function (p, i) {
+      if (q && p.name.toLowerCase().indexOf(q) < 0 && (p.barcode || '').toLowerCase().indexOf(q) < 0) return;
+      if (p.category !== lastCat) { lastCat = p.category; html += '<div class="wh-cat">' + esc(p.category || 'بدون تصنيف') + '</div>'; }
+      html += '<div class="wh-item' + (inLines(p.id) ? ' added' : '') + '"><span>' + esc(p.name) + (p.barcode ? ' <small>' + esc(p.barcode) + '</small>' : '') + '</span>' +
+        '<span class="q">' + fmt(p.available_stock) + ' <small>' + esc(p.unit_display || '') + '</small></span>' +
+        '<button type="button" class="lq-btn" data-add="' + i + '">' + (inLines(p.id) ? '✓' : '＋') + '</button></div>';
+    });
+    whList.innerHTML = html || '<div class="lq-empty">' + (whItems.length ? 'مفيش صنف بالاسم ده' : 'المستودع ده فاضي') + '</div>';
+  }
+  function loadWarehouseStock() {
+    whItems = [];
+    if (!fromSel.value) { whBox.style.display = 'none'; return; }
+    whBox.style.display = 'block';
+    document.getElementById('whName').textContent = fromSel.selectedOptions[0].textContent.trim();
+    whList.innerHTML = '<div class="lq-empty">⏳ جاري التحميل…</div>';
+    fetch('{% url "inventory:api_warehouse_stock" %}?warehouse_id=' + encodeURIComponent(fromSel.value))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        whItems = d.products || [];
+        document.getElementById('whCount').textContent = '(' + whItems.length + ' صنف)';
+        renderStock();
+      });
+  }
+  whFilter.addEventListener('input', renderStock);
+  whList.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-add]'); if (!b) return;
+    var p = whItems[+b.dataset.add]; if (!p || inLines(p.id)) return;
+    addRow(p); renderStock();
+  });
+  document.getElementById('whAddAll').addEventListener('click', function () {
+    var todo = whItems.filter(function (p) { return !inLines(p.id); });
+    if (!todo.length) return;
+    if (body.querySelectorAll('tr.st-row').length + todo.length > MAX) { alert('الحد الأقصى ' + MAX + ' صنف في التحويل الواحد.'); return; }
+    if (!confirm('إضافة ' + todo.length + ' صنف بكل الكمية المتاحة؟')) return;
+    todo.forEach(function (p) { addRow(p, p.available_stock, 'base'); });
+    renderStock();
+  });
+  body.addEventListener('click', function (e) { if (e.target.closest('.st-remove')) setTimeout(renderStock, 0); });
+
   fromSel.addEventListener('change', function () {
     body.querySelectorAll('tr.st-row').forEach(loadStock);
+    loadWarehouseStock();
     refreshState();
   });
   toSel.addEventListener('change', refreshState);
@@ -232,6 +297,7 @@
     addRow({ id: r.id, name: r.name, barcode: r.barcode, uoms: r.uoms, available_stock: null }, r.quantity, r.uom_id);
   });
   refreshState();
+  loadWarehouseStock();
 })();
 </script>
 {% endblock %}

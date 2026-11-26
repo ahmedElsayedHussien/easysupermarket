@@ -138,9 +138,14 @@ class DocumentTests(ETATestBase):
     def test_business_receiver(self):
         company = make_partner('شركة الأمل', 'CUSTOMER', tax_id='987654321', address='شارع التحرير')
         inv = make_invoice(self.w, lines=[(self.w.product, 1, 10, 14)], partner=company)
+        with self.assertRaises(ETAValidationError):                 # a company needs its own address
+            build_invoice_json(inv.id)
+        company.eta_governate, company.eta_region_city, company.eta_building_number = 'الجيزة', 'الدقي', '12'
+        company.save()
         rec = build_invoice_json(inv.id)['receiver']
         self.assertEqual((rec['type'], rec['id']), ('B', '987654321'))
-        self.assertEqual(rec['address']['street'], 'شارع التحرير')
+        self.assertEqual(rec['address'], {'country': 'EG', 'governate': 'الجيزة', 'regionCity': 'الدقي',
+                                          'street': 'شارع التحرير', 'buildingNumber': '12'})
 
 
 class LifecycleTests(ETATestBase):
@@ -780,3 +785,82 @@ class CategoryEGSTests(ETATestBase):
         r = self.client.get(reverse('einvoicing:egs_codes'))
         self.assertContains(r, 'أكواد الفئات')
         self.assertContains(r, 'يُرسل بكود الفئة')
+
+
+class SecurityAndBranchTests(ETATestBase):
+    """Secrets encrypted at rest; one settings row; a branch's own ETA code/address; the log is kept."""
+
+    def test_secrets_encrypted_in_the_database(self):
+        from django.db import connection
+        s = TaxIntegrationSettings.objects.get()
+        with connection.cursor() as c:
+            c.execute('SELECT client_secret, api_token FROM einvoicing_taxintegrationsettings WHERE id = %s', [s.pk])
+            raw_secret, raw_token = c.fetchone()
+        self.assertTrue(raw_secret.startswith('enc1$'))
+        self.assertTrue(raw_token.startswith('enc1$'))
+        self.assertEqual(s.client_secret, 'sec')                        # read back in clear
+        self.assertFalse(s.api_token.startswith('enc1$'))
+
+    def test_single_settings_row(self):
+        with self.assertRaises(ValueError):
+            TaxIntegrationSettings.objects.create(client_id='x', client_secret='y')
+
+    def test_branch_with_its_own_eta_code(self):
+        b = self.w.branch
+        b.eta_branch_code, b.eta_governate, b.eta_region_city, b.eta_street, b.eta_building_number = (
+            '3', 'الجيزة', 'الهرم', 'شارع الهرم', '40')
+        b.save()
+        inv = make_invoice(self.w, lines=[(self.w.product, 1, 10, 14)])
+        addr = build_invoice_json(inv.id)['issuer']['address']
+        self.assertEqual((addr['branchID'], addr['governate'], addr['street']), ('3', 'الجيزة', 'شارع الهرم'))
+
+    def test_log_is_never_deleted_with_its_invoice(self):
+        from django.db.models import ProtectedError
+        inv = make_invoice(self.w, lines=[(self.w.product, 1, 10, 14)])
+        self.assertTrue(EInvoiceLog.objects.filter(invoice=inv).exists())
+        Invoice.objects.filter(pk=inv.pk).update(status=Invoice.CANCELLED)
+        inv.refresh_from_db()
+        with self.assertRaises(ProtectedError):
+            inv.delete()
+
+
+class BuilderRulesTests(ETATestBase):
+    """Ids cleaned / checked, taxes as the ETA re-computes them, issue time = posting, credit notes on Valid only."""
+
+    def test_ids_cleaned_and_checked(self):
+        co = make_partner('شركة شرطات', 'CUSTOMER', tax_id='123-456-789', address='ش 1',
+                          eta_governate='القاهرة', eta_region_city='مصر الجديدة')
+        inv = make_invoice(self.w, lines=[(self.w.product, 1, 10, 14)], partner=co)
+        self.assertEqual(build_invoice_json(inv.id)['receiver']['id'], '123456789')
+        bad = make_partner('شركة ناقصة', 'CUSTOMER', tax_id='12345', address='ش 1', eta_governate='ق',
+                           eta_region_city='م')
+        inv2 = make_invoice(self.w, lines=[(self.w.product, 1, 10, 14)], partner=bad)
+        with self.assertRaises(ETAValidationError) as cm:
+            build_invoice_json(inv2.id)
+        self.assertIn('9 أرقام', ' '.join(cm.exception.errors))
+
+    def test_tax_is_netTotal_times_rate_at_5_decimals(self):
+        from decimal import Decimal
+        inv = make_invoice(self.w, lines=[(self.w.product, '0.333', '7.77', 14)])
+        doc = build_invoice_json(inv.id)
+        ln = doc['invoiceLines'][0]
+        t1 = next(t for t in ln['taxableItems'] if t['taxType'] == 'T1')['amount']
+        expected = float((Decimal(str(ln['netTotal'])) * 14 / 100).quantize(Decimal('0.00001')))
+        self.assertEqual(t1, expected)
+        self.check_identities(doc)
+
+    def test_issue_time_is_when_posted(self):
+        import datetime as dt
+        from django.utils import timezone
+        inv = make_invoice(self.w, lines=[(self.w.product, 1, 10, 14)])
+        Invoice.objects.filter(pk=inv.pk).update(created_at=timezone.now() - dt.timedelta(days=5))   # old draft
+        issued = build_invoice_json(inv.id)['dateTimeIssued']
+        self.assertEqual(issued[:10], timezone.now().astimezone(dt.timezone.utc).strftime('%Y-%m-%d'))
+
+    def test_credit_note_refused_when_original_invalid(self):
+        sale = make_invoice(self.w, lines=[(self.w.product, 3, 10, 14)])
+        EInvoiceLog.objects.filter(invoice=sale).update(status='INVALID', uuid='U-BAD')
+        ret = make_invoice(self.w, 'RETURN_SALE', lines=[(self.w.product, 1, 10, 14)], parent_invoice=sale)
+        with self.assertRaises(ETAValidationError) as cm:
+            build_invoice_json(ret.id)
+        self.assertIn('Valid', ' '.join(cm.exception.errors))

@@ -71,7 +71,7 @@
 
                     <div class="row">
                         {% for field in form %}
-                        {% if field.name == 'egs_code' or field.name == 'gpc_code' %}
+                        {% if field.name == 'egs_code' or field.name == 'gpc_code' or field.name == 'eta_tax_subtype' %}
                         {# shown in the "أكواد الضرائب (متقدم)" section below #}
                         {% elif field.field.widget.input_type == 'checkbox' %}
                         <div class="col-md-4 form-group d-flex align-items-center mt-4" style="gap: 10px;">
@@ -151,7 +151,7 @@
                             استخدم كود EGS خاص فقط لصنف يحتاج تكويداً مستقلاً.
                         </p>
                         <div class="row">
-                            {% for field in form %}{% if field.name == 'egs_code' or field.name == 'gpc_code' %}
+                            {% for field in form %}{% if field.name == 'egs_code' or field.name == 'gpc_code' or field.name == 'eta_tax_subtype' %}
                             <div class="col-md-4 form-group">
                                 <label for="{{ field.id_for_label }}">{{ field.label }}</label>
                                 {{ field }}

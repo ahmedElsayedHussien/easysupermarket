@@ -694,6 +694,18 @@
                         <span><i class="fas fa-plus-circle me-2" style="color: #2ed573; font-size: 0.85rem;"></i> (+) المقبوضات النقدية من المبيعات:</span>
                         <span class="val" style="color: #2ed573;">+{{ details.total_cash_sales|floatformat:2 }} ج.م</span>
                     </div>
+                    {% if details.total_rental_settlements %}
+                    <div class="recon-item">
+                        <span><i class="fas fa-exchange-alt me-2" style="color: #ffa502; font-size: 0.85rem;"></i> (±) تسويات إرجاع المعدات النقدية:</span>
+                        <span class="val" style="color: #ffa502;"><bdi dir="ltr">{% if details.total_rental_settlements > 0 %}+{% endif %}{{ details.total_rental_settlements|floatformat:2 }}</bdi> ج.م</span>
+                    </div>
+                    {% endif %}
+                    {% if details.total_cash_maintenance > 0 %}
+                    <div class="recon-item">
+                        <span><i class="fas fa-plus-circle me-2" style="color: #2ed573; font-size: 0.85rem;"></i> (+) تحصيلات الصيانة النقدية:</span>
+                        <span class="val" style="color: #2ed573;">+{{ details.total_cash_maintenance|floatformat:2 }} ج.م</span>
+                    </div>
+                    {% endif %}
                     {% if details.total_cash_rentals > 0 %}
                     <div class="recon-item">
                         <span><i class="fas fa-plus-circle me-2" style="color: #2ed573; font-size: 0.85rem;"></i> (+) المقبوضات النقدية من إيجار المعدات:</span>
@@ -1051,6 +1063,12 @@
                     <td>(+) مبيعات نقدية (كاش):</td>
                     <td style="text-align: left; font-weight: bold;">+{{ details.total_cash_sales|floatformat:2 }}</td>
                 </tr>
+                {% if details.total_cash_maintenance > 0 %}
+                <tr>
+                    <td>(+) صيانة كاش:</td>
+                    <td style="text-align: left; font-weight: bold;">+{{ details.total_cash_maintenance|floatformat:2 }}</td>
+                </tr>
+                {% endif %}
                 {% if details.total_cash_rentals > 0 %}
                 <tr>
                     <td>(+) إيجارات كاش:</td>

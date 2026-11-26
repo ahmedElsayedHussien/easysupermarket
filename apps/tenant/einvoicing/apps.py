@@ -7,4 +7,4 @@ class EinvoicingConfig(AppConfig):
     verbose_name = 'منظومة الفاتورة الإلكترونية'
 
     def ready(self):
-        import apps.tenant.einvoicing.signals
+        pass  # the e-invoice queue is filled explicitly by invoice_service (no signals)

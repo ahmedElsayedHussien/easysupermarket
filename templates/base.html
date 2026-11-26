@@ -434,7 +434,7 @@
 
             {% if system_setting is None or system_setting.show_nav_accounting_dashboard %}
             {# expenses, vouchers, transfers, cheques, fixed assets, loans, journals, chart of accounts, reports: all inside #}
-            <a href="{% url 'accounting:accounting_dashboard' %}" class="nav-link nav-gold {% if request.resolver_match.app_name == 'accounting' and request.resolver_match.url_name != 'liquidity_dashboard' and request.resolver_match.url_name|slice:':8' != 'eservice' and request.resolver_match.url_name|slice:':11' != 'pos_machine' and request.resolver_match.url_name|slice:':8' != 'treasury' and request.resolver_match.url_name|slice:':4' != 'bank' and request.resolver_match.url_name|slice:':7' != 'ewallet' and request.resolver_match.url_name|slice:':7' != 'custody' and request.resolver_match.url_name|slice:':7' != 'bank_re' and request.resolver_match.url_name != 'tax_settlement' and request.resolver_match.url_name != 'fiscal_years' %}active{% endif %}">
+            <a href="{% url 'accounting:accounting_dashboard' %}" class="nav-link nav-gold {% if request.resolver_match.app_name == 'accounting' and request.resolver_match.url_name != 'liquidity_dashboard' and request.resolver_match.url_name|slice:':8' != 'eservice' and request.resolver_match.url_name|slice:':11' != 'pos_machine' and request.resolver_match.url_name|slice:':8' != 'treasury' and request.resolver_match.url_name|slice:':4' != 'bank' and request.resolver_match.url_name|slice:':7' != 'ewallet' and request.resolver_match.url_name|slice:':7' != 'custody' and request.resolver_match.url_name|slice:':7' != 'bank_re' and request.resolver_match.url_name != 'tax_settlement' and request.resolver_match.url_name != 'fiscal_years' and request.resolver_match.url_name != 'intermediaries' and request.resolver_match.url_name != 'account_mapping' %}active{% endif %}">
                 <span class="nav-icon">📒</span>
                 <span class="nav-text">{% trans 'لوحة المحاسبة' %}</span>
             </a>
@@ -451,6 +451,18 @@
             <a href="{% url 'accounting:fiscal_years' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'fiscal_years' %}active{% endif %}">
                 <span class="nav-icon">📕</span>
                 <span class="nav-text">{% trans 'إقفال السنة المالية' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.accounting.change_accountmapping %}
+            <a href="{% url 'accounting:account_mapping' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'account_mapping' %}active{% endif %}">
+                <span class="nav-icon">🔗</span>
+                <span class="nav-text">{% trans 'ربط الحسابات' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.accounting.view_intermediarycompany %}
+            <a href="{% url 'accounting:intermediaries' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'intermediaries' %}active{% endif %}">
+                <span class="nav-icon">🏪</span>
+                <span class="nav-text">{% trans 'الشركات الوسيطة' %}</span>
             </a>
             {% endif %}
             {% if perms.accounting.view_taxsettlement %}

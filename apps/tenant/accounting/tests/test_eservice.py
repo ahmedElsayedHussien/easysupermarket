@@ -27,6 +27,7 @@ def seed(acc, amount, ref):
                                     status=JournalEntry.POSTED)
     JournalItem.objects.create(entry=e, account=acc, debit=amount, credit=0)
     JournalItem.objects.create(entry=e, account=account('3100'), debit=0, credit=amount)
+    e.post()
 
 
 def bal(acc):

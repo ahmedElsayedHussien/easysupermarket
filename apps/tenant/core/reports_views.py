@@ -3309,82 +3309,66 @@ class TrialBalanceReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomPe
     csv_filename = "trial_balance_report.csv"
 
     def get_csv_headers(self):
-        return ['كود الحساب', 'اسم الحساب', 'النوع', 'إجمالي مدين', 'إجمالي دائن', 'رصيد مدين', 'رصيد دائن']
+        return ['كود الحساب', 'اسم الحساب', 'النوع', 'افتتاحي مدين', 'افتتاحي دائن',
+                'حركة مدين', 'حركة دائن', 'رصيد مدين', 'رصيد دائن']
 
     def get_csv_row(self, obj):
-        return [
-            obj['code'],
-            obj['name'],
-            obj['type'],
-            obj['debit'],
-            obj['credit'],
-            obj['net_debit'],
-            obj['net_credit']
-        ]
+        return [obj['code'], obj['name'], obj['type'], obj['opening_debit'], obj['opening_credit'],
+                obj['debit'], obj['credit'], obj['net_debit'], obj['net_credit']]
 
     def get_context_data(self, **kwargs):
+        """
+        ميزان مجاميع وأرصدة: رصيد أول المدة (قبل «من») + حركة الفترة = الرصيد في آخر يوم «إلى».
+        كل ده في استعلام تجميعي واحد (Sum بـ filter)، والقيود المرحّلة بس.
+        """
         context = super().get_context_data(**kwargs)
         start_date = _date_param(self.request, 'start_date')
         end_date = _date_param(self.request, 'end_date')
 
         from apps.tenant.accounting.models import Account, JournalItem
-        from django.db.models import Sum
+        from django.db.models import Q, Sum
 
         items = JournalItem.objects.filter(entry__status='POSTED')
-        if start_date:
-            items = items.filter(entry__date__gte=start_date)
         if end_date:
             items = items.filter(entry__date__lte=end_date)
+        if start_date:
+            before, inside = Q(entry__date__lt=start_date), Q(entry__date__gte=start_date)
+        else:
+            before, inside = Q(pk__in=[]), Q()
 
-        acc_balances = items.values(
-            'account__id', 'account__code', 'account__name', 'account__account_type'
-        ).annotate(
-            total_debit=Sum('debit'),
-            total_credit=Sum('credit')
+        rows = items.values('account__id', 'account__code', 'account__name', 'account__account_type').annotate(
+            op_d=Sum('debit', filter=before), op_c=Sum('credit', filter=before),
+            per_d=Sum('debit', filter=inside), per_c=Sum('credit', filter=inside),
         ).order_by('account__code')
 
+        zero = Decimal('0')
+        types = dict(Account.ACCOUNT_TYPES)
         accounts_list = []
-        total_debit = Decimal('0')
-        total_credit = Decimal('0')
+        for r in rows:
+            op = (r['op_d'] or zero) - (r['op_c'] or zero)
+            td, tc = r['per_d'] or zero, r['per_c'] or zero
+            close = op + td - tc
+            if not (op or td or tc or close):
+                continue
+            accounts_list.append({
+                'code': r['account__code'], 'name': r['account__name'],
+                'type': types.get(r['account__account_type'], r['account__account_type']),
+                'opening_debit': op if op > 0 else zero, 'opening_credit': -op if op < 0 else zero,
+                'debit': td, 'credit': tc,
+                'net_debit': close if close > 0 else zero, 'net_credit': -close if close < 0 else zero,
+            })
 
-        for ab in acc_balances:
-            td = ab['total_debit'] or Decimal('0')
-            tc = ab['total_credit'] or Decimal('0')
-            
-            if ab['account__account_type'] in ['ASSET', 'EXPENSE']:
-                net = td - tc
-                net_debit = net if net > 0 else Decimal('0')
-                net_credit = abs(net) if net < 0 else Decimal('0')
-            else:
-                net = tc - td
-                net_credit = net if net > 0 else Decimal('0')
-                net_debit = abs(net) if net < 0 else Decimal('0')
-
-            if net_debit > 0 or net_credit > 0 or td > 0 or tc > 0:
-                accounts_list.append({
-                    'code': ab['account__code'],
-                    'name': ab['account__name'],
-                    'type': dict(Account.ACCOUNT_TYPES).get(ab['account__account_type'], ab['account__account_type']),
-                    'debit': td,
-                    'credit': tc,
-                    'net_debit': net_debit,
-                    'net_credit': net_credit
-                })
-                total_debit += td
-                total_credit += tc
-
-        context['accounts'] = accounts_list
-        context['total_debit'] = total_debit
-        context['total_credit'] = total_credit
-        context['total_net_debit'] = sum(a['net_debit'] for a in accounts_list)
-        context['total_net_credit'] = sum(a['net_credit'] for a in accounts_list)
-        context['start_date'] = start_date
-        context['end_date'] = end_date
-        context['title'] = 'ميزان المراجعة'
-        
-        # for CSV export
-        context['object_list'] = accounts_list
-
+        def total(key):
+            return sum((acc[key] for acc in accounts_list), zero)
+        context.update({
+            'accounts': accounts_list, 'object_list': accounts_list,
+            'total_opening_debit': total('opening_debit'), 'total_opening_credit': total('opening_credit'),
+            'total_debit': total('debit'), 'total_credit': total('credit'),
+            'total_net_debit': total('net_debit'), 'total_net_credit': total('net_credit'),
+            'start_date': start_date, 'end_date': end_date, 'title': 'ميزان المراجعة',
+        })
+        context['is_balanced'] = (context['total_debit'] == context['total_credit']
+                                  and context['total_net_debit'] == context['total_net_credit'])
         return context
 
 def _ledger_quick_ranges():
@@ -3466,7 +3450,7 @@ class GeneralLedgerReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomP
                 if end_date:
                     period_items = period_items.filter(entry__date__lte=end_date)
                     
-                period_items = period_items.select_related('entry').order_by('entry__date', 'entry__created_at')
+                period_items = period_items.select_related('entry').order_by('entry__date', 'entry__created_at', 'entry_id', 'id')
                 
                 transactions = []
                 running_balance = opening_balance
@@ -3739,6 +3723,10 @@ def export_shift_detail_excel(request, pk):
     ]
     if to_dec(dt['total_cash_rentals']) > 0:
         recon_rows.append(["(+) المقبوضات النقدية من إيجار المعدات", to_dec(dt['total_cash_rentals']), "عقود إيجار مسددة نقداً"])
+    if to_dec(dt.get('total_rental_settlements') or 0) != 0:
+        recon_rows.append(["(±) تسويات إرجاع المعدات النقدية", to_dec(dt['total_rental_settlements']), "مرتجع إيجار − غرامة نقداً"])
+    if to_dec(dt.get('total_cash_maintenance') or 0) > 0:
+        recon_rows.append(["(+) تحصيلات الصيانة النقدية", to_dec(dt['total_cash_maintenance']), "تذاكر صيانة مسلّمة نقداً"])
     if to_dec(dt['total_cash_receipts']) > 0:
         recon_rows.append(["(+) سندات القبض النقدية المقبوضة بالوردية", to_dec(dt['total_cash_receipts']), "مقبوضات سندات كاش"])
     recon_rows.append(["(-) المرتجعات النقدية المسددة من الدرج", -to_dec(dt['total_cash_refunds']), "مرتجعات مبيعات كاش"])

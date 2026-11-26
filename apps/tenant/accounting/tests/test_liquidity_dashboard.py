@@ -14,6 +14,7 @@ def post(account_debit, account_credit, amount, ref):
                                     status=JournalEntry.POSTED)
     JournalItem.objects.create(entry=e, account=account_debit, debit=amount, credit=0)
     JournalItem.objects.create(entry=e, account=account_credit, debit=0, credit=amount)
+    e.post()
     return e
 
 

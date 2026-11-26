@@ -68,6 +68,21 @@
             </tfoot>
         </table>
         
+        {% if can_reverse %}
+        <form method="post" action="{% url 'accounting:journal_reverse' entry.pk %}" class="mt-4"
+              style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;border:1px dashed var(--border-bright);border-radius:10px;padding:.75rem;">
+            {% csrf_token %}
+            <div style="flex:2;min-width:220px;"><label class="form-label text-muted">سبب العكس (إجباري)</label>
+                <input name="reason" class="form-control" required minlength="3" maxlength="200"></div>
+            <div style="flex:1;min-width:150px;"><label class="form-label text-muted">تاريخ القيد العكسي</label>
+                <input type="date" name="date" class="form-control"></div>
+            <button class="btn btn-danger" onclick="return confirm('عمل قيد عكسي للقيد {{ entry.reference }}؟');">↩️ قيد عكسي</button>
+            <small class="text-muted" style="flex-basis:100%;">القيد الأصلي بيفضل زي ما هو، وبيتعمل قيد بنفس الحسابات مقلوبة (التاريخ فاضي = النهارده).</small>
+        </form>
+        {% elif entry.status == 'POSTED' and entry.content_type_id and not entry.reversal_of_id and not entry.reversing_entry %}
+        <p class="text-muted mt-3" style="font-size:.85rem;">القيد ده تبع مستند — لو عايز تلغيه، اتلغي من المستند نفسه.</p>
+        {% endif %}
+
         <div class="mt-4">
             {% if request.user.is_superuser or request.user.employee_profile.is_admin %}
             <a href="{% url 'accounting:journal_list' %}" class="btn btn-ghost">العودة للقيود</a>

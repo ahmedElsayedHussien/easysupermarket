@@ -1,11 +1,14 @@
 import secrets
+from decimal import Decimal
 
 from django.db import models
+from apps.tenant.core.crypto import EncryptedCharField
 from apps.tenant.invoicing.models import Invoice
 
 class TaxIntegrationSettings(models.Model):
     client_id = models.CharField(max_length=255, verbose_name="معرف العميل (Client ID)")
-    client_secret = models.CharField(max_length=255, verbose_name="كلمة السر (Client Secret)")
+    # encrypted at rest (core.crypto): a database backup alone never reveals it
+    client_secret = EncryptedCharField(max_length=500, verbose_name="كلمة السر (Client Secret)")
     taxpayer_activity_code = models.CharField(
         max_length=10, blank=True, default="", verbose_name="كود النشاط (Activity Code)",
         help_text="كود النشاط المسجل لك في مصلحة الضرائب (4 أرقام) — مثال: 4711 لمحلات السوبر ماركت.")
@@ -37,10 +40,10 @@ class TaxIntegrationSettings(models.Model):
         max_length=10, blank=True, default="W010", verbose_name="كود نوع الخصم والإضافة (T4)",
         help_text="كود نوع ضريبة الخصم والإضافة من دليل أكواد الضرائب حسب طبيعة التعامل (يُستخدم فقط إذا كانت الفاتورة عليها خصم وإضافة).")
     receiver_id_threshold = models.DecimalField(
-        max_digits=12, decimal_places=2, default=50000, verbose_name="حد إلزام الرقم القومي للعميل الفرد",
+        max_digits=12, decimal_places=2, default=Decimal('50000'), verbose_name="حد إلزام الرقم القومي للعميل الفرد",
         help_text="فاتورة لعميل فرد بقيمة تساوي أو تزيد عن هذا المبلغ لا تُرسل إلا ومعها الرقم القومي للعميل.")
     # Shared secret used by the Local Signer: "Authorization: Bearer <api_token>".
-    api_token = models.CharField(max_length=128, blank=True, default='', editable=False,
+    api_token = EncryptedCharField(max_length=300, blank=True, default='', editable=False,
                                  verbose_name="مفتاح ربط برنامج التوقيع (API Token)")
 
     class Meta:
@@ -57,6 +60,9 @@ class TaxIntegrationSettings(models.Model):
         return self.api_token
 
     def save(self, *args, **kwargs):
+        # one settings row: a second one would make "which credentials?" ambiguous
+        if self._state.adding and TaxIntegrationSettings.objects.exists():
+            raise ValueError('إعدادات الفاتورة الإلكترونية صف واحد بس — عدّل الموجود.')
         if not self.api_token:
             self.api_token = self.generate_api_token()
             update_fields = kwargs.get('update_fields')
@@ -85,10 +91,13 @@ class EInvoiceLog(models.Model):
         ('REJECT_REQUESTED', 'العميل طلب رفض الفاتورة'),
     ]
     
-    invoice = models.OneToOneField(Invoice, on_delete=models.CASCADE, related_name='einvoice_log', verbose_name="الفاتورة")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='WAITING_APPROVAL', verbose_name="الحالة")
-    uuid = models.CharField(max_length=255, blank=True, null=True, verbose_name="UUID الفاتورة بالضرائب")
-    submission_id = models.CharField(max_length=255, blank=True, null=True, verbose_name="رقم الإرسال (Submission ID)")
+    invoice = models.OneToOneField(Invoice, on_delete=models.PROTECT, related_name='einvoice_log', verbose_name="الفاتورة")
+    # 4) the Local Signer / status sync look these up all the time
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='WAITING_APPROVAL', db_index=True,
+                              verbose_name="الحالة")
+    uuid = models.CharField(max_length=255, blank=True, null=True, db_index=True, verbose_name="UUID الفاتورة بالضرائب")
+    submission_id = models.CharField(max_length=255, blank=True, null=True, db_index=True,
+                                     verbose_name="رقم الإرسال (Submission ID)")
     # ETA "longId": the long unique id meant for document printouts (anonymous lookup).
     long_id = models.CharField(max_length=100, blank=True, default='', verbose_name="الرقم الطويل للطباعة (Long ID)")
     # Public read-only link to the document at the ETA (from Search Documents: publicUrl)

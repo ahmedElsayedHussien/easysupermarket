@@ -100,6 +100,14 @@ class PriceList(models.Model):
             return f"{self.name} [قطاع: {self.sector.name}]"
         return self.name
 
+    def save(self, *args, **kwargs):
+        # only the target of the list's own type is kept (a type change never leaves the old target behind)
+        if self.list_type != self.CUSTOMER:
+            self.partner = None
+        if self.list_type != self.SECTOR:
+            self.sector = None
+        return super().save(*args, **kwargs)
+
     def clean(self):
         super().clean()
         if self.list_type == self.CUSTOMER and not self.partner:
@@ -113,7 +121,7 @@ class PriceList(models.Model):
         if not self.is_active:
             return False
         if as_of_date is None:
-            as_of_date = timezone.now().date()
+            as_of_date = timezone.localdate()
         if self.start_date and as_of_date < self.start_date:
             return False
         if self.end_date and as_of_date > self.end_date:
@@ -190,8 +198,13 @@ class PriceListItem(models.Model):
     class Meta:
         verbose_name = 'بند قائمة الأسعار'
         verbose_name_plural = 'بنود قائمة الأسعار'
-        unique_together = [('price_list', 'product', 'uom', 'min_quantity')]
         ordering = ['product__name', '-min_quantity']
+        constraints = [
+            models.UniqueConstraint(fields=['price_list', 'product', 'min_quantity'], condition=models.Q(uom__isnull=True),
+                                    name='uniq_pli_base_unit'),
+            models.UniqueConstraint(fields=['price_list', 'product', 'uom', 'min_quantity'],
+                                    condition=models.Q(uom__isnull=False), name='uniq_pli_with_unit'),
+        ]
 
     def __str__(self):
         method_desc = f"{self.custom_price} ج.م" if self.pricing_method == self.FIXED else f"خصم {self.discount_percentage}%"
@@ -199,6 +212,10 @@ class PriceListItem(models.Model):
 
     def clean(self):
         super().clean()
+        if self.min_quantity is None or self.min_quantity <= 0:
+            raise ValidationError({'min_quantity': 'أقل كمية لازم تكون أكبر من صفر.'})
+        if self.uom_id and self.product_id and not self.product.uoms.filter(uom_id=self.uom_id).exists():
+            raise ValidationError({'uom': 'الوحدة دي مش من وحدات الصنف.'})
         if self.pricing_method == self.FIXED and (self.custom_price is None or self.custom_price < Decimal('0')):
             raise ValidationError({'custom_price': 'يرجى إدخال سعر محدد صحيح.'})
         if self.pricing_method == self.DISCOUNT and (self.discount_percentage is None or self.discount_percentage < Decimal('0') or self.discount_percentage > Decimal('100')):
