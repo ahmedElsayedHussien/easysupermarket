@@ -1,0 +1,16 @@
+{% extends "rep_app/base.html" %}
+{% block content %}
+<div class="card">
+    <div class="row"><h2 style="flex:1; margin:0;">⬆️ {{ o.number }}</h2><span class="badge {{ o.status }}">{{ o.get_status_display }}</span></div>
+    <p class="muted">من {{ o.from_warehouse.name }} — {{ o.date|date:"j/n/Y" }}</p>
+    <div class="list">
+        {% for l in lines %}
+        <div class="item"><div class="grow"><div class="t">{{ l.product.name }}</div><div class="muted">طلبت {{ l.requested_qty|floatformat:"-3" }} {{ l.uom_name }}</div></div>
+            {% if l.approved_qty is not None %}<b class="num {% if l.approved_qty < l.requested_qty %}warn{% else %}ok{% endif %}">{{ l.approved_qty|floatformat:"-3" }}</b>{% endif %}</div>
+        {% endfor %}
+    </div>
+    {% if o.status == 'APPROVED' %}<p class="msg success">✔ اتعمد — استلم البضاعة من أمين المخزن.</p>{% endif %}
+    {% if o.status == 'ISSUED' %}<p class="msg success">✔ البضاعة اتنقلت لعربيتك.</p>{% endif %}
+</div>
+<a class="btn ghost" href="{% url 'invoicing:rep_app_loading' %}">↩ رجوع</a>
+{% endblock %}

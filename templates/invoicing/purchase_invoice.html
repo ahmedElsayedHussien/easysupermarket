@@ -18,6 +18,8 @@
     
     <div class="card p-4">
         <form method="POST">
+            {% if posted_data.po_id %}<input type="hidden" name="po_id" value="{{ posted_data.po_id }}">
+            <div class="alert" style="background:rgba(0,229,255,.08); border:1px solid rgba(0,229,255,.3); color:var(--neon-cyan); border-radius:8px; padding:.6rem .9rem;">📦 استلام أمر شراء — الأصناف الباقية من الأمر متكتبة؛ عدّل الكميات حسب اللي وصل فعلاً.</div>{% endif %}
             {% csrf_token %}
             <div class="d-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
                 {% if branches %}
@@ -403,6 +405,9 @@ const productBarcodeMap = {
     {% if puom.barcode %}
     "{{ puom.barcode|escapejs }}": { productId: "{{ p.id }}", uomId: "{{ puom.id }}" },
     {% endif %}
+    {% endfor %}
+    {% for xb in p.extra_barcodes.all %}
+    "{{ xb.barcode|escapejs }}": { productId: "{{ p.id }}", uomId: "{{ xb.uom_id|default:'' }}" },
     {% endfor %}
     {% endfor %}
 };

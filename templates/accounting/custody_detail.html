@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.cd { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.cd-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.cd-panel h1 { font-size: 1.25rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.cd-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .6rem; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .6rem; margin-top: .7rem; }
+.facts div { background: var(--bg-secondary); border-radius: 8px; padding: .55rem .7rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.facts b { display: block; font-size: 1rem; color: var(--text-primary); margin-top: .15rem; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.row3 { display: grid; grid-template-columns: 2fr 1fr 2fr auto; gap: .5rem; margin-bottom: .45rem; }
+.cd input, .cd select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .42rem .55rem; font-size: .85rem; width: 100%; }
+.cd-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .82rem; cursor: pointer; text-decoration: none; }
+.cd-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.cd-btn.danger { border-color: var(--neon-red); color: var(--neon-red); background: transparent; }
+.sum { display: flex; flex-wrap: wrap; gap: 1rem; font-size: .88rem; font-weight: 700; color: var(--text-primary); margin: .6rem 0; }
+.sum .bad { color: var(--neon-red); } .sum .ok { color: var(--neon-green); }
+.inline { display: flex; flex-wrap: wrap; gap: .6rem; align-items: end; }
+.inline label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; min-width: 160px; }
+.chk { display: flex; gap: .4rem; align-items: center; font-size: .85rem; color: var(--text-primary); font-weight: 600; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th, .tbl td { padding: .45rem .4rem; border-bottom: 1px solid var(--border-default); text-align: right; color: var(--text-primary); }
+.tbl th { color: var(--text-muted); font-size: .75rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cd">
+    <div class="cd-panel">
+        <h1>💼 العهدة {{ c.number }} — {{ c.employee.user|display_name }}</h1>
+        <div class="facts">
+            <div>المبلغ<b>{{ c.amount|floatformat:"2g" }}</b></div>
+            <div>التاريخ<b>{{ c.date|date:"Y-m-d" }}</b></div>
+            <div>من خزينة<b>{{ c.treasury.name }}</b></div>
+            <div>الحالة<b>{{ c.get_status_display }}</b></div>
+            <div style="grid-column: span 2;">الغرض<b>{{ c.purpose }}</b></div>
+        </div>
+        <div style="margin-top:.6rem; display:flex; gap:.5rem;">
+            <a class="cd-btn" href="{% url 'accounting:custody_list' %}">↩ كل العهد</a>
+            {% if c.payout_entry_id %}<a class="cd-btn" href="{% url 'accounting:journal_detail' c.payout_entry_id %}">🧾 قيد الصرف</a>{% endif %}
+            {% if c.settlement_entry_id %}<a class="cd-btn" href="{% url 'accounting:journal_detail' c.settlement_entry_id %}">🧾 قيد التسوية</a>{% endif %}
+        </div>
+    </div>
+
+    {% if c.status == 'OPEN' and can_settle %}
+    <form method="post" class="cd-panel" id="settleForm" onsubmit="return confirm('تسوية العهدة وعمل القيد؟');">
+        {% csrf_token %}
+        <h2>🧾 تسوية العهدة</h2>
+        <p class="note">اكتب المصروفات اللي اتصرفت من العهدة (بالفواتير)، والمبلغ اللي رجع للخزينة.</p>
+        <div id="expRows" style="margin-top:.6rem;"></div>
+        <button type="button" class="cd-btn" id="addExp">➕ بند مصروف</button>
+        <div class="inline" style="margin-top:.8rem;">
+            <label>المرتجع نقداً للخزينة<input type="number" name="returned" id="returned" min="0" step="0.01" value="0"></label>
+            <label>للخزينة<select name="return_treasury">{% for t in treasuries %}<option value="{{ t.id }}" {% if t.id == c.treasury_id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}</select></label>
+            <label class="chk"><input type="checkbox" name="leftover_to_loan" value="1" id="toLoan"> الباقي يتحول سلفة تتخصم من مرتبه</label>
+        </div>
+        <div class="sum" id="sumLine"></div>
+        <div style="display:flex; gap:.5rem; justify-content:space-between;">
+            <button type="submit" class="cd-btn primary">💾 تسوية</button>
+            <button type="submit" name="action" value="cancel" class="cd-btn danger" formnovalidate onclick="return confirm('الفلوس رجعت كلها من غير صرف؟ هيتلغي قيد الصرف.');">إلغاء العهدة (رجعت كاملة)</button>
+        </div>
+        <template id="expTpl">
+            <div class="row3">
+                <select name="exp_account[]">{% for a in accounts %}<option value="{{ a.id }}">{{ a.code }} — {{ a.name }}</option>{% endfor %}</select>
+                <input type="number" name="exp_amount[]" min="0" step="0.01" placeholder="المبلغ" class="exp-amt">
+                <input type="text" name="exp_desc[]" maxlength="255" placeholder="البيان (اختياري)">
+                <button type="button" class="cd-btn danger rm">✕</button>
+            </div>
+        </template>
+    </form>
+    <script>
+    (function () {
+        var amount = {{ c.amount|stringformat:"s" }};
+        var rows = document.getElementById('expRows'), tpl = document.getElementById('expTpl');
+        var ret = document.getElementById('returned'), sum = document.getElementById('sumLine');
+        function add() { rows.appendChild(tpl.content.cloneNode(true)); upd(); }
+        function upd() {
+            var spent = 0;
+            rows.querySelectorAll('.exp-amt').forEach(function (i) { spent += parseFloat(i.value) || 0; });
+            var r = parseFloat(ret.value) || 0, left = amount - spent - r;
+            sum.innerHTML = 'المصروفات: ' + spent.toFixed(2) + ' · المرتجع: ' + r.toFixed(2) + ' · ' +
+                (left > 0.004 ? '<span class="bad">باقي ' + left.toFixed(2) + ' (رجّعه أو حوّله سلفة)</span>'
+                 : left < -0.004 ? '<span class="bad">صرف زيادة ' + (-left).toFixed(2) + ' هيترد للموظف من الخزينة</span>'
+                 : '<span class="ok">متساوية ✔</span>');
+        }
+        document.getElementById('addExp').addEventListener('click', add);
+        rows.addEventListener('input', upd); ret.addEventListener('input', upd);
+        rows.addEventListener('click', function (e) { if (e.target.classList.contains('rm')) { e.target.closest('.row3').remove(); upd(); } });
+        add();
+    })();
+    </script>
+    {% endif %}
+
+    {% if c.status == 'SETTLED' %}
+    <div class="cd-panel">
+        <h2>🧾 التسوية ({{ c.settled_at|date:"Y-m-d" }})</h2>
+        <table class="tbl">
+            <thead><tr><th>حساب المصروف</th><th>البيان</th><th>المبلغ</th></tr></thead>
+            <tbody>
+                {% for e in expenses %}<tr><td>{{ e.account.code }} — {{ e.account.name }}</td><td>{{ e.description }}</td><td>{{ e.amount|floatformat:"2g" }}</td></tr>
+                {% empty %}<tr><td colspan="3">مفيش مصروفات.</td></tr>{% endfor %}
+                {% if c.returned_amount %}<tr><td colspan="2">مرتجع نقدي إلى {{ c.return_treasury.name }}</td><td>{{ c.returned_amount|floatformat:"2g" }}</td></tr>{% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

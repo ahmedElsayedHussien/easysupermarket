@@ -21,7 +21,12 @@ def post_payroll(payroll):
     payroll_obj = payroll
     payroll = locked
 
-    if payroll.net_salary <= 0:
+    loans = payroll.loan_deduction or 0
+    insurance = payroll.social_insurance or 0
+    employer = payroll.employer_insurance or 0
+    tax = payroll.income_tax or 0
+    gross = payroll.net_salary + loans + insurance + tax   # salary cost before deductions
+    if gross <= 0:
         return None
 
     salaries_exp_acc = _get_system_account('5210')
@@ -34,23 +39,50 @@ def post_payroll(payroll):
         status=JournalEntry.POSTED,
     )
 
-    # Debit Expense
+    # Debit Expense (the salary before loan instalments); a sales commission goes to 5215
+    commission = payroll.commission_pay or 0
     JournalItem.objects.create(
         entry=entry,
         account=salaries_exp_acc,
-        debit=payroll.net_salary,
+        debit=gross - commission,
         credit=0,
         description=f"مصروف راتب لشهر {payroll.month}/{payroll.year}"
     )
+    if commission > 0:
+        JournalItem.objects.create(entry=entry, account=_get_system_account('5215'), debit=commission, credit=0,
+                                   description=f"عمولة مبيعات {payroll.month}/{payroll.year}")
 
-    # Credit Liability
-    JournalItem.objects.create(
-        entry=entry,
-        account=accrued_salaries_acc,
-        debit=0,
-        credit=payroll.net_salary,
-        description=f"استحقاق راتب لشهر {payroll.month}/{payroll.year}"
-    )
+    # Company share of social insurance: an extra cost, owed to the insurance authority
+    if employer > 0:
+        JournalItem.objects.create(entry=entry, account=_get_system_account('5212'), debit=employer, credit=0,
+                                   description=f"حصة المنشأة في التأمينات {payroll.month}/{payroll.year}")
+    if insurance + employer > 0:
+        JournalItem.objects.create(entry=entry, account=_get_system_account('2165'), debit=0,
+                                   credit=insurance + employer,
+                                   description=f"تأمينات اجتماعية مستحقة (الموظف + المنشأة) {payroll.month}/{payroll.year}")
+    if tax > 0:
+        JournalItem.objects.create(entry=entry, account=_get_system_account('2166'), debit=0, credit=tax,
+                                   description=f"ضريبة كسب العمل المستحقة {payroll.month}/{payroll.year}")
+
+    # Credit the employee's loans (1135) with the instalments deducted this month
+    if loans > 0:
+        JournalItem.objects.create(
+            entry=entry,
+            account=_get_system_account('1135'),
+            debit=0,
+            credit=loans,
+            description=f"أقساط سلف مخصومة من راتب {payroll.month}/{payroll.year}"
+        )
+
+    # Credit Liability (net to pay)
+    if payroll.net_salary > 0:
+        JournalItem.objects.create(
+            entry=entry,
+            account=accrued_salaries_acc,
+            debit=0,
+            credit=payroll.net_salary,
+            description=f"استحقاق راتب لشهر {payroll.month}/{payroll.year}"
+        )
 
     payroll.journal_entry = entry
     payroll.save(update_fields=['journal_entry'])

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block extra_css %}{% include "invoicing/_van_css.html" %}{% endblock %}
+
+{% block content %}
+<div class="vn">
+    <div class="vn-panel">
+        <div class="vn-head"><h1>💵 توريدات المناديب</h1></div>
+        <p class="note">فلوس البيع النقدي والتحصيل بتنزل في خزنة المندوب. لما يسلّم الفلوس سجّل التوريد هنا: المبلغ بيتنقل من خزنته للخزنة أو البنك اللي استلم. لو سلّم أقل من رصيده تقدر تحمّله العجز — بيتسجل عليه سلفة عجز وتتخصم من مرتبه.</p>
+    </div>
+
+    <div class="vn-panel">
+        <h2>💼 أرصدة خزن المناديب دلوقتي</h2>
+        {% if balances %}
+        <table class="tbl">
+            <thead><tr><th>المندوب</th><th>خزنته</th><th>الرصيد اللي معاه</th></tr></thead>
+            <tbody>{% for b in balances %}<tr><td>{{ b.rep }}</td><td>{{ b.rep.treasury.name }}</td><td><strong>{{ b.balance|floatformat:"2g" }}</strong></td></tr>{% endfor %}</tbody>
+        </table>
+        {% else %}<p class="note">مفيش مناديب ليهم خزنة — حدد خزنة لكل مندوب من شاشة المندوب.</p>{% endif %}
+    </div>
+
+    {% if can_add and balances %}
+    <form method="post" class="vn-panel">
+        {% csrf_token %}
+        <h2>➕ استلام توريد</h2>
+        <div class="frm">
+            <label>المندوب<select name="rep" required><option value="">— اختار —</option>{% for b in balances %}<option value="{{ b.rep.id }}">{{ b.rep }} (معاه {{ b.balance|floatformat:2 }})</option>{% endfor %}</select></label>
+            <label>المبلغ المستلم<input type="number" name="amount" min="0" step="0.01" required></label>
+            <label>استلمته في<select name="destination" required><option value="">— اختار —</option>
+                {% for t in treasuries %}<option value="t:{{ t.id }}">🏦 خزنة {{ t.name }}</option>{% endfor %}
+                {% for b in banks %}<option value="b:{{ b.id }}">💳 بنك {{ b.name }}</option>{% endfor %}</select></label>
+            <label>ملاحظات<input type="text" name="notes" maxlength="255"></label>
+        </div>
+        <label style="display:flex; gap:.4rem; align-items:center; margin-top:.6rem; color:var(--text-primary); font-size:.85rem;">
+            <input type="checkbox" name="charge_shortage"> لو المبلغ أقل من رصيده: حمّله الفرق كعجز (يتخصم من مرتبه)</label>
+        <div class="actions"><button class="vn-btn primary">💾 تسجيل التوريد</button></div>
+    </form>
+    {% endif %}
+
+    <div class="vn-panel">
+        <h2>📜 التوريدات</h2>
+        {% if handovers %}
+        <table class="tbl">
+            <thead><tr><th>الرقم</th><th>التاريخ</th><th>المندوب</th><th>رصيده وقتها</th><th>المورّد</th><th>عجز عليه</th><th>استلم في</th><th>استلمه</th></tr></thead>
+            <tbody>
+                {% for h in handovers %}
+                <tr><td><strong>{{ h.number }}</strong></td><td>{{ h.date|date:"Y-m-d" }}</td><td>{{ h.rep }}</td>
+                    <td>{{ h.expected|floatformat:"2g" }}</td><td><strong>{{ h.amount|floatformat:"2g" }}</strong></td>
+                    <td>{% if h.shortage_charged %}<span class="warn">{{ h.shortage_charged|floatformat:"2g" }}</span>{% else %}—{% endif %}</td>
+                    <td>{% if h.treasury %}{{ h.treasury.name }}{% elif h.bank_account %}{{ h.bank_account.name }}{% endif %}</td>
+                    <td>{% if h.created_by %}{{ h.created_by|display_name }}{% endif %}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% include "invoicing/_van_pager.html" %}
+        {% else %}<p class="note">مفيش توريدات لسه.</p>{% endif %}
+    </div>
+</div>
+{% endblock %}

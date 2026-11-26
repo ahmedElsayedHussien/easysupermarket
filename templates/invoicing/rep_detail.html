@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.rd { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.rd-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.rd-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.rd-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .6rem; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin-top: .7rem; }
+.kpis div { background: var(--bg-secondary); border-radius: 8px; padding: .55rem .7rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.kpis b { display: block; font-size: 1.1rem; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.rd select, .rd input { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .38rem .5rem; font-size: .84rem; }
+.frm { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .6rem; align-items: end; }
+.frm label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.rd-btn { padding: .4rem .85rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; text-decoration: none; font-size: .84rem; display: inline-block; }
+.rd-btn.ghost { background: transparent; color: var(--text-primary); border-color: var(--border-bright); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 1rem; }
+.row { display: flex; justify-content: space-between; font-size: .85rem; color: var(--text-primary); padding: .3rem 0; border-bottom: 1px solid var(--border-default); }
+.muted { color: var(--text-muted); font-size: .84rem; }
+.ok { color: var(--neon-green); font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rd">
+    <div class="rd-panel">
+        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+            <h1>🚚 {{ rep }} — {{ month_name }} {{ year|stringformat:"d" }}</h1>
+            <form method="get" style="margin-inline-start:auto; display:flex; gap:.4rem;">
+                <select name="month" onchange="this.form.submit()">{% for n, nm in months %}<option value="{{ n }}" {% if n == month %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
+                <input type="number" name="year" value="{{ year|stringformat:'d' }}" style="width:6rem;" onchange="this.form.submit()">
+                <a class="rd-btn ghost" href="{% url 'invoicing:rep_list' %}?year={{ year|stringformat:'d' }}&month={{ month }}">↩</a>
+            </form>
+        </div>
+        <div class="kpis">
+            <div>صافي المبيعات<b>{{ perf.net|floatformat:"2g" }}</b></div>
+            <div>الفواتير<b>{{ perf.invoices }}</b></div>
+            <div>العملاء<b>{{ perf.customers }}</b></div>
+            <div>التارجت<b>{{ perf.target|floatformat:"2g" }}</b>{% if perf.achievement is not None %}{{ perf.achievement }}% محقق{% endif %}</div>
+            <div>💵 الفلوس اللي معاه<b>{{ cash|floatformat:"2g" }}</b>{% if rep.treasury %}{{ rep.treasury.name }}{% else %}<span style="color:var(--neon-red);">مالوش خزنة</span>{% endif %}</div>
+            <div>العمولة ({{ rep.commission_rate|floatformat:"-2" }}%)<b>{{ perf.commission|floatformat:"2g" }}</b>{% if perf.approved %}<span class="ok">✔ معتمدة {{ perf.approved.amount|floatformat:"2g" }}</span>{% endif %}</div>
+        </div>
+        {% if can_approve %}
+        <form method="post" style="margin-top:.7rem;">{% csrf_token %}<input type="hidden" name="action" value="approve"><input type="hidden" name="year" value="{{ year|stringformat:'d' }}"><input type="hidden" name="month" value="{{ month }}">
+            <button class="rd-btn" onclick="return confirm('اعتماد عمولة الشهر ({{ perf.commission|floatformat:2 }})؟ هتتضاف لمرتبه في المسير.');">✔ {% if perf.approved %}إعادة{% endif %} اعتماد عمولة {{ month_name }}</button></form>
+        {% endif %}
+    </div>
+
+    <div class="cols">
+        <div class="rd-panel">
+            <h2>📦 مخزون العربية {% if rep.van_warehouse %}({{ rep.van_warehouse.name }}){% endif %}</h2>
+            {% if rep.van_warehouse %}
+            <div style="display:flex; gap:.4rem; margin-bottom:.6rem; flex-wrap:wrap;">
+                {% if main_wh %}<a class="rd-btn" href="{% url 'inventory:transfer_stock' %}?from={{ main_wh.id }}&to={{ rep.van_warehouse.id }}">⬆️ تحميل العربية</a>
+                <a class="rd-btn ghost" href="{% url 'inventory:transfer_stock' %}?from={{ rep.van_warehouse.id }}&to={{ main_wh.id }}">⬇️ تفريغ العربية</a>{% endif %}
+            </div>
+            {% for s in van_stock %}<div class="row"><span>{{ s.product__name }}</span><span>{{ s.q|floatformat:"-3" }}</span></div>
+            {% empty %}<p class="muted">العربية فاضية.</p>{% endfor %}
+            {% else %}<p class="muted">مفيش مخزن عربية متحدد — حدده من الإعدادات تحت.</p>{% endif %}
+        </div>
+        <div class="rd-panel">
+            <h2>🧾 فواتير الشهر</h2>
+            {% for i in invoices %}<div class="row"><span><a href="{% url 'invoicing:invoice_detail' i.id %}" style="color:var(--neon-cyan);">{{ i.invoice_number }}</a> — {{ i.partner.name|default:"" }} ({{ i.date|date:"j/n" }})</span><span>{% if i.invoice_type == 'RETURN_SALE' %}−{% endif %}{{ i.total_amount|floatformat:"2g" }}</span></div>
+            {% empty %}<p class="muted">مفيش فواتير.</p>{% endfor %}
+        </div>
+    </div>
+
+    <div class="cols">
+        <div class="rd-panel">
+            <h2>⬆️ طلبات التحميل {% if perms.invoicing.view_loadingorder %}<a class="rd-btn ghost" style="font-size:.75rem; padding:.2rem .6rem;" href="{% url 'invoicing:loading_list' %}?status=ALL&rep={{ rep.id }}">الكل</a>{% endif %}</h2>
+            {% for o in loadings %}<div class="row"><span>{% if perms.invoicing.view_loadingorder %}<a href="{% url 'invoicing:loading_detail' o.id %}" style="color:var(--neon-cyan);">{{ o.number }}</a>{% else %}{{ o.number }}{% endif %} ({{ o.date|date:"j/n" }})</span><span>{{ o.get_status_display }}</span></div>
+            {% empty %}<p class="muted">مفيش.</p>{% endfor %}
+            {% for o in unloadings %}{% if forloop.first %}<h2 style="margin-top:.8rem;">⬇️ طلبات التفريغ</h2>{% endif %}<div class="row"><span>{% if perms.invoicing.view_unloadingorder %}<a href="{% url 'invoicing:unloading_detail' o.id %}" style="color:var(--neon-cyan);">{{ o.number }}</a>{% else %}{{ o.number }}{% endif %} ({{ o.date|date:"j/n" }})</span><span>{{ o.get_status_display }}</span></div>{% endfor %}
+        </div>
+        <div class="rd-panel">
+            <h2>💵 التوريدات {% if perms.invoicing.view_repcashhandover %}<a class="rd-btn ghost" style="font-size:.75rem; padding:.2rem .6rem;" href="{% url 'invoicing:handover_list' %}?rep={{ rep.id }}">الكل / توريد جديد</a>{% endif %}</h2>
+            {% for h in handovers %}<div class="row"><span>{{ h.number }} ({{ h.date|date:"j/n" }}){% if h.shortage_charged %} <span style="color:var(--neon-red);">عجز {{ h.shortage_charged|floatformat:2 }}</span>{% endif %}</span><span>{{ h.amount|floatformat:"2g" }}</span></div>
+            {% empty %}<p class="muted">مفيش توريدات.</p>{% endfor %}
+        </div>
+    </div>
+
+    {% if can_change %}
+    <form method="post" class="rd-panel">
+        {% csrf_token %}<input type="hidden" name="action" value="settings">
+        <h2>⚙️ إعدادات المندوب</h2>
+        <div class="frm">
+            <label>مخزن العربية<select name="van_warehouse"><option value="">—</option><option value="new">➕ مخزن عربية جديد</option>{% for w in warehouses %}<option value="{{ w.id }}" {% if w.id == rep.van_warehouse_id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}</select></label>
+            <label>خزنة المندوب<select name="treasury"><option value="">—</option><option value="new">➕ خزنة جديدة</option>{% for t in treasuries %}<option value="{{ t.id }}" {% if t.id == rep.treasury_id %}selected{% endif %}>{{ t.name }}</option>{% endfor %}</select></label>
+            <label>بيحمّل من مخزن<select name="source_warehouse"><option value="">تلقائي{% if source_wh and not rep.source_warehouse_id %} ({{ source_wh.name }}){% endif %}</option>{% for w in warehouses %}<option value="{{ w.id }}" {% if w.id == rep.source_warehouse_id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}</select></label>
+            <label>نسبة العمولة %<input type="number" name="commission_rate" min="0" max="100" step="0.01" value="{{ rep.commission_rate|stringformat:'s' }}"></label>
+            <label>التارجت الشهري<input type="number" name="monthly_target" min="0" step="0.01" value="{{ rep.monthly_target|stringformat:'s' }}"></label>
+            <label style="flex-direction:row; align-items:center; gap:.4rem;"><input type="checkbox" name="is_active" {% if rep.is_active %}checked{% endif %}> نشط</label>
+            <div><button class="rd-btn">💾 حفظ</button></div>
+        </div>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}

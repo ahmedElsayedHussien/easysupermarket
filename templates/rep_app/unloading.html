@@ -1,0 +1,43 @@
+{% extends "rep_app/base.html" %}
+{% block head %}
+<style>
+    .tabs2 { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+    .ln { padding: .55rem 0; border-bottom: 1px solid var(--line); }
+    .ln .row input { padding: .5rem; text-align: center; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="tabs2">
+    <a class="btn ghost" href="{% url 'invoicing:rep_app_loading' %}">⬆️ تحميل</a>
+    <a class="btn" href="{% url 'invoicing:rep_app_unloading' %}">⬇️ تفريغ</a>
+</div>
+{% if products %}
+<form method="post" class="card">
+    {% csrf_token %}
+    <h2>⬇️ رجّع بضاعة {% if target %}<span class="muted">لـ {{ target.name }}</span>{% endif %}</h2>
+    <p class="muted">اكتب الكمية اللي هترجعها من كل صنف (بالوحدة الأساسية). اللي مش هترجعه سيبه فاضي.</p>
+    {% for p in products %}
+    <div class="ln">
+        <input type="hidden" name="product_id" value="{{ p.id }}">
+        <div class="row"><b style="flex:1;">{{ p.name }}</b><span class="muted">معاك {{ p.qty }} {{ p.uoms.0.name }}</span></div>
+        <div class="row" style="margin-top:.35rem;">
+            <div style="flex:1;"><label>سليم</label><input type="number" name="sound" min="0" max="{{ p.qty }}" step="any" inputmode="decimal"></div>
+            <div style="flex:1;"><label>تالف</label><input type="number" name="damaged" min="0" max="{{ p.qty }}" step="any" inputmode="decimal"></div>
+        </div>
+    </div>
+    {% endfor %}
+    <div class="field" style="margin-top:.6rem;"><label>ملاحظات (سبب التالف مثلاً)</label><input name="notes" maxlength="300"></div>
+    <button class="btn">📤 ابعت طلب التفريغ</button>
+</form>
+{% else %}
+<div class="card"><p class="muted">العربية فاضية — مفيش حاجة ترجعها.</p></div>
+{% endif %}
+<div class="card">
+    <h2>📋 طلبات التفريغ</h2>
+    <div class="list">
+        {% for o in orders %}
+        <div class="item"><div class="grow"><div class="t">{{ o.number }}</div><div class="muted">{{ o.date|date:"j/n" }} — {{ o.n }} صنف</div></div><span class="badge {{ o.status }}">{{ o.get_status_display }}</span></div>
+        {% empty %}<p class="muted">مفيش طلبات.</p>{% endfor %}
+    </div>
+</div>
+{% endblock %}

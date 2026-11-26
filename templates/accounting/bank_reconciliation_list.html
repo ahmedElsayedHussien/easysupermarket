@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.br { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.br-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.br-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.br-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .6rem; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.frm { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; align-items: end; }
+.frm label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.frm input, .frm select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .42rem .55rem; font-size: .85rem; }
+.br-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .82rem; cursor: pointer; text-decoration: none; }
+.br-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .5rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td:first-child, .tbl th:first-child { text-align: right; }
+.st { font-size: .72rem; font-weight: 800; padding: .12rem .55rem; border-radius: 999px; }
+.st.DRAFT { background: rgba(251,191,36,.15); color: var(--neon-gold); }
+.st.DONE { background: rgba(46,213,115,.15); color: var(--neon-green); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="br">
+    <div class="br-panel">
+        <h1>🏦 التسوية البنكية</h1>
+        <p class="note">قارن كشف البنك بحركات الحساب في البرنامج: اكتب رصيد الكشف وتاريخه، وعلّم على الحركات اللي ظهرت في الكشف. لما الفرق يبقى صفر تنهي التسوية — والحركات اللي لسه ماظهرتش (شيك لسه متصرفش مثلاً) بتفضل للتسوية الجاية.</p>
+    </div>
+
+    {% if can_add %}
+    <form method="post" class="br-panel">
+        {% csrf_token %}
+        <h2>➕ تسوية جديدة</h2>
+        <div class="frm">
+            <label>الحساب البنكي<select name="bank" required>{% for b in banks %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}</select></label>
+            <label>تاريخ كشف البنك<input type="date" name="statement_date" value="{{ today|date:'Y-m-d' }}" required></label>
+            <label>الرصيد في كشف البنك<input type="number" name="statement_balance" step="0.01" required></label>
+            <label>ملاحظات<input type="text" name="notes" maxlength="255" placeholder="اختياري"></label>
+            <div><button type="submit" class="br-btn primary">ابدأ التسوية</button></div>
+        </div>
+    </form>
+    {% endif %}
+
+    <div class="br-panel">
+        {% if recs %}
+        <table class="tbl">
+            <thead><tr><th>الحساب</th><th>تاريخ الكشف</th><th>رصيد الكشف</th><th>رصيد الدفاتر</th><th>الفرق</th><th>الحالة</th><th></th></tr></thead>
+            <tbody>
+                {% for r in recs %}
+                <tr><td><strong>{{ r.bank_account.name }}</strong></td><td>{{ r.statement_date|date:"Y-m-d" }}</td>
+                    <td>{{ r.statement_balance|floatformat:"2g" }}</td><td>{{ r.book_balance|floatformat:"2g" }}</td>
+                    <td>{{ r.difference|floatformat:"2g" }}</td><td><span class="st {{ r.status }}">{{ r.get_status_display }}</span></td>
+                    <td><a class="br-btn" href="{% url 'accounting:bank_reconciliation_detail' r.id %}">{% if r.status == 'DRAFT' %}كمّل{% else %}عرض{% endif %}</a></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}<p class="note" style="text-align:center; padding:1rem;">مفيش تسويات لسه.</p>{% endif %}
+    </div>
+</div>
+{% endblock %}

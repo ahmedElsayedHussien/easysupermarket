@@ -107,6 +107,24 @@ def confirm_invoice(invoice_id: int):
     return invoice
 
 
+def _stock_map(products, warehouse):
+    """{product_id: stock in ``warehouse``} like Product.get_stock(), for many products in
+    2 queries (batches summed for normal items, unsold serials counted for serialized)."""
+    from django.db.models import Count, Sum
+    from apps.tenant.inventory.models import InventoryBatch, SerialItem
+    serial_ids = {p.id for p in products if p.product_type == 'SERIALIZED'}
+    other_ids = {p.id for p in products if p.product_type not in ('SERIALIZED', 'SERVICE')}
+    out = {}
+    if other_ids:
+        out.update(InventoryBatch.objects.filter(product_id__in=other_ids, warehouse=warehouse)
+                   .values('product_id').annotate(t=Sum('quantity_remaining')).values_list('product_id', 't'))
+    if serial_ids:
+        out.update((pid, Decimal(n)) for pid, n in SerialItem.objects.filter(
+            product_id__in=serial_ids, warehouse=warehouse, is_sold=False)
+            .values('product_id').annotate(n=Count('id')).values_list('product_id', 'n'))
+    return {pid: (v or Decimal('0')) for pid, v in out.items()}
+
+
 def _process_sale_invoice(invoice, lines):
     """
     Internal handler for SALE invoice confirmation.
@@ -125,11 +143,17 @@ def _process_sale_invoice(invoice, lines):
     allow_negative_global = getattr(system_setting, 'allow_negative_stock', False)
 
     # --- Pre-validate all stock before consuming anything ---
+    # (stock of every line's product in 2 queries, not one per line; quantities of the
+    #  same product on several lines are added together before comparing)
+    available_map = _stock_map([line.product for line in lines], invoice.warehouse)
+    needed = {}
     for line in lines:
         if line.product.product_type == 'SERVICE':
             continue  # Services have no stock limits
         base_quantity = line.quantity * (line.uom.conversion_factor if getattr(line, 'uom', None) else 1)
-        available = line.product.get_stock(warehouse=invoice.warehouse)
+        needed[line.product_id] = needed.get(line.product_id, Decimal('0')) + base_quantity
+        base_quantity = needed[line.product_id]
+        available = available_map.get(line.product_id, Decimal('0'))
         # Master Lock: Global setting or individual product setting governs negative stock
         allow_negative = allow_negative_global or getattr(line.product, 'allow_negative_stock', False)
         if available < base_quantity and not allow_negative:
@@ -383,6 +407,15 @@ def update_invoice_payment_method(
         curr_partner = invoice.partner
         if not curr_partner or 'عميل نقدي' in curr_partner.name or curr_partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']:
             raise ValueError('لا يمكن تغيير طريقة السداد إلى (آجل) لـ "عميل نقدي". يرجى اختيار عميل/مورد آخر مخصص للآجل.')
+
+    # Split payment: the legs must add up to the invoice total (the screen checks this in the
+    # browser, but the server never trusts it). 0.05 covers piastre rounding.
+    if payment_type == 'SPLIT':
+        legs = (Decimal(paid_cash or 0) + Decimal(paid_card or 0) + Decimal(paid_ewallet or 0)
+                + Decimal(paid_bank or 0) + (invoice.paid_credit or Decimal('0')))
+        if abs(legs - invoice.total_amount) > Decimal('0.05'):
+            raise ValueError(f'مجموع مبالغ الدفع المقسّم ({legs:.2f}) لا يساوي إجمالي الفاتورة '
+                             f'({invoice.total_amount:.2f}).')
 
     # 1. If invoice is POSTED, reverse its active entries (audit trail: posted lines are never
     #    edited or deleted). The new entry posted in step 3 uses the (possibly new) partner's

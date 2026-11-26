@@ -183,6 +183,7 @@
             <p class="text-muted m-0 mt-1" style="font-size: 0.9rem;">
                 إدخال الكميات الفعلية على الرف؛ يقوم النظام بحساب الفارق وتصفير أي عجز سالب وضبط الرصيد تلقائياً.
             </p>
+            <a href="{% url 'inventory:stocktake_sheet' %}" style="display:inline-block; margin-top:.4rem; color:#ff7300; font-weight:700; text-decoration:none;">🖨️ اطبع ورقة جرد (عمياء / كاملة)</a>
         </div>
         <div class="d-flex gap-2">
             <a href="{% url 'inventory:adjustment_list' %}" class="btn btn-ghost">
@@ -314,6 +315,7 @@ const allProductsLookup = [
         id: {{ p.id }},
         name: "{{ p.name|escapejs }}",
         barcode: "{{ p.barcode|default:''|escapejs }}",
+        codes: [{% if p.barcode %}"{{ p.barcode|lower|escapejs }}",{% endif %}{% for xb in p.extra_barcodes.all %}"{{ xb.barcode|lower|escapejs }}",{% endfor %}],
         sku: "{{ p.sku|default:''|escapejs }}",
         price: {{ p.price|default:0 }},
         cost: {{ p.last_purchase_price|default:0 }}
@@ -455,7 +457,7 @@ function addRowToTable(item) {
         <td class="text-center">
             <input type="number" step="0.0001" name="unit_cost[]" class="form-control text-center unit-cost-input" 
                    style="width: 100px; display: inline-block; background: rgba(0,0,0,0.3); border-color: rgba(255,255,255,0.1); color: #fff;" 
-                   value="${parseFloat(item.unitCost || 0).toFixed(2)}" 
+                   value="${item.unitCost || 0}" 
                    oninput="calculateRow(this.closest('tr'))">
         </td>
         <td class="text-center en variance-impact" style="font-weight: 700; color: #94a3b8;">
@@ -567,7 +569,7 @@ document.getElementById('quickBarcodeInput').addEventListener('keydown', functio
         document.querySelectorAll('#stocktakeTbody tr').forEach(tr => {
             const pId = tr.querySelector('.product-id-input').value;
             const item = allProductsLookup.find(x => x.id == pId);
-            if (item && (item.barcode.toLowerCase() === query || item.name.toLowerCase().includes(query))) {
+            if (item && (item.codes.includes(query) || item.name.toLowerCase().includes(query))) {
                 existingRow = tr;
             }
         });
@@ -585,7 +587,7 @@ document.getElementById('quickBarcodeInput').addEventListener('keydown', functio
         }
 
         // Not in table: find product in lookup
-        const found = allProductsLookup.find(x => x.barcode.toLowerCase() === query) 
+        const found = allProductsLookup.find(x => x.codes.includes(query)) 
                    || allProductsLookup.find(x => x.name.toLowerCase().includes(query));
 
         if (found) {

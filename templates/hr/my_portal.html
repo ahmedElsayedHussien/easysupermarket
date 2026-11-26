@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.mp { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.mp-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.mp-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.mp-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .6rem; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+.chip { font-size: .82rem; font-weight: 700; padding: .3rem .75rem; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); }
+.chip b { color: var(--text-primary); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .5rem; align-items: end; }
+.grid label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.mp input, .mp select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .4rem .5rem; font-size: .85rem; }
+.mp-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; }
+.row { display: flex; justify-content: space-between; font-size: .86rem; color: var(--text-primary); padding: .3rem 0; border-bottom: 1px solid var(--border-default); }
+.row span:last-child { font-variant-numeric: tabular-nums; }
+.muted { color: var(--text-muted); font-size: .84rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mp">
+    <div class="mp-panel">
+        <h1>🙋 صفحتي — {{ name }}</h1>
+        <div class="chips">
+            <span class="chip">{{ month_name }}: حضور <b>{{ summary.present_days }}</b> من {{ summary.working_days }}</span>
+            <span class="chip">غياب <b>{{ summary.absent_days }}</b></span>
+            <span class="chip">تأخير <b>{{ summary.delay_hours }}</b> س</span>
+            <span class="chip">إضافي <b>{{ summary.overtime_hours }}</b> س</span>
+            {% for b in balances %}<span class="chip">رصيد {{ b.type.name }} <b>{{ b.remaining|floatformat:"-1" }}</b> يوم</span>{% endfor %}
+        </div>
+    </div>
+
+    <div class="cols">
+        <form method="post" class="mp-panel">
+            {% csrf_token %}<input type="hidden" name="action" value="leave">
+            <h2>🌴 طلب إجازة</h2>
+            <div class="grid">
+                <label>النوع<select name="leave_type">{% for t in leave_types %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select></label>
+                <label>من<input type="date" name="start_date" value="{{ today|date:'Y-m-d' }}" required></label>
+                <label>إلى<input type="date" name="end_date" value="{{ today|date:'Y-m-d' }}" required></label>
+                <label>السبب<input name="reason" maxlength="255"></label>
+                <div><button class="mp-btn">إرسال</button></div>
+            </div>
+            <div style="margin-top:.6rem;">{% for l in leaves %}<div class="row"><span>{{ l.leave_type.name }} {{ l.start_date|date:"j/n" }} → {{ l.end_date|date:"j/n" }} ({{ l.days|floatformat:"-1" }} يوم)</span><span>{{ l.get_status_display }}</span></div>{% endfor %}</div>
+        </form>
+        <form method="post" class="mp-panel">
+            {% csrf_token %}<input type="hidden" name="action" value="loan">
+            <h2>💵 طلب سلفة</h2>
+            <div class="grid">
+                <label>المبلغ<input type="number" name="amount" min="1" step="0.01" required></label>
+                <label>عدد الأقساط<input type="number" name="installments" min="1" max="24" value="1"></label>
+                <label>السبب<input name="reason" maxlength="255"></label>
+                <div><button class="mp-btn">إرسال</button></div>
+            </div>
+            <div style="margin-top:.6rem;">
+                {% for r in loan_requests %}<div class="row"><span>طلب {{ r.amount|floatformat:"2g" }} ({{ r.created_at|date:"j/n" }})</span><span>{{ r.get_status_display }}</span></div>{% endfor %}
+                {% for l in loans %}<div class="row"><span>سلفة {{ l.amount|floatformat:"2g" }} — {{ l.get_source_display }}</span><span>متبقي {{ l.remaining|floatformat:"2g" }}</span></div>{% endfor %}
+            </div>
+        </form>
+    </div>
+
+    <div class="mp-panel">
+        <h2>💸 مرتباتي</h2>
+        {% for p in payslips %}
+        <div class="row"><span>{{ p.month }}/{{ p.year|stringformat:"d" }} — أساسي {{ p.base_pay|floatformat:"2g" }} · خصومات {{ p.deductions|add:p.loan_deduction|floatformat:"2g" }}{% if p.social_insurance %} · تأمينات {{ p.social_insurance|floatformat:"2g" }}{% endif %}{% if p.income_tax %} · ضريبة {{ p.income_tax|floatformat:"2g" }}{% endif %} · إضافي {{ p.overtime_pay|floatformat:"2g" }}</span><span><b>{{ p.net_salary|floatformat:"2g" }}</b></span></div>
+        {% empty %}<p class="muted">مفيش مرتبات معتمدة لسه.</p>{% endfor %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.ef { max-width: 1150px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.ef-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.ef-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.ef-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .6rem; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .6rem; }
+.chip { font-size: .8rem; font-weight: 700; padding: .25rem .7rem; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); }
+.chip b { color: var(--text-primary); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .6rem; align-items: end; }
+.grid label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.ef input, .ef select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .4rem .55rem; font-size: .85rem; }
+.ef-btn { padding: .4rem .8rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; font-size: .82rem; cursor: pointer; text-decoration: none; }
+.ef-btn.ghost { background: transparent; color: var(--text-primary); border-color: var(--border-bright); }
+.ef-btn.danger { background: transparent; color: var(--neon-red); border-color: var(--neon-red); padding: .15rem .5rem; font-size: .72rem; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.tbl th { color: var(--text-muted); font-size: .74rem; padding: .4rem .3rem; border-bottom: 1px solid var(--border-bright); text-align: right; }
+.tbl td { padding: .4rem .3rem; border-bottom: 1px solid var(--border-default); color: var(--text-primary); }
+.exp { color: var(--neon-red); font-weight: 700; } .soon { color: var(--neon-gold); font-weight: 700; }
+.done td { opacity: .55; }
+.eos { background: rgba(255,71,87,.08); border: 1px solid rgba(255,71,87,.35); border-radius: 8px; padding: .6rem .8rem; color: var(--text-primary); font-size: .88rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ef">
+    <div class="ef-panel">
+        <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+            <h1>🗂️ {{ name }}</h1>
+            <span style="margin-inline-start:auto; display:flex; gap:.4rem;">
+                <a class="ef-btn ghost" href="{% url 'hr:attendance_report' %}?employee={{ emp.id }}">📅 الحضور</a>
+                <a class="ef-btn ghost" href="{% url 'hr:employee_list' %}">↩ الموظفين</a>
+            </span>
+        </div>
+        <div class="chips">
+            <span class="chip">{{ emp.get_role_display }}</span>
+            <span class="chip">🏢 {{ emp.branch.name|default:"بدون فرع" }}</span>
+            <span class="chip">الراتب <b>{{ emp.base_salary|floatformat:"2g" }}</b></span>
+            {% if annual_type %}<span class="chip">رصيد {{ annual_type.name }} <b>{{ leave_left|floatformat:"-1" }}</b> يوم</span>{% endif %}
+            <span class="chip">سلف متبقية <b>{{ loans_left|floatformat:"2g" }}</b></span>
+            {% if not emp.user.is_active %}<span class="chip" style="color:var(--neon-red);">الحساب موقوف</span>{% endif %}
+        </div>
+        {% if eos %}
+        <div class="eos" style="margin-top:.7rem;">🔚 انتهت خدمته {{ eos.termination_date|date:"Y-m-d" }} ({{ eos.reason }}) — مكافأة {{ eos.severance|floatformat:"2g" }} + بدل إجازات {{ eos.leave_encashment|floatformat:"2g" }} − سلف {{ eos.loans_deducted|floatformat:"2g" }} = صافي {{ eos.net_amount|floatformat:"2g" }}{% if eos.journal_entry_id %} · <a href="{% url 'accounting:journal_detail' eos.journal_entry_id %}" style="color:var(--neon-cyan);">القيد</a>{% endif %}</div>
+        {% elif can_eos and emp.user.is_active %}
+        <a class="ef-btn ghost" style="display:inline-block; margin-top:.7rem; color:var(--neon-red); border-color:var(--neon-red);" href="{% url 'hr:end_of_service' emp.id %}">🔚 نهاية الخدمة (مخالصة)</a>
+        {% endif %}
+    </div>
+
+    <form method="post" class="ef-panel">
+        {% csrf_token %}<input type="hidden" name="action" value="profile">
+        <h2>📋 البيانات الوظيفية</h2>
+        <div class="grid">
+            <label>القسم<select name="department" {% if not can_edit %}disabled{% endif %}><option value="">—</option>{% for d in departments %}<option value="{{ d.id }}" {% if profile.department_id == d.id %}selected{% endif %}>{{ d.name }}</option>{% endfor %}</select></label>
+            <label>الوظيفة<select name="job_title" {% if not can_edit %}disabled{% endif %}><option value="">—</option>{% for j in job_titles %}<option value="{{ j.id }}" {% if profile.job_title_id == j.id %}selected{% endif %}>{{ j.name }}</option>{% endfor %}</select></label>
+            <label>تاريخ التعيين<input type="date" name="hire_date" value="{{ profile.hire_date|date:'Y-m-d' }}" {% if not can_edit %}disabled{% endif %}></label>
+            <label>الرقم القومي<input name="national_id" value="{{ profile.national_id }}" maxlength="20" {% if not can_edit %}disabled{% endif %}></label>
+            <label>التليفون<input name="phone" value="{{ profile.phone }}" maxlength="30" {% if not can_edit %}disabled{% endif %}></label>
+            <label>العنوان<input name="address" value="{{ profile.address }}" maxlength="255" {% if not can_edit %}disabled{% endif %}></label>
+            {% if can_edit %}<div><button class="ef-btn">💾 حفظ</button></div>{% endif %}
+        </div>
+    </form>
+
+    <div class="cols">
+        <div class="ef-panel">
+            <h2>📄 المستندات</h2>
+            <table class="tbl">
+                <thead><tr><th>النوع</th><th>الرقم</th><th>ينتهي</th><th></th></tr></thead>
+                <tbody>
+                    {% for d in documents %}
+                    <tr><td>{{ d.get_doc_type_display }}{% if d.title %} <span style="color:var(--text-muted);">— {{ d.title }}</span>{% endif %}</td><td>{{ d.number|default:"—" }}</td>
+                        <td class="{% if d.expiry_date and d.expiry_date < today %}exp{% elif d.expiry_date and d.expiry_date <= soon %}soon{% endif %}">{{ d.expiry_date|date:"Y-m-d"|default:"—" }}</td>
+                        <td style="white-space:nowrap;">{% if d.file %}<a href="{{ d.file.url }}" target="_blank" style="color:var(--neon-cyan);">📎</a>{% endif %}
+                            {% if can_edit %}<form method="post" style="display:inline;">{% csrf_token %}<input type="hidden" name="action" value="delete_document"><input type="hidden" name="doc" value="{{ d.id }}"><button class="ef-btn danger" onclick="return confirm('حذف المستند؟');">✕</button></form>{% endif %}</td></tr>
+                    {% empty %}<tr><td colspan="4" style="color:var(--text-muted);">مفيش مستندات.</td></tr>{% endfor %}
+                </tbody>
+            </table>
+            {% if can_edit %}
+            <form method="post" enctype="multipart/form-data" class="grid" style="margin-top:.6rem;">
+                {% csrf_token %}<input type="hidden" name="action" value="document">
+                <label>النوع<select name="doc_type">{% for k, v in doc_types %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></label>
+                <label>الرقم<input name="number" maxlength="60"></label>
+                <label>ينتهي في<input type="date" name="expiry_date"></label>
+                <label>الملف<input type="file" name="file"></label>
+                <label>وصف<input name="title" maxlength="150"></label>
+                <div><button class="ef-btn">➕ إضافة</button></div>
+            </form>
+            {% endif %}
+        </div>
+
+        <div class="ef-panel">
+            <h2>🎒 العهد العينية</h2>
+            <table class="tbl">
+                <thead><tr><th>الصنف</th><th>القيمة</th><th>اتسلم</th><th>رجع</th></tr></thead>
+                <tbody>
+                    {% for a in assets %}
+                    <tr class="{% if a.returned_on %}done{% endif %}"><td>{{ a.item }}{% if a.serial %} <span style="color:var(--text-muted);">({{ a.serial }})</span>{% endif %}</td><td>{{ a.value|floatformat:"2g" }}</td><td>{{ a.issued_on|date:"Y-m-d" }}</td>
+                        <td>{% if a.returned_on %}{{ a.returned_on|date:"Y-m-d" }}{% elif can_edit %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="return_asset"><input type="hidden" name="asset" value="{{ a.id }}"><button class="ef-btn ghost" style="padding:.15rem .5rem; font-size:.72rem;">رجعت ✔</button></form>{% else %}معاه{% endif %}</td></tr>
+                    {% empty %}<tr><td colspan="4" style="color:var(--text-muted);">مفيش عهد عينية.</td></tr>{% endfor %}
+                </tbody>
+            </table>
+            {% if can_edit %}
+            <form method="post" class="grid" style="margin-top:.6rem;">
+                {% csrf_token %}<input type="hidden" name="action" value="asset">
+                <label>الصنف<input name="item" required maxlength="150" placeholder="لابتوب، يونيفورم..."></label>
+                <label>سيريال<input name="serial" maxlength="80"></label>
+                <label>القيمة<input type="number" name="value" min="0" step="0.01" value="0"></label>
+                <div><button class="ef-btn">➕ تسليم</button></div>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="cols">
+        <div class="ef-panel">
+            <h2>💵 السلف السارية</h2>
+            {% for l in loans %}<div style="color:var(--text-primary); font-size:.86rem;">{{ l.date|date:"Y-m-d" }} — {{ l.amount|floatformat:"2g" }} (متبقي {{ l.remaining|floatformat:"2g" }}) · {{ l.get_source_display }}</div>
+            {% empty %}<p style="color:var(--text-muted); font-size:.84rem;">مفيش سلف سارية.</p>{% endfor %}
+        </div>
+        <div class="ef-panel">
+            <h2>💸 آخر المرتبات</h2>
+            {% for p in payrolls %}<div style="color:var(--text-primary); font-size:.86rem;">{{ p.month }}/{{ p.year|stringformat:"d" }} — صافي {{ p.net_salary|floatformat:"2g" }} {% if p.is_paid %}✅{% else %}⏳{% endif %}</div>
+            {% empty %}<p style="color:var(--text-muted); font-size:.84rem;">مفيش مسيرات.</p>{% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

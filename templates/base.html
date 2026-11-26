@@ -11,6 +11,8 @@
     <link rel="icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
     <link rel="shortcut icon" type="image/x-icon" href="{% static 'img/favicon.ico' %}">
     <link rel="apple-touch-icon" href="{% static 'img/app-icon.png' %}">
+    <link rel="manifest" href="{% url 'core:pwa_manifest' %}">
+    <meta name="theme-color" content="#ff7300">
 
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -46,6 +48,7 @@
             margin-top: auto;
         }
     </style>
+    {% include 'partials/theme_head.html' %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
 <div class="app-wrapper">
@@ -63,7 +66,7 @@
         <!-- Logo -->
         <div class="navbar-logo" style="display:flex; align-items:center; justify-content:center; padding:0 0.5rem;">
             <a href="/" title="{% trans 'الرئيسية' %}" style="display:flex; align-items:center; text-decoration:none;">
-                <img src="{% static 'img/logo-on-dark.png' %}" alt="مسار" style="height:44px; max-width:160px; object-fit:contain;">
+                <img src="{% static 'img/logo-on-dark.png' %}" alt="مسار" class="brand-logo" style="height:44px; max-width:160px; object-fit:contain;">
             </a>
         </div>
 
@@ -127,6 +130,40 @@
                     </form>
                 </div>
             </div>
+
+            <!-- Alerts bell (core.pwa.alerts_api — loaded after the page, never slows it) -->
+            <div class="bell-wrap" id="bellWrap">
+                <button type="button" class="theme-toggle" id="bellBtn" title="{% trans 'محتاج انتباهك' %}" aria-label="{% trans 'التنبيهات' %}"><span class="theme-keep-colors">🔔</span><span class="bell-count" id="bellCount" hidden></span></button>
+                <div class="bell-menu" id="bellMenu" hidden></div>
+            </div>
+            <style>
+                .bell-wrap { position: relative; display: inline-flex; }
+                .bell-count { position: absolute; top: -6px; inset-inline-end: -6px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; background: var(--neon-red); color: #fff; font-size: .66rem; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
+                .bell-menu { position: absolute; top: 34px; inset-inline-end: 0; width: 320px; max-height: 60vh; overflow: auto; background: var(--bg-card); border: 1px solid var(--border-bright); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.4); z-index: 2000; padding: .4rem; }
+                .bell-menu a { display: flex; gap: .5rem; align-items: center; padding: .5rem .55rem; border-radius: 8px; text-decoration: none; color: var(--text-primary); font-size: .82rem; }
+                .bell-menu a:hover { background: var(--bg-secondary); }
+                .bell-menu .n { font-weight: 800; min-width: 1.6rem; text-align: center; }
+                .bell-menu .empty { padding: .7rem; color: var(--neon-green); font-size: .84rem; font-weight: 700; }
+            </style>
+            <script>
+            (function () {
+                var btn = document.getElementById('bellBtn'), menu = document.getElementById('bellMenu'), badge = document.getElementById('bellCount');
+                if (!btn) return;
+                function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+                fetch('{% url "core:alerts_api" %}', {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (d) {
+                    if (d.count) { badge.textContent = d.count; badge.hidden = false; }
+                    menu.innerHTML = d.items.length ? d.items.map(function (a) {
+                        return '<a href="' + esc(a.url) + '"><span class="theme-keep-colors">' + esc(a.icon) + '</span><span class="n">' + esc(String(a.count)) + '</span><span>' + esc(a.text) + '</span></a>';
+                    }).join('') : '<div class="empty">✅ كله تمام — مفيش حاجة مستنياك</div>';
+                }).catch(function () {});
+                btn.addEventListener('click', function (e) { e.stopPropagation(); menu.hidden = !menu.hidden; });
+                document.addEventListener('click', function (e) { if (!document.getElementById('bellWrap').contains(e.target)) menu.hidden = true; });
+                if ('serviceWorker' in navigator) { navigator.serviceWorker.register('{% url "core:pwa_sw" %}', {scope: '/'}).catch(function () {}); }
+            })();
+            </script>
+
+            <!-- Day / night theme -->
+            <button type="button" class="theme-toggle" onclick="toggleTheme()" title="{% trans 'الوضع النهاري / الليلي' %}" aria-label="{% trans 'الوضع النهاري / الليلي' %}"><span class="ico-night theme-keep-colors">🌙</span><span class="ico-day theme-keep-colors">☀️</span></button>
 
             <!-- Language Switcher -->
             <form action="{% url 'set_language' %}" method="post" class="lang-switcher" style="display:inline-flex; align-items:center;">
@@ -214,6 +251,36 @@
             {% endif %}
             {% endif %}
 
+            {% if perms.invoicing.view_salesrep %}
+            <a href="{% url 'invoicing:rep_list' %}" class="nav-link nav-green {% if request.resolver_match.url_name == 'rep_list' or request.resolver_match.url_name == 'rep_detail' %}active{% endif %}">
+                <span class="nav-icon">🚚</span>
+                <span class="nav-text">{% trans 'مناديب المبيعات' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.invoicing.view_loadingorder %}
+            <a href="{% url 'invoicing:loading_list' %}" class="nav-link nav-green {% if request.resolver_match.url_name == 'loading_list' or request.resolver_match.url_name == 'loading_detail' %}active{% endif %}">
+                <span class="nav-icon">⬆️</span>
+                <span class="nav-text">{% trans 'طلبات التحميل' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.invoicing.view_unloadingorder %}
+            <a href="{% url 'invoicing:unloading_list' %}" class="nav-link nav-green {% if request.resolver_match.url_name == 'unloading_list' or request.resolver_match.url_name == 'unloading_detail' %}active{% endif %}">
+                <span class="nav-icon">⬇️</span>
+                <span class="nav-text">{% trans 'طلبات التفريغ' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.invoicing.view_repcashhandover %}
+            <a href="{% url 'invoicing:handover_list' %}" class="nav-link nav-green {% if request.resolver_match.url_name == 'handover_list' %}active{% endif %}">
+                <span class="nav-icon">💵</span>
+                <span class="nav-text">{% trans 'توريدات المناديب' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.invoicing.use_rep_app %}
+            <a href="{% url 'invoicing:rep_app_home' %}" class="nav-link nav-green">
+                <span class="nav-icon">📱</span>
+                <span class="nav-text">{% trans 'واجهة المندوب' %}</span>
+            </a>
+            {% endif %}
             {% if system_setting is None or system_setting.show_nav_purchase_invoices or system_setting.show_nav_create_purchase %}
             <p class="nav-section-title">{% trans 'المشتريات' %}</p>
 
@@ -221,6 +288,12 @@
             <a href="{% url 'invoicing:purchase_invoice_list' %}" class="nav-link nav-red {% if request.resolver_match.url_name == 'purchase_invoice_list' %}active{% endif %}">
                 <span class="nav-icon">🛒</span>
                 <span class="nav-text">{% trans 'فواتير المشتريات' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.invoicing.view_purchaseorder %}
+            <a href="{% url 'invoicing:purchase_order_list' %}" class="nav-link nav-red {% if request.resolver_match.url_name|slice:':14' == 'purchase_order' %}active{% endif %}">
+                <span class="nav-icon">📦</span>
+                <span class="nav-text">{% trans 'أوامر الشراء' %}</span>
             </a>
             {% endif %}
             
@@ -301,12 +374,48 @@
                 <span class="nav-icon">⏰</span>
                 <span class="nav-text">{% trans 'الحضور والانصراف' %}</span>
             </a>
+            {% if perms.hr.change_attendance %}
+            <a href="{% url 'hr:attendance_manage' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'attendance_manage' %}active{% endif %}">
+                <span class="nav-icon">📝</span>
+                <span class="nav-text">{% trans 'إدخال الحضور اليدوي' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.hr.view_attendance %}
+            <a href="{% url 'hr:attendance_report' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'attendance_report' %}active{% endif %}">
+                <span class="nav-icon">📊</span>
+                <span class="nav-text">{% trans 'تقرير الحضور والرواتب' %}</span>
+            </a>
+            {% endif %}
             {% endif %}
 
             {% if system_setting is None or system_setting.show_nav_hr_payroll %}
             <a href="{% url 'hr:payroll_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'payroll_list' %}active{% endif %}">
                 <span class="nav-icon">💸</span>
                 <span class="nav-text">{% trans 'مسير الرواتب' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.hr.view_employeeprofile %}
+            <a href="{% url 'hr:employee_list' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'employee_list' or request.resolver_match.url_name == 'employee_file' or request.resolver_match.url_name == 'end_of_service' %}active{% endif %}">
+                <span class="nav-icon">👥</span>
+                <span class="nav-text">{% trans 'الموظفين' %}</span>
+            </a>
+            {% endif %}
+            {% if request.user.employee_profile %}
+            <a href="{% url 'hr:my_portal' %}" class="nav-link nav-blue {% if request.resolver_match.url_name == 'my_portal' %}active{% endif %}">
+                <span class="nav-icon">🙋</span>
+                <span class="nav-text">{% trans 'صفحتي' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.hr.view_leaverequest %}
+            <a href="{% url 'hr:leave_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'leave_list' %}active{% endif %}">
+                <span class="nav-icon">🌴</span>
+                <span class="nav-text">{% trans 'الإجازات' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.hr.view_employeeloan %}
+            <a href="{% url 'hr:loan_list' %}" class="nav-link nav-blue {% if request.resolver_match.app_name == 'hr' and request.resolver_match.url_name == 'loan_list' %}active{% endif %}">
+                <span class="nav-icon">💵</span>
+                <span class="nav-text">{% trans 'سلف الموظفين' %}</span>
             </a>
             {% endif %}
             {% endif %}
@@ -325,7 +434,7 @@
 
             {% if system_setting is None or system_setting.show_nav_accounting_dashboard %}
             {# expenses, vouchers, transfers, cheques, fixed assets, loans, journals, chart of accounts, reports: all inside #}
-            <a href="{% url 'accounting:accounting_dashboard' %}" class="nav-link nav-gold {% if request.resolver_match.app_name == 'accounting' and request.resolver_match.url_name != 'liquidity_dashboard' and request.resolver_match.url_name|slice:':8' != 'eservice' and request.resolver_match.url_name|slice:':11' != 'pos_machine' and request.resolver_match.url_name|slice:':8' != 'treasury' and request.resolver_match.url_name|slice:':4' != 'bank' and request.resolver_match.url_name|slice:':7' != 'ewallet' %}active{% endif %}">
+            <a href="{% url 'accounting:accounting_dashboard' %}" class="nav-link nav-gold {% if request.resolver_match.app_name == 'accounting' and request.resolver_match.url_name != 'liquidity_dashboard' and request.resolver_match.url_name|slice:':8' != 'eservice' and request.resolver_match.url_name|slice:':11' != 'pos_machine' and request.resolver_match.url_name|slice:':8' != 'treasury' and request.resolver_match.url_name|slice:':4' != 'bank' and request.resolver_match.url_name|slice:':7' != 'ewallet' and request.resolver_match.url_name|slice:':7' != 'custody' and request.resolver_match.url_name|slice:':7' != 'bank_re' and request.resolver_match.url_name != 'tax_settlement' and request.resolver_match.url_name != 'fiscal_years' %}active{% endif %}">
                 <span class="nav-icon">📒</span>
                 <span class="nav-text">{% trans 'لوحة المحاسبة' %}</span>
             </a>
@@ -336,6 +445,30 @@
             <a href="{% url 'accounting:liquidity_dashboard' %}" class="nav-link nav-gold {% if request.resolver_match.url_name in 'liquidity_dashboard,treasury_list,bank_list,ewallet_list,treasury_create,bank_create,ewallet_create,treasury_update,bank_update,ewallet_update' %}active{% endif %}">
                 <span class="nav-icon">💧</span>
                 <span class="nav-text">{% trans 'إدارة السيولة' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.accounting.view_fiscalyearclose %}
+            <a href="{% url 'accounting:fiscal_years' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'fiscal_years' %}active{% endif %}">
+                <span class="nav-icon">📕</span>
+                <span class="nav-text">{% trans 'إقفال السنة المالية' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.accounting.view_taxsettlement %}
+            <a href="{% url 'accounting:tax_settlement' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'tax_settlement' %}active{% endif %}">
+                <span class="nav-icon">🧾</span>
+                <span class="nav-text">{% trans 'التسوية الضريبية' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.accounting.view_bankreconciliation %}
+            <a href="{% url 'accounting:bank_reconciliation_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'bank_reconciliation_list' or request.resolver_match.url_name == 'bank_reconciliation_detail' %}active{% endif %}">
+                <span class="nav-icon">🏦</span>
+                <span class="nav-text">{% trans 'التسوية البنكية' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.accounting.view_custody %}
+            <a href="{% url 'accounting:custody_list' %}" class="nav-link nav-gold {% if request.resolver_match.url_name == 'custody_list' or request.resolver_match.url_name == 'custody_detail' %}active{% endif %}">
+                <span class="nav-icon">💼</span>
+                <span class="nav-text">{% trans 'العهد النقدية' %}</span>
             </a>
             {% endif %}
 
@@ -373,6 +506,12 @@
             <a href="{% url 'core:user_list' %}" class="nav-link nav-lime {% if request.resolver_match.url_name == 'user_list' %}active{% endif %}">
                 <span class="nav-icon">👤</span>
                 <span class="nav-text">{% trans 'المستخدمين' %}</span>
+            </a>
+            {% endif %}
+            {% if perms.core.view_auditlog %}
+            <a href="{% url 'core:audit_log' %}" class="nav-link nav-lime {% if request.resolver_match.url_name == 'audit_log' %}active{% endif %}">
+                <span class="nav-icon">🕵️</span>
+                <span class="nav-text">{% trans 'سجل التعديلات' %}</span>
             </a>
             {% endif %}
             

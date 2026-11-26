@@ -49,13 +49,18 @@ def render_right_panel(context):
     elif app_name == 'invoicing':
         template_name = 'panels/invoicing_panel.html'
         today = timezone.now().date()
-        today_invoices_qs = Invoice.objects.filter(date=today, invoice_type=Invoice.SALE)
-        new_context['today_invoices'] = today_invoices_qs.count()
-        new_context['today_revenue'] = today_invoices_qs.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
-        
-        # Payment types revenue (cash, card, credit usually, but using CASH, CARD)
-        new_context['cash_revenue'] = today_invoices_qs.filter(payment_type=Invoice.CASH).aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
-        new_context['card_revenue'] = today_invoices_qs.filter(payment_type=Invoice.CARD).aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
+        from django.db.models import Count, Q
+        # count, revenue and the cash / card split in ONE query
+        today_stats = Invoice.objects.filter(date=today, invoice_type=Invoice.SALE).aggregate(
+            n=Count('id'),
+            total=Sum('total_amount'),
+            cash=Sum('total_amount', filter=Q(payment_type=Invoice.CASH)),
+            card=Sum('total_amount', filter=Q(payment_type=Invoice.CARD)),
+        )
+        new_context['today_invoices'] = today_stats['n']
+        new_context['today_revenue'] = today_stats['total'] or Decimal('0')
+        new_context['cash_revenue'] = today_stats['cash'] or Decimal('0')
+        new_context['card_revenue'] = today_stats['card'] or Decimal('0')
         # Wallet isn't in models, but UI has it, we'll keep it 0 or we can use CREDIT if needed
         new_context['wallet_revenue'] = Decimal('0')
 

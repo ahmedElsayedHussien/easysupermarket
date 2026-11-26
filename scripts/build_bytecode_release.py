@@ -31,7 +31,7 @@ SOURCE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # proj
 DEST_DIR = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else r"E:\easysupermarket_release"
 
 # Code & assets (copied fresh on every build)
-INCLUDE_DIRS = ['apps', 'config', 'templates', 'static', 'staticfiles', 'locale']
+INCLUDE_DIRS = ['apps', 'config', 'templates', 'static', 'staticfiles', 'locale', 'guides']
 INCLUDE_FILES = [
     'manage.py', 'run_waitress.py', 'switch_db.py',
     'start_server.bat', 'setup_venv.bat', 'setup_database.bat', 'switch_database.bat',

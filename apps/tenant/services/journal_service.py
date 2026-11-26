@@ -630,8 +630,17 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     # --- Cr: Revenue ---
     # We must split revenue between normal products and services (Labor).
-    product_revenue_gross = sum((line.subtotal for line in invoice.lines.all() if line.product.product_type != 'SERVICE'), Decimal('0'))
-    service_revenue_gross = sum((line.subtotal for line in invoice.lines.all() if line.product.product_type == 'SERVICE'), Decimal('0'))
+    from django.db.models import DecimalField, Q, Sum, Value
+    from django.db.models.functions import Coalesce
+    _money = DecimalField(max_digits=20, decimal_places=4)
+    revenue = invoice.lines.aggregate(
+        products=Coalesce(Sum('subtotal', filter=~Q(product__product_type='SERVICE')), Value(Decimal('0')),
+                          output_field=_money),
+        services=Coalesce(Sum('subtotal', filter=Q(product__product_type='SERVICE')), Value(Decimal('0')),
+                          output_field=_money),
+    )
+    product_revenue_gross = revenue['products']
+    service_revenue_gross = revenue['services']
     total_gross = product_revenue_gross + service_revenue_gross
 
     product_revenue_net = product_revenue_gross.quantize(Decimal('0.00'))
@@ -1008,6 +1017,17 @@ def _signed_balance(acc, total_d, total_c):
 
 def _is_leaf_account(acc):
     return acc.lft is not None and acc.rght is not None and acc.rght - acc.lft == 1
+
+
+def with_balances(objects):
+    """List of treasuries / banks / wallets / POS machines (anything with an ``account``
+    FK) whose ``current_balance`` is ready without one query per object. The objects'
+    accounts should be select_related; returns the list."""
+    objects = list(objects)
+    accounts = [o.account for o in objects if getattr(o, 'account_id', None)]
+    if accounts:
+        batch_get_account_balances(account_qs=accounts)
+    return objects
 
 
 def batch_get_account_balances(account_qs=None, account_ids=None):

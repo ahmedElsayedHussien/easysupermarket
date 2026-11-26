@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block extra_css %}{% include "invoicing/_van_css.html" %}{% endblock %}
+
+{% block content %}
+<div class="vn">
+    <div class="vn-panel">
+        <div class="vn-head">
+            <h1>⬆️ طلب تحميل {{ order.number }}</h1>
+            <span class="st {{ order.status }}">{{ order.get_status_display }}</span>
+            <span style="margin-inline-start:auto;" class="no-print">
+                <button class="vn-btn" onclick="window.print()">🖨️ طباعة إذن الصرف</button>
+                <a class="vn-btn" href="{% url 'invoicing:loading_list' %}">↩</a>
+            </span>
+        </div>
+        <div class="meta">
+            <div>المندوب<b>{{ order.rep }}</b></div>
+            <div>من مخزن<b>{{ order.from_warehouse.name }}</b></div>
+            <div>لعربية<b>{{ order.to_warehouse.name }}</b></div>
+            <div>التاريخ<b>{{ order.date|date:"Y-m-d" }}</b></div>
+            <div>طلبه<b>{% if order.requested_by %}{{ order.requested_by|display_name }}{% else %}—{% endif %}</b></div>
+            {% if order.approved_by %}<div>اعتمده<b>{{ order.approved_by|display_name }} — {{ order.approved_at|date:"j/n H:i" }}</b></div>{% endif %}
+            {% if order.issued_by %}<div>صرفه<b>{{ order.issued_by|display_name }} — {{ order.issued_at|date:"j/n H:i" }}</b></div>{% endif %}
+            {% if order.transfer %}<div>التحويل المخزني<b><a href="{% url 'inventory:stock_transfer_detail' order.transfer.id %}" style="color:var(--neon-cyan);">{{ order.transfer.number }}</a></b></div>{% endif %}
+        </div>
+        {% if order.notes %}<p class="note">📝 {{ order.notes }}</p>{% endif %}
+    </div>
+
+    <form method="post" class="vn-panel">
+        {% csrf_token %}
+        <table class="tbl">
+            <thead><tr><th>الصنف</th><th>الوحدة</th><th>المطلوب</th><th>المعتمد</th><th>المتاح في {{ order.from_warehouse.name }} (أساسي)</th><th>في العربية دلوقتي</th></tr></thead>
+            <tbody>
+                {% for l in lines %}
+                <tr><td>{{ l.product.name }}</td><td>{{ l.uom_name }}</td><td>{{ l.requested_qty|floatformat:"-3" }}</td>
+                    <td>{% if order.status == 'PENDING' and can_approve %}<input class="qty-in" type="number" name="qty_{{ l.id }}" min="0" max="{{ l.requested_qty|stringformat:'s' }}" step="any" value="{{ l.requested_qty|stringformat:'s' }}">
+                        {% elif l.approved_qty is not None %}<strong>{{ l.approved_qty|floatformat:"-3" }}</strong>{% else %}—{% endif %}</td>
+                    <td>{{ l.available|floatformat:"-3" }}</td><td>{{ l.in_van|floatformat:"-3" }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="actions no-print">
+            {% if order.status == 'PENDING' and can_approve %}
+            <button class="vn-btn primary" name="action" value="approve">✔ اعتماد بالكميات دي</button>
+            {% endif %}
+            {% if order.status == 'APPROVED' and can_issue %}
+            <button class="vn-btn green" name="action" value="issue" onclick="return confirm('صرف البضاعة المعتمدة ونقلها لعربية المندوب؟');">📦 صرف وترحيل للعربية</button>
+            {% endif %}
+            {% if order.status == 'PENDING' or order.status == 'APPROVED' %}{% if can_approve or can_issue %}
+            <button class="vn-btn danger" name="action" value="cancel" formnovalidate onclick="return confirm('إلغاء الطلب؟');">✖ إلغاء الطلب</button>
+            {% endif %}{% endif %}
+        </div>
+    </form>
+</div>
+{% endblock %}

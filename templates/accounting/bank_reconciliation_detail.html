@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.bd { max-width: 1150px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.bd-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.bd-panel h1 { font-size: 1.25rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; margin-top: .7rem; }
+.kpis div { background: var(--bg-secondary); border-radius: 8px; padding: .55rem .7rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.kpis b { display: block; font-size: 1.1rem; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.kpis .diff.ok b { color: var(--neon-green); } .kpis .diff.bad b { color: var(--neon-red); }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .45rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td.desc { text-align: right; }
+.in { color: var(--neon-green); } .out { color: var(--neon-red); }
+tr.on td { background: rgba(46,213,115,.07); }
+.bd-btn { padding: .45rem .9rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .84rem; cursor: pointer; text-decoration: none; }
+.bd-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.bd-btn.danger { border-color: var(--neon-red); color: var(--neon-red); background: transparent; }
+.bar { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .8rem; align-items: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bd">
+    <div class="bd-panel">
+        <h1>🏦 تسوية {{ rec.bank_account.name }} — كشف {{ rec.statement_date|date:"Y-m-d" }} ({{ rec.get_status_display }})</h1>
+        <div class="kpis">
+            <div>رصيد كشف البنك<b id="kStatement">{{ rec.statement_balance|floatformat:2 }}</b></div>
+            <div>رصيد الدفاتر لحد التاريخ<b>{% if snap %}{{ snap.book|floatformat:2 }}{% else %}{{ rec.book_balance|floatformat:2 }}{% endif %}</b></div>
+            <div>المطابق (قديم + المعلّم عليه)<b id="kCleared">{% if snap %}{{ snap.cleared|floatformat:2 }}{% else %}{{ rec.cleared_balance|floatformat:2 }}{% endif %}</b></div>
+            <div class="diff" id="kDiffBox">الفرق<b id="kDiff">{% if snap %}{{ snap.difference|floatformat:2 }}{% else %}{{ rec.difference|floatformat:2 }}{% endif %}</b></div>
+        </div>
+        <a class="bd-btn" style="display:inline-block; margin-top:.6rem;" href="{% url 'accounting:bank_reconciliation_list' %}">↩ كل التسويات</a>
+    </div>
+
+    {% if snap %}
+    <form method="post" class="bd-panel" id="recForm">
+        {% csrf_token %}
+        <p class="note" style="margin-top:0;">علّم على كل حركة ظهرت في كشف البنك. الإيداع (+) والسحب (−) زي ما البنك شايفهم.</p>
+        {% if snap.rows %}
+        <table class="tbl">
+            <thead><tr><th style="width:3rem;"><input type="checkbox" id="all" title="الكل"></th><th>التاريخ</th><th>القيد</th><th>البيان</th><th>المبلغ</th></tr></thead>
+            <tbody>
+                {% for r in snap.rows %}
+                <tr class="{% if r.ticked %}on{% endif %}">
+                    <td><input type="checkbox" name="items" value="{{ r.item.id }}" data-amount="{{ r.amount|stringformat:'s' }}" {% if r.ticked %}checked{% endif %} {% if not can_edit %}disabled{% endif %}></td>
+                    <td>{{ r.item.entry.date|date:"Y-m-d" }}</td>
+                    <td>{{ r.item.entry.reference }}</td>
+                    <td class="desc">{{ r.item.description|default:r.item.entry.description|truncatechars:80 }}</td>
+                    <td class="{% if r.amount >= 0 %}in{% else %}out{% endif %}">{{ r.amount|floatformat:2 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}<p class="note">مفيش حركات مفتوحة على الحساب لحد التاريخ ده.</p>{% endif %}
+        {% if can_edit %}
+        <div class="bar">
+            <button type="submit" name="action" value="save" class="bd-btn">💾 حفظ مسودة</button>
+            <button type="submit" name="action" value="finish" class="bd-btn primary" id="finishBtn">✔ إنهاء التسوية</button>
+            <button type="submit" name="action" value="delete" class="bd-btn danger" style="margin-inline-start:auto;" onclick="return confirm('حذف مسودة التسوية؟');">حذف المسودة</button>
+        </div>
+        {% endif %}
+    </form>
+    <script>
+    (function () {
+        var form = document.getElementById('recForm');
+        var base = {{ snap.previous_cleared|stringformat:"s" }}, statement = {{ rec.statement_balance|stringformat:"s" }};
+        var boxes = form.querySelectorAll('input[name="items"]');
+        function upd() {
+            var c = base;
+            boxes.forEach(function (b) { if (b.checked) c += parseFloat(b.dataset.amount); b.closest('tr').classList.toggle('on', b.checked); });
+            var d = Math.round((statement - c) * 100) / 100;
+            document.getElementById('kCleared').textContent = c.toFixed(2);
+            document.getElementById('kDiff').textContent = d.toFixed(2);
+            document.getElementById('kDiffBox').className = 'diff ' + (Math.abs(d) < 0.005 ? 'ok' : 'bad');
+            var fb = document.getElementById('finishBtn'); if (fb) fb.disabled = Math.abs(d) >= 0.005;
+        }
+        boxes.forEach(function (b) { b.addEventListener('change', upd); });
+        var all = document.getElementById('all');
+        if (all) all.addEventListener('change', function () { boxes.forEach(function (b) { if (!b.disabled) b.checked = all.checked; }); upd(); });
+        upd();
+    })();
+    </script>
+    {% endif %}
+
+    {% if cleared_rows is not None %}
+    <div class="bd-panel">
+        <table class="tbl">
+            <thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>المبلغ</th></tr></thead>
+            <tbody>
+                {% for r in cleared_rows %}<tr><td>{{ r.item.entry.date|date:"Y-m-d" }}</td><td>{{ r.item.entry.reference }}</td><td class="desc">{{ r.item.description|default:r.item.entry.description|truncatechars:80 }}</td><td class="{% if r.amount >= 0 %}in{% else %}out{% endif %}">{{ r.amount|floatformat:2 }}</td></tr>
+                {% empty %}<tr><td colspan="4">مفيش حركات.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        {% if can_edit %}
+        <form method="post" class="bar">{% csrf_token %}<button type="submit" name="action" value="reopen" class="bd-btn" onclick="return confirm('فتح التسوية تاني كمسودة؟');">↺ فتح التسوية تاني</button></form>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

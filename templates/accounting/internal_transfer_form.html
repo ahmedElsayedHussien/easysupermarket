@@ -277,7 +277,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const acc = getAccountInfo(val, activeSelect);
         if (acc) {
-            const curBal = acc.balance;
+            const curBal = parseFloat(acc.balance) || 0;
             const reqAmt = parseFloat(amountInput ? amountInput.value : 0) || 0;
             const afterBal = curBal - reqAmt;
 
@@ -313,7 +313,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const acc = getAccountInfo(val, activeSelect);
         if (acc) {
-            const curBal = acc.balance;
+            const curBal = parseFloat(acc.balance) || 0;
             const reqAmt = parseFloat(amountInput ? amountInput.value : 0) || 0;
             const afterBal = curBal + reqAmt;
 

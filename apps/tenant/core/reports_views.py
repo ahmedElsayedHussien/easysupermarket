@@ -1843,9 +1843,13 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
             in_types = ['IN', 'TRANSFER_IN', 'ADJUSTMENT_IN', 'OPENING_BALANCE', 'RETURN_IN']
             out_types = ['OUT', 'TRANSFER_OUT', 'ADJUSTMENT_OUT', 'RETURN_OUT']
             
-            in_qty = prev_qs.filter(movement_type__in=in_types).aggregate(Sum('quantity'))['quantity__sum'] or Decimal('0')
-            out_qty = prev_qs.filter(movement_type__in=out_types).aggregate(Sum('quantity'))['quantity__sum'] or Decimal('0')
-            
+            def in_out(qs):
+                """(quantity in, quantity out) of a movement queryset in ONE query."""
+                agg = qs.order_by().aggregate(i=Sum('quantity', filter=Q(movement_type__in=in_types)),
+                                              o=Sum('quantity', filter=Q(movement_type__in=out_types)))
+                return agg['i'] or Decimal('0'), agg['o'] or Decimal('0')
+
+            in_qty, out_qty = in_out(prev_qs)
             opening_balance = in_qty - out_qty
             
             current_balance = opening_balance
@@ -1856,8 +1860,7 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
                     Q(created_at__lt=first_item.created_at) | 
                     Q(created_at=first_item.created_at, id__lt=first_item.id)
                 )
-                in_before = qs_before.filter(movement_type__in=in_types).aggregate(Sum('quantity'))['quantity__sum'] or Decimal('0')
-                out_before = qs_before.filter(movement_type__in=out_types).aggregate(Sum('quantity'))['quantity__sum'] or Decimal('0')
+                in_before, out_before = in_out(qs_before)
                 
                 current_balance = opening_balance + in_before - out_before
                 
@@ -1868,8 +1871,7 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
                         current_balance -= obj.quantity
                     obj.running_balance = current_balance
             
-            all_in = self.get_queryset().filter(movement_type__in=in_types).aggregate(Sum('quantity'))['quantity__sum'] or Decimal('0')
-            all_out = self.get_queryset().filter(movement_type__in=out_types).aggregate(Sum('quantity'))['quantity__sum'] or Decimal('0')
+            all_in, all_out = in_out(self.get_queryset())
             closing_balance = opening_balance + all_in - all_out
             
             context['show_balances'] = True
@@ -2505,22 +2507,21 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
         import datetime
         from decimal import Decimal
 
-        treasuries = list(_scope_treasuries(Treasury.objects.all(), self.request).select_related('branch'))
+        treasuries = list(_scope_treasuries(Treasury.objects.all(), self.request).select_related('branch', 'account'))
         if is_branch_restricted(self.request):
             # Bank accounts / e-wallets are company-level (no branch): hidden from branch staff.
             bank_accounts = []
             ewallets = []
         else:
-            bank_accounts = list(BankAccount.objects.all())
-            ewallets = list(EWallet.objects.all())
+            bank_accounts = list(BankAccount.objects.select_related('account'))
+            ewallets = list(EWallet.objects.select_related('account'))
 
-        # Auto-healing ensuring GL accounts exist
-        for t in treasuries:
-            t.ensure_account()
-        for b in bank_accounts:
-            b.ensure_account()
-        for w in ewallets:
-            w.ensure_account()
+        # Auto-healing ensuring GL accounts exist, then every
+        # balance of the dropdown in one batch instead of 2 queries per row.
+        for obj in treasuries + bank_accounts + ewallets:
+            obj.ensure_account()   # no query when the (preloaded) account is fine
+        from apps.tenant.services.journal_service import with_balances
+        with_balances(treasuries + bank_accounts + ewallets)
 
         selected_account_val = self.request.GET.get('account') or self.request.GET.get('treasury')
         
@@ -3046,7 +3047,8 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
             page_obj = paginator.get_page(self.request.GET.get('page', 1))
             page_sessions = list(page_obj.object_list)
 
-        sessions_data = [get_pos_session_details(session) for session in page_sessions]
+        from apps.tenant.invoicing.shift_services import shifts_list_rows
+        sessions_data = shifts_list_rows(page_sessions)
 
         # Grand totals over the whole filtered range (not just the current page).
         # Closed shifts use the figures stored when the shift was closed (one
@@ -3064,7 +3066,7 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
         total_diff += closed_agg['diff']
         computed = {dt['session'].id: dt for dt in sessions_data}
         for session in sessions_qs.filter(status=POSSession.OPEN):
-            dt = computed.get(session.id) or get_pos_session_details(session)
+            dt = computed.get(session.id) or shifts_list_rows([session])[0]
             total_expected += dt['expected_balance']
             total_actual += dt['actual_balance']
             total_diff += dt['difference']
@@ -3447,8 +3449,9 @@ class GeneralLedgerReportView(BranchRestrictedDenyMixin, CsvExportMixin, CustomP
                 
                 if start_date:
                     opening_items = items.filter(entry__date__lt=start_date)
-                    od = opening_items.aggregate(s=Sum('debit'))['s'] or Decimal('0')
-                    oc = opening_items.aggregate(s=Sum('credit'))['s'] or Decimal('0')
+                    sums = opening_items.aggregate(d=Sum('debit'), c=Sum('credit'))   # one query
+                    od = sums['d'] or Decimal('0')
+                    oc = sums['c'] or Decimal('0')
                     
                     if account.normal_balance == 'DEBIT':
                         opening_balance = od - oc
@@ -4029,7 +4032,7 @@ class FixedAssetReportView(CsvExportMixin, CustomPermissionRequiredMixin, Templa
         from apps.tenant.accounting.models import FixedAsset
         from decimal import Decimal
 
-        qs = FixedAsset.objects.all().select_related('branch', 'asset_account').order_by('-purchase_date', '-id')
+        qs = FixedAsset.with_totals(FixedAsset.objects.select_related('branch', 'asset_account')).order_by('-purchase_date', '-id')
         qs = filter_by_branch(qs, self.request)
 
         category = self.request.GET.get('category')
@@ -4172,7 +4175,7 @@ class LoanReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView
         from apps.tenant.accounting.models import Loan
         from decimal import Decimal
 
-        qs = Loan.objects.all().select_related('loan_account', 'interest_expense_account').order_by('-start_date', '-id')
+        qs = Loan.with_totals(Loan.objects.select_related('loan_account', 'interest_expense_account')).order_by('-start_date', '-id')
         qs = filter_by_branch(qs, self.request)
 
         loan_type = self.request.GET.get('loan_type')
@@ -4295,3 +4298,22 @@ class LoanReportView(CsvExportMixin, CustomPermissionRequiredMixin, TemplateView
         return response
 
 
+class CashFlowReportView(BranchRestrictedDenyMixin, CustomPermissionRequiredMixin, TemplateView):
+    """قائمة التدفقات النقدية (الطريقة المباشرة) — accounting.cash_flow."""
+    template_name = 'reports/cash_flow.html'
+    permission_required = 'core.view_accounting_reports'
+
+    def get_context_data(self, **kwargs):
+        import datetime
+        from apps.tenant.accounting.cash_flow import cash_flow
+        context = super().get_context_data(**kwargs)
+        today = timezone.now().date()
+        date_from = _date_param(self.request, 'date_from') or today.replace(day=1)
+        date_to = _date_param(self.request, 'date_to') or today
+        if isinstance(date_from, str):
+            date_from = datetime.date.fromisoformat(date_from)
+        if isinstance(date_to, str):
+            date_to = datetime.date.fromisoformat(date_to)
+        context.update({'title': 'قائمة التدفقات النقدية', 'date_from': date_from, 'date_to': date_to,
+                        **cash_flow(date_from, date_to)})
+        return context

@@ -41,7 +41,7 @@
                 <td>{{ product.name }}</td>
                 <td>{{ product.category.name|default:"-" }}</td>
                 <td>{{ product.sale_price|floatformat:2 }} ج.م</td>
-                <td>{{ product.pos_stock|default:product.get_stock|floatformat:0 }}</td>
+                <td>{{ product.pos_stock|floatformat:0 }}</td>
                 <td>
                     {% if product.is_active %}
                     <span class="badge badge-success">نعم</span>

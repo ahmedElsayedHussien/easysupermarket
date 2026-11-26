@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.eo { max-width: 820px; margin: 0 auto; }
+.eo-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1rem; }
+.eo-panel h1 { font-size: 1.25rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .5rem; }
+.note { font-size: .82rem; color: var(--text-muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .7rem; }
+.grid label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.eo input, .eo select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .42rem .55rem; font-size: .86rem; }
+.facts div { display: flex; justify-content: space-between; padding: .35rem 0; border-bottom: 1px solid var(--border-default); color: var(--text-primary); font-size: .9rem; }
+.warn { background: rgba(255,71,87,.1); border: 1px solid rgba(255,71,87,.4); color: var(--neon-red); border-radius: 8px; padding: .55rem .8rem; font-size: .85rem; margin-bottom: .7rem; }
+.eo-btn { padding: .5rem 1rem; border-radius: 8px; border: 1px solid var(--neon-red); background: var(--neon-red); color: #fff; font-weight: 800; cursor: pointer; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="eo">
+    <div class="eo-panel">
+        <h1>🔚 نهاية خدمة — {{ name }}</h1>
+        <p class="note">المخالصة: مكافأة نهاية الخدمة (حسب العقد / القانون) + بدل رصيد الإجازات − السلف المتبقية = الصافي اللي يتصرف. بعد الحفظ حساب الموظف بيتقفل ومبيقدرش يدخل.</p>
+        <div class="facts">
+            <div><span>تاريخ التعيين</span><b>{{ p.hire|date:"Y-m-d" }}</b></div>
+            <div><span>سنين الخدمة (لحد التاريخ المختار)</span><b>{{ p.years }}</b></div>
+            <div><span>أجر اليوم (الأساسي ÷ 30)</span><b>{{ p.daily_rate|floatformat:"2g" }}</b></div>
+            <div><span>رصيد الإجازات المتبقي</span><b>{{ p.leave_days|floatformat:"-1" }} يوم = {{ p.leave_encashment|floatformat:"2g" }}</b></div>
+            <div><span>سلف متبقية هتتخصم</span><b>{{ p.loans_left|floatformat:"2g" }}</b></div>
+        </div>
+    </div>
+    {% if p.open_assets %}<div class="warn">⚠️ لازم العهد العينية ترجع الأول: {% for a in p.open_assets %}{{ a.item }}{% if not forloop.last %}، {% endif %}{% endfor %} — سجّل رجوعها من ملف الموظف.</div>{% endif %}
+    <form method="post" class="eo-panel" onsubmit="return confirm('عمل المخالصة وقفل حساب الموظف؟');">
+        {% csrf_token %}
+        <div class="grid">
+            <label>تاريخ انتهاء الخدمة<input type="date" name="termination_date" value="{{ term|date:'Y-m-d' }}" required></label>
+            <label>السبب<select name="reason"><option>استقالة</option><option>إنهاء تعاقد</option><option>انتهاء عقد</option><option>تقاعد</option><option>أخرى</option></select></label>
+            <label>مكافأة نهاية الخدمة<input type="number" name="severance" min="0" step="0.01" value="0"></label>
+            <label>أيام الإجازة اللي تتصرف بدل<input type="number" name="leave_days" min="0" step="0.5" value="{{ p.leave_days|stringformat:'s' }}"></label>
+            <label>يتصرف من<select name="source"><option value="">— (لو الصافي صفر) —</option>{% for t in treasuries %}<option value="t:{{ t.id }}">🏧 {{ t.name }}</option>{% endfor %}{% for b in banks %}<option value="b:{{ b.id }}">🏦 {{ b.name }}</option>{% endfor %}</select></label>
+        </div>
+        <div style="margin-top:.9rem;"><button class="eo-btn" {% if p.open_assets %}disabled{% endif %}>🔚 عمل المخالصة</button>
+            <a href="{% url 'hr:employee_file' emp.id %}" style="margin-inline-start:.6rem; color:var(--text-muted);">رجوع</a></div>
+    </form>
+</div>
+{% endblock %}

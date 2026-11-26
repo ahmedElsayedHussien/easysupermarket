@@ -1,0 +1,6 @@
+{% if page_obj.has_other_pages %}
+<div class="no-print" style="display:flex; gap:.5rem; justify-content:center; margin-top:.8rem;">
+    {% if page_obj.has_previous %}<a class="vn-btn" href="?status={{ status }}&rep={{ rep_id }}&page={{ page_obj.previous_page_number }}">السابق</a>{% endif %}
+    {% if page_obj.has_next %}<a class="vn-btn" href="?status={{ status }}&rep={{ rep_id }}&page={{ page_obj.next_page_number }}">التالي</a>{% endif %}
+</div>
+{% endif %}

@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="{% static 'css/design_system.css' %}">
     <link rel="stylesheet" href="{% static 'css/compat.css' %}">
     <link rel="stylesheet" href="{% static 'css/pos.css' %}?v={% now 'U' %}">
+    {% include 'partials/theme_head.html' %}
 </head>
 <body class="pos-page">
     <!-- Tier 1: POS Main Navbar (Brand, Primary Actions, Branch/Warehouse, Cashier, Clock) -->
@@ -18,7 +19,7 @@
         <div class="pos-nav-left">
             <div class="pos-brand">
                 <a href="/" title="{% trans 'الرئيسية' %}" style="display:flex; align-items:center; text-decoration:none;">
-                    <img src="{% static 'img/logo-on-dark.png' %}" alt="مسار" class="pos-brand-logo" style="height:38px; max-width:140px; object-fit:contain;">
+                    <img src="{% static 'img/logo-on-dark.png' %}" alt="مسار" class="pos-brand-logo brand-logo" style="height:38px; max-width:140px; object-fit:contain;">
                 </a>
             </div>
             {% if is_admin %}
@@ -49,6 +50,7 @@
                     {% endfor %}
                 </select>
             </div>
+            <button type="button" class="theme-toggle" onclick="toggleTheme()" title="{% trans 'الوضع النهاري / الليلي' %}" aria-label="{% trans 'الوضع النهاري / الليلي' %}"><span class="ico-night theme-keep-colors">🌙</span><span class="ico-day theme-keep-colors">☀️</span></button>
             <span class="pos-cashier-badge">👤 {{ request.user|display_name }}</span>
             <a href="{% url 'invoicing:pos_close_shift' %}" class="pos-close-shift-btn">🔒 {% trans 'إغلاق الوردية' %}</a>
             <span id="posDateTime"></span>

@@ -101,6 +101,11 @@ class EInvoiceLog(models.Model):
     class Meta:
         verbose_name = "سجل الفاتورة الإلكترونية"
         verbose_name_plural = "سجل الفواتير الإلكترونية"
+        permissions = [
+            ('cancel_einvoice', 'إلغاء فاتورة مرسلة لدى الضرائب'),
+            ('reject_received_einvoice', 'رفض فاتورة واردة من مورد'),
+            ('manage_egs_codes', 'تسجيل أكواد الأصناف EGS'),
+        ]
 
     def __str__(self):
         return f"سجل فاتورة {self.invoice.id} - {self.get_status_display()}"

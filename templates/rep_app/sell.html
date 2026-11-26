@@ -1,0 +1,181 @@
+{% extends "rep_app/base.html" %}
+{% block head %}
+<style>
+    .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4rem; }
+    .seg button { padding: .65rem .3rem; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); font-weight: 800; font-family: inherit; font-size: .9rem; }
+    .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .results { max-height: 260px; overflow: auto; margin-top: .4rem; }
+    .results .item { cursor: pointer; }
+    .cart-line { border-bottom: 1px solid var(--line); padding: .6rem 0; }
+    .cart-line:last-child { border-bottom: 0; }
+    .qty { display: flex; align-items: center; gap: .3rem; }
+    .qty button { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); font-size: 1.2rem; font-weight: 800; }
+    .qty input { width: 70px; text-align: center; padding: .5rem; }
+    .cart-line select { width: auto; padding: .45rem; font-size: .88rem; }
+    .total-bar { position: sticky; bottom: calc(70px + env(safe-area-inset-bottom)); background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: .8rem; box-shadow: 0 -4px 18px rgba(0,0,0,.08); }
+    .big { font-size: 1.5rem; font-weight: 900; }
+    .x { background: none; border: 0; color: var(--bad); font-size: 1.1rem; }
+</style>
+{% endblock %}
+{% block content %}
+{% if not rep.van_warehouse or not rep.treasury %}
+<div class="msg error">لازم الإدارة تحدد لك مخزن عربية وخزنة الأول.</div>
+{% else %}
+<div class="card">
+    <h2>👤 العميل</h2>
+    <div id="custChosen" class="row" {% if not partner %}hidden{% endif %}>
+        <div class="grow" style="flex:1;"><b id="custName">{{ partner.name }}</b><div class="muted" id="custBal"></div></div>
+        <button type="button" class="btn ghost sm" onclick="clearCustomer()">تغيير</button>
+    </div>
+    <div id="custPick" {% if partner %}hidden{% endif %}>
+        <input id="custQ" type="search" placeholder="ابحث باسم العميل أو موبايله… (فاضي = عميل نقدي)" autocomplete="off">
+        <div id="custResults" class="results list"></div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>📦 الأصناف (من عربيتك)</h2>
+    <input id="prodQ" type="search" placeholder="ابحث بالاسم أو الباركود…" autocomplete="off">
+    <div id="prodResults" class="results list"></div>
+</div>
+
+<div class="card" id="cartCard" hidden>
+    <h2>🛒 الفاتورة</h2>
+    <div id="cart"></div>
+    <div class="field" style="margin-top:.6rem;"><label>خصم % (اختياري)</label><input id="disc" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="0"></div>
+    <label>طريقة الدفع</label>
+    <div class="seg" id="paySeg">
+        <button type="button" data-p="CASH" class="on">💵 نقدي</button>
+        <button type="button" data-p="CREDIT">📒 آجل</button>
+        <button type="button" data-p="PARTIAL">➗ جزء نقدي</button>
+    </div>
+    <div class="field" id="paidBox" hidden style="margin-top:.6rem;"><label>المدفوع نقدي دلوقتي</label><input id="paid" type="number" min="0" step="0.01" inputmode="decimal"></div>
+</div>
+
+<div class="total-bar" id="totalBar" hidden>
+    <div class="row"><div style="flex:1;"><div class="muted">الإجمالي (شامل الضريبة)</div><div class="big num" id="total">0.00</div><div class="muted" id="taxLine"></div></div>
+        <button class="btn ok" style="width:auto; padding:.9rem 1.4rem;" id="saveBtn" onclick="save()">✔ حفظ الفاتورة</button></div>
+    <div class="msg error" id="err" hidden style="margin-top:.5rem;"></div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{{ products_json|json_script:"products-data" }}
+<script>
+var PRODUCTS = JSON.parse(document.getElementById('products-data').textContent);
+var cart = [], payment = 'CASH', partner = {% if partner %}{id: {{ partner.id }}, name: "{{ partner.name|escapejs }}"}{% else %}null{% endif %};
+var quoteTimer = null, lastQuote = null;
+var SELL_URL = '{% url "invoicing:rep_app_sell" %}', CUST_URL = '{% url "invoicing:rep_app_customers" %}';
+
+function byId(id) { return PRODUCTS.find(function (p) { return p.id === id; }); }
+
+// ---- products ----
+document.getElementById('prodQ') && document.getElementById('prodQ').addEventListener('input', function () {
+    var q = this.value.trim().toLowerCase(), box = document.getElementById('prodResults');
+    if (!q) { box.innerHTML = ''; return; }
+    var exact = PRODUCTS.filter(function (p) { return p.barcode && p.barcode.toLowerCase() === q; });
+    if (exact.length === 1) { add(exact[0].id); this.value = ''; box.innerHTML = ''; return; }
+    var hits = PRODUCTS.filter(function (p) { return p.name.toLowerCase().indexOf(q) >= 0 || (p.barcode || '').toLowerCase().indexOf(q) >= 0; }).slice(0, 30);
+    box.innerHTML = hits.length ? hits.map(function (p) {
+        return '<div class="item" onclick="add(' + p.id + ')"><div class="grow"><div class="t">' + esc(p.name) + '</div><div class="muted">في العربية: ' + esc(p.qty) + ' ' + esc(p.uoms[0].name) + '</div></div><b class="num">' + money(p.price) + '</b></div>';
+    }).join('') : '<p class="muted">مفيش صنف بالاسم ده في عربيتك.</p>';
+});
+
+function add(id) {
+    var line = cart.find(function (l) { return l.product_id === id && l.uom_id === ''; });
+    if (line) { line.qty = (parseFloat(line.qty) || 0) + 1; } else { cart.push({product_id: id, uom_id: '', qty: 1}); }
+    document.getElementById('prodQ').value = ''; document.getElementById('prodResults').innerHTML = '';
+    render(); quote();
+}
+function setQty(i, v) { cart[i].qty = Math.max(0, parseFloat(v) || 0); render(); quote(); }
+function step(i, d) { setQty(i, (parseFloat(cart[i].qty) || 0) + d); }
+function setUom(i, v) { cart[i].uom_id = v; quote(); }
+function removeLine(i) { cart.splice(i, 1); render(); quote(); }
+
+function render() {
+    cart = cart.filter(function (l) { return l.qty > 0; });
+    var has = cart.length > 0;
+    document.getElementById('cartCard').hidden = !has; document.getElementById('totalBar').hidden = !has;
+    document.getElementById('cart').innerHTML = cart.map(function (l, i) {
+        var p = byId(l.product_id), q = lastQuote && lastQuote.lines.find(function (x) { return x.product_id === l.product_id && String(x.uom_id) === String(l.uom_id); });
+        var factor = parseFloat((p.uoms.find(function (u) { return String(u.id) === String(l.uom_id); }) || {factor: 1}).factor);
+        var over = l.qty * factor > parseFloat(p.qty);
+        return '<div class="cart-line"><div class="row"><b style="flex:1;">' + esc(p.name) + '</b><button class="x" onclick="removeLine(' + i + ')">✕</button></div>' +
+            '<div class="row" style="margin-top:.4rem; flex-wrap:wrap;"><div class="qty"><button onclick="step(' + i + ',-1)">−</button><input type="number" inputmode="decimal" min="0" step="any" value="' + l.qty + '" onchange="setQty(' + i + ', this.value)"><button onclick="step(' + i + ',1)">+</button></div>' +
+            (p.uoms.length > 1 ? '<select onchange="setUom(' + i + ', this.value)">' + p.uoms.map(function (u) { return '<option value="' + u.id + '"' + (String(u.id) === String(l.uom_id) ? ' selected' : '') + '>' + esc(u.name) + '</option>'; }).join('') + '</select>' : '<span class="muted">' + esc(p.uoms[0].name) + '</span>') +
+            '<span style="margin-inline-start:auto;" class="num">' + (q ? '<span class="muted">' + money(q.price) + ' × </span><b>' + money(q.total) + '</b>' : '') + '</span></div>' +
+            (over ? '<div class="bad muted">⚠ أكتر من اللي في العربية (' + esc(p.qty) + ')</div>' : '') + '</div>';
+    }).join('');
+}
+
+function payload(extra) {
+    var body = {cart: cart.map(function (l) { return {product_id: l.product_id, uom_id: l.uom_id, qty: String(l.qty)}; }),
+                partner_id: partner ? partner.id : null, discount_pct: document.getElementById('disc').value || '0'};
+    return JSON.stringify(Object.assign(body, extra || {}));
+}
+function post(body) {
+    return fetch(SELL_URL, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf()}, body: body}).then(function (r) { return r.json(); });
+}
+function quote() {
+    clearTimeout(quoteTimer);
+    if (!cart.length) return;
+    quoteTimer = setTimeout(function () {
+        post(payload({quote: true})).then(function (d) {
+            var err = document.getElementById('err');
+            if (!d.success) { err.textContent = d.error; err.hidden = false; return; }
+            err.hidden = true; lastQuote = d;
+            document.getElementById('total').textContent = money(d.total);
+            document.getElementById('taxLine').textContent = 'منها ضريبة ' + money(d.tax);
+            render();
+        });
+    }, 250);
+}
+document.getElementById('disc') && document.getElementById('disc').addEventListener('input', quote);
+
+// ---- payment ----
+document.querySelectorAll('#paySeg button').forEach(function (b) {
+    b.addEventListener('click', function () {
+        payment = b.dataset.p;
+        document.querySelectorAll('#paySeg button').forEach(function (x) { x.classList.toggle('on', x === b); });
+        document.getElementById('paidBox').hidden = payment !== 'PARTIAL';
+    });
+});
+
+function save() {
+    var err = document.getElementById('err'), btn = document.getElementById('saveBtn');
+    if (payment !== 'CASH' && !partner) { err.textContent = 'البيع الآجل لازم تختار عميل.'; err.hidden = false; return; }
+    if (!confirm('حفظ الفاتورة بإجمالي ' + document.getElementById('total').textContent + '؟')) return;
+    btn.disabled = true;
+    post(payload({payment: payment, paid_amount: document.getElementById('paid').value || '0'})).then(function (d) {
+        if (d.success) { window.location = d.url; return; }
+        err.textContent = d.error; err.hidden = false; btn.disabled = false;
+    }).catch(function () { err.textContent = 'مفيش اتصال — جرّب تاني.'; err.hidden = false; btn.disabled = false; });
+}
+
+// ---- customer ----
+var custTimer = null, custHits = [];
+document.getElementById('custQ') && document.getElementById('custQ').addEventListener('input', function () {
+    var q = this.value.trim(), box = document.getElementById('custResults');
+    clearTimeout(custTimer);
+    if (q.length < 2) { box.innerHTML = ''; return; }
+    custTimer = setTimeout(function () {
+        fetch(CUST_URL + '?json=1&q=' + encodeURIComponent(q), {credentials: 'same-origin'}).then(function (r) { return r.json(); }).then(function (d) {
+            custHits = d.items;
+            box.innerHTML = d.items.length ? d.items.map(function (c, i) {
+                return '<div class="item" onclick="pickCustomer(custHits[' + i + '])"><div class="grow"><div class="t">' + esc(c.name) + '</div><div class="muted">' + esc(c.mobile || '') + '</div></div><span class="num muted">' + money(c.balance) + '</span></div>';
+            }).join('') : '<p class="muted">مفيش عميل بالاسم ده — ضيفه من شاشة العملاء.</p>';
+        });
+    }, 250);
+});
+function pickCustomer(c) {
+    partner = c; document.getElementById('custName').textContent = c.name;
+    document.getElementById('custBal').textContent = 'رصيده عليه: ' + money(c.balance);
+    document.getElementById('custChosen').hidden = false; document.getElementById('custPick').hidden = true;
+    document.getElementById('custResults').innerHTML = ''; quote();
+}
+function clearCustomer() {
+    partner = null; document.getElementById('custChosen').hidden = true; document.getElementById('custPick').hidden = false;
+    document.getElementById('custQ').value = ''; quote();
+}
+</script>
+{% endblock %}

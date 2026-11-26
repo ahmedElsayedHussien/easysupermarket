@@ -243,6 +243,24 @@ class BranchForm(forms.ModelForm):
         return treasury
 
 
+
+def catalog_permission_queryset():
+    """Only the permissions of core.permission_catalog can be given from the user screen."""
+    from .permission_catalog import catalog_permissions
+    return Permission.objects.filter(id__in=[p.id for p in catalog_permissions().values()])
+
+
+def save_user_permissions(user, role, selected):
+    """ADMIN: every permission. Others: the ticked catalog permissions; permissions
+    outside the catalog (not shown on the screen) are left as they were."""
+    if role == Role.ADMIN:
+        user.user_permissions.set(Permission.objects.all())
+        return
+    catalog_ids = set(catalog_permission_queryset().values_list('id', flat=True))
+    keep = [pid for pid in user.user_permissions.values_list('id', flat=True) if pid not in catalog_ids]
+    user.user_permissions.set(keep + [p.id for p in selected])
+
+
 class EmployeeUserCreationForm(UserCreationForm):
     first_name = forms.CharField(label='الاسم الأول', max_length=30, required=True)
     last_name = forms.CharField(label='الاسم الأخير', max_length=30, required=True)
@@ -269,19 +287,22 @@ class EmployeeUserCreationForm(UserCreationForm):
         initial=Role.CASHIER
     )
     user_permissions = forms.ModelMultipleChoiceField(
-        queryset=Permission.objects.all(),
+        queryset=Permission.objects.none(),   # the permission catalog, set in __init__
         widget=forms.CheckboxSelectMultiple,
         required=False,
         label='الصلاحيات المخصصة'
     )
     
     # HR Fields
-    base_salary = forms.DecimalField(max_digits=10, decimal_places=2, initial=0.00, required=False, label='الراتب الأساسي')
-    hourly_rate = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة ساعة العمل')
+    base_salary = forms.DecimalField(max_digits=10, decimal_places=2, initial=Decimal('0.00'), required=False, label='الراتب الأساسي')
+    hourly_rate = forms.DecimalField(max_digits=8, decimal_places=2, initial=Decimal('0.00'), required=False, label='قيمة ساعة العمل')
     shift_start_time = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}), required=False, label='ميعاد الحضور')
     shift_end_time = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}), required=False, label='ميعاد الانصراف')
-    deduction_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة الخصم للساعة')
-    overtime_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة الإضافي للساعة')
+    deduction_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=Decimal('0.00'), required=False, label='قيمة الخصم للساعة')
+    overtime_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=Decimal('0.00'), required=False, label='قيمة الإضافي للساعة')
+    is_insured = forms.BooleanField(required=False, initial=True, label='مؤمَّن عليه (تأمينات اجتماعية)')
+    insurance_wage = forms.DecimalField(max_digits=10, decimal_places=2, required=False, label='الأجر التأميني (فاضي = الأساسي)')
+    tax_exempt = forms.BooleanField(required=False, label='معفى من ضريبة كسب العمل')
 
     class Meta(UserCreationForm.Meta):
         model = User
@@ -293,6 +314,7 @@ class EmployeeUserCreationForm(UserCreationForm):
             self.fields['username'].label = 'اسم المستخدم (Username)'
             self.fields['username'].help_text = 'اسم تسجيل الدخول للنظام (حروف إنجليزية أو أرقام).'
         self.fields['branch'].help_text = NO_BRANCH_HELP
+        self.fields['user_permissions'].queryset = catalog_permission_queryset()
 
     def clean_username(self):
         # Stored as <schema>__<entered> (no prefix in SQLite mode).
@@ -347,12 +369,12 @@ class EmployeeUserCreationForm(UserCreationForm):
                     'shift_end_time': self.cleaned_data.get('shift_end_time'),
                     'deduction_per_hour': self.cleaned_data.get('deduction_per_hour') or 0,
                     'overtime_per_hour': self.cleaned_data.get('overtime_per_hour') or 0,
+                    'is_insured': bool(self.cleaned_data.get('is_insured')),
+                    'insurance_wage': self.cleaned_data.get('insurance_wage') or None,
+                    'tax_exempt': bool(self.cleaned_data.get('tax_exempt')),
                 }
             )
-            if role == Role.ADMIN:
-                user.user_permissions.set(Permission.objects.all())
-            else:
-                user.user_permissions.set(self.cleaned_data.get('user_permissions', []))
+            save_user_permissions(user, role, self.cleaned_data.get('user_permissions', []))
         return user
 
 
@@ -383,19 +405,22 @@ class EmployeeUserUpdateForm(forms.ModelForm):
     )
     is_active = forms.BooleanField(label='حساب نشط', required=False)
     user_permissions = forms.ModelMultipleChoiceField(
-        queryset=Permission.objects.all(),
+        queryset=Permission.objects.none(),   # the permission catalog, set in __init__
         widget=forms.CheckboxSelectMultiple,
         required=False,
         label='الصلاحيات المخصصة'
     )
 
     # HR Fields
-    base_salary = forms.DecimalField(max_digits=10, decimal_places=2, initial=0.00, required=False, label='الراتب الأساسي')
-    hourly_rate = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة ساعة العمل')
+    base_salary = forms.DecimalField(max_digits=10, decimal_places=2, initial=Decimal('0.00'), required=False, label='الراتب الأساسي')
+    hourly_rate = forms.DecimalField(max_digits=8, decimal_places=2, initial=Decimal('0.00'), required=False, label='قيمة ساعة العمل')
     shift_start_time = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}), required=False, label='ميعاد الحضور')
     shift_end_time = forms.TimeField(widget=forms.TimeInput(attrs={'type': 'time'}), required=False, label='ميعاد الانصراف')
-    deduction_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة الخصم للساعة')
-    overtime_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=0.00, required=False, label='قيمة الإضافي للساعة')
+    deduction_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=Decimal('0.00'), required=False, label='قيمة الخصم للساعة')
+    overtime_per_hour = forms.DecimalField(max_digits=8, decimal_places=2, initial=Decimal('0.00'), required=False, label='قيمة الإضافي للساعة')
+    is_insured = forms.BooleanField(required=False, initial=True, label='مؤمَّن عليه (تأمينات اجتماعية)')
+    insurance_wage = forms.DecimalField(max_digits=10, decimal_places=2, required=False, label='الأجر التأميني (فاضي = الأساسي)')
+    tax_exempt = forms.BooleanField(required=False, label='معفى من ضريبة كسب العمل')
 
     class Meta:
         model = User
@@ -404,6 +429,7 @@ class EmployeeUserUpdateForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['branch'].help_text = NO_BRANCH_HELP
+        self.fields['user_permissions'].queryset = catalog_permission_queryset()
         if self.instance and self.instance.pk:
             # Show the entered name, never the internal tenant prefix.
             self.initial['username'] = display_username(self.instance.username)
@@ -417,9 +443,12 @@ class EmployeeUserUpdateForm(forms.ModelForm):
                 self.fields['shift_end_time'].initial = employee.shift_end_time
                 self.fields['deduction_per_hour'].initial = employee.deduction_per_hour
                 self.fields['overtime_per_hour'].initial = employee.overtime_per_hour
+                self.fields['is_insured'].initial = employee.is_insured
+                self.fields['insurance_wage'].initial = employee.insurance_wage
+                self.fields['tax_exempt'].initial = employee.tax_exempt
             except Employee.DoesNotExist:
                 pass
-            self.fields['user_permissions'].initial = self.instance.user_permissions.all()
+            self.fields['user_permissions'].initial = list(self.instance.user_permissions.values_list('id', flat=True))
 
     def clean_username(self):
         entered = (self.cleaned_data.get('username') or '').strip()
@@ -465,12 +494,12 @@ class EmployeeUserUpdateForm(forms.ModelForm):
                     'shift_end_time': self.cleaned_data.get('shift_end_time'),
                     'deduction_per_hour': self.cleaned_data.get('deduction_per_hour') or 0,
                     'overtime_per_hour': self.cleaned_data.get('overtime_per_hour') or 0,
+                    'is_insured': bool(self.cleaned_data.get('is_insured')),
+                    'insurance_wage': self.cleaned_data.get('insurance_wage') or None,
+                    'tax_exempt': bool(self.cleaned_data.get('tax_exempt')),
                 }
             )
-            if role == Role.ADMIN:
-                user.user_permissions.set(Permission.objects.all())
-            else:
-                user.user_permissions.set(self.cleaned_data.get('user_permissions', []))
+            save_user_permissions(user, role, self.cleaned_data.get('user_permissions', []))
         return user
 
 

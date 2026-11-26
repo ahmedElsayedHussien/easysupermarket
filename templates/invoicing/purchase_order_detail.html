@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.pd { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.pd-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.2rem; }
+.pd-head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.pd-head h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; margin-top: .7rem; }
+.facts div { font-size: .78rem; color: var(--text-muted); font-weight: 700; }
+.facts b { display: block; font-size: .95rem; color: var(--text-primary); }
+.tbl { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .5rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td:first-child, .tbl th:first-child { text-align: right; }
+.pd-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .84rem; text-decoration: none; cursor: pointer; }
+.pd-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.pd-btn.danger { border-color: var(--neon-red); color: var(--neon-red); background: transparent; }
+.done { color: var(--neon-green); font-weight: 700; } .part { color: var(--neon-gold); font-weight: 700; }
+.print-only { display: none; }
+@media print {
+  .sidebar, .navbar, .no-print { display: none !important; }
+  .print-only { display: block; }
+  .pd-panel { border: none; }
+  body, .pd-panel, .tbl td, .facts b { color: #000 !important; background: #fff !important; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pd">
+    <div class="pd-panel">
+        <div class="print-only" style="text-align:center; margin-bottom:1rem;"><h2 style="margin:0;">{{ company.name }}</h2>{% if company.phone %}<div>{{ company.phone }}</div>{% endif %}</div>
+        <div class="pd-head">
+            <h1>📦 أمر شراء {{ order.number }}</h1>
+            <span class="no-print" style="margin-inline-start:auto; display:flex; gap:.4rem; flex-wrap:wrap;">
+                <button type="button" class="pd-btn" onclick="window.print()">🖨️ طباعة</button>
+                {% if can_receive %}<a class="pd-btn primary" href="{% url 'invoicing:purchase_invoice' %}?po={{ order.id }}">📥 استلام بفاتورة شراء</a>{% endif %}
+                {% if can_change %}
+                <form method="post" style="display:inline;">{% csrf_token %}
+                    {% if order.status == 'DRAFT' %}<button name="action" value="sent" class="pd-btn">✉ اتبعت للمورد</button>{% endif %}
+                    {% if order.status == 'PARTIAL' %}<button name="action" value="close" class="pd-btn" onclick="return confirm('قفل الأمر والباقي مش هيوصل؟');">قفل الأمر</button>{% endif %}
+                    {% if order.status == 'DRAFT' or order.status == 'SENT' or order.status == 'PARTIAL' %}<button name="action" value="cancel" class="pd-btn danger" onclick="return confirm('إلغاء أمر الشراء؟');">إلغاء</button>{% endif %}
+                </form>
+                {% endif %}
+                <a class="pd-btn" href="{% url 'invoicing:purchase_order_list' %}">↩</a>
+            </span>
+        </div>
+        <div class="facts">
+            <div>المورد<b>{{ order.supplier.name }}</b></div>
+            <div>التاريخ<b>{{ order.date|date:"Y-m-d" }}</b></div>
+            <div>الاستلام المتوقع<b>{{ order.expected_date|date:"Y-m-d"|default:"—" }}</b></div>
+            <div>المخزن<b>{{ order.warehouse.name }}</b></div>
+            <div>الحالة<b>{{ order.get_status_display }}</b></div>
+        </div>
+        {% if order.notes %}<p style="color:var(--text-muted); font-size:.85rem; margin:.6rem 0 0;">{{ order.notes }}</p>{% endif %}
+    </div>
+    <div class="pd-panel">
+        <table class="tbl">
+            <thead><tr><th>الصنف</th><th>الوحدة</th><th>الكمية</th><th>السعر</th><th>الإجمالي</th><th class="no-print">المستلم</th></tr></thead>
+            <tbody>
+                {% for l in lines %}
+                <tr><td>{{ l.product.name }}</td><td>{% if l.uom %}{{ l.uom.uom.name }}{% else %}الأساسية{% endif %}</td>
+                    <td>{{ l.quantity|floatformat:"-3" }}</td><td>{{ l.unit_price|floatformat:"2g" }}</td>
+                    <td>{{ l.amount|floatformat:"2g" }}</td>
+                    <td class="no-print {% if l.received_quantity >= l.quantity %}done{% elif l.received_quantity %}part{% endif %}">{{ l.received_quantity|floatformat:"-3" }}</td></tr>
+                {% endfor %}
+            </tbody>
+            <tfoot><tr><td colspan="4"><strong>الإجمالي المتوقع</strong></td><td><strong>{{ total|floatformat:"2g" }}</strong></td><td class="no-print"></td></tr></tfoot>
+        </table>
+        {% with invs=order.invoices.all %}{% if invs %}
+        <p class="no-print" style="font-size:.82rem; color:var(--text-muted); margin-top:.7rem;">فواتير الاستلام: {% for i in invs %}<a href="{% url 'invoicing:invoice_detail' i.id %}" style="color:var(--neon-cyan);">{{ i.invoice_number }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}</p>
+        {% endif %}{% endwith %}
+    </div>
+</div>
+{% endblock %}

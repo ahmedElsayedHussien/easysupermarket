@@ -4,6 +4,9 @@ from . import liquidity_views
 from . import accounting_dashboard_views
 from . import eservice_dashboard_views
 
+from . import custody_views
+from . import bank_rec_views
+
 app_name = 'accounting'
 urlpatterns = [
     # Journal Entries
@@ -87,6 +90,13 @@ urlpatterns = [
     path('eservice/rules/<int:pk>/delete/', views.eservice_rule_delete, name='eservice_rule_delete'),
 
     # Internal Transfers (تحويل الأموال بين الحسابات)
+    path('api/partner-open-invoices/', views.partner_open_invoices, name='partner_open_invoices'),
+    path('bank-reconciliation/', bank_rec_views.bank_reconciliation_list, name='bank_reconciliation_list'),
+    path('bank-reconciliation/<int:pk>/', bank_rec_views.bank_reconciliation_detail, name='bank_reconciliation_detail'),
+    path('tax-settlement/', custody_views.tax_settlement_view, name='tax_settlement'),
+    path('fiscal-years/', custody_views.fiscal_years_view, name='fiscal_years'),
+    path('custody/', custody_views.custody_list, name='custody_list'),
+    path('custody/<int:pk>/', custody_views.custody_detail, name='custody_detail'),
     path('transfers/', views.InternalTransferListView.as_view(), name='transfer_list'),
     path('transfers/create/', views.InternalTransferCreateView.as_view(), name='transfer_create'),
     path('transfers/<int:pk>/', views.InternalTransferDetailView.as_view(), name='transfer_detail'),

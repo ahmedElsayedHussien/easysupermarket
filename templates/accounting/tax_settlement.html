@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.ts { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.ts-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.ts-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.ts-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .5rem; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; margin-top: .7rem; }
+.kpis div { background: var(--bg-secondary); border-radius: 8px; padding: .55rem .7rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.kpis b { display: block; font-size: 1.1rem; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+.row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin-top: .5rem; }
+.row label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.ts input, .ts select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .4rem .55rem; font-size: .85rem; }
+.ts-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.tbl th, .tbl td { padding: .45rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); }
+.tbl th { color: var(--text-muted); font-size: .76rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ts">
+    <div class="ts-panel">
+        <h1>🧾 التسوية الضريبية</h1>
+        <p class="note">آخر كل شهر: اقفل ضريبة القيمة المضافة (ضريبة المبيعات ناقص ضريبة المشتريات = المستحق للمصلحة)، وبعدين سدد المستحق. ولو بتخصم ضريبة خصم وإضافة من الموردين، سددها من هنا كمان.</p>
+        <div class="kpis">
+            <div>ضريبة المبيعات (2130)<b>{{ pos.output_vat|floatformat:"2g" }}</b></div>
+            <div>ضريبة المشتريات (1190)<b>{{ pos.input_vat|floatformat:"2g" }}</b></div>
+            <div>الصافي لو اتقفلت النهارده<b>{{ pos.net_vat|floatformat:"2g" }}</b></div>
+            <div>مستحق السداد (2135)<b>{{ pos.vat_payable|floatformat:"2g" }}</b></div>
+            <div>خصم وإضافة مستحق للمصلحة (2120)<b>{{ pos.wht_payable|floatformat:"2g" }}</b></div>
+            <div>خصم وإضافة لينا عند العملاء (1155)<b>{{ pos.wht_receivable|floatformat:"2g" }}</b></div>
+        </div>
+    </div>
+
+    {% if can_add %}
+    <div class="cols">
+        <form method="post" class="ts-panel" onsubmit="return confirm('إقفال ضريبة القيمة المضافة لحد التاريخ ده؟');">
+            {% csrf_token %}<input type="hidden" name="action" value="close_vat">
+            <h2>1️⃣ إقفال ضريبة القيمة المضافة</h2>
+            <p class="note">بينقل أرصدة ضريبة المبيعات والمشتريات لحد التاريخ لحساب المستحق. لو المشتريات أكبر، الفرق بيفضل رصيد مرحّل للشهر الجاي.</p>
+            <div class="row"><label>لحد تاريخ<input type="date" name="period_end" value="{{ last_month_end|date:'Y-m-d' }}" required></label>
+                <button type="submit" class="ts-btn">إقفال</button></div>
+        </form>
+        <form method="post" class="ts-panel" onsubmit="return confirm('سداد ضريبة القيمة المضافة؟');">
+            {% csrf_token %}<input type="hidden" name="action" value="vat_pay">
+            <h2>2️⃣ سداد ضريبة القيمة المضافة</h2>
+            <div class="row">
+                <label>المبلغ<input type="number" name="amount" step="0.01" min="0" value="{{ pos.vat_payable|stringformat:'s' }}" required></label>
+                <label>من<select name="source">{% for b in banks %}<option value="b:{{ b.id }}">🏦 {{ b.name }}</option>{% endfor %}{% for t in treasuries %}<option value="t:{{ t.id }}">🏧 {{ t.name }}</option>{% endfor %}</select></label>
+                <button type="submit" class="ts-btn">سداد</button>
+            </div>
+        </form>
+        <form method="post" class="ts-panel" onsubmit="return confirm('سداد ضريبة الخصم والإضافة؟');">
+            {% csrf_token %}<input type="hidden" name="action" value="wht_pay">
+            <h2>3️⃣ سداد ضريبة الخصم والإضافة</h2>
+            <div class="row">
+                <label>المبلغ<input type="number" name="amount" step="0.01" min="0" value="{{ pos.wht_payable|stringformat:'s' }}" required></label>
+                <label>من<select name="source">{% for b in banks %}<option value="b:{{ b.id }}">🏦 {{ b.name }}</option>{% endfor %}{% for t in treasuries %}<option value="t:{{ t.id }}">🏧 {{ t.name }}</option>{% endfor %}</select></label>
+                <button type="submit" class="ts-btn">سداد</button>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+
+    <div class="ts-panel">
+        <h2>📜 السجل</h2>
+        {% if history %}
+        <table class="tbl">
+            <thead><tr><th>التاريخ</th><th>النوع</th><th>مبيعات</th><th>مشتريات</th><th>المبلغ</th><th>القيد</th></tr></thead>
+            <tbody>{% for h in history %}<tr><td>{{ h.date|date:"Y-m-d" }}</td><td>{{ h.get_kind_display }}</td>
+                <td>{% if h.kind == 'VAT_CLOSE' %}{{ h.output_vat|floatformat:"2g" }}{% else %}—{% endif %}</td>
+                <td>{% if h.kind == 'VAT_CLOSE' %}{{ h.input_vat|floatformat:"2g" }}{% else %}—{% endif %}</td>
+                <td>{{ h.amount|floatformat:"2g" }}</td>
+                <td>{% if h.journal_entry_id %}<a href="{% url 'accounting:journal_detail' h.journal_entry_id %}" style="color:var(--neon-cyan);">{{ h.journal_entry.reference }}</a>{% endif %}</td></tr>{% endfor %}</tbody>
+        </table>
+        {% else %}<p class="note">مفيش تسويات لسه.</p>{% endif %}
+    </div>
+</div>
+{% endblock %}

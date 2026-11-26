@@ -37,6 +37,7 @@ urlpatterns = [
     path('uom/<int:pk>/update/', views.UnitOfMeasureUpdateView.as_view(), name='uom_update'),
     
     path('stocktake/', views.stocktake_create, name='stocktake'),
+    path('stocktake/sheet/', views.stocktake_sheet, name='stocktake_sheet'),
     path('adjustments/', views.adjustment_list, name='adjustment_list'),
     path('adjustments/create/', views.adjustment_create, name='adjustment_create'),
     path('adjustments/<int:pk>/', views.adjustment_detail, name='adjustment_detail'),

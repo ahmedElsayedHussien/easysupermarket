@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.al { max-width: 1250px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.al-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.al-head h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; align-items: end; }
+.filters label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.filters input, .filters select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .4rem .55rem; font-size: .84rem; }
+.al-btn { padding: .45rem .9rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .84rem; cursor: pointer; text-decoration: none; text-align: center; }
+.al-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.al-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.al-table th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .45rem; border-bottom: 1px solid var(--border-bright); text-align: right; white-space: nowrap; }
+.al-table td { padding: .55rem .45rem; border-bottom: 1px solid var(--border-default); color: var(--text-primary); vertical-align: top; }
+.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sub { display: block; font-size: .72rem; color: var(--text-muted); font-weight: 600; }
+.act { font-size: .72rem; font-weight: 800; padding: .12rem .55rem; border-radius: 999px; white-space: nowrap; }
+.act.CREATE { background: rgba(46,213,115,.15); color: var(--neon-green); }
+.act.UPDATE { background: rgba(251,191,36,.15); color: var(--neon-gold); }
+.act.DELETE { background: rgba(255,71,87,.15); color: var(--neon-red); }
+.act.LOGIN, .act.LOGOUT { background: var(--bg-secondary); color: var(--text-muted); }
+.chg { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15rem; }
+.chg li { font-size: .8rem; }
+.chg b { color: var(--text-muted); font-weight: 700; }
+.old { color: var(--neon-red); text-decoration: line-through; opacity: .8; }
+.new { color: var(--neon-green); font-weight: 700; }
+.table-scroll { overflow-x: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="al">
+    <div class="al-panel al-head">
+        <h1>🕵️ سجل التعديلات</h1>
+        <p class="note">مين عدّل إيه وإمتى، والقيمة كانت كام وبقت كام: الأصناف والأسعار والباركودات، العملاء والموردين، إلغاء الفواتير وتغيير طريقة السداد بعد الترحيل، السندات والمصروفات والتحويلات، الإعدادات والفروع، المستخدمين وصلاحياتهم، الحضور اليدوي، اعتماد المرتبات والسلف، تسويات المخزون، وتسجيل الدخول. (البيع العادي من نقطة البيع مش بيتسجل هنا عشان السجل ميتملاش.)</p>
+    </div>
+
+    <form method="get" class="al-panel filters">
+        <label>من <input type="date" name="from" value="{{ date_from|date:'Y-m-d' }}"></label>
+        <label>إلى <input type="date" name="to" value="{{ date_to|date:'Y-m-d' }}"></label>
+        <label>المستخدم
+            <select name="user"><option value="">الكل</option>{% for u in users %}<option value="{{ u.id }}" {% if user_id == u.id|stringformat:'d' %}selected{% endif %}>{{ u|display_name }}</option>{% endfor %}</select>
+        </label>
+        <label>القسم
+            <select name="section"><option value="">الكل</option>{% for s in sections %}<option value="{{ s.id }}" {% if section == s.id|stringformat:'d' %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select>
+        </label>
+        <label>العملية
+            <select name="action"><option value="">الكل</option>{% for k, v in actions %}<option value="{{ k }}" {% if action == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+        </label>
+        <label>بحث <input type="search" name="q" value="{{ q }}" placeholder="اسم الصنف / رقم الفاتورة..."></label>
+        <button type="submit" class="al-btn primary">🔍 عرض</button>
+    </form>
+
+    <div class="al-panel">
+        {% if logs %}
+        <div class="table-scroll">
+        <table class="al-table">
+            <thead><tr><th>الوقت</th><th>المستخدم</th><th>العملية</th><th>القسم / السجل</th><th>التغييرات</th></tr></thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td class="when">{{ log.created_at|date:"Y-m-d" }}<span class="sub">{{ log.created_at|date:"H:i:s" }}</span></td>
+                    <td>{% if log.user %}{{ log.user|display_name }}{% else %}<span class="sub">النظام</span>{% endif %}{% if log.ip %}<span class="sub">{{ log.ip }}</span>{% endif %}</td>
+                    <td><span class="act {{ log.action }}">{{ log.get_action_display }}</span></td>
+                    <td><span class="sub">{{ log.section_name }}</span>{{ log.object_repr }}</td>
+                    <td>
+                        {% if log.changes %}
+                        <ul class="chg">
+                            {% for field, pair in log.changes.items %}
+                            <li><b>{{ field }}:</b>
+                                {% if log.action == 'UPDATE' and pair.0 is not None %}<span class="old">{{ pair.0 }}</span> ← {% endif %}
+                                <span class="new">{{ pair.1|default:"—" }}</span></li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}<span class="sub">—</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% if page_obj.has_other_pages %}
+        <div style="display:flex; gap:.5rem; justify-content:center; margin-top:.8rem; align-items:center;">
+            {% if page_obj.has_previous %}<a class="al-btn" href="?{{ query }}&page={{ page_obj.previous_page_number }}">السابق</a>{% endif %}
+            <span class="sub">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }} ({{ page_obj.paginator.count }} سجل)</span>
+            {% if page_obj.has_next %}<a class="al-btn" href="?{{ query }}&page={{ page_obj.next_page_number }}">التالي</a>{% endif %}
+        </div>
+        {% endif %}
+        {% else %}
+        <p class="note" style="text-align:center; padding:1.5rem;">مفيش تعديلات في الفترة دي.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

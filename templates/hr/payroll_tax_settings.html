@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.pt { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.pt-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.pt-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.pt-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .6rem; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.warn { background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.4); color: var(--neon-gold); border-radius: 8px; padding: .55rem .8rem; font-size: .85rem; font-weight: 600; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .7rem; }
+.grid label { display: flex; flex-direction: column; gap: .25rem; font-size: .78rem; color: var(--text-muted); font-weight: 700; }
+.pt input { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .42rem .55rem; font-size: .86rem; }
+.switch { display: flex; align-items: center; gap: .5rem; font-weight: 800; color: var(--text-primary); font-size: .92rem; margin-bottom: .6rem; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th, .tbl td { padding: .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); }
+.tbl th { color: var(--text-muted); font-size: .76rem; }
+.pt-btn { padding: .45rem .9rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .84rem; cursor: pointer; text-decoration: none; }
+.pt-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.res { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin-top: .7rem; }
+.res div { background: var(--bg-secondary); border-radius: 8px; padding: .55rem .7rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.res b { display: block; font-size: 1.05rem; color: var(--text-primary); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pt">
+    <div class="pt-panel">
+        <h1>🧮 ضرائب وتأمينات المرتبات</h1>
+        <p class="note">لما تتفعل: حصة الموظف في التأمينات وضريبة كسب العمل بتتخصم من مرتبه في المسير، وحصة المحل في التأمينات بتتسجل مصروف (5212). القيد: التأمينات المستحقة على 2165 والضريبة على 2166.</p>
+        <div class="warn" style="margin-top:.6rem;">⚠️ النسب والحدود والشرائح بتتغير بالقوانين وكل سنة — القيم المبدئية هنا للمراجعة بس. راجعها مع محاسبكم قبل التفعيل، وجرّب الحاسبة تحت على مرتب معروف.</div>
+        <a class="pt-btn" style="display:inline-block; margin-top:.6rem;" href="{% url 'hr:payroll_list' %}">↩ مسير الرواتب</a>
+    </div>
+
+    <form method="post" class="pt-panel">
+        {% csrf_token %}
+        <label class="switch"><input type="checkbox" name="insurance_enabled" {% if s.insurance_enabled %}checked{% endif %}> 🛡️ حساب التأمينات الاجتماعية</label>
+        <div class="grid">
+            <label>حصة الموظف %<input type="number" name="employee_insurance_rate" step="0.01" min="0" max="100" value="{{ s.employee_insurance_rate|stringformat:'s' }}"></label>
+            <label>حصة صاحب العمل %<input type="number" name="employer_insurance_rate" step="0.01" min="0" max="100" value="{{ s.employer_insurance_rate|stringformat:'s' }}"></label>
+            <label>الحد الأدنى للأجر التأميني (شهري)<input type="number" name="insurance_min_wage" step="0.01" min="0" value="{{ s.insurance_min_wage|stringformat:'s' }}"></label>
+            <label>الحد الأقصى للأجر التأميني (شهري)<input type="number" name="insurance_max_wage" step="0.01" min="0" value="{{ s.insurance_max_wage|stringformat:'s' }}"></label>
+        </div>
+        <p class="note">الأجر التأميني لكل موظف من شاشة المستخدم (لو فاضي = الراتب الأساسي)، وتقدر تشيل «مؤمَّن عليه» لموظف معين.</p>
+
+        <hr style="border-color:var(--border-default); margin:1rem 0;">
+        <label class="switch"><input type="checkbox" name="tax_enabled" {% if s.tax_enabled %}checked{% endif %}> 🧾 حساب ضريبة كسب العمل</label>
+        <div class="grid" style="margin-bottom:.7rem;">
+            <label>الإعفاء الشخصي السنوي<input type="number" name="personal_exemption" step="0.01" min="0" value="{{ s.personal_exemption|stringformat:'s' }}"></label>
+        </div>
+        <table class="tbl">
+            <thead><tr><th>الشريحة لحد (سنوي)</th><th>النسبة %</th></tr></thead>
+            <tbody>
+                {% for b in brackets %}
+                <tr><td>{% if b.0 is None %}<input type="hidden" name="br_upper[]" value="">— وما فوق —{% else %}<input type="number" name="br_upper[]" step="0.01" min="0" value="{{ b.0|stringformat:'s' }}">{% endif %}</td>
+                    <td><input type="number" name="br_rate[]" step="0.01" min="0" max="100" value="{{ b.1|stringformat:'s' }}"></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p class="note">الضريبة الشهرية = الضريبة على ((الإجمالي − تأمينات الموظف) × 12 − الإعفاء) بالشرائح ÷ 12. الموظف المعفى بيتعلّم عليه من شاشة المستخدم.</p>
+        <div style="margin-top:.8rem;"><button type="submit" class="pt-btn primary">💾 حفظ</button></div>
+    </form>
+
+    <div class="pt-panel">
+        <h2>🧪 جرّب على مرتب</h2>
+        <form method="get" style="display:flex; gap:.5rem; align-items:center;">
+            <input type="number" name="sample" step="0.01" min="0" value="{{ sample_value }}" placeholder="إجمالي المرتب الشهري">
+            <button type="submit" class="pt-btn">احسب</button>
+        </form>
+        {% if sample %}
+        <div class="res">
+            <div>الإجمالي<b>{{ sample.gross|floatformat:2 }}</b></div>
+            <div>تأمينات الموظف<b>{{ sample.social_insurance|floatformat:2 }}</b></div>
+            <div>ضريبة كسب العمل<b>{{ sample.income_tax|floatformat:2 }}</b></div>
+            <div>الصافي<b>{{ sample.net|floatformat:2 }}</b></div>
+            <div>حصة المحل في التأمينات<b>{{ sample.employer_insurance|floatformat:2 }}</b></div>
+        </div>
+        <p class="note">الحاسبة بتحسب كأن التأمينات والضريبة متفعلين، بالإعدادات المحفوظة.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

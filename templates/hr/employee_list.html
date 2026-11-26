@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.el { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.el-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.el-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.el-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .5rem; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.warn { background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.4); color: var(--neon-gold); border-radius: 8px; padding: .55rem .8rem; font-size: .84rem; }
+.warn a { color: var(--neon-gold); font-weight: 800; }
+.tabs { display: flex; gap: .4rem; flex-wrap: wrap; }
+.tabs a { padding: .3rem .8rem; border-radius: 999px; font-size: .8rem; font-weight: 700; text-decoration: none; background: var(--bg-secondary); color: var(--text-muted); }
+.tabs a.on { background: var(--neon-orange); color: #fff; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; margin-top: .6rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .5rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); }
+.tbl td:first-child, .tbl th:first-child { text-align: right; }
+.tbl a { color: var(--text-primary); font-weight: 800; text-decoration: none; }
+.tbl a:hover { color: var(--neon-orange); }
+.off td { opacity: .5; }
+.sub { display: block; font-size: .72rem; color: var(--text-muted); }
+.org { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+.org form { display: flex; gap: .4rem; margin-top: .5rem; }
+.org input, .org select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .35rem .5rem; font-size: .84rem; }
+.el-btn { padding: .35rem .75rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; font-size: .8rem; cursor: pointer; }
+.chip { display: inline-block; font-size: .78rem; padding: .15rem .55rem; border-radius: 999px; background: var(--bg-secondary); color: var(--text-primary); margin: .15rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="el">
+    <div class="el-panel">
+        <h1>👥 الموظفين</h1>
+        <p class="note">ملف كل موظف: بياناته الوظيفية، مستنداته وتواريخ انتهائها، العهد العينية اللي معاه، سلفه وإجازاته ومرتباته، ونهاية الخدمة.</p>
+    </div>
+    {% if expiring %}
+    <div class="warn">⚠️ مستندات انتهت أو هتنتهي خلال 30 يوم:
+        {% for d in expiring %}<a href="{% url 'hr:employee_file' d.employee_id %}">{{ d.employee.user|display_name }}</a> ({{ d.get_doc_type_display }} — {{ d.expiry_date|date:"Y-m-d" }}{% if d.expiry_date < today %} منتهي{% endif %}){% if not forloop.last %} · {% endif %}{% endfor %}
+    </div>
+    {% endif %}
+    <div class="el-panel">
+        <div class="tabs">
+            <a href="?" class="{% if not dept %}on{% endif %}">كل الأقسام</a>
+            {% for d in departments %}<a href="?department={{ d.id }}" class="{% if dept == d.id|stringformat:'d' %}on{% endif %}">{{ d.name }} ({{ d.n }})</a>{% endfor %}
+        </div>
+        <table class="tbl">
+            <thead><tr><th>الموظف</th><th>القسم / الوظيفة</th><th>الفرع</th><th>تاريخ التعيين</th><th>الراتب</th><th>مستندات</th><th>عهد عينية</th></tr></thead>
+            <tbody>
+                {% for e in employees %}
+                <tr class="{% if not e.user.is_active %}off{% endif %}">
+                    <td><a href="{% url 'hr:employee_file' e.id %}">{{ e.user|display_name }}</a><span class="sub">{{ e.get_role_display }}{% if not e.user.is_active %} · موقوف{% endif %}</span></td>
+                    <td>{{ e.hr_profile.department.name|default:"—" }}<span class="sub">{{ e.hr_profile.job_title.name|default:"" }}</span></td>
+                    <td>{{ e.branch.name|default:"—" }}</td>
+                    <td>{{ e.hr_profile.hire_date|date:"Y-m-d"|default:"—" }}</td>
+                    <td>{{ e.base_salary|floatformat:"2g" }}</td>
+                    <td>{{ e.docs }}</td>
+                    <td>{% if e.open_assets %}{{ e.open_assets }}{% else %}—{% endif %}</td>
+                </tr>
+                {% empty %}<tr><td colspan="7">مفيش موظفين.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if can_org %}
+    <div class="el-panel org">
+        <div><h2>🏢 الأقسام</h2>{% for d in departments %}<span class="chip">{{ d.name }}</span>{% endfor %}
+            <form method="post">{% csrf_token %}<input type="hidden" name="kind" value="department"><input name="name" placeholder="قسم جديد" required><button class="el-btn">إضافة</button></form></div>
+        <div><h2>💼 الوظائف</h2>{% for j in job_titles %}<span class="chip">{{ j.name }}{% if j.department %} · {{ j.department.name }}{% endif %}</span>{% endfor %}
+            <form method="post">{% csrf_token %}<input type="hidden" name="kind" value="job_title"><input name="name" placeholder="وظيفة جديدة" required>
+                <select name="department"><option value="">بدون قسم</option>{% for d in departments %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}</select><button class="el-btn">إضافة</button></form></div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

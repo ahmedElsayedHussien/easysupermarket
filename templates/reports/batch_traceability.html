@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.rx { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.rx-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.rx-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.rx-panel h2 { font-size: .98rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.flt { display: flex; gap: .5rem; margin-top: .6rem; }
+.flt input { flex: 1; background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .45rem .6rem; }
+.rx-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; }
+.facts { display: flex; flex-wrap: wrap; gap: .4rem 1rem; font-size: .82rem; color: var(--text-muted); margin: .4rem 0 .6rem; }
+.facts b { color: var(--text-primary); }
+.tbl { width: 100%; border-collapse: collapse; font-size: .83rem; }
+.tbl th { color: var(--text-muted); font-size: .74rem; padding: .4rem .3rem; border-bottom: 1px solid var(--border-bright); text-align: right; }
+.tbl td { padding: .38rem .3rem; border-bottom: 1px solid var(--border-default); color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.exp { color: var(--neon-red); font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rx">
+    <div class="rx-panel">
+        <h1>🔎 تتبع التشغيلة</h1>
+        <p class="note">ابحث برقم التشغيلة أو اسم / باركود الصنف: هتشوف كل دفعة جت منين (فاتورة الشراء والمورد)، صلاحيتها، وكل حركة عليها (بيع، مرتجع، تحويل، تسوية).</p>
+        <form method="get" class="flt"><input name="q" value="{{ q }}" placeholder="رقم التشغيلة / اسم الصنف / الباركود" autofocus><button class="rx-btn">بحث</button></form>
+    </div>
+    {% for b in batches %}
+    <div class="rx-panel">
+        <h2>{{ b.product.name }} — تشغيلة {{ b.batch_number|default:"(بدون رقم)" }}</h2>
+        <div class="facts">
+            <span>المخزن <b>{{ b.warehouse.name }}</b></span>
+            <span>الكمية الأصلية <b>{{ b.quantity_original|floatformat:"-3" }}</b></span>
+            <span>الباقي <b>{{ b.quantity_remaining|floatformat:"-3" }}</b></span>
+            <span>التكلفة <b>{{ b.unit_cost|floatformat:"2g" }}</b></span>
+            <span>الصلاحية <b class="{% if b.expiry_date and b.expiry_date < today %}exp{% endif %}">{{ b.expiry_date|date:"Y-m-d"|default:"—" }}</b></span>
+            {% if b.source_invoice_line %}<span>من <b><a href="{% url 'invoicing:invoice_detail' b.source_invoice_line.invoice_id %}" style="color:var(--neon-cyan);">{{ b.source_invoice_line.invoice.invoice_number }}</a></b> — {{ b.source_invoice_line.invoice.partner.name|default:"" }}</span>{% endif %}
+        </div>
+        <table class="tbl">
+            <thead><tr><th>التاريخ</th><th>الحركة</th><th>الكمية</th><th>المخزن</th><th>المرجع</th></tr></thead>
+            <tbody>{% for m in b.moves %}<tr><td>{{ m.created_at|date:"Y-m-d H:i" }}</td><td>{{ m.get_movement_type_display }}</td><td>{{ m.quantity|floatformat:"-3" }}</td><td>{{ m.warehouse.name }}</td><td>{{ m.reference }}</td></tr>
+            {% empty %}<tr><td colspan="5" style="color:var(--text-muted);">مفيش حركات مسجلة على الدفعة دي.</td></tr>{% endfor %}</tbody>
+        </table>
+    </div>
+    {% empty %}{% if q %}<div class="rx-panel"><p class="note">مفيش نتايج لـ «{{ q }}».</p></div>{% endif %}{% endfor %}
+</div>
+{% endblock %}

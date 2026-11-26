@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.sh { max-width: 1000px; margin: 0 auto; }
+.sh-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: 1rem; }
+.sh-panel h1 { font-size: 1.25rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.flt { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin-top: .6rem; }
+.flt label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.flt select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .4rem .55rem; }
+.sh-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; }
+.sheet table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.sheet th, .sheet td { border: 1px solid var(--border-bright); padding: .45rem .4rem; color: var(--text-primary); }
+.sheet th { font-size: .78rem; background: var(--bg-secondary); }
+.sheet .count { width: 18%; }
+.sheet .cat td { background: var(--bg-secondary); font-weight: 800; }
+.sheet-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-bottom: .6rem; color: var(--text-primary); font-size: .88rem; }
+.sign { display: flex; justify-content: space-between; margin-top: 2rem; color: var(--text-primary); font-size: .88rem; }
+@media print {
+  .sidebar, .navbar, .no-print { display: none !important; }
+  .sh-panel { border: none; padding: 0; }
+  .sheet th, .sheet td { border-color: #000 !important; color: #000 !important; background: #fff !important; }
+  .sheet-head, .sign { color: #000 !important; }
+  .sheet tr { break-inside: avoid; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sh">
+    <div class="sh-panel no-print">
+        <h1>🖨️ ورقة جرد للطباعة</h1>
+        <p class="note">اطبع الورقة واديها لللي هيعد. «عمياء» = من غير الرصيد اللي في السيستم عشان العد يبقى حقيقي، و«كاملة» = بالرصيد. بعد العد دخّل الأرقام في شاشة الجرد الفعلي.</p>
+        <form method="get" class="flt">
+            <label>المخزن<select name="warehouse">{% for w in warehouses %}<option value="{{ w.id }}" {% if warehouse and w.id == warehouse.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}</select></label>
+            <label>الفئة<select name="category"><option value="">كل الفئات</option>{% for c in categories %}<option value="{{ c.id }}" {% if category and c.id == category.id %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></label>
+            <label>النوع<select name="mode"><option value="blind" {% if blind %}selected{% endif %}>عمياء (من غير الرصيد)</option><option value="full" {% if not blind %}selected{% endif %}>كاملة (بالرصيد)</option></select></label>
+            <button type="submit" class="sh-btn">عرض</button>
+            <button type="button" class="sh-btn" onclick="window.print()">🖨️ طباعة</button>
+            <a class="sh-btn" style="text-decoration:none; background:var(--bg-secondary); border-color:var(--border-bright); color:var(--text-primary);" href="{% url 'inventory:stocktake' %}">↩ شاشة الجرد</a>
+        </form>
+    </div>
+    <div class="sh-panel sheet">
+        <div class="sheet-head">
+            <strong>{{ company.name }} — ورقة جرد {% if blind %}(عمياء){% endif %}</strong>
+            <span>المخزن: {{ warehouse.name|default:"—" }}{% if category %} · الفئة: {{ category.name }}{% endif %} · التاريخ: {{ today|date:"Y-m-d" }}</span>
+        </div>
+        <table>
+            <thead><tr><th style="width:4%;">#</th><th style="width:18%;">الباركود</th><th>الصنف</th><th style="width:10%;">الوحدة</th>{% if not blind %}<th style="width:12%;">الرصيد</th>{% endif %}<th class="count">العدد الفعلي</th><th style="width:15%;">ملاحظات</th></tr></thead>
+            <tbody>
+                {% for r in rows %}
+                {% ifchanged r.product.category_id %}<tr class="cat"><td colspan="{% if blind %}6{% else %}7{% endif %}">{{ r.product.category.name|default:"بدون فئة" }}</td></tr>{% endifchanged %}
+                <tr><td>{{ forloop.counter }}</td><td>{{ r.product.barcode|default:"" }}</td><td>{{ r.product.name }}</td><td>{{ r.product.get_unit_display }}</td>
+                    {% if not blind %}<td>{{ r.stock|floatformat:"-3" }}</td>{% endif %}<td></td><td></td></tr>
+                {% empty %}<tr><td colspan="7">مفيش أصناف.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        <div class="sign"><span>اسم وتوقيع القائم بالجرد: ................................</span><span>المراجع: ................................</span></div>
+    </div>
+</div>
+{% endblock %}

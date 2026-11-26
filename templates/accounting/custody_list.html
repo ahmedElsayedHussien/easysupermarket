@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.cu { max-width: 1150px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.cu-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.cu-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.cu-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .6rem; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.frm { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; align-items: end; }
+.frm label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.frm input, .frm select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .42rem .55rem; font-size: .85rem; }
+.cu-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .82rem; cursor: pointer; text-decoration: none; }
+.cu-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.tabs { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+.tabs a { padding: .3rem .8rem; border-radius: 999px; font-size: .8rem; font-weight: 700; text-decoration: none; background: var(--bg-secondary); color: var(--text-muted); }
+.tabs a.on { background: var(--neon-orange); color: #fff; }
+.chip { font-size: .8rem; font-weight: 700; padding: .25rem .7rem; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); margin-inline-start: auto; }
+.chip b { color: var(--text-primary); }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; margin-top: .6rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .75rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .5rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td:first-child, .tbl th:first-child { text-align: right; }
+.sub { display: block; font-size: .72rem; color: var(--text-muted); font-weight: 600; }
+.st { font-size: .72rem; font-weight: 800; padding: .12rem .55rem; border-radius: 999px; }
+.st.OPEN { background: rgba(251,191,36,.15); color: var(--neon-gold); }
+.st.SETTLED { background: rgba(46,213,115,.15); color: var(--neon-green); }
+.st.CANCELLED { background: var(--bg-secondary); color: var(--text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cu">
+    <div class="cu-panel">
+        <h1>💼 العهد النقدية</h1>
+        <p class="note">ادي موظف مبلغ يشتري بيه حاجات للمحل، ولما يرجع بالفواتير سوّي العهدة: المصروفات بتتسجل على حساباتها والباقي يرجع الخزينة — أو يتحول سلفة تتخصم من مرتبه.</p>
+    </div>
+
+    {% if can_add %}
+    <form method="post" class="cu-panel" onsubmit="return confirm('صرف العهدة وعمل قيدها من الخزينة؟');">
+        {% csrf_token %}
+        <h2>➕ صرف عهدة</h2>
+        <div class="frm">
+            <label>الموظف<select name="employee" required><option value="">— اختار —</option>{% for e in employees %}<option value="{{ e.id }}">{{ e.user|display_name }}</option>{% endfor %}</select></label>
+            <label>المبلغ<input type="number" name="amount" min="1" step="0.01" required></label>
+            <label>من خزينة<select name="treasury" required>{% for t in treasuries %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select></label>
+            <label>الغرض<input type="text" name="purpose" maxlength="255" required placeholder="مثلاً: شراء أدوات نظافة"></label>
+            <div><button type="submit" class="cu-btn primary">💾 صرف</button></div>
+        </div>
+    </form>
+    {% endif %}
+
+    <div class="cu-panel">
+        <div class="tabs">
+            {% for k, v in status_choices %}<a href="?status={{ k }}" class="{% if status == k %}on{% endif %}">{{ v }}</a>{% endfor %}
+            <a href="?status=ALL" class="{% if status == 'ALL' %}on{% endif %}">الكل</a>
+            <span class="chip">عهد مفتوحة <b>{{ open_total|floatformat:"2g" }}</b></span>
+        </div>
+        {% if custodies %}
+        <table class="tbl">
+            <thead><tr><th>الموظف</th><th>رقم العهدة</th><th>التاريخ</th><th>المبلغ</th><th>الغرض</th><th>الحالة</th><th></th></tr></thead>
+            <tbody>
+                {% for c in custodies %}
+                <tr>
+                    <td><strong>{{ c.employee.user|display_name }}</strong></td>
+                    <td>{{ c.number }}</td>
+                    <td>{{ c.date|date:"Y-m-d" }}</td>
+                    <td>{{ c.amount|floatformat:"2g" }}<span class="sub">{{ c.treasury.name }}</span></td>
+                    <td>{{ c.purpose }}</td>
+                    <td><span class="st {{ c.status }}">{{ c.get_status_display }}</span></td>
+                    <td><a class="cu-btn" href="{% url 'accounting:custody_detail' c.id %}">{% if c.status == 'OPEN' %}تسوية{% else %}عرض{% endif %}</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if page_obj.has_other_pages %}
+        <div style="display:flex; gap:.5rem; justify-content:center; margin-top:.8rem;">
+            {% if page_obj.has_previous %}<a class="cu-btn" href="?status={{ status }}&page={{ page_obj.previous_page_number }}">السابق</a>{% endif %}
+            <span class="sub">صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}</span>
+            {% if page_obj.has_next %}<a class="cu-btn" href="?status={{ status }}&page={{ page_obj.next_page_number }}">التالي</a>{% endif %}
+        </div>
+        {% endif %}
+        {% else %}<p class="note" style="text-align:center; padding:1rem;">مفيش عهد هنا.</p>{% endif %}
+    </div>
+</div>
+{% endblock %}

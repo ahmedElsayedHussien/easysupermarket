@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.sg { max-width: 1250px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.sg-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.sg-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.sg input, .sg select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .35rem .5rem; font-size: .84rem; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .35rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .4rem .35rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td:nth-child(2) { text-align: right; }
+.sg-btn { padding: .45rem .9rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; }
+.low { color: var(--neon-red); font-weight: 700; }
+.qty-in { width: 6rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sg">
+    <div class="sg-panel">
+        <h1>💡 اقتراح أوامر شراء من النواقص</h1>
+        <p class="note">الأصناف اللي وصلت لحد إعادة الطلب أو أقل في المخزن، والكمية المقترحة توصّلها للحد الأقصى (أو ضعف حد الطلب) بعد طرح اللي عليه أوامر شراء مفتوحة. المورد المقترح = آخر مورد اتشرى منه. علّم على اللي عايزه — بيتعمل أمر لكل مورد.</p>
+        <form method="get" style="margin-top:.6rem;">
+            <select name="warehouse" onchange="this.form.submit()">{% for w in warehouses %}<option value="{{ w.id }}" {% if warehouse and w.id == warehouse.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}</select>
+        </form>
+    </div>
+    <form method="post" class="sg-panel">
+        {% csrf_token %}<input type="hidden" name="warehouse" value="{{ warehouse.id }}">
+        {% if rows %}
+        <table class="tbl">
+            <thead><tr><th><input type="checkbox" id="all" checked></th><th>الصنف</th><th>الرصيد</th><th>حد الطلب</th><th>على أوامر مفتوحة</th><th>الكمية</th><th>آخر سعر</th><th>المورد</th></tr></thead>
+            <tbody>
+                {% for r in rows %}
+                <tr>
+                    <td><input type="checkbox" name="pick" value="{{ r.product.id }}" checked class="pick"></td>
+                    <td><strong>{{ r.product.name }}</strong></td>
+                    <td class="low">{{ r.stock|floatformat:"-2" }}</td>
+                    <td>{{ r.level|floatformat:"-2" }}</td>
+                    <td>{{ r.on_order|floatformat:"-2" }}</td>
+                    <td><input type="number" name="qty_{{ r.product.id }}" value="{{ r.quantity|stringformat:'s' }}" min="0" step="0.001" class="qty-in"></td>
+                    <td>{{ r.price|floatformat:"2g" }}</td>
+                    <td><select name="supplier_{{ r.product.id }}"><option value="">— اختار —</option>{% for s in suppliers %}<option value="{{ s.id }}" {% if r.supplier and s.id == r.supplier.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div style="margin-top:.8rem;"><button type="submit" class="sg-btn">📦 اعمل أوامر الشراء</button></div>
+        <script>document.getElementById('all').addEventListener('change', function () { var c = this.checked; document.querySelectorAll('.pick').forEach(function (b) { b.checked = c; }); });</script>
+        {% else %}<p class="note" style="text-align:center; padding:1rem;">✅ مفيش نواقص في المخزن ده (أو حدود إعادة الطلب مش متحددة للأصناف).</p>{% endif %}
+    </form>
+</div>
+{% endblock %}

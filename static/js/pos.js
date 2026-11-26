@@ -2628,10 +2628,10 @@ const POS = {
     // ============================================================
     toggleReturnMode(forceState = null) {
         // POS checkout only creates SALE invoices now (server rejects RETURN_SALE for safety:
-        // returns must be priced/validated server-side). Send the cashier to the returns screen.
+        // returns must be priced/validated server-side). A return starts from the original invoice.
         if (forceState === null && !this.isReturnMode) {
-            if (confirm('المرتجعات تتم الآن من شاشة المرتجعات (مرتبطة بفاتورة أو مرتجع مستقل).\n\nهل تريد فتح شاشة المرتجعات؟')) {
-                window.open('/invoicing/sales-returns/', '_blank');
+            if (confirm('المرتجع بيتعمل من الفاتورة الأصلية: افتح الفاتورة ودوس «إرجاع».\n\nتفتح قايمة فواتير المبيعات؟')) {
+                window.open('/invoicing/sales/', '_blank');
             }
             return;
         }

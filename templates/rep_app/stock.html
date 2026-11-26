@@ -1,0 +1,21 @@
+{% extends "rep_app/base.html" %}
+{% block content %}
+<div class="card">
+    <h2>🚚 بضاعة العربية {% if rep.van_warehouse %}({{ rep.van_warehouse.name }}){% endif %}</h2>
+    <input id="q" type="search" placeholder="ابحث…" oninput="filter(this.value)">
+    <div class="list" id="list" style="margin-top:.4rem;">
+        {% for p in products %}
+        <div class="item" data-n="{{ p.name|lower }} {{ p.barcode }}"><div class="grow"><div class="t">{{ p.name }}</div><div class="muted">{{ p.barcode }}</div></div><b class="num">{{ p.qty }} <span class="muted">{{ p.uoms.0.name }}</span></b></div>
+        {% empty %}<p class="muted">العربية فاضية — اعمل طلب تحميل.</p>{% endfor %}
+    </div>
+</div>
+<div class="grid2">
+    <a class="btn" href="{% url 'invoicing:rep_app_loading' %}">⬆️ طلب تحميل</a>
+    <a class="btn ghost" href="{% url 'invoicing:rep_app_unloading' %}">⬇️ طلب تفريغ</a>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function filter(q) { q = q.trim().toLowerCase(); document.querySelectorAll('#list .item').forEach(function (el) { el.hidden = q && el.dataset.n.indexOf(q) < 0; }); }
+</script>
+{% endblock %}

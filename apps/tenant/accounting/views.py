@@ -155,7 +155,13 @@ class JournalEntryListView(CustomPermissionRequiredMixin, ListView):
 
     
     def get_queryset(self):
-        queryset = JournalEntry.objects.select_related('reversal_of', 'reversed_by').order_by('-date', '-created_at')
+        from django.db.models import DecimalField, Sum, Value
+        from django.db.models.functions import Coalesce
+        money = DecimalField(max_digits=20, decimal_places=2)
+        queryset = (JournalEntry.objects.select_related('reversal_of', 'reversed_by')
+                    .annotate(total_debit=Coalesce(Sum('items__debit'), Value(Decimal('0')), output_field=money),
+                              total_credit=Coalesce(Sum('items__credit'), Value(Decimal('0')), output_field=money))
+                    .order_by('-date', '-created_at'))
         
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
@@ -193,7 +199,8 @@ class JournalEntryDetailView(CustomPermissionRequiredMixin, DetailView):
     context_object_name = 'entry'
 
     def get_queryset(self):
-        return JournalEntry.objects.select_related('reversal_of', 'reversed_by', 'created_by')
+        return (JournalEntry.objects.select_related('reversal_of', 'reversed_by', 'created_by')
+                .prefetch_related('items__account'))
 
     def dispatch(self, request, *args, **kwargs):
         if not is_admin_user(request.user):
@@ -215,6 +222,7 @@ class TreasuryListView(CustomPermissionRequiredMixin, ListView):
     permission_required = 'accounting.view_treasury'
 
     model = Treasury
+    queryset = Treasury.objects.select_related('branch', 'account')
     template_name = 'accounting/treasury_list.html'
     context_object_name = 'treasuries'
     
@@ -283,6 +291,7 @@ class BankAccountListView(CustomPermissionRequiredMixin, ListView):
     permission_required = 'accounting.view_bankaccount'
 
     model = BankAccount
+    queryset = BankAccount.objects.select_related('account')
     template_name = 'accounting/bank_list.html'
     context_object_name = 'banks'
     
@@ -351,6 +360,7 @@ class EWalletListView(CustomPermissionRequiredMixin, ListView):
     permission_required = 'accounting.view_ewallet'
 
     model = EWallet
+    queryset = EWallet.objects.select_related('account')
     template_name = 'accounting/ewallet_list.html'
     context_object_name = 'ewallets'
     
@@ -486,8 +496,11 @@ class AccountUpdateView(CustomPermissionRequiredMixin, UpdateView):
 @login_required
 @custom_permission_required('accounting.view_account', redirect_url='core:main_screen')
 def chart_of_accounts(request):
-    accounts = Account.objects.all()
-    has_accounts = accounts.exists()
+    from apps.tenant.services.journal_service import batch_get_account_balances
+    # every balance in a fixed number of queries (not 2 aggregates per account in the tree)
+    accounts = list(Account.objects.order_by('tree_id', 'lft'))
+    batch_get_account_balances(account_qs=accounts)
+    has_accounts = bool(accounts)
     context = {'accounts': accounts, 'has_accounts': has_accounts, 'title': 'شجرة الحسابات'}
     return render(request, 'accounting/chart_of_accounts.html', context)
 
@@ -718,7 +731,7 @@ class ExpenseListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 10
     
     def get_queryset(self):
-        qs = scope_expenses(super().get_queryset(), self.request.user)
+        qs = scope_expenses(super().get_queryset().select_related('branch', 'expense_account'), self.request.user)
         start_date = self.request.GET.get('start_date')
         end_date = self.request.GET.get('end_date')
         search_query = self.request.GET.get('search_query')
@@ -860,7 +873,7 @@ class ReceiptListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
-        return scope_vouchers(Voucher.objects.all(), self.request.user).filter(voucher_type=Voucher.RECEIPT).order_by('-date', '-created_at')
+        return scope_vouchers(Voucher.objects.select_related('partner'), self.request.user).filter(voucher_type=Voucher.RECEIPT).order_by('-date', '-created_at')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -878,7 +891,7 @@ class PaymentListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 20
 
     def get_queryset(self):
-        return scope_vouchers(Voucher.objects.all(), self.request.user).filter(voucher_type=Voucher.PAYMENT).order_by('-date', '-created_at')
+        return scope_vouchers(Voucher.objects.select_related('partner'), self.request.user).filter(voucher_type=Voucher.PAYMENT).order_by('-date', '-created_at')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1020,8 +1033,27 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
                 messages.success(self.request, 'تم حفظ مسودة السند بنجاح.')
         except Exception as e:
             messages.warning(self.request, f'تم حفظ السند كمسودة ولكن تعذر الترحيل التلقائي: {_error_text(e)}')
-
+        self._save_invoice_allocations()
         return response
+
+    def _save_invoice_allocations(self):
+        """«ربط بالفواتير» rows of the form (alloc_<invoice id> = amount); none = oldest first."""
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .allocation_services import save_allocations
+        amounts = {}
+        for key, value in self.request.POST.items():
+            if key.startswith('alloc_') and key[6:].isdigit() and (value or '').strip():
+                try:
+                    amounts[key[6:]] = Decimal(value)
+                except (InvalidOperation, ValueError):
+                    pass
+        if not amounts:
+            return
+        try:
+            save_allocations(self.object, amounts)
+        except DjangoValidationError as e:
+            messages.warning(self.request, 'اتحفظ السند بس الربط بالفواتير ماتسجلش: ' + ' '.join(e.messages)
+                             + ' — المبلغ هيتوزع على الفواتير الأقدم تلقائياً.')
 
     def get_success_url(self):
         return reverse_lazy('accounting:voucher_detail', kwargs={'pk': self.object.pk})
@@ -1034,7 +1066,7 @@ class VoucherDetailView(CustomPermissionRequiredMixin, DetailView):
     context_object_name = 'voucher'
 
     def get_queryset(self):
-        return scope_vouchers(Voucher.objects.all(), self.request.user)
+        return scope_vouchers(Voucher.objects.prefetch_related('allocations__invoice'), self.request.user)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1320,7 +1352,8 @@ def _pos_machine_form_post(request, machine, branches):
 @custom_permission_required('accounting.view_posmachine', redirect_url='core:main_screen')
 def pos_machine_list(request):
     """POS machines of the user's branch scope with current balances."""
-    machines = list(_scoped_machines(request))
+    from apps.tenant.services.journal_service import with_balances
+    machines = with_balances(_scoped_machines(request))
     context = {
         'machines': machines,
         'low_balance_count': sum(1 for m in machines if m.is_active and m.is_low_balance),
@@ -1432,6 +1465,7 @@ def eservice_center(request):
 
     # Money operations use the CURRENT working branch only (header / open shift / own branch).
     working_branch = get_working_branch(request)
+    from apps.tenant.services.journal_service import with_balances
     machines = POSMachine.objects.filter(is_active=True).select_related('branch', 'account')
     machines = machines.filter(branch=working_branch) if working_branch else machines.none()
     ewallets = EWallet.objects.all()
@@ -1532,7 +1566,8 @@ def eservice_center(request):
                     messages.error(request, f'حدث خطأ: {_error_text(e)}')
 
     context = {
-        'machines': machines,
+        # balances of all machines in one batch (the template shows them per machine)
+        'machines': with_balances(machines),
         'ewallets': ewallets,
         'treasuries': treasuries,
         'agents': agents,
@@ -1836,7 +1871,9 @@ class InternalTransferListView(CustomPermissionRequiredMixin, ListView):
     def get_queryset(self):
         if self.request.GET.get('incoming'):
             return incoming_transfers(self.request.user).order_by('-date', '-created_at')
-        return scope_transfers(InternalTransfer.objects.all(), self.request.user).order_by('-date', '-created_at')
+        return scope_transfers(InternalTransfer.objects.select_related(
+            'from_treasury', 'from_bank_account', 'from_ewallet', 'to_treasury', 'to_bank_account', 'to_ewallet',
+        ), self.request.user).order_by('-date', '-created_at')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -1886,15 +1923,20 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
         for w in EWallet.objects.filter(account__isnull=True):
             w.ensure_account()
 
+        # one balance batch for all three lists, reused by the JSON and the template
+        from apps.tenant.services.journal_service import with_balances
+        treasuries = with_balances(scope_treasuries(Treasury.objects.select_related('account'), self.request.user))
+        banks = with_balances(BankAccount.objects.select_related('account'))
+        ewallets = with_balances(EWallet.objects.select_related('account'))
         accounts_data = {
-            'TREASURY': {str(t.id): {'name': t.name, 'balance': float(t.current_balance)} for t in scope_treasuries(Treasury.objects.all(), self.request.user)},
-            'BANK': {str(b.id): {'name': b.name, 'balance': float(b.current_balance)} for b in BankAccount.objects.all()},
-            'EWALLET': {str(w.id): {'name': w.name, 'balance': float(w.current_balance)} for w in EWallet.objects.all()},
+            'TREASURY': {str(t.id): {'name': t.name, 'balance': str(t.current_balance)} for t in treasuries},
+            'BANK': {str(b.id): {'name': b.name, 'balance': str(b.current_balance)} for b in banks},
+            'EWALLET': {str(w.id): {'name': w.name, 'balance': str(w.current_balance)} for w in ewallets},
         }
         context['accounts_data_json'] = json.dumps(accounts_data, ensure_ascii=False)
-        context['treasuries_list'] = scope_treasuries(Treasury.objects.all(), self.request.user)
-        context['banks_list'] = BankAccount.objects.all()
-        context['ewallets_list'] = EWallet.objects.all()
+        context['treasuries_list'] = treasuries
+        context['banks_list'] = banks
+        context['ewallets_list'] = ewallets
         return context
 
     def form_valid(self, form):
@@ -2290,7 +2332,7 @@ class ChequeCancelPayableActionView(CustomPermissionRequiredMixin, View):
 class ChequeBookListView(CustomPermissionRequiredMixin, ListView):
     permission_required = 'accounting.view_chequebook'
     model = ChequeBook
-    queryset = ChequeBook.objects.all().order_by('-id')
+    queryset = ChequeBook.objects.select_related('bank_account').order_by('-id')
     template_name = 'accounting/cheque_book_list.html'
     context_object_name = 'books'
     paginate_by = 25
@@ -2332,7 +2374,7 @@ class FixedAssetListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 25
 
     def get_queryset(self):
-        qs = FixedAsset.objects.all().select_related('branch', 'asset_account', 'accumulated_depreciation_account')
+        qs = FixedAsset.with_totals(FixedAsset.objects.select_related('branch', 'asset_account', 'accumulated_depreciation_account'))
         q = self.request.GET.get('q')
         cat = self.request.GET.get('category')
         st = self.request.GET.get('status')
@@ -2621,7 +2663,7 @@ class FixedAssetDepreciationRunView(CustomPermissionRequiredMixin, View):
             'notes': f"إهلاك الأصول الثابتة عن شهر {month:02d} / {year}"
         })
 
-        all_active_assets = FixedAsset.objects.filter(status=FixedAsset.AssetStatus.ACTIVE)
+        all_active_assets = FixedAsset.with_totals(FixedAsset.objects.filter(status=FixedAsset.AssetStatus.ACTIVE))
         already_run_asset_ids = set(
             AssetDepreciationLog.objects.filter(year=year, month=month).values_list('asset_id', flat=True)
         )
@@ -2783,7 +2825,7 @@ class LoanListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 25
 
     def get_queryset(self):
-        qs = Loan.objects.all().select_related('branch', 'loan_account')
+        qs = Loan.with_totals(Loan.objects.select_related('branch', 'loan_account'))
         q = self.request.GET.get('q')
         lt = self.request.GET.get('loan_type')
         st = self.request.GET.get('status')
@@ -3048,5 +3090,22 @@ class LoanInstallmentPayView(CustomPermissionRequiredMixin, View):
         return redirect('accounting:loan_detail', pk=loan.pk)
 
 
-
-
+@login_required
+@custom_permission_required('accounting.view_voucher', redirect_url='core:main_screen')
+def partner_open_invoices(request):
+    """Open credit invoices of a customer (receipt) / supplier (payment), oldest first —
+    for the «ربط بالفواتير» panel of the voucher form."""
+    from django.http import JsonResponse
+    from apps.tenant.partners.models import Partner
+    from .allocation_services import KIND_OF_VOUCHER, open_invoices
+    partner = Partner.objects.filter(pk=request.GET.get('partner') or 0).first()
+    kind = KIND_OF_VOUCHER.get(request.GET.get('type', ''))
+    if partner is None or kind is None:
+        return JsonResponse({'rows': []})
+    d = open_invoices([partner], kind)[partner.pk]
+    return JsonResponse({
+        'rows': [{'id': r['invoice'].id, 'number': r['invoice'].invoice_number, 'date': str(r['invoice'].date),
+                  'due': str(r['due']), 'days_overdue': r['days_overdue'], 'credit': str(r['credit']),
+                  'outstanding': str(r['outstanding'])} for r in d['rows']],
+        'open_total': str(d['open_total']), 'not_on_invoices': str(d['not_on_invoices']),
+    })

@@ -13,7 +13,6 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.dateparse import parse_date
@@ -21,7 +20,7 @@ from django.utils.dateparse import parse_date
 from apps.tenant.core.access import filter_by_branch
 from apps.tenant.core.decorators import custom_permission_required
 
-from .models import Product, ProductUoM, StockMovement, StockTransfer, StockTransferLine, Warehouse
+from .models import Product, ProductUoM, StockTransfer, Warehouse
 
 MAX_LINES = 300
 
@@ -88,8 +87,6 @@ def _posted_rows(post):
 @login_required
 @custom_permission_required('inventory.change_inventorybatch', redirect_url='core:main_screen')
 def stock_transfer_create(request):
-    from apps.tenant.services.fifo_engine import transfer_stock
-
     sources = _source_warehouses(request)
     destinations = Warehouse.objects.filter(is_active=True).select_related('branch').order_by('branch__name', 'name')
 
@@ -132,30 +129,13 @@ def stock_transfer_create(request):
                 else:
                     merged[key] = {'product': product, 'uom': uom, 'factor': factor, 'qty': l['qty'], 'base_qty': base_qty}
 
-            with transaction.atomic():
-                doc = StockTransfer.objects.create(
-                    date=parse_date(request.POST.get('date') or '') or datetime.date.today(),
-                    from_warehouse=from_wh, to_warehouse=to_wh,
-                    notes=(request.POST.get('notes') or '').strip(), created_by=request.user,
-                )
-                total = Decimal('0')
-                for item in merged.values():
-                    product = item['product']
-                    try:
-                        transfer_stock(product, from_wh, to_wh, item['base_qty'], reference=doc.number)
-                    except ValueError as e:
-                        raise _TransferAbort(f'"{product.name}": {e}')
-                    moved = StockMovement.objects.filter(reference=doc.number, product=product,
-                                                         movement_type='TRANSFER_OUT')
-                    cost = sum(((m.quantity or 0) * (m.unit_cost or 0) for m in moved), Decimal('0'))
-                    unit_cost = (cost / item['base_qty']) if item['base_qty'] else Decimal('0')
-                    StockTransferLine.objects.create(
-                        transfer=doc, product=product, uom=item['uom'], quantity=item['qty'],
-                        conversion_factor=item['factor'], base_quantity=item['base_qty'], unit_cost=unit_cost,
-                    )
-                    total += cost
-                doc.total_cost = total
-                doc.save(update_fields=['total_cost'])
+            from .transfer_services import post_transfer
+            try:
+                doc = post_transfer(from_wh, to_wh, list(merged.values()), user=request.user,
+                                    notes=(request.POST.get('notes') or '').strip(),
+                                    date=parse_date(request.POST.get('date') or '') or datetime.date.today())
+            except ValueError as e:
+                raise _TransferAbort(str(e))
             messages.success(request, f'تم تنفيذ التحويل {doc.number}: {len(merged)} صنف من {from_wh.name} إلى {to_wh.name}.')
             return redirect('inventory:stock_transfer_detail', pk=doc.pk)
         except _TransferAbort as e:
@@ -165,7 +145,9 @@ def stock_transfer_create(request):
         'title': 'تحويل مخزني',
         'sources': sources,
         'destinations': destinations,
-        'posted': request.POST if request.method == 'POST' else None,
+        'posted': request.POST if request.method == 'POST' else (
+            {'from_warehouse': request.GET.get('from', ''), 'to_warehouse': request.GET.get('to', '')}
+            if (request.GET.get('from') or request.GET.get('to')) else None),
         'posted_rows': _posted_rows(request.POST) if request.method == 'POST' else [],
         'max_lines': MAX_LINES,
     }

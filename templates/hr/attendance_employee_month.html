@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}حضور {{ name }} — {{ month_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.em { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.em-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.em-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; }
+.em-head h1 { font-size: 1.25rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.em-tools { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-inline-start: auto; }
+.em-tools select, .em-btn { padding: .4rem .75rem; border-radius: 8px; border: 1px solid var(--border-bright);
+    background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .85rem; text-decoration: none; cursor: pointer; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
+.chip { font-size: .8rem; font-weight: 700; padding: .25rem .7rem; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); }
+.chip b { color: var(--text-primary); }
+.em-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.em-table th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.em-table td { padding: .45rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.em-table td:first-child, .em-table th:first-child { text-align: right; }
+.em-table tr.off td, .em-table tr.future td, .em-table tr.before td { color: var(--text-muted); }
+.st { font-size: .74rem; font-weight: 800; padding: .12rem .55rem; border-radius: 999px; white-space: nowrap; }
+.st.present { background: rgba(46,213,115,.15); color: var(--neon-green); }
+.st.absent { background: rgba(255,71,87,.15); color: var(--neon-red); }
+.st.leave { background: rgba(59,130,246,.15); color: var(--neon-blue); }
+.st.off, .st.future, .st.before { background: var(--bg-secondary); color: var(--text-muted); }
+.neg { color: var(--neon-red); font-weight: 700; } .pos { color: var(--neon-green); font-weight: 700; }
+.src { font-size: .72rem; color: var(--text-muted); }
+.pay { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .6rem; margin-top: .6rem; }
+.pay div { background: var(--bg-secondary); border-radius: 8px; padding: .55rem .7rem; font-size: .78rem; color: var(--text-muted); font-weight: 700; }
+.pay b { display: block; font-size: 1.05rem; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+@media print { .sidebar, .navbar, .em-tools, .no-print { display: none !important; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="em">
+    <div class="em-panel">
+        <div class="em-head">
+            <h1>📅 حضور {{ name }} — {{ month_name }}</h1>
+            <form method="get" class="em-tools">
+                <input type="hidden" name="employee" value="{{ employee.id }}">
+                <select name="month" onchange="this.form.submit()" aria-label="الشهر">
+                    {% for num, nm in month_choices %}<option value="{{ num }}" {% if num == month %}selected{% endif %}>{{ nm }}</option>{% endfor %}
+                </select>
+                <select name="year" onchange="this.form.submit()" aria-label="السنة">
+                    {% for y in year_choices %}<option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y|stringformat:"d" }}</option>{% endfor %}
+                </select>
+                <button type="button" class="em-btn" onclick="window.print()">🖨️ طباعة</button>
+                <a class="em-btn" href="{% url 'hr:attendance_report' %}?month={{ month }}&year={{ year|stringformat:'d' }}">↩ كل الموظفين</a>
+            </form>
+        </div>
+        <div class="chips">
+            <span class="chip">🏢 {{ employee.branch.name|default:"بدون فرع" }}</span>
+            <span class="chip">⏱ الوردية {% if employee.shift_start_time %}{{ employee.shift_start_time|time:"H:i" }}–{{ employee.shift_end_time|time:"H:i" }}{% else %}غير محددة{% endif %}</span>
+            <span class="chip">أيام العمل <b>{{ summary.working_days }}</b></span>
+            <span class="chip">✅ حضور <b>{{ summary.present_days }}</b></span>
+            <span class="chip">🌴 إجازة <b>{{ summary.leave_days }}</b></span>
+            <span class="chip">❌ غياب <b>{{ summary.absent_days }}</b></span>
+            <span class="chip">⏰ تأخير <b>{{ summary.delay_hours }}</b> س</span>
+            <span class="chip">➕ إضافي <b>{{ summary.overtime_hours }}</b> س</span>
+        </div>
+        {% if show_pay %}
+            {% if payroll %}
+            <div class="pay">
+                <div>الأساسي<b>{{ payroll.base_pay|floatformat:"2g" }}</b></div>
+                <div>خصم الغياب<b class="neg">{{ payroll.absence_deduction|floatformat:"2g" }}</b></div>
+                <div>خصم التأخير<b class="neg">{{ payroll.delay_deduction|floatformat:"2g" }}</b></div>
+                <div>الإضافي<b class="pos">{{ payroll.overtime_pay|floatformat:"2g" }}</b></div>
+                <div>صافي الراتب<b>{{ payroll.net_salary|floatformat:"2g" }}</b>{% if payroll.is_paid %}✅ معتمد{% else %}⏳ معلق{% endif %}</div>
+            </div>
+            {% else %}
+            <p class="src" style="margin:.6rem 0 0;">مسير الشهر ده لسه ماصدرش للموظف.</p>
+            {% endif %}
+        {% endif %}
+    </div>
+
+    <div class="em-panel">
+        <table class="em-table">
+            <thead>
+                <tr><th>اليوم</th><th>الحالة</th><th>الحضور</th><th>الانصراف</th><th>تأخير</th><th>إضافي</th><th>المصدر / ملاحظات</th>{% if can_edit %}<th class="no-print"></th>{% endif %}</tr>
+            </thead>
+            <tbody>
+                {% for d in days %}
+                <tr class="{{ d.state }}">
+                    <td><strong>{{ d.date|date:"j" }}</strong> <span class="src">{{ d.weekday }}</span></td>
+                    <td><span class="st {{ d.state }}">{{ d.label }}</span></td>
+                    <td>{{ d.in|default:"—" }}</td>
+                    <td>{{ d.out|default:"—" }}</td>
+                    <td class="{% if d.att.delay_hours %}neg{% endif %}">{% if d.att.delay_hours %}{{ d.att.delay_hours }} س{% else %}—{% endif %}</td>
+                    <td class="{% if d.att.overtime_hours %}pos{% endif %}">{% if d.att.overtime_hours %}{{ d.att.overtime_hours }} س{% else %}—{% endif %}</td>
+                    <td class="src">{% if d.att %}{% if d.att.source == 'GPS' %}📍 بصمة{% else %}✍️ يدوي{% if d.att.entered_by %} ({{ d.att.entered_by|display_name }}){% endif %}{% endif %}{% if d.att.notes %} · {{ d.att.notes }}{% endif %}{% endif %}</td>
+                    {% if can_edit %}<td class="no-print">{% if d.state != 'future' %}<a class="em-btn" style="padding:.15rem .5rem; font-size:.72rem;" href="{% url 'hr:attendance_manage' %}?date={{ d.date|date:'Y-m-d' }}" title="تعديل حضور اليوم ده">✏️</a>{% endif %}</td>{% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

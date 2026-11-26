@@ -15,6 +15,7 @@ class Role(models.TextChoices):
     ACCOUNTANT = 'ACCOUNTANT', 'محاسب'
     CASHIER = 'CASHIER', 'كاشير'
     INVENTORY = 'INVENTORY', 'أمين مخزن'
+    SALES_REP = 'SALES_REP', 'مندوب مبيعات'
 
 
 class Employee(models.Model):
@@ -23,13 +24,21 @@ class Employee(models.Model):
     branch = models.ForeignKey('Branch', on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_('الفرع'))
 
     # HR & Payroll Fields
-    hourly_rate = models.DecimalField(max_digits=8, decimal_places=2, default=0.00, verbose_name=_('قيمة ساعة العمل العادية'))
-    daily_working_hours = models.DecimalField(max_digits=4, decimal_places=2, default=8.00, verbose_name=_('ساعات العمل اليومية'))
+    hourly_rate = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'), verbose_name=_('قيمة ساعة العمل العادية'))
+    daily_working_hours = models.DecimalField(max_digits=4, decimal_places=2, default=Decimal('8.00'), verbose_name=_('ساعات العمل اليومية'))
     shift_start_time = models.TimeField(null=True, blank=True, verbose_name=_('ميعاد الحضور'))
     shift_end_time = models.TimeField(null=True, blank=True, verbose_name=_('ميعاد الانصراف'))
-    deduction_per_hour = models.DecimalField(max_digits=8, decimal_places=2, default=0.00, verbose_name=_('قيمة الخصم للساعة'))
-    overtime_per_hour = models.DecimalField(max_digits=8, decimal_places=2, default=0.00, verbose_name=_('قيمة الإضافي للساعة'))
-    base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, verbose_name=_('الراتب الأساسي (اختياري)'))
+    deduction_per_hour = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'), verbose_name=_('قيمة الخصم للساعة'))
+    overtime_per_hour = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'), verbose_name=_('قيمة الإضافي للساعة'))
+    base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('الراتب الأساسي (اختياري)'))
+    is_insured = models.BooleanField(default=True, verbose_name=_('مؤمَّن عليه'))
+    insurance_wage = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True,
+                                         verbose_name=_('الأجر التأميني (فاضي = الأساسي)'))
+    tax_exempt = models.BooleanField(default=False, verbose_name=_('معفى من ضريبة كسب العمل'))
+
+    class Meta:
+        verbose_name = _('موظف')
+        verbose_name_plural = _('الموظفين')
 
     def is_admin(self):
         # Tenant admin rights come only from the role in THIS schema; the global
@@ -47,6 +56,9 @@ class Employee(models.Model):
 
     def is_inventory(self):
         return self.role == Role.INVENTORY or self.is_admin()
+
+    def is_sales_rep(self):
+        return self.role == Role.SALES_REP
 
     def save(self, *args, **kwargs):
         # SECURITY: never derive the global is_superuser/is_staff flags from a
@@ -109,7 +121,7 @@ class SystemSetting(models.Model):
         verbose_name=_('إظهار سعر التكلفة وآخر شراء في نقطة البيع'),
         help_text=_('عند التفعيل يظهر عمود آخر شراء وتكلفة الوحدة في شاشة نقطة البيع والسلة. أوقفه لإخفاء التكلفة عن الكاشير والعملاء.')
     )
-    pos_price_margin_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0.0, verbose_name=_('هامش التعديل المسموح للسعر (%)'))
+    pos_price_margin_percent = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.0'), verbose_name=_('هامش التعديل المسموح للسعر (%)'))
     max_pos_discount_percentage = models.DecimalField(
         max_digits=5, decimal_places=2, default=100,
         validators=[MinValueValidator(0), MaxValueValidator(100)],
@@ -283,3 +295,37 @@ class DocumentSequence(models.Model):
 
     def __str__(self):
         return f'{self.key}{self.last_value}'
+
+
+class AuditLog(models.Model):
+    """سجل التعديلات: مين عمل إيه وإمتى، وإيه اللي اتغير (قبل ← بعد).
+    Written by core.audit (signals on the tracked models + logins); never edited."""
+    CREATE = 'CREATE'
+    UPDATE = 'UPDATE'
+    DELETE = 'DELETE'
+    LOGIN = 'LOGIN'
+    LOGOUT = 'LOGOUT'
+    ACTION_CHOICES = (
+        (CREATE, _('إضافة')), (UPDATE, _('تعديل')), (DELETE, _('حذف')),
+        (LOGIN, _('تسجيل دخول')), (LOGOUT, _('تسجيل خروج')),
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name=_('الوقت'))
+    user = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                             verbose_name=_('المستخدم'))
+    action = models.CharField(max_length=10, choices=ACTION_CHOICES, db_index=True, verbose_name=_('العملية'))
+    content_type = models.ForeignKey('contenttypes.ContentType', on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='+', verbose_name=_('القسم'))
+    object_id = models.CharField(max_length=64, blank=True, default='', db_index=True, verbose_name=_('رقم السجل'))
+    object_repr = models.CharField(max_length=255, blank=True, default='', verbose_name=_('السجل'))
+    changes = models.JSONField(default=dict, blank=True, verbose_name=_('التغييرات'))
+    ip = models.GenericIPAddressField(null=True, blank=True, verbose_name=_('IP'))
+
+    class Meta:
+        verbose_name = _('سجل تعديل')
+        verbose_name_plural = _('سجل التعديلات')
+        ordering = ['-created_at', '-id']
+        indexes = [models.Index(fields=['content_type', 'object_id'], name='audit_object_idx')]
+
+    def __str__(self):
+        return f'{self.get_action_display()} {self.object_repr}'

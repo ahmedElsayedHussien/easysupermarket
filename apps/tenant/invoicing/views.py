@@ -152,8 +152,9 @@ def pos_view(request):
         stock_map = {}
         cost_map = {}
 
+    branch_prices = Product.branch_price_map([p.id for p in products_list], current_branch)
     for p in products_list:
-        p.sale_price = p.get_price_for_branch(current_branch)
+        p.sale_price = branch_prices.get(p.id, p.sale_price)
         p.pos_stock = stock_map.get(p.id, Decimal('0'))
         p.pos_avg_cost = cost_map.get(p.id, p.last_purchase_price or Decimal('0'))
         p.pos_last_purchase = p.last_purchase_price if p.last_purchase_price else p.pos_avg_cost
@@ -468,13 +469,13 @@ def _deposit_targets(session):
     }
 
 @login_required
-@custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
+@custom_permission_required('invoicing.add_purchase_invoice', redirect_url='core:main_screen')
 def purchase_invoice_view(request):
     """Purchase Invoice Form"""
     import json
     suppliers = Partner.objects.filter(partner_type__in=['SUPPLIER', 'BOTH'], is_active=True)
     warehouses = Warehouse.objects.filter(is_active=True)
-    products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom')
+    products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom', 'extra_barcodes')
     
     def normalize_name(name):
         if not name: return ""
@@ -650,9 +651,13 @@ def purchase_invoice_view(request):
                     e_invoice_number=e_invoice_number if e_invoice_number else None,
                 )
                 
+                # every product of the form in ONE query (was one query per line)
+                form_products = Product.objects.in_bulk([int(p) for p in product_ids if str(p).isdigit()])
                 for i, (pid, qty, price, uom_id) in enumerate(zip(product_ids, quantities, prices, uom_ids)):
                     if pid and qty and price:
-                        product = Product.objects.get(id=pid)
+                        product = form_products.get(int(pid)) if str(pid).isdigit() else None
+                        if product is None:
+                            raise Product.DoesNotExist(f'الصنف رقم {pid} غير موجود')
                         line_expiry = None
                         raw_expiry = (expiry_dates[i] or '').strip()
                         if raw_expiry and invoice_type == Invoice.PURCHASE:
@@ -754,6 +759,12 @@ def purchase_invoice_view(request):
                 
                 from apps.tenant.services.invoice_service import confirm_invoice
                 confirm_invoice(invoice.id)
+                po_id = request.POST.get('po_id') or ''
+                if po_id.isdigit() and invoice.invoice_type == Invoice.PURCHASE:
+                    from .models import PurchaseOrder
+                    from .purchase_orders import receive_from_invoice
+                    receive_from_invoice(PurchaseOrder.objects.filter(pk=int(po_id)).first(),
+                                         Invoice.objects.get(pk=invoice.id))
                 
             messages.success(request, 'تم حفظ وترحيل الفاتورة بنجاح!')
             return redirect('invoicing:purchase_invoice_list')
@@ -807,6 +818,19 @@ def purchase_invoice_view(request):
         'expiry_tracking_enabled': expiry_tracking_enabled,
         'title': 'فاتورة مشتريات'
     }
+    if request.GET.get('type') == Invoice.RETURN_PURCHASE:
+        # purchase return without an original invoice (e.g. opening-balance goods)
+        context.update(posted_data={'invoice_type': Invoice.RETURN_PURCHASE}, title='مرتجع مشتريات')
+    po_id = request.GET.get('po') or ''
+    if po_id.isdigit():
+        # receiving a purchase order: its remaining lines pre-filled
+        from .models import PurchaseOrder
+        from .purchase_orders import invoice_prefill
+        order = PurchaseOrder.objects.filter(pk=int(po_id), status__in=PurchaseOrder.OPEN_STATUSES).first()
+        if order is not None:
+            data, lines = invoice_prefill(order)
+            context.update(posted_data={**data, 'po_id': str(order.pk)}, posted_lines_json=_safe_json_for_script(lines),
+                           title=f'استلام أمر الشراء {order.number}', purchase_order=order)
     return render(request, 'invoicing/purchase_invoice.html', context)
 
 @login_required
@@ -958,9 +982,30 @@ def invoice_detail(request, invoice_id):
         'bank_accounts': BankAccount.objects.all(),
         'ewallets': EWallet.objects.all(),
         'partners': partners,
-        'title': f'تفاصيل فاتورة رقم {invoice.invoice_number}'
+        'title': f'تفاصيل فاتورة رقم {invoice.invoice_number}',
+        'credit_status': _invoice_credit_status(invoice),
     }
     return render(request, 'invoicing/invoice_detail.html', context)
+
+
+def _invoice_credit_status(invoice):
+    """For a posted credit (آجل) sale / purchase: how much is still open on it and which
+    vouchers were tied to it (accounting.allocation_services)."""
+    if invoice.status != Invoice.POSTED or invoice.invoice_type not in (Invoice.SALE, Invoice.PURCHASE)             or invoice.partner_id is None:
+        return None
+    credit = invoice.total_amount if invoice.payment_type == Invoice.CREDIT else (
+        invoice.paid_credit if invoice.payment_type == Invoice.SPLIT else Decimal('0'))
+    if not credit or credit <= 0:
+        return None
+    from apps.tenant.accounting.allocation_services import open_invoices
+    data = open_invoices([invoice.partner], invoice.invoice_type)[invoice.partner_id]
+    row = next((r for r in data['rows'] if r['invoice'].id == invoice.id), None)
+    outstanding = row['outstanding'] if row else Decimal('0')
+    return {
+        'credit': credit, 'outstanding': outstanding, 'paid': credit - outstanding,
+        'days_overdue': row['days_overdue'] if row else 0,
+        'allocations': invoice.voucher_allocations.filter(voucher__status='POSTED').select_related('voucher'),
+    }
 
 @login_required
 @custom_permission_required('invoicing.change_invoice', redirect_url='core:main_screen')
@@ -1023,7 +1068,7 @@ def update_invoice_payment_method_view(request, invoice_id):
 
 
 @login_required
-@custom_permission_required('invoicing.change_invoice', redirect_url='core:main_screen')
+@custom_permission_required('invoicing.cancel_invoice', redirect_url='core:main_screen')
 def cancel_invoice_view(request, invoice_id):
     if request.method != 'POST':
         return JsonResponse({'success': False, 'error': 'Method not allowed'}, status=405)
@@ -1055,16 +1100,11 @@ def get_product_by_barcode(request):
         product = None
         selected_uom_id = 'base'
         
-        # 1. Direct barcode match
-        product = Product.objects.prefetch_related('uoms__uom').filter(barcode=barcode, is_active=True).first()
-        
-        # 2. UoM barcode match
-        if not product:
-            from apps.tenant.inventory.models import ProductUoM
-            puom = ProductUoM.objects.select_related('product', 'uom').filter(barcode=barcode, product__is_active=True).first()
-            if puom:
-                product = puom.product
-                selected_uom_id = puom.id
+        # 1-3. product barcode -> unit barcode -> extra barcode (inventory.barcodes)
+        from apps.tenant.inventory.barcodes import find_by_barcode
+        product, puom = find_by_barcode(barcode)
+        if puom is not None:
+            selected_uom_id = puom.id
 
         # 3. If barcode is numeric, fallback to matching by product ID
         if not product and barcode.isdigit():
@@ -1277,7 +1317,7 @@ def complete_sale(request):
         partner_id = data.get('partner_id')
 
         # This endpoint ONLY creates SALE invoices. Returns must go through the
-        # return screens (process_invoice_return / create_standalone_sales_return).
+        # return from the original invoice (process_invoice_return).
         invoice_type = data.get('invoice_type', 'SALE') or 'SALE'
         if invoice_type != Invoice.SALE:
             raise _SaleAbort(
@@ -1432,10 +1472,15 @@ def complete_sale(request):
                 pos_session=open_session,
                 discount_percentage=discount_percentage,
                 notes=notes,
+                sales_rep=_rep_for_user(request.user),   # a sales rep's sales count for his commission
             )
 
             used_serial_ids = set()
             line_count = 0
+            # every product of the cart in ONE query (was one query per cart line)
+            cart_products = Product.objects.in_bulk(
+                [int(i.get('product_id')) for i in cart
+                 if isinstance(i, dict) and str(i.get('product_id') or '').isdigit()])
             for item in cart:
                 if not isinstance(item, dict):
                     continue
@@ -1443,8 +1488,8 @@ def complete_sale(request):
                 if not pid:
                     continue
                 try:
-                    product = Product.objects.get(id=int(pid))
-                except (Product.DoesNotExist, ValueError, TypeError):
+                    product = cart_products[int(pid)]
+                except (KeyError, ValueError, TypeError):
                     raise _SaleAbort(
                         f'الصنف برقم ({pid}) غير موجود في قاعدة البيانات أو تم حذفه. يرجى مراجعة الأصناف بالسلة.',
                         status=200,
@@ -1803,10 +1848,13 @@ RECEIPT_TITLES = {
 @login_required
 @require_POST
 def process_invoice_return(request, invoice_id):
-    if not is_admin_user(request.user):
+    """Return items of a posted invoice — THE way to make a return: a sales return needs
+    invoicing.add_sales_return, a purchase return invoicing.add_purchase_invoice."""
+    kind = Invoice.objects.filter(id=invoice_id).values_list('invoice_type', flat=True).first()
+    needed = 'invoicing.add_purchase_invoice' if kind == Invoice.PURCHASE else 'invoicing.add_sales_return'
+    if not request.user.has_perm(needed):   # admins hold every permission
         return JsonResponse({'status': 'error', 'message': 'غير مصرح لك بإجراء هذه العملية.'}, status=403)
 
-        
     try:
         data = json.loads(request.body)
         items = data.get('items', [])
@@ -1888,6 +1936,7 @@ def process_invoice_return(request, invoice_id):
                 status=Invoice.DRAFT,
                 cashier=request.user,
                 parent_invoice=original_invoice,
+                sales_rep=original_invoice.sales_rep,
                 discount_percentage=original_invoice.discount_percentage,
                 pos_session=session_to_use,
             )
@@ -2014,231 +2063,155 @@ def shift_report(request):
     return render(request, 'invoicing/shift_report.html', context)
 
 
-@login_required
-@custom_permission_required('invoicing.view_invoice', redirect_url='core:main_screen')
-def sales_returns_dashboard(request):
-    """Dashboard view listing all sales returns and summary statistics"""
-    from django.db.models import Sum, Count
-    
-    returns_qs = Invoice.objects.filter(invoice_type=Invoice.RETURN_SALE).select_related('partner', 'warehouse', 'branch', 'treasury').order_by('-date', '-created_at')
-    
-    # Filter by partner if provided
-    partner_id = request.GET.get('partner_id')
-    if partner_id:
-        returns_qs = returns_qs.filter(partner_id=partner_id)
-        
-    payment_type = request.GET.get('payment_type')
-    if payment_type:
-        returns_qs = returns_qs.filter(payment_type=payment_type)
-
-    total_returns_count = returns_qs.count()
-    total_returns_amount = returns_qs.aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
-    credit_returns_amount = returns_qs.filter(payment_type=Invoice.CREDIT).aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
-    cash_returns_amount = returns_qs.exclude(payment_type=Invoice.CREDIT).aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
-
-    customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True)
-
-    from django.core.paginator import Paginator
-    paginator = Paginator(returns_qs, 25)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-
-    context = {
-        'title': 'مركز مرتجعات المبيعات',
-        'returns': page_obj,
-        'page_obj': page_obj,
-        'is_paginated': page_obj.has_other_pages(),
-        'customers': customers,
-        'total_returns_count': total_returns_count,
-        'total_returns_amount': total_returns_amount,
-        'credit_returns_amount': credit_returns_amount,
-        'cash_returns_amount': cash_returns_amount,
-        'selected_partner_id': partner_id,
-        'selected_payment_type': payment_type,
-    }
-    return render(request, 'invoicing/sales_returns_dashboard.html', context)
-
 
 @login_required
-@custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
-def create_standalone_sales_return(request):
-    """View to create a standalone sales return (e.g. for opening balance items) without original invoice"""
-    from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
+@custom_permission_required('invoicing.add_sales_return_no_invoice', redirect_url='core:main_screen')
+def sales_return_no_invoice(request):
+    """Sales return of goods sold BEFORE the system (opening balance): no invoice exists
+    to return from. Every other sales return is made from its invoice
+    (process_invoice_return). Safeguards: own permission, the user's branch warehouses
+    only, and a unit price never above the product's current sale price in that unit."""
+    from django.db import transaction
+    from apps.tenant.accounting.forms import scoped_treasuries
+    from apps.tenant.accounting.models import BankAccount, EWallet
+    from apps.tenant.core.access import filter_by_branch
+    from apps.tenant.inventory.models import ProductUoM, SerialItem
     from apps.tenant.services.invoice_service import confirm_invoice
-    
+
+    warehouses = filter_by_branch(Warehouse.objects.filter(is_active=True).select_related('branch'), request)
+    here = 'invoicing:sales_return_no_invoice'
+
     if request.method == 'POST':
         try:
-            partner_id = request.POST.get('partner_id')
-            warehouse_id = request.POST.get('warehouse_id')
-            payment_type = request.POST.get('payment_type', Invoice.CREDIT)
-            treasury_id = request.POST.get('treasury_id')
-            bank_id = request.POST.get('bank_account_id')
-            ewallet_id = request.POST.get('ewallet_id')
-            notes = request.POST.get('notes', '')
-            
-            if not partner_id:
-                messages.error(request, 'يرجى تحديد العميل.')
-                return redirect('invoicing:create_standalone_sales_return')
-                
-            if not warehouse_id:
-                messages.error(request, 'يرجى تحديد المستودع المستلم.')
-                return redirect('invoicing:create_standalone_sales_return')
-
-            partner = Partner.objects.get(id=partner_id)
-            warehouse = Warehouse.objects.get(id=warehouse_id)
-            if is_branch_restricted(request) and warehouse.branch_id not in (get_allowed_branch_ids(request) or []):
-                messages.error(request, 'لا يمكنك استلام مرتجع على مستودع خارج فرعك.')
-                return redirect('invoicing:create_standalone_sales_return')
+            partner = Partner.objects.filter(id=request.POST.get('partner_id') or 0,
+                                             partner_type__in=['CUSTOMER', 'BOTH']).first()
+            warehouse = warehouses.filter(id=request.POST.get('warehouse_id') or 0).first()
+            if partner is None:
+                raise ValueError('يرجى تحديد العميل.')
+            if warehouse is None:
+                raise ValueError('يرجى تحديد المستودع المستلم (من مخازن فرعك).')
             branch = warehouse.branch or get_working_branch(request)
-            
-            treasury = Treasury.objects.filter(id=treasury_id).first() if treasury_id else None
-            bank_account = BankAccount.objects.filter(id=bank_id).first() if bank_id else None
-            ewallet = EWallet.objects.filter(id=ewallet_id).first() if ewallet_id else None
+            payment_type = request.POST.get('payment_type') or Invoice.CREDIT
+            if payment_type not in (Invoice.CASH, Invoice.CREDIT, Invoice.CARD, Invoice.EWALLET, Invoice.BANK_TRANSFER):
+                raise ValueError('طريقة رد المبلغ غير صالحة.')
+            treasury = scoped_treasuries(request.user).filter(id=request.POST.get('treasury_id') or 0).first()
+            bank_account = BankAccount.objects.filter(id=request.POST.get('bank_account_id') or 0).first()
+            ewallet = EWallet.objects.filter(id=request.POST.get('ewallet_id') or 0).first()
+            if payment_type == Invoice.CASH and treasury is None:
+                raise ValueError('اختار الخزينة اللي هيترد منها المبلغ.')
 
-            # Get submitted products
             product_ids = request.POST.getlist('product_ids[]')
             quantities = request.POST.getlist('quantities[]')
             prices = request.POST.getlist('prices[]')
             uom_ids = request.POST.getlist('uom_ids[]')
-            
             if not product_ids:
-                messages.error(request, 'يرجى إضافة صنف واحد على الأقل للمرتجع.')
-                return redirect('invoicing:create_standalone_sales_return')
-                
-            from django.db import transaction
+                raise ValueError('يرجى إضافة صنف واحد على الأقل للمرتجع.')
+            products = Product.objects.in_bulk([int(p) for p in product_ids if str(p).isdigit()])
+            branch_prices = Product.branch_price_map(products.keys(), branch)
+            apply_vat = request.POST.get('apply_vat') in ['true', 'on', '1']
+            apply_wht = request.POST.get('apply_wht') in ['true', 'on', '1']
+
             with transaction.atomic():
                 return_invoice = Invoice.objects.create(
-                    invoice_type=Invoice.RETURN_SALE,
-                    partner=partner,
-                    branch=branch,
-                    warehouse=warehouse,
-                    treasury=treasury,
-                    bank_account=bank_account,
-                    ewallet=ewallet,
-                    payment_type=payment_type,
-                    status=Invoice.DRAFT,
-                    cashier=request.user,
-                    notes=notes,
-                    date=timezone.now().date(),
+                    invoice_type=Invoice.RETURN_SALE, partner=partner, branch=branch, warehouse=warehouse,
+                    treasury=treasury if payment_type == Invoice.CASH else None,
+                    bank_account=bank_account, ewallet=ewallet, payment_type=payment_type,
+                    status=Invoice.DRAFT, cashier=request.user, date=timezone.now().date(),
+                    notes=(request.POST.get('notes', '') + ' — مرتجع بدون فاتورة (رصيد أول المدة)').strip(' —'),
                 )
-                
-                from apps.tenant.inventory.models import ProductUoM, SerialItem
-                apply_vat = request.POST.get('apply_vat') in ['true', 'on', '1']
-                apply_wht = request.POST.get('apply_wht') in ['true', 'on', '1']
-                
+                lines = 0
                 for idx, (pid, qty_str, price_str) in enumerate(zip(product_ids, quantities, prices)):
                     qty = Decimal(qty_str or '0')
                     price = Decimal(price_str or '0')
                     if qty < 0 or price < 0:
                         raise ValueError('الكمية والسعر لا يمكن أن يكونا بقيم سالبة.')
-                    if qty > 0:
-                        prod = Product.objects.get(id=pid)
-                        uom_id = uom_ids[idx] if idx < len(uom_ids) and uom_ids[idx] else None
-                        uom_obj = None
-                        if uom_id:
-                            uom_obj = ProductUoM.objects.filter(id=uom_id, product=prod).first()
-                        if not uom_obj:
-                            # Empty value in the form means the base unit (factor 1)
-                            uom_obj = prod.uoms.filter(is_base=True).first()
-                        
-                        line_tax_rate = prod.tax_rate if apply_vat else Decimal('0')
-                        line_wht_rate = prod.withholding_tax_rate if apply_wht else Decimal('0')
-                        
-                        if prod.product_type == 'SERIALIZED':
-                            imei_1_list = request.POST.getlist(f'imei_1_line_{idx}[]')
-                            imei_2_list = request.POST.getlist(f'imei_2_line_{idx}[]')
-                            serial_list = request.POST.getlist(f'serial_line_{idx}[]')
-                            condition_list = request.POST.getlist(f'condition_line_{idx}[]')
-                            
-                            num_items = int(qty)
-                            for j in range(num_items):
-                                sn = serial_list[j] if j < len(serial_list) else ''
-                                i1 = imei_1_list[j] if j < len(imei_1_list) else ''
-                                i2 = imei_2_list[j] if j < len(imei_2_list) else ''
-                                cond = condition_list[j] if j < len(condition_list) else SerialItem.CONDITION_NEW
-                                
-                                serial_item = None
-                                if i1:
-                                    serial_item = SerialItem.objects.filter(product=prod, imei_1=i1).first()
-                                elif sn:
-                                    serial_item = SerialItem.objects.filter(product=prod, serial_number=sn).first()
-                                    
-                                if serial_item:
-                                    serial_item = SerialItem.objects.select_for_update(of=('self',)).get(pk=serial_item.pk)
-                                    if not serial_item.is_sold and serial_item.warehouse_id:
-                                        raise ValueError(
-                                            f'السيريال/IMEI ({i1 or sn}) للصنف "{prod.name}" موجود بالفعل في المخزون ولم يُبع.'
-                                        )
-                                    serial_item.warehouse = warehouse
-                                    serial_item.is_sold = False
-                                    serial_item.is_returned = False
-                                    serial_item.save()
-                                else:
-                                    serial_item = SerialItem.objects.create(
-                                        product=prod,
-                                        serial_number=sn if sn else None,
-                                        imei_1=i1 if i1 else None,
-                                        imei_2=i2 if i2 else None,
-                                        condition=cond if cond else SerialItem.CONDITION_NEW,
-                                        warehouse=warehouse,
-                                        is_sold=False,
-                                        actual_cost=price,
-                                    )
-                                    
-                                inv_line = InvoiceLine(
-                                    invoice=return_invoice,
-                                    product=prod,
-                                    quantity=Decimal('1'),
-                                    unit_price=price,
-                                    uom=uom_obj,
-                                    serial_item=serial_item,
-                                    tax_rate=line_tax_rate,
-                                    wht_rate=line_wht_rate,
+                    if qty == 0:
+                        continue
+                    prod = products.get(int(pid)) if str(pid).isdigit() else None
+                    if prod is None:
+                        raise ValueError(f'الصنف رقم {pid} غير موجود.')
+                    uom_id = uom_ids[idx] if idx < len(uom_ids) and uom_ids[idx] else None
+                    uom_obj = ProductUoM.objects.filter(id=uom_id, product=prod).first() if uom_id else None
+                    if not uom_obj:
+                        uom_obj = prod.uoms.filter(is_base=True).first()   # empty = base unit
+                    factor = (uom_obj.conversion_factor if uom_obj and uom_obj.conversion_factor else Decimal('1'))
+                    ceiling = (Decimal(branch_prices.get(prod.id, prod.sale_price) or 0) * factor).quantize(Decimal('0.01'))
+                    if price > ceiling + Decimal('0.005'):
+                        raise ValueError(f'سعر "{prod.name}" ({price}) أعلى من سعر البيع الحالي ({ceiling}). '
+                                         'المرتجع بدون فاتورة ميزيدش عن سعر البيع.')
+                    line_tax_rate = prod.tax_rate if apply_vat else Decimal('0')
+                    line_wht_rate = prod.withholding_tax_rate if apply_wht else Decimal('0')
+
+                    if prod.product_type == 'SERIALIZED':
+                        imei_1_list = request.POST.getlist(f'imei_1_line_{idx}[]')
+                        imei_2_list = request.POST.getlist(f'imei_2_line_{idx}[]')
+                        serial_list = request.POST.getlist(f'serial_line_{idx}[]')
+                        condition_list = request.POST.getlist(f'condition_line_{idx}[]')
+                        # stock value of a returned device = its cost, not the refund price
+                        unit_cost = prod.get_average_cost(warehouse) or prod.last_purchase_price or Decimal('0')
+                        for j in range(int(qty)):
+                            sn = serial_list[j] if j < len(serial_list) else ''
+                            i1 = imei_1_list[j] if j < len(imei_1_list) else ''
+                            i2 = imei_2_list[j] if j < len(imei_2_list) else ''
+                            cond = condition_list[j] if j < len(condition_list) else SerialItem.CONDITION_NEW
+                            serial_item = None
+                            if i1:
+                                serial_item = SerialItem.objects.filter(product=prod, imei_1=i1).first()
+                            elif sn:
+                                serial_item = SerialItem.objects.filter(product=prod, serial_number=sn).first()
+                            if serial_item:
+                                serial_item = SerialItem.objects.select_for_update(of=('self',)).get(pk=serial_item.pk)
+                                if not serial_item.is_sold and serial_item.warehouse_id:
+                                    raise ValueError(f'السيريال/IMEI ({i1 or sn}) للصنف "{prod.name}" موجود بالفعل '
+                                                     'في المخزون ولم يُبع.')
+                                serial_item.warehouse = warehouse
+                                serial_item.is_sold = False
+                                serial_item.is_returned = False
+                                serial_item.save()
+                            else:
+                                serial_item = SerialItem.objects.create(
+                                    product=prod, serial_number=sn or None, imei_1=i1 or None, imei_2=i2 or None,
+                                    condition=cond or SerialItem.CONDITION_NEW, warehouse=warehouse, is_sold=False,
+                                    actual_cost=unit_cost,
                                 )
-                                inv_line.save()
-                        else:
-                            inv_line = InvoiceLine(
-                                invoice=return_invoice,
-                                product=prod,
-                                quantity=qty,
-                                unit_price=price,
-                                uom=uom_obj,
-                                tax_rate=line_tax_rate,
-                                wht_rate=line_wht_rate,
+                            InvoiceLine.objects.create(
+                                invoice=return_invoice, product=prod, quantity=Decimal('1'), unit_price=price,
+                                uom=uom_obj, serial_item=serial_item, tax_rate=line_tax_rate, wht_rate=line_wht_rate,
                             )
-                            inv_line.save()
-                
+                            lines += 1
+                    else:
+                        InvoiceLine.objects.create(
+                            invoice=return_invoice, product=prod, quantity=qty, unit_price=price, uom=uom_obj,
+                            tax_rate=line_tax_rate, wht_rate=line_wht_rate,
+                        )
+                        lines += 1
+                if not lines:
+                    raise ValueError('اكتب كمية لصنف واحد على الأقل.')
                 return_invoice.recalculate_totals()
-                
-                # Confirm and post invoice
-                confirmed_invoice = confirm_invoice(return_invoice.id)
-                messages.success(request, f'تم إنشاء وقيد مرتجع المبيعات بنجاح رقم ({confirmed_invoice.invoice_number}).')
-                return redirect('invoicing:sales_returns_dashboard')
-                
+                confirmed = confirm_invoice(return_invoice.id)
+            messages.success(request, f'تم تسجيل مرتجع المبيعات بدون فاتورة رقم ({confirmed.invoice_number}).')
+            return redirect('invoicing:invoice_detail', confirmed.id)
         except Exception as e:
-            messages.error(request, f'حدث خطأ أثناء حفظ المرتجع: {str(e)}')
-            return redirect('invoicing:create_standalone_sales_return')
+            messages.error(request, f'لم يتم حفظ المرتجع: {e}')
+            return redirect(here)
 
-    customers = Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True)
-    warehouses = Warehouse.objects.filter(is_active=True)
-    treasuries = Treasury.objects.all()
-    bank_accounts = BankAccount.objects.all()
-    ewallets = EWallet.objects.all()
-    products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom')
-
+    branch = get_working_branch(request)
+    products = list(Product.objects.filter(is_active=True).prefetch_related('uoms__uom'))
+    branch_prices = Product.branch_price_map([p.id for p in products], branch)
+    for p in products:
+        p.sale_price = branch_prices.get(p.id, p.sale_price)   # the ceiling the server enforces
     from apps.tenant.core.models import SystemSetting
-
     context = {
-        'title': 'إضافة مرتجع مبيعات مباشر (رصيد أول المدة)',
-        'customers': customers,
+        'title': 'مرتجع مبيعات بدون فاتورة (رصيد أول المدة)',
+        'customers': Partner.objects.filter(partner_type__in=['CUSTOMER', 'BOTH'], is_active=True),
         'warehouses': warehouses,
-        'treasuries': treasuries,
-        'bank_accounts': bank_accounts,
-        'ewallets': ewallets,
+        'treasuries': scoped_treasuries(request.user),
+        'bank_accounts': BankAccount.objects.all(),
+        'ewallets': EWallet.objects.all(),
         'products': products,
         'settings': SystemSetting.get_settings(),
     }
-    return render(request, 'invoicing/standalone_sales_return_form.html', context)
+    return render(request, 'invoicing/sales_return_no_invoice.html', context)
 
 
 # ---------------------------------------------------------------------------
@@ -2487,7 +2460,7 @@ def quotation_edit(request, quotation_id):
 def quotation_detail(request, quotation_id):
     """View Quotation details."""
     quotation = get_object_or_404(
-        _scoped_quotations(request).select_related('partner', 'branch', 'warehouse', 'created_by', 'converted_invoice').prefetch_related('lines__product', 'lines__uom'),
+        _scoped_quotations(request).select_related('partner', 'branch', 'warehouse', 'created_by', 'converted_invoice').prefetch_related('lines__product', 'lines__uom__uom'),
         id=quotation_id
     )
     context = {
@@ -2580,7 +2553,7 @@ def quotation_convert(request, quotation_id):
 def quotation_print(request, quotation_id):
     """Printable Quotation View."""
     quotation = get_object_or_404(
-        _scoped_quotations(request).select_related('partner', 'branch', 'warehouse').prefetch_related('lines__product', 'lines__uom'),
+        _scoped_quotations(request).select_related('partner', 'branch', 'warehouse').prefetch_related('lines__product', 'lines__uom__uom'),
         id=quotation_id
     )
     system_setting = SystemSetting.get_settings()
@@ -2754,7 +2727,6 @@ def pos_shift_stats_api(request):
     return JsonResponse(data)
 
 
-
-
-
-
+def _rep_for_user(user):
+    from .rep_services import rep_for_user
+    return rep_for_user(user)

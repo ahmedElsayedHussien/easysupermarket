@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block extra_css %}{% include "invoicing/_van_css.html" %}{% endblock %}
+
+{% block content %}
+<div class="vn">
+    <div class="vn-panel">
+        <div class="vn-head">
+            <h1>⬇️ طلب تفريغ {{ order.number }}</h1>
+            <span class="st {{ order.status }}">{{ order.get_status_display }}</span>
+            <span style="margin-inline-start:auto;" class="no-print">
+                <button class="vn-btn" onclick="window.print()">🖨️ طباعة</button>
+                <a class="vn-btn" href="{% url 'invoicing:unloading_list' %}">↩</a>
+            </span>
+        </div>
+        <div class="meta">
+            <div>المندوب<b>{{ order.rep }}</b></div>
+            <div>من عربية<b>{{ order.from_warehouse.name }}</b></div>
+            <div>السليم للمخزن<b>{{ order.to_warehouse.name }}</b></div>
+            {% if order.damaged_warehouse %}<div>التالف لمخزن<b>{{ order.damaged_warehouse.name }}</b></div>{% endif %}
+            <div>التاريخ<b>{{ order.date|date:"Y-m-d" }}</b></div>
+            <div>طلبه<b>{% if order.requested_by %}{{ order.requested_by|display_name }}{% else %}—{% endif %}</b></div>
+            {% if order.received_by %}<div>استلمه<b>{{ order.received_by|display_name }} — {{ order.received_at|date:"j/n H:i" }}</b></div>{% endif %}
+            {% if order.transfer %}<div>تحويل السليم<b><a href="{% url 'inventory:stock_transfer_detail' order.transfer.id %}" style="color:var(--neon-cyan);">{{ order.transfer.number }}</a></b></div>{% endif %}
+            {% if order.damaged_transfer %}<div>تحويل التالف<b><a href="{% url 'inventory:stock_transfer_detail' order.damaged_transfer.id %}" style="color:var(--neon-cyan);">{{ order.damaged_transfer.number }}</a></b></div>{% endif %}
+        </div>
+        {% if order.notes %}<p class="note">📝 {{ order.notes }}</p>{% endif %}
+    </div>
+
+    <form method="post" class="vn-panel">
+        {% csrf_token %}
+        <table class="tbl">
+            <thead><tr><th>الصنف</th><th>سليم (أساسي)</th><th>تالف (أساسي)</th><th>رصيد العربية</th></tr></thead>
+            <tbody>
+                {% for l in lines %}
+                <tr><td>{{ l.product.name }} <span class="note">({{ l.product.pos_unit_name }})</span></td>
+                    {% if order.status == 'PENDING' and can_receive %}
+                    <td><input class="qty-in" type="number" name="sound_{{ l.id }}" min="0" step="any" value="{{ l.sound_qty|stringformat:'s' }}"></td>
+                    <td><input class="qty-in" type="number" name="damaged_{{ l.id }}" min="0" step="any" value="{{ l.damaged_qty|stringformat:'s' }}"></td>
+                    {% else %}
+                    <td>{{ l.sound_qty|floatformat:"-3" }}</td><td>{% if l.damaged_qty %}<span class="warn">{{ l.damaged_qty|floatformat:"-3" }}</span>{% else %}0{% endif %}</td>
+                    {% endif %}
+                    <td>{{ l.in_van|floatformat:"-3" }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if order.status == 'PENDING' and can_receive %}
+        <div class="frm no-print" style="margin-top:.8rem;">
+            <label>التالف يروح على<select name="damaged_warehouse"><option value="">نفس المخزن ({{ order.to_warehouse.name }})</option>{% for w in warehouses %}{% if w.id != order.to_warehouse_id %}<option value="{{ w.id }}">{{ w.name }}</option>{% endif %}{% endfor %}</select></label>
+        </div>
+        <div class="actions no-print">
+            <button class="vn-btn green" name="action" value="receive" onclick="return confirm('استلام البضاعة بالكميات دي وترحيلها؟');">📥 استلام وترحيل</button>
+            <button class="vn-btn danger" name="action" value="cancel" onclick="return confirm('إلغاء الطلب؟');">✖ إلغاء الطلب</button>
+        </div>
+        <p class="note">لو عايز تشطب التالف من المخزون نهائي، اعمل بعد الاستلام «تسوية جرد» على مخزن التوالف.</p>
+        {% endif %}
+    </form>
+</div>
+{% endblock %}

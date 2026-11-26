@@ -147,7 +147,7 @@ class RentalReportsView(CustomPermissionRequiredMixin, View):
     permission_required = 'rentals.view_rental'
     def get(self, request):
         equipment_status = Equipment.objects.values('status').annotate(count=Count('id'))
-        active_rentals = Rental.objects.filter(status=Rental.STATUS_ACTIVE).order_by('end_date')
+        active_rentals = Rental.objects.filter(status=Rental.STATUS_ACTIVE).select_related('equipment', 'customer').order_by('end_date')
         
         from django.db.models import F
         equipment_profitability = Equipment.objects.annotate(

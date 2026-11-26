@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.rx { max-width: 1150px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.rx-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.rx-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.flt { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin-top: .6rem; }
+.flt label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.flt input, .flt select { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .4rem .55rem; }
+.rx-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; margin-top: .6rem; }
+.kpis div { background: var(--bg-secondary); border-radius: 8px; padding: .55rem .7rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.kpis b { display: block; font-size: 1.1rem; color: var(--text-primary); }
+.tbl { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .45rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td:first-child, .tbl th:first-child { text-align: right; }
+.k { font-size: .72rem; font-weight: 800; padding: .12rem .55rem; border-radius: 999px; }
+.k.dead { background: rgba(255,71,87,.15); color: var(--neon-red); } .k.slow { background: rgba(251,191,36,.15); color: var(--neon-gold); }
+.k.mid { background: rgba(0,229,255,.12); color: var(--neon-cyan); } .k.fast { background: rgba(46,213,115,.15); color: var(--neon-green); }
+@media print { .sidebar, .navbar, .flt { display: none !important; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rx">
+    <div class="rx-panel">
+        <h1>🔄 دوران المخزون</h1>
+        <p class="note">معدل الدوران = تكلفة المباع في الفترة ÷ قيمة الرصيد الحالي بالتكلفة. «يكفي كام يوم» = الرصيد الحالي ÷ متوسط البيع اليومي. الراكد = عليه رصيد ومتباعش خالص في الفترة — فلوس واقفة على الرف.</p>
+        <form method="get" class="flt">
+            <label>من <input type="date" name="date_from" value="{{ date_from|date:'Y-m-d' }}"></label>
+            <label>إلى <input type="date" name="date_to" value="{{ date_to|date:'Y-m-d' }}"></label>
+            <label>الترتيب<select name="sort"><option value="slow" {% if sort == 'slow' %}selected{% endif %}>الراكد والبطيء الأول</option><option value="fast" {% if sort == 'fast' %}selected{% endif %}>الأسرع الأول</option></select></label>
+            <button class="rx-btn">عرض</button><button type="button" class="rx-btn" onclick="window.print()">🖨️</button>
+        </form>
+        <div class="kpis">
+            <div>تكلفة المباع ({{ days }} يوم)<b>{{ totals.cogs|floatformat:"2g" }}</b></div>
+            <div>قيمة المخزون الحالي<b>{{ totals.value|floatformat:"2g" }}</b></div>
+            <div>معدل الدوران الكلي<b>{{ totals.turnover|default:"—" }}</b></div>
+            <div>قيمة الراكد<b style="color:var(--neon-red);">{{ dead_value|floatformat:"2g" }}</b></div>
+        </div>
+    </div>
+    <div class="rx-panel">
+        <table class="tbl">
+            <thead><tr><th>الصنف</th><th>الحالة</th><th>المباع</th><th>تكلفة المباع</th><th>الرصيد</th><th>قيمة الرصيد</th><th>الدوران</th><th>يكفي (يوم)</th></tr></thead>
+            <tbody>
+                {% for r in rows %}
+                <tr><td>{{ r.name }}</td><td><span class="k {{ r.klass }}">{{ r.klass_label }}</span></td>
+                    <td>{{ r.qty_sold|floatformat:"-2" }}</td><td>{{ r.cogs|floatformat:"2g" }}</td>
+                    <td>{{ r.qty_now|floatformat:"-2" }}</td><td>{{ r.value|floatformat:"2g" }}</td>
+                    <td>{{ r.turnover|default:"—" }}</td><td>{{ r.cover|default:"—" }}</td></tr>
+                {% empty %}<tr><td colspan="8">مفيش بيانات.</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

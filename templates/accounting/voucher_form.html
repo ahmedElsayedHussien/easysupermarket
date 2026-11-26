@@ -203,6 +203,24 @@
                 </div>
             </div>
 
+            <!-- ربط بالفواتير (accounting.allocation_services) -->
+            <div class="col-12 mb-3" id="allocPanel" style="display:none;">
+                <div style="border:1px dashed var(--border-bright); border-radius:10px; padding:.8rem 1rem;">
+                    <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+                        <strong class="text-neon-blue">🔗 ربط بالفواتير (اختياري)</strong>
+                        <span class="small text-muted" id="allocInfo"></span>
+                        <button type="button" class="btn btn-sm" id="allocAuto" style="margin-inline-start:auto; background:#ff7300; color:#fff; font-weight:700;">توزيع تلقائي (الأقدم أولاً)</button>
+                    </div>
+                    <p class="small text-muted mb-2 mt-1">حدد السند ده سداد لأنهي فاتورة. لو سبته فاضي، المبلغ بيتوزع لوحده على الفواتير الأقدم.</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0" style="color:var(--text-primary);">
+                            <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الاستحقاق</th><th>متأخرة</th><th>المتبقي</th><th style="width:9rem;">المبلغ من السند</th></tr></thead>
+                            <tbody id="allocRows"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
             <div class="col-12 mb-3">
                 <label class="form-label text-neon-blue">{{ form.description.label }}</label>
                 {{ form.description }}
@@ -534,5 +552,46 @@ document.addEventListener('DOMContentLoaded', function() {
     window.togglePaymentFields();
     updateMutualExclusion('init');
 });
+</script>
+
+<script>
+(function () {
+    var panel = document.getElementById('allocPanel');
+    var partner = document.getElementById('id_partner');
+    var amountInput = document.getElementById('id_amount');
+    var vtype = '{{ voucher_type|default:"" }}';
+    if (!panel || !partner || (vtype !== 'RECEIPT' && vtype !== 'PAYMENT')) return;
+    var rowsBox = document.getElementById('allocRows'), info = document.getElementById('allocInfo');
+    var openRows = [];
+    function load() {
+        rowsBox.innerHTML = ''; openRows = [];
+        if (!partner.value) { panel.style.display = 'none'; return; }
+        fetch('{% url "accounting:partner_open_invoices" %}?type=' + vtype + '&partner=' + encodeURIComponent(partner.value))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                openRows = d.rows || [];
+                if (!openRows.length) { panel.style.display = 'none'; return; }
+                panel.style.display = '';
+                info.textContent = 'مفتوح على الفواتير: ' + d.open_total + ' ج.م';
+                openRows.forEach(function (r) {
+                    var tr = document.createElement('tr');
+                    tr.innerHTML = '<td>' + r.number + '</td><td>' + r.date + '</td><td>' + r.due + '</td>' +
+                        '<td>' + (r.days_overdue ? r.days_overdue + ' يوم' : '—') + '</td><td>' + r.outstanding + '</td>' +
+                        '<td><input type="number" min="0" step="0.01" max="' + r.outstanding + '" name="alloc_' + r.id + '" class="form-control form-control-sm alloc-input"></td>';
+                    rowsBox.appendChild(tr);
+                });
+            }).catch(function () { panel.style.display = 'none'; });
+    }
+    document.getElementById('allocAuto').addEventListener('click', function () {
+        var left = parseFloat(amountInput && amountInput.value) || 0;
+        rowsBox.querySelectorAll('.alloc-input').forEach(function (inp, i) {
+            var open = parseFloat(openRows[i].outstanding) || 0, take = Math.min(open, left);
+            inp.value = take > 0 ? take.toFixed(2) : '';
+            left = Math.round((left - take) * 100) / 100;
+        });
+    });
+    partner.addEventListener('change', load);
+    load();
+})();
 </script>
 {% endblock %}

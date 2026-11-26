@@ -89,6 +89,8 @@ MIDDLEWARE = [
     # the "account not linked to a branch" warning.
     'django.contrib.messages.middleware.MessageMiddleware',
     'apps.tenant.core.middleware.BranchMiddleware',
+    # current user / IP for the audit log (apps.tenant.core.audit)
+    'apps.tenant.core.audit.AuditMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'django.middleware.locale.LocaleMiddleware',
 ]
@@ -159,6 +161,8 @@ AUTH_PASSWORD_VALIDATORS = [
 AUTHENTICATION_BACKENDS = [
     'axes.backends.AxesStandaloneBackend',
     'django.contrib.auth.backends.ModelBackend',
+    # role ADMIN holds every permission (incl. ones added later): templates' perms.* match the views
+    'apps.tenant.core.auth_backends.TenantAdminPermissionBackend',
 ]
 
 # =============================================================================

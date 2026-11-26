@@ -1,0 +1,68 @@
+{% extends "rep_app/base.html" %}
+{% block head %}
+<style>
+    .tabs2 { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+    .results { max-height: 240px; overflow: auto; }
+    .ln { display: flex; gap: .4rem; align-items: center; padding: .5rem 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    .ln input[type=number] { width: 80px; padding: .5rem; text-align: center; }
+    .ln select { width: auto; padding: .45rem; }
+    .x { background: none; border: 0; color: var(--bad); font-size: 1.1rem; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="tabs2">
+    <a class="btn" href="{% url 'invoicing:rep_app_loading' %}">⬆️ تحميل</a>
+    <a class="btn ghost" href="{% url 'invoicing:rep_app_unloading' %}">⬇️ تفريغ</a>
+</div>
+{% if not rep.van_warehouse %}
+<div class="msg error">الإدارة لسه ما حددتلكش مخزن عربية.</div>
+{% else %}
+<form method="post" class="card" id="frm">
+    {% csrf_token %}
+    <h2>⬆️ طلب تحميل جديد {% if source %}<span class="muted">من {{ source.name }}</span>{% endif %}</h2>
+    <input id="q" type="search" placeholder="ابحث عن الصنف…" autocomplete="off">
+    <div id="results" class="results list"></div>
+    <div id="lines" style="margin-top:.4rem;"></div>
+    <div class="field" style="margin-top:.6rem;"><label>ملاحظات</label><input name="notes" maxlength="300"></div>
+    <button class="btn" id="send" disabled>📤 ابعت الطلب للاعتماد</button>
+</form>
+{% endif %}
+<div class="card">
+    <h2>📋 طلباتي</h2>
+    <div class="list">
+        {% for o in orders %}
+        <a class="item" href="{% url 'invoicing:rep_app_loading_order' o.id %}"><div class="grow"><div class="t">{{ o.number }}</div><div class="muted">{{ o.date|date:"j/n" }} — {{ o.n }} صنف</div></div><span class="badge {{ o.status }}">{{ o.get_status_display }}</span></a>
+        {% empty %}<p class="muted">مفيش طلبات.</p>{% endfor %}
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+{{ catalog_json|json_script:"catalog-data" }}
+<script>
+var CATALOG = JSON.parse(document.getElementById('catalog-data').textContent), picked = [];
+var q = document.getElementById('q');
+q && q.addEventListener('input', function () {
+    var s = this.value.trim().toLowerCase(), box = document.getElementById('results');
+    if (!s) { box.innerHTML = ''; return; }
+    var hits = CATALOG.filter(function (p) { return p.name.toLowerCase().indexOf(s) >= 0 || (p.barcode || '').toLowerCase() === s; }).slice(0, 30);
+    box.innerHTML = hits.length ? hits.map(function (p) {
+        return '<div class="item" onclick="pick(' + p.id + ')"><div class="grow"><div class="t">' + esc(p.name) + '</div><div class="muted">متاح في المخزن: ' + esc(p.qty) + ' ' + esc(p.uoms[0].name) + '</div></div><b>＋</b></div>';
+    }).join('') : '<p class="muted">مش موجود في المخزن.</p>';
+});
+function pick(id) {
+    if (!picked.some(function (x) { return x === id; })) picked.push(id);
+    q.value = ''; document.getElementById('results').innerHTML = ''; draw();
+}
+function drop(id) { picked = picked.filter(function (x) { return x !== id; }); draw(); }
+function draw() {
+    document.getElementById('lines').innerHTML = picked.map(function (id) {
+        var p = CATALOG.find(function (x) { return x.id === id; });
+        return '<div class="ln"><input type="hidden" name="product_id" value="' + p.id + '"><b style="flex:1; min-width:140px;">' + esc(p.name) + '</b>' +
+            '<input type="number" name="qty" min="0" step="any" inputmode="decimal" required placeholder="الكمية">' +
+            '<select name="uom_id">' + p.uoms.map(function (u) { return '<option value="' + u.id + '">' + esc(u.name) + '</option>'; }).join('') + '</select>' +
+            '<button type="button" class="x" onclick="drop(' + p.id + ')">✕</button></div>';
+    }).join('');
+    document.getElementById('send').disabled = !picked.length;
+}
+</script>
+{% endblock %}

@@ -85,7 +85,7 @@ class InvoiceApprovalListView(CustomPermissionRequiredMixin, ListView):
     paginate_by = 25
 
     def get_queryset(self):
-        return EInvoiceLog.objects.filter(status='WAITING_APPROVAL').order_by('-created_at')
+        return EInvoiceLog.objects.filter(status='WAITING_APPROVAL').select_related('invoice__partner').order_by('-created_at')
 
 class EInvoiceHistoryListView(CustomPermissionRequiredMixin, ListView):
     permission_required = 'einvoicing.view_einvoicelog'
@@ -103,7 +103,7 @@ class EInvoiceHistoryListView(CustomPermissionRequiredMixin, ListView):
 
     def get_queryset(self):
         # Exclude 'WAITING_APPROVAL' so we only see ones that have entered the pipeline
-        return EInvoiceLog.objects.exclude(status='WAITING_APPROVAL').order_by('-updated_at')
+        return EInvoiceLog.objects.exclude(status='WAITING_APPROVAL').select_related('invoice__partner').order_by('-updated_at')
 
 @custom_permission_required('einvoicing.change_einvoicelog', redirect_url='core:main_screen')
 def approve_invoice_for_eta(request, log_id):
@@ -226,7 +226,7 @@ def refresh_all_eta_status(request):
     return redirect('einvoicing:invoice_history')
 
 
-@custom_permission_required('einvoicing.change_einvoicelog', redirect_url='core:main_screen')
+@custom_permission_required('einvoicing.cancel_einvoice', redirect_url='core:main_screen')
 def cancel_eta_document(request, log_id):
     """Cancel at the Tax Authority a document whose invoice was cancelled in the program."""
     if request.method == 'POST':
@@ -300,7 +300,7 @@ def received_documents_view(request):
     })
 
 
-@custom_permission_required('einvoicing.change_einvoicelog', redirect_url='core:main_screen')
+@custom_permission_required('einvoicing.reject_received_einvoice', redirect_url='core:main_screen')
 def reject_received_document(request):
     from django.urls import reverse
     from .services import reject_document
@@ -319,7 +319,7 @@ def reject_received_document(request):
 EGS_BATCH_LIMIT = 50
 
 
-@custom_permission_required('einvoicing.change_einvoicelog', redirect_url='core:main_screen')
+@custom_permission_required('einvoicing.manage_egs_codes', redirect_url='core:main_screen')
 def egs_codes_view(request):
     """Register products' EGS codes at the Tax Authority (Create EGS Code Usage API)."""
     from django.core.paginator import Paginator

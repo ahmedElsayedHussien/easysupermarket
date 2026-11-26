@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} — {{ month_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.ar { max-width: 1250px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.ar-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.ar-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; }
+.ar-head h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.ar-tools { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-inline-start: auto; }
+.ar-tools select, .ar-btn { padding: .4rem .75rem; border-radius: 8px; border: 1px solid var(--border-bright);
+    background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .85rem; text-decoration: none; cursor: pointer; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
+.kpi { background: var(--bg-card); border: 1px solid var(--border-default); border-top: 3px solid var(--k); border-radius: 12px; padding: .8rem .9rem; }
+.kpi .l { font-size: .78rem; color: var(--text-muted); font-weight: 700; }
+.kpi .v { font-size: 1.35rem; font-weight: 800; color: var(--text-primary); font-variant-numeric: tabular-nums; margin-top: .15rem; }
+.kpi .s { font-size: .74rem; color: var(--text-muted); font-weight: 600; }
+.ar-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.ar-table th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .55rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; white-space: nowrap; }
+.ar-table th:first-child, .ar-table td:first-child { text-align: right; }
+.ar-table td { padding: .55rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.ar-table tfoot td { font-weight: 800; border-top: 2px solid var(--border-bright); border-bottom: none; }
+.ar-table a.emp { color: var(--text-primary); font-weight: 800; text-decoration: none; }
+.ar-table a.emp:hover { color: var(--neon-orange); }
+.sub { display: block; font-size: .72rem; color: var(--text-muted); font-weight: 600; }
+.neg { color: var(--neon-red); font-weight: 700; } .pos { color: var(--neon-green); font-weight: 700; }
+.group { border-inline-start: 2px solid var(--border-bright); }
+.rate { display: inline-block; min-width: 3rem; font-size: .72rem; font-weight: 800; padding: .1rem .4rem; border-radius: 999px; }
+.rate.good { background: rgba(46,213,115,.15); color: var(--neon-green); }
+.rate.mid { background: rgba(251,191,36,.15); color: var(--neon-gold); }
+.rate.bad { background: rgba(255,71,87,.15); color: var(--neon-red); }
+.note { font-size: .78rem; color: var(--text-muted); }
+.table-scroll { overflow-x: auto; }
+@media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media print {
+  .sidebar, .navbar, .ar-tools, .no-print { display: none !important; }
+  .ar-panel, .kpi { border-color: #999; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ar">
+    <div class="ar-panel">
+        <div class="ar-head">
+            <h1>📊 تقرير الحضور والغياب{% if show_pay %} والرواتب{% endif %} — {{ month_name }}</h1>
+            <form method="get" class="ar-tools">
+                <select name="month" onchange="this.form.submit()" aria-label="الشهر">
+                    {% for num, name in month_choices %}<option value="{{ num }}" {% if num == month %}selected{% endif %}>{{ name }}</option>{% endfor %}
+                </select>
+                <select name="year" onchange="this.form.submit()" aria-label="السنة">
+                    {% for y in year_choices %}<option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y|stringformat:"d" }}</option>{% endfor %}
+                </select>
+                <a class="ar-btn" href="?month={{ month }}&year={{ year|stringformat:'d' }}&export=excel">⬇️ إكسيل</a>
+                <button type="button" class="ar-btn" onclick="window.print()">🖨️ طباعة</button>
+                {% if show_pay %}<a class="ar-btn" href="{% url 'hr:payroll_list' %}?month={{ month }}&year={{ year|stringformat:'d' }}">💸 مسير الشهر</a>{% endif %}
+            </form>
+        </div>
+        <p class="note" style="margin:.5rem 0 0;">أيام العمل = أيام الشهر من غير الإجازة الأسبوعية (لحد النهارده في الشهر الحالي، ومن تاريخ تعيين الموظف). الغياب = يوم عمل من غير حضور ولا إجازة. {% if grace_minutes %}سماحية التأخير {{ grace_minutes }} دقيقة في اليوم.{% endif %} دوس على اسم الموظف تشوف شهره يوم بيوم.</p>
+    </div>
+
+    {% if rows %}
+    <div class="kpis">
+        <div class="kpi" style="--k: var(--neon-green);"><div class="l">✅ أيام الحضور</div><div class="v">{{ totals.present_days }}</div><div class="s">من {{ totals.working_days }} يوم عمل</div></div>
+        <div class="kpi" style="--k: var(--neon-red);"><div class="l">❌ أيام الغياب</div><div class="v">{{ totals.absent_days }}</div><div class="s">🌴 {{ totals.leave_days }} يوم إجازة</div></div>
+        <div class="kpi" style="--k: var(--neon-gold);"><div class="l">⏰ ساعات التأخير</div><div class="v">{{ totals.delay_hours }}</div><div class="s">{{ totals.deductible_delay }} بعد السماحية</div></div>
+        {% if show_pay %}
+        <div class="kpi" style="--k: var(--neon-orange);"><div class="l">💰 صافي الرواتب</div><div class="v">{{ totals.net_salary|floatformat:"2g" }}</div><div class="s">{% if totals.missing_payrolls %}{{ totals.missing_payrolls }} موظف مسيره لسه ماصدرش{% else %}ج.م{% endif %}</div></div>
+        {% else %}
+        <div class="kpi" style="--k: var(--neon-green);"><div class="l">➕ ساعات الإضافي</div><div class="v">{{ totals.overtime_hours }}</div><div class="s">ساعة</div></div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="ar-panel">
+        {% if rows %}
+        <div class="table-scroll">
+        <table class="ar-table">
+            <thead>
+                <tr>
+                    <th>الموظف</th>
+                    <th>أيام العمل</th>
+                    <th>حضور</th>
+                    <th>إجازة</th>
+                    <th>غياب</th>
+                    <th>نسبة الحضور</th>
+                    <th class="group">تأخير (ساعة)</th>
+                    <th>إضافي (ساعة)</th>
+                    {% if show_pay %}
+                    <th class="group">خصم الغياب</th>
+                    <th>خصم التأخير</th>
+                    <th>الإضافي</th>
+                    <th>صافي الراتب</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rows %}
+                <tr>
+                    <td><a class="emp" href="?month={{ month }}&year={{ year|stringformat:'d' }}&employee={{ r.employee.id }}">{{ r.name }}</a><span class="sub">{{ r.employee.branch.name|default:"بدون فرع" }}</span></td>
+                    <td>{{ r.working_days }}</td>
+                    <td class="pos">{{ r.present_days }}</td>
+                    <td>{{ r.leave_days }}</td>
+                    <td class="{% if r.absent_days %}neg{% endif %}">{{ r.absent_days }}</td>
+                    <td>
+                        {% if r.attendance_rate is not None %}
+                        <span class="rate {% if r.attendance_rate >= 95 %}good{% elif r.attendance_rate >= 80 %}mid{% else %}bad{% endif %}">{{ r.attendance_rate }}%</span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td class="group {% if r.delay_hours %}neg{% endif %}">{{ r.delay_hours }}{% if r.deductible_delay != r.delay_hours %}<span class="sub">{{ r.deductible_delay }} بعد السماحية</span>{% endif %}</td>
+                    <td class="{% if r.overtime_hours %}pos{% endif %}">{{ r.overtime_hours }}</td>
+                    {% if show_pay %}
+                        {% if r.payroll %}
+                        <td class="group">{{ r.payroll.absence_deduction|floatformat:"2g" }}</td>
+                        <td>{{ r.payroll.delay_deduction|floatformat:"2g" }}</td>
+                        <td>{{ r.payroll.overtime_pay|floatformat:"2g" }}</td>
+                        <td><strong>{{ r.payroll.net_salary|floatformat:"2g" }}</strong><span class="sub">{% if r.payroll.is_paid %}✅ معتمد{% else %}⏳ معلق{% endif %}</span></td>
+                        {% else %}
+                        <td class="group" colspan="4"><span class="sub">{% if r.employee.base_salary %}المسير لسه ماصدرش{% else %}مفيش راتب أساسي{% endif %}</span></td>
+                        {% endif %}
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr>
+                    <td>الإجمالي ({{ rows|length }})</td>
+                    <td>{{ totals.working_days }}</td>
+                    <td>{{ totals.present_days }}</td>
+                    <td>{{ totals.leave_days }}</td>
+                    <td>{{ totals.absent_days }}</td>
+                    <td></td>
+                    <td class="group">{{ totals.delay_hours }}</td>
+                    <td>{{ totals.overtime_hours }}</td>
+                    {% if show_pay %}
+                    <td class="group">{{ totals.absence_deduction|floatformat:"2g" }}</td>
+                    <td>{{ totals.delay_deduction|floatformat:"2g" }}</td>
+                    <td>{{ totals.overtime_pay|floatformat:"2g" }}</td>
+                    <td>{{ totals.net_salary|floatformat:"2g" }}</td>
+                    {% endif %}
+                </tr>
+            </tfoot>
+        </table>
+        </div>
+        {% else %}
+        <p class="note" style="text-align:center; padding:1.5rem;">مفيش موظفين في نطاق فرعك.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

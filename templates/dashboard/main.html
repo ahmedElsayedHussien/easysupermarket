@@ -1,239 +1,235 @@
 {% extends 'base.html' %}
-{% load i18n static %}
+{% load i18n static user_tags %}
 
-{% block title %}لوحة التحكم الرئيسية - ميزا{% endblock %}
+{% block title %}لوحة التحكم الرئيسية - مسار{% endblock %}
 
 {% block extra_css %}
 <style>
-.command-hub { max-width: 1200px; margin: 0 auto; }
-.section-title { font-size: 1.15rem; font-weight: 800; color: var(--neon-cyan); letter-spacing: 2px; }
-.hub-search { margin: 1rem 0; }
-.module-card { min-height: 150px; }
-.shortcut-hint {
-    font-family: var(--font-english); font-size: 0.72rem; font-weight: 700;
-    color: rgba(255, 255, 255, 0.9); margin-top: 0.25rem; letter-spacing: 0.5px;
+.home { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.1rem; }
+.home-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.home-h { font-size: .95rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .75rem; display: flex; align-items: center; gap: .4rem; }
+.home-h small { font-size: .75rem; font-weight: 600; color: var(--text-muted); margin-inline-start: auto; }
+
+/* greeting */
+.home-hello { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
+.home-hello h1 { font-size: 1.35rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.home-hello .meta { color: var(--text-muted); font-size: .85rem; font-weight: 600; }
+
+/* KPI tiles */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; }
+.kpi { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: .9rem 1rem;
+       border-top: 3px solid var(--k, var(--neon-cyan)); }
+.kpi .lbl { font-size: .8rem; color: var(--text-muted); font-weight: 700; }
+.kpi .val { font-size: 1.6rem; font-weight: 800; color: var(--text-primary); margin: .2rem 0; font-variant-numeric: tabular-nums; }
+.kpi .val small { font-size: .8rem; color: var(--text-muted); font-weight: 700; }
+.kpi .sub { font-size: .78rem; color: var(--text-muted); font-weight: 600; }
+.kpi .up { color: var(--neon-green); font-weight: 800; }
+.kpi .down { color: var(--neon-red); font-weight: 800; }
+
+/* alerts */
+.alerts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
+.alert-row { display: flex; align-items: center; gap: .7rem; padding: .55rem .75rem; border-radius: 9px;
+             background: var(--bg-secondary); border-inline-start: 4px solid var(--neon-gold); text-decoration: none; color: var(--text-primary); }
+.alert-row.critical { border-inline-start-color: var(--neon-red); }
+.alert-row:hover { background: var(--bg-tertiary); }
+.alert-row .cnt { min-width: 2.2rem; text-align: center; font-weight: 800; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.alert-row .txt { flex: 1; font-weight: 600; font-size: .9rem; }
+.alert-row .go { font-size: .8rem; font-weight: 800; color: var(--neon-orange); white-space: nowrap; }
+.all-good { color: var(--neon-green); font-weight: 700; font-size: .9rem; }
+
+/* quick actions */
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.act { display: inline-flex; align-items: center; gap: .45rem; padding: .55rem .9rem; border-radius: 9px; text-decoration: none;
+       background: var(--bg-secondary); border: 1px solid var(--border-bright); color: var(--text-primary); font-weight: 700; font-size: .88rem; }
+.act:hover { border-color: var(--neon-orange); }
+.act.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.act kbd { font-family: var(--font-english, monospace); font-size: .7rem; padding: 0 .3rem; border-radius: 4px;
+           border: 1px solid currentColor; opacity: .8; }
+
+/* chart + top items */
+.two { display: grid; grid-template-columns: 3fr 2fr; gap: 1.1rem; }
+.bars { display: flex; align-items: flex-end; gap: .6rem; height: 170px; padding: 1.4rem .2rem 0; border-bottom: 1px solid var(--border-bright); }
+.bar-col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; position: relative; }
+.bar { width: 100%; max-width: 46px; min-height: 2px; background: var(--neon-orange); opacity: .55; border-radius: 4px 4px 0 0; }
+.bar-col.today .bar { opacity: 1; }
+.bar-col .tip { position: absolute; bottom: calc(var(--h) + 6px); font-size: .72rem; font-weight: 800; color: var(--text-primary);
+                white-space: nowrap; font-variant-numeric: tabular-nums; visibility: hidden; }
+.bar-col.today .tip, .bar-col:hover .tip { visibility: visible; }
+.bar-col:hover .bar { opacity: 1; }
+.bar-names { display: flex; gap: .6rem; padding: .35rem .2rem 0; }
+.bar-names span { flex: 1; text-align: center; font-size: .72rem; color: var(--text-muted); font-weight: 700; }
+.bar-names span.today { color: var(--text-primary); }
+.top-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .55rem; }
+.top-list li { font-size: .85rem; }
+.top-list .ti-row { display: flex; justify-content: space-between; gap: .5rem; font-weight: 700; color: var(--text-primary); }
+.top-list .ti-row span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.top-list .q { color: var(--text-muted); font-size: .75rem; font-weight: 600; }
+.top-list .track { height: 6px; background: var(--bg-secondary); border-radius: 3px; margin-top: .25rem; }
+.top-list .fill { height: 100%; background: var(--neon-cyan); border-radius: 3px; }
+.empty { color: var(--text-muted); font-size: .85rem; padding: 1rem 0; text-align: center; }
+
+/* modules */
+.mod-search { margin-inline-start: auto; background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary);
+              border-radius: 8px; padding: .35rem .7rem; font-size: .82rem; width: 220px; max-width: 50%; }
+.mods { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .6rem; }
+.mod { display: flex; align-items: center; gap: .6rem; padding: .75rem .8rem; border-radius: 10px; text-decoration: none;
+       background: var(--bg-secondary); border: 1px solid var(--border-default); border-inline-start: 3px solid var(--m); }
+.mod:hover { border-color: var(--m); transform: translateY(-1px); }
+.mod .ic { font-size: 1.35rem; }
+.mod .tx { display: flex; flex-direction: column; min-width: 0; }
+.mod .t { white-space: nowrap; font-weight: 800; font-size: .88rem; color: var(--text-primary); }
+.mod .s { font-size: .7rem; color: var(--text-muted); font-family: var(--font-english, inherit); }
+.m-orange { --m: var(--neon-orange); } .m-green { --m: var(--neon-green); } .m-red { --m: var(--neon-red); }
+.m-purple { --m: var(--neon-purple); } .m-cyan { --m: var(--neon-cyan); } .m-blue { --m: var(--neon-blue); }
+.m-gold { --m: var(--neon-gold); } .m-lime { --m: var(--neon-lime); } .m-gray { --m: var(--text-muted); }
+
+@media (max-width: 900px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .two { grid-template-columns: 1fr; }
 }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="command-hub">
+<div class="home">
 
-    <!-- Section Header -->
-    <div style="text-align:center;margin-bottom:1.5rem;">
-        <h2 class="section-title">⚡ Fast Access Command Hub</h2>
-        <p style="font-size:0.9rem;color:#cbd5e1;font-weight:700;margin-top:0.4rem;">اختر الوحدة للبدء السريع</p>
+    {# 1) greeting #}
+    <div class="home-hello">
+        <h1>{{ greeting }} يا {{ request.user|display_name }} 👋</h1>
+        <span class="meta">{% if current_branch %}🏢 {{ current_branch.name }}{% else %}🏢 كل الفروع{% endif %} · {{ today|date:"l j F Y" }}</span>
     </div>
 
-    <!-- ============================================================
-         TOP ROW: 5 Primary Module Cards
-         ============================================================ -->
-    <div class="module-grid module-grid-5">
-
-        <!-- POS - Orange -->
-        <a href="{% url 'invoicing:pos' %}" class="module-card card-orange">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M2 3h20v2H2V3zm2 4h16v14H4V7zm2 2v10h12V9H6zm1 2h4v2H7v-2zm6 0h4v2h-4v-2zm-6 4h4v2H7v-2zm6 0h4v2h-4v-2z"/>
-                </svg>
+    {# 2) today's figures (admins) #}
+    {% if show_figures %}
+    <div class="kpis">
+        <div class="kpi" style="--k: var(--neon-green);">
+            <div class="lbl">💰 صافي مبيعات اليوم</div>
+            <div class="val">{{ figures.sales|floatformat:"0g" }} <small>ج.م</small></div>
+            <div class="sub">
+                {% if figures.change is None %}أمس: {{ figures.sales_yesterday|floatformat:"0g" }} ج.م
+                {% elif figures.change > 0 %}<span class="up">▲ {{ figures.change_abs }}%</span> عن أمس
+                {% elif figures.change < 0 %}<span class="down">▼ {{ figures.change_abs }}%</span> عن أمس
+                {% else %}نفس مبيعات أمس{% endif %}
             </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'نقطة البيع' %}</div>
-                <div class="card-subtitle">POS — Cashier</div>
-                <div class="shortcut-hint">[F5] Quick Open</div>
-            </div>
-        </a>
-
-        <!-- Sales - Green -->
-        <a href="{% url 'invoicing:sales_invoice_list' %}" class="module-card card-green">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm3 3h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2zm9-8v2h-2V8h2zm0 4v2h-2v-2h2z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'إدارة المبيعات' %}</div>
-                <div class="card-subtitle">Sales Management</div>
-            </div>
-        </a>
-
-        <!-- Purchases - Red -->
-        <a href="{% url 'invoicing:purchase_invoice' %}" class="module-card card-red">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M6 2l1.5 4H20l-2 7H7L5 2H2V0h4l1 2zm1 14a2 2 0 100 4 2 2 0 000-4zm11 0a2 2 0 100 4 2 2 0 000-4zM8 13h11.5l1.4-5H7.5L8 13z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'إدارة المشتريات' %}</div>
-                <div class="card-subtitle">Purchases</div>
-            </div>
-        </a>
-
-        <!-- Stock Control FIFO - Cyan -->
-        <a href="{% url 'inventory:stock_list' %}" class="module-card card-cyan">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M2 20h20v2H2v-2zM4 8l8-6 8 6v12H4V8zm2 2v8h12v-8l-6-4.5L6 10zm3 4h2v2H9v-2zm4 0h2v2h-2v-2zm-4-4h2v2H9v-2zm4 0h2v2h-2v-2z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'إدارة المخزون' %}</div>
-                <div class="card-subtitle">Stock Control FIFO</div>
-            </div>
-        </a>
-
-        <!-- Returns - Purple -->
-        <a href="{% url 'invoicing:sales_returns_dashboard' %}" class="module-card card-purple">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M17 3l4 4-4 4V8h-4V6h4V3zM7 21l-4-4 4-4v3h4v2H7v3zM3 3h8v2H5v14h6v2H3V3zm10 0h8v18h-8v-2h6V5h-6V3z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'المرتجعات' %}</div>
-                <div class="card-subtitle">Returns & Refunds</div>
-            </div>
-        </a>
-
-    </div>
-
-    <!-- ============================================================
-         SEARCH BAR
-         ============================================================ -->
-    <div class="hub-search">
-        <div class="search-box">
-            <input type="text" id="hubSearch" placeholder="{% trans 'Search modules... ابحث عن وحدة' %}">
-            <span class="search-icon">🔍</span>
         </div>
-    </div>
-
-    <!-- ============================================================
-         BOTTOM ROW: 5 Secondary Module Cards
-         ============================================================ -->
-    <div class="module-grid module-grid-5">
-
-        <!-- Branches - Lime (Admin Only) -->
-        {% if is_admin %}
-        <a href="{% url 'core:branch_list' %}" class="module-card card-lime">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'الفروع' %}</div>
-                <div class="card-subtitle">Branches & Entities</div>
-            </div>
-        </a>
-        {% endif %}
-
-        <!-- Suppliers - Blue -->
-        <a href="{% url 'partners:supplier_list' %}" class="module-card card-blue">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M3 13h2v7H3v-7zm4-4h2v11H7V9zm4-4h2v15h-2V5zm4 2h2v13h-2V7zm4-4h2v17h-2V3zM1 21h22v2H1v-2z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'الموردون' %}</div>
-                <div class="card-subtitle">Suppliers</div>
-            </div>
-        </a>
-
-        <!-- Finance - Gold (Admin Only) -->
-        {% if is_admin %}
-        <a href="{% url 'accounting:journal_list' %}" class="module-card card-gold">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'الحسابات والمالية' %}</div>
-                <div class="card-subtitle">Accounts & Finance</div>
-            </div>
-        </a>
-        {% endif %}
-
-        <!-- Reports - Purple -->
-        <a href="{% url 'core:reports_index' %}" class="module-card card-purple">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'التقارير' %}</div>
-                <div class="card-subtitle">Reports & Analytics</div>
-            </div>
-        </a>
-
-
-        <!-- Settings - Gray (Admin Only) -->
-        {% if is_admin %}
-        <a href="{% url 'core:settings_dashboard' %}" class="module-card card-gray">
-            <div class="card-icon">
-                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
-                </svg>
-            </div>
-            <div class="card-content">
-                <div class="card-title">{% trans 'إعدادات النظام' %}</div>
-                <div class="card-subtitle">System Settings</div>
-            </div>
-        </a>
-        {% endif %}
-
-    </div>
-
-    <!-- E-Service Full-Width Card (Admin Only) -->
-    {% if is_admin %}
-    <div style="margin-top:1rem;">
-        <div class="module-card" style="display:flex;flex-wrap:wrap;align-items:center;gap:1.5rem;padding:1.25rem 1.5rem;background:linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05));border:2px solid rgba(255,115,0,0.5);border-radius:12px;transition:all 0.2s;" onmouseover="this.style.borderColor='#ff7300';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.25),rgba(255,115,0,1))'" onmouseout="this.style.borderColor='rgba(255,115,0,0.5)';this.style.background='linear-gradient(135deg,rgba(255,115,0,0.15),rgba(255,115,0,0.05))'">
-            <div style="font-size:2.5rem;flex-shrink:0;">💳</div>
-            <div style="flex:1;min-width:250px;">
-                <div style="color:#ff7300;font-size:1.15rem;font-weight:800;">خدمات الشحن والدفع الإلكتروني</div>
-                <div style="color:#cbd5e1;font-size:0.88rem;font-weight:600;margin-top:0.25rem;">إدارة ماكينات فوري وأمان والبنوك | سحب وإيداع وتحويل رصيد للعملاء | شحن الماكينات من المناديب</div>
-            </div>
-            <div style="display:flex;flex-wrap:wrap;gap:0.75rem;position:relative;z-index:10;justify-content:flex-start;">
-                <a href="{% url 'accounting:eservice_history' %}" style="padding:0.5rem 1rem;border-radius:6px;border:1px solid rgba(255,255,255,0.2);color:#fff;font-size:0.8rem;font-weight:700;text-decoration:none;display:flex;align-items:center;gap:5px;">📜 السجل</a>
-                <a href="{% url 'accounting:pos_machine_list' %}" style="padding:0.5rem 1rem;border-radius:6px;border:1px solid rgba(255,115,0,0.5);color:#ff7300;font-size:0.8rem;font-weight:700;text-decoration:none;background:rgba(255,115,0,0.1);display:flex;align-items:center;gap:5px;">⚙️ الماكينات</a>
-                <a href="{% url 'accounting:eservice_center' %}" style="padding:0.5rem 1rem;border-radius:6px;border:1px solid rgba(255,115,0,0.5);color:#ff7300;font-size:0.8rem;font-weight:700;text-decoration:none;background:rgba(255,115,0,0.1);display:flex;align-items:center;gap:5px;">🏪 مركز الخدمات</a>
-                <a href="/accounting/eservice/dashboard/" style="padding:0.5rem 1rem;border-radius:6px;background:#ff7300;color:#fff;font-size:0.8rem;font-weight:700;text-decoration:none;display:flex;align-items:center;gap:5px;">لوحة خدمات الدفع ←</a>
-            </div>
+        <div class="kpi" style="--k: var(--neon-cyan);">
+            <div class="lbl">🧾 فواتير البيع اليوم</div>
+            <div class="val">{{ figures.invoices }}</div>
+            <div class="sub">{% if figures.invoices %}متوسط الفاتورة {% widthratio figures.sales figures.invoices 1 %} ج.م{% else %}لسه مفيش فواتير النهارده{% endif %}</div>
+        </div>
+        <div class="kpi" style="--k: var(--neon-gold);">
+            <div class="lbl">💵 الكاش في الأدراج دلوقتي</div>
+            <div class="val">{{ figures.drawer_cash|floatformat:"0g" }} <small>ج.م</small></div>
+            <div class="sub">{% if figures.open_shifts %}{{ figures.open_shifts }} وردية مفتوحة{% else %}مفيش ورديات مفتوحة{% endif %}</div>
+        </div>
+        <div class="kpi" style="--k: var(--neon-purple);">
+            <div class="lbl">📈 مجمل ربح اليوم</div>
+            <div class="val">{{ figures.profit|floatformat:"0g" }} <small>ج.م</small></div>
+            <div class="sub">{% if figures.margin is not None %}هامش {{ figures.margin }}% من المبيعات{% else %}المبيعات ناقص تكلفة البضاعة{% endif %}</div>
         </div>
     </div>
     {% endif %}
 
+    {# 3) needs attention #}
+    {% if alerts or show_figures %}
+    <div class="home-panel">
+        <h2 class="home-h">⚠️ محتاج انتباهك</h2>
+        {% if alerts %}
+        <ul class="alerts">
+            {% for a in alerts %}
+            <li><a class="alert-row {{ a.level }}" href="{{ a.url }}">
+                <span>{{ a.icon }}</span>
+                <span class="cnt">{{ a.count }}</span>
+                <span class="txt">{{ a.text }}</span>
+                <span class="go">{{ a.action }} ←</span>
+            </a></li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="all-good">✅ كله تمام — مفيش حاجة مستنياك النهارده</div>
+        {% endif %}
+    </div>
+    {% endif %}
 
-    <!-- ============================================================
-         QUICK STATS ROW (Admin Only)
-         ============================================================ -->
-    {% if request.user.is_superuser %}
-    <div class="grid-4" style="margin-top:1.5rem;">
-        <div class="stat-card stat-green">
-            <div class="stat-label">{% trans 'مبيعات اليوم' %}</div>
-            <div class="stat-value">{{ today_sales|default:"0"|floatformat:0 }}</div>
-            <div class="stat-change up">↑ {{ today_sales_change|default:"0" }}% {% trans 'عن أمس' %}</div>
+    {# 4) quick actions #}
+    {% if quick_actions %}
+    <div class="home-panel">
+        <h2 class="home-h">⚡ إجراءات سريعة</h2>
+        <div class="actions">
+            {% for a in quick_actions %}
+            <a class="act {% if forloop.first %}primary{% endif %}" href="{{ a.url }}">{{ a.icon }} {{ a.label }}{% if a.key %} <kbd>{{ a.key }}</kbd>{% endif %}</a>
+            {% endfor %}
         </div>
-        <div class="stat-card stat-cyan">
-            <div class="stat-label">{% trans 'الأصناف في المخزون' %}</div>
-            <div class="stat-value">{{ total_products|default:"0" }}</div>
-            <div class="stat-change" style="color:var(--neon-cyan);">↗ {% trans 'فعال' %}</div>
+    </div>
+    {% endif %}
+
+    {# 5) week chart + today's top items (admins) #}
+    {% if show_figures %}
+    <div class="two">
+        <div class="home-panel">
+            <h2 class="home-h">📊 صافي المبيعات آخر 7 أيام <small>الإجمالي {{ week.total|floatformat:"0g" }} ج.م</small></h2>
+            {% if week.has_data %}
+            <div class="bars" role="img" aria-label="صافي المبيعات آخر 7 أيام">
+                {% for d in week.days %}
+                <div class="bar-col {% if d.is_today %}today{% endif %}" style="--h: {{ d.pct|floatformat:'0' }}%;" title="{{ d.name }} {{ d.date|date:'j/n' }}: {{ d.value|floatformat:'0g' }} ج.م">
+                    <span class="tip">{{ d.value|floatformat:"0g" }}</span>
+                    <div class="bar" style="height: {{ d.pct|floatformat:'0' }}%;"></div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="bar-names">{% for d in week.days %}<span class="{% if d.is_today %}today{% endif %}">{{ d.name }}</span>{% endfor %}</div>
+            {% else %}
+            <div class="empty">مفيش مبيعات في آخر 7 أيام</div>
+            {% endif %}
         </div>
-        <div class="stat-card stat-red">
-            <div class="stat-label">مخزون منخفض</div>
-            <div class="stat-value">{{ low_stock_count|default:"0" }}</div>
-            <div class="stat-change down" style="color:var(--neon-red);">⚠ {% trans 'يحتاج مراجعة' %}</div>
+        <div class="home-panel">
+            <h2 class="home-h">🏆 أكتر الأصناف بيعاً النهارده</h2>
+            {% if top_items %}
+            <ul class="top-list">
+                {% for r in top_items %}
+                <li>
+                    <div class="ti-row"><span>{{ r.product__name }} <span class="q">× {{ r.qty|floatformat:"-2" }}</span></span><span>{{ r.amount|floatformat:"0g" }} ج.م</span></div>
+                    <div class="track"><div class="fill" style="width: {{ r.pct|floatformat:'0' }}%;"></div></div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty">لسه مفيش مبيعات النهارده</div>
+            {% endif %}
         </div>
-        <div class="stat-card stat-gold">
-            <div class="stat-label">{% trans 'فواتير اليوم' %}</div>
-            <div class="stat-value">{{ today_invoices|default:"0" }}</div>
-            <div class="stat-change up">✓ {% trans 'مكتملة' %}</div>
+    </div>
+    {% endif %}
+
+    {# 6) modules #}
+    {% if modules %}
+    <div class="home-panel">
+        <h2 class="home-h">🗂️ الأقسام
+            <input type="search" id="homeModSearch" class="mod-search" placeholder="ابحث عن قسم..." autocomplete="off">
+        </h2>
+        <div class="mods" id="homeMods">
+            {% for m in modules %}
+            <a class="mod m-{{ m.color }}" href="{{ m.url }}" data-q="{{ m.title }} {{ m.subtitle|lower }}">
+                <span class="ic">{{ m.icon }}</span>
+                <span class="tx"><span class="t">{{ m.title }}</span><span class="s">{{ m.subtitle }}</span></span>
+            </a>
+            {% endfor %}
         </div>
     </div>
     {% endif %}
 
 </div>
+
+<script>
+(function () {
+    var box = document.getElementById('homeModSearch');
+    if (!box) return;
+    var cards = document.querySelectorAll('#homeMods .mod');
+    function apply() {
+        var q = box.value.trim().toLowerCase();
+        cards.forEach(function (c) { c.style.display = (!q || c.dataset.q.indexOf(q) !== -1) ? '' : 'none'; });
+    }
+    box.addEventListener('input', apply);
+    box.addEventListener('keydown', function (e) { if (e.key === 'Escape') { box.value = ''; apply(); } });
+})();
+</script>
 {% endblock %}

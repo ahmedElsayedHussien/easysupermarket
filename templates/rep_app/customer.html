@@ -1,0 +1,29 @@
+{% extends "rep_app/base.html" %}
+{% block content %}
+<div class="card">
+    <h2>👤 {{ p.name }}</h2>
+    <div class="muted">{{ p.mobile|default:p.phone }}{% if p.address %} — {{ p.address }}{% endif %}</div>
+    <div class="grid2" style="margin-top:.6rem;">
+        <div class="kpi"><small>رصيده عليه</small><b class="num {% if balance > 0 %}warn{% endif %}">{{ balance|floatformat:"2g" }}</b></div>
+        <div class="kpi"><small>حد الائتمان</small><b class="num">{% if p.credit_limit %}{{ p.credit_limit|floatformat:"2g" }}{% else %}مفتوح{% endif %}</b></div>
+    </div>
+</div>
+<a class="btn" href="{% url 'invoicing:rep_app_sell' %}?customer={{ p.id }}">🛒 بيع للعميل ده</a>
+<form method="post" class="card">
+    {% csrf_token %}
+    <h2>💰 تحصيل نقدي</h2>
+    <div class="field"><label>المبلغ</label><input type="number" name="amount" min="0.01" step="0.01" inputmode="decimal" required></div>
+    <div class="field"><label>ملاحظة</label><input name="notes" maxlength="200"></div>
+    <button class="btn ok" onclick="return confirm('تسجيل التحصيل؟ الفلوس هتنزل في خزنتك.');">✔ تسجيل التحصيل</button>
+</form>
+<div class="card">
+    <h2>🧾 فواتيري للعميل</h2>
+    <div class="list">{% for i in invoices %}<a class="item" href="{% url 'invoicing:rep_app_invoice' i.id %}"><div class="grow"><div class="t">{{ i.invoice_number }}</div><div class="muted">{{ i.date|date:"j/n/Y" }}{% if i.paid_credit %} — آجل {{ i.paid_credit|floatformat:2 }}{% endif %}</div></div><b class="num">{{ i.total_amount|floatformat:"2g" }}</b></a>{% empty %}<p class="muted">مفيش.</p>{% endfor %}</div>
+</div>
+{% if receipts %}
+<div class="card">
+    <h2>💰 تحصيلاتي</h2>
+    <div class="list">{% for v in receipts %}<div class="item"><div class="grow"><div class="t">{{ v.voucher_number }}</div><div class="muted">{{ v.date|date:"j/n/Y" }}</div></div><b class="num ok">{{ v.amount|floatformat:"2g" }}</b></div>{% endfor %}</div>
+</div>
+{% endif %}
+{% endblock %}

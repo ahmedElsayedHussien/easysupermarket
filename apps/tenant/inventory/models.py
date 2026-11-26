@@ -10,7 +10,7 @@ Critical design decisions:
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.core.exceptions import ValidationError
-from django.db.models import Sum
+from django.db.models import F, Sum
 from mptt.models import MPTTModel, TreeForeignKey
 from decimal import Decimal
 import datetime
@@ -257,14 +257,16 @@ class Product(models.Model):
         )
         if warehouse:
             qs = qs.filter(warehouse=warehouse)
-        total_qty = qs.aggregate(q=Sum('quantity_remaining'))['q'] or Decimal('0')
+        # Weighted average sum(qty * cost) / sum(qty), both computed by the database
+        agg = qs.aggregate(
+            q=Sum('quantity_remaining'),
+            v=Sum(F('quantity_remaining') * F('unit_cost'),
+                  output_field=models.DecimalField(max_digits=30, decimal_places=8)),
+        )
+        total_qty = agg['q'] or Decimal('0')
         if total_qty == 0:
             return self.last_purchase_price
-        # Weighted average: sum(qty * cost) / total_qty
-        total_value = sum(
-            b.quantity_remaining * b.unit_cost for b in qs
-        )
-        return (total_value / total_qty).quantize(Decimal('0.0001'))
+        return ((agg['v'] or Decimal('0')) / total_qty).quantize(Decimal('0.0001'))
 
     @property
     def is_low_stock(self):
@@ -283,6 +285,16 @@ class Product(models.Model):
         if not branch: return self.sale_price
         pb = self.branch_prices.filter(branch=branch).first()
         return pb.sale_price if pb else self.sale_price
+
+    @staticmethod
+    def branch_price_map(product_ids, branch):
+        """{product_id: branch sale price} for many products in ONE query (only products that
+        have a branch price). Use ``prices.get(p.id, p.sale_price)`` instead of calling
+        get_price_for_branch() in a loop."""
+        if not branch or not product_ids:
+            return {}
+        return dict(ProductBranch.objects.filter(product_id__in=list(product_ids), branch=branch)
+                    .values_list('product_id', 'sale_price'))
 
 
 
@@ -331,7 +343,7 @@ class ProductUoM(models.Model):
     )
     is_base = models.BooleanField(default=False, verbose_name=_('وحدة أساسية'))
     conversion_factor = models.DecimalField(
-        max_digits=10, decimal_places=4, default=1.0, verbose_name=_('معامل التحويل')
+        max_digits=10, decimal_places=4, default=Decimal('1'), verbose_name=_('معامل التحويل')
     )
     barcode = models.CharField(
         max_length=100, unique=True, null=True, blank=True, verbose_name=_('باركود الوحدة')
@@ -353,6 +365,8 @@ class ProductBranch(models.Model):
     
     class Meta:
         unique_together = ('product', 'branch')
+        verbose_name = _('سعر صنف بالفرع')
+        verbose_name_plural = _('أسعار الأصناف بالفروع')
 
 
 # ---------------------------------------------------------------------------
@@ -783,3 +797,22 @@ class StockTransferLine(models.Model):
     @property
     def uom_name(self):
         return self.uom.uom.name if self.uom_id else self.product.pos_unit_name
+
+
+class ProductBarcode(models.Model):
+    """باركود إضافي للصنف (نفس الصنف بأكثر من باركود: موردين أو تعبئات مختلفة).
+    uom = وحدة الباركود (فاضي = الوحدة الأساسية). البحث: inventory.barcodes.find_by_barcode."""
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='extra_barcodes',
+                                verbose_name=_('الصنف'))
+    uom = models.ForeignKey(ProductUoM, on_delete=models.CASCADE, null=True, blank=True, related_name='extra_barcodes',
+                            verbose_name=_('الوحدة'))
+    barcode = models.CharField(max_length=100, unique=True, verbose_name=_('الباركود'))
+    note = models.CharField(max_length=150, blank=True, default='', verbose_name=_('ملاحظة (المورد / التعبئة)'))
+
+    class Meta:
+        verbose_name = _('باركود إضافي')
+        verbose_name_plural = _('باركودات إضافية')
+        ordering = ['id']
+
+    def __str__(self):
+        return f'{self.barcode} → {self.product}'

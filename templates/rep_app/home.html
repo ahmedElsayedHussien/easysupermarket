@@ -1,0 +1,34 @@
+{% extends "rep_app/base.html" %}
+{% block heading %}أهلاً {{ rep_name }} 👋{% endblock %}
+{% block content %}
+{% if not ready %}
+<div class="msg error">لسه الإدارة ما حددتلكش {% if not rep.van_warehouse %}مخزن عربية{% endif %}{% if not rep.van_warehouse and not rep.treasury %} و{% endif %}{% if not rep.treasury %}خزنة{% endif %} — البيع مش هيشتغل لحد ما يتحددوا.</div>
+{% endif %}
+<div class="grid2">
+    <div class="kpi"><small>💵 الفلوس اللي معاك</small><b class="num">{{ cash|floatformat:"2g" }}</b></div>
+    <div class="kpi"><small>🧾 مبيعات النهارده</small><b class="num">{{ day.total|default:0|floatformat:"2g" }}</b><div class="muted">{{ day.n }} فاتورة{% if day.credit %} — آجل {{ day.credit|floatformat:"2g" }}{% endif %}</div></div>
+    <div class="kpi"><small>📦 أصناف في العربية</small><b class="num">{{ items_in_van }}</b></div>
+    <div class="kpi"><small>📋 طلبات مستنية</small><b class="num">{{ pending_loading|add:pending_unloading }}</b><div class="muted">تحميل {{ pending_loading }} · تفريغ {{ pending_unloading }}</div></div>
+</div>
+<div class="tiles">
+    <a class="tile" href="{% url 'invoicing:rep_app_sell' %}"><span>🛒</span>فاتورة بيع</a>
+    <a class="tile" href="{% url 'invoicing:rep_app_customers' %}"><span>💰</span>تحصيل من عميل</a>
+    <a class="tile" href="{% url 'invoicing:rep_app_loading' %}"><span>⬆️</span>طلب تحميل</a>
+    <a class="tile" href="{% url 'invoicing:rep_app_unloading' %}"><span>⬇️</span>طلب تفريغ</a>
+</div>
+<div class="card">
+    <h2>🧾 آخر فواتيري</h2>
+    <div class="list">
+        {% for i in recent %}
+        <a class="item" href="{% url 'invoicing:rep_app_invoice' i.id %}"><div class="grow"><div class="t">{{ i.partner.name|default:"عميل نقدي" }}</div><div class="muted">{{ i.invoice_number }} — {{ i.date|date:"j/n" }}</div></div><b class="num">{{ i.total_amount|floatformat:"2g" }}</b></a>
+        {% empty %}<p class="muted">لسه مفيش فواتير.</p>{% endfor %}
+    </div>
+</div>
+{% if handovers %}
+<div class="card">
+    <h2>💵 آخر توريداتي</h2>
+    <div class="list">{% for h in handovers %}<div class="item"><div class="grow"><div class="t">{{ h.number }}</div><div class="muted">{{ h.date|date:"j/n/Y" }}{% if h.shortage_charged %} — <span class="bad">عجز {{ h.shortage_charged|floatformat:2 }}</span>{% endif %}</div></div><b class="num">{{ h.amount|floatformat:"2g" }}</b></div>{% endfor %}</div>
+</div>
+{% endif %}
+<form action="{% url 'logout' %}" method="post">{% csrf_token %}<button class="btn ghost">🚪 تسجيل خروج</button></form>
+{% endblock %}

@@ -99,6 +99,16 @@
                         <a href="{% url 'core:report_customer_debts' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
+                {% if perms.partners.view_partner %}
+                <div class="report-card">
+                    <div class="report-icon">⏳</div>
+                    <div class="report-info">
+                        <h4>أعمار الديون بالفاتورة</h4>
+                        <p>كل فاتورة آجلة لسه عليها فلوس، متقسمة 0-30 / 31-60 / 61-90 / أكتر من 90 يوم — للعملاء والموردين.</p>
+                        <a href="{% url 'partners:aging_report' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                {% endif %}
                 <div class="report-card">
                     <div class="report-icon">↩️</div>
                     <div class="report-info">
@@ -195,6 +205,30 @@
                         <h4>الأصناف الراكدة</h4>
                         <p>الأصناف المتوفرة بالمخازن ولم تشهد حركة بيع منذ فترة طويلة.</p>
                         <a href="{% url 'core:report_slow_moving' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">🔄</div>
+                    <div class="report-info">
+                        <h4>دوران المخزون</h4>
+                        <p>معدل دوران كل صنف، وعدد الأيام اللي الرصيد يكفيها، والراكد اللي فلوسه واقفة على الرف.</p>
+                        <a href="{% url 'core:report_inventory_turnover' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">🗑️</div>
+                    <div class="report-info">
+                        <h4>الهالك والعجز</h4>
+                        <p>تسويات النقص والزيادة (إعدام، تالف، عجز جرد) بالتكلفة لكل صنف.</p>
+                        <a href="{% url 'core:report_wastage' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">🔎</div>
+                    <div class="report-info">
+                        <h4>تتبع التشغيلة</h4>
+                        <p>كل دفعة جت منين وصلاحيتها وكل حركة عليها — بالبحث برقم التشغيلة أو الصنف.</p>
+                        <a href="{% url 'core:report_batch_trace' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
                 <div class="report-card">
@@ -318,6 +352,14 @@
                         <h4>قائمة الدخل (الأرباح والخسائر)</h4>
                         <p>بيان شامل بصافي المبيعات وتكلفة البضاعة والمصروفات لاستنتاج صافي الربح.</p>
                         <a href="{% url 'core:report_income_statement' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                <div class="report-card">
+                    <div class="report-icon">💧</div>
+                    <div class="report-info">
+                        <h4>قائمة التدفقات النقدية</h4>
+                        <p>الفلوس اللي دخلت وخرجت من الخزائن والبنوك في الفترة: تشغيل / استثمار / تمويل، مع مطابقة الرصيد.</p>
+                        <a href="{% url 'core:report_cash_flow' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
                     </div>
                 </div>
                 <div class="report-card" style="border: 1px solid rgba(0, 229, 255, 0.4); background: linear-gradient(135deg, rgba(0, 229, 255, 0.08), rgba(0,0,0,0.2));">
@@ -485,6 +527,16 @@
                         <a href="{% url 'hr:payroll_list' %}" class="btn btn-sm btn-orange">عرض المسيرات</a>
                     </div>
                 </div>
+                {% if perms.hr.view_attendance %}
+                <div class="report-card">
+                    <div class="report-icon">📊</div>
+                    <div class="report-info">
+                        <h4>تقرير الحضور والغياب والرواتب</h4>
+                        <p>لكل موظف في الشهر: أيام العمل والحضور والإجازة والغياب، ساعات التأخير والإضافي، وخصومات وصافي الراتب. مع حضور كل موظف يوم بيوم وتصدير إكسيل.</p>
+                        <a href="{% url 'hr:attendance_report' %}" class="btn btn-sm btn-orange">عرض التقرير</a>
+                    </div>
+                </div>
+                {% endif %}
                 <div class="report-card">
                     <div class="report-icon">📍</div>
                     <div class="report-info">

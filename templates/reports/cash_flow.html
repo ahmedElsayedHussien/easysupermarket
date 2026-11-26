@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.cf { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.cf-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.cf-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.flt { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; margin-top: .7rem; }
+.flt label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.flt input { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .4rem .55rem; }
+.cf-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; }
+.sec h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .5rem; display: flex; justify-content: space-between; }
+.grp { border-top: 1px solid var(--border-default); padding: .45rem 0; }
+.grp summary { display: flex; justify-content: space-between; cursor: pointer; font-weight: 700; color: var(--text-primary); font-size: .9rem; list-style: none; }
+.grp summary::-webkit-details-marker { display: none; }
+.acc { display: flex; justify-content: space-between; font-size: .8rem; color: var(--text-muted); padding: .15rem 1.2rem; }
+.num { font-variant-numeric: tabular-nums; }
+.in { color: var(--neon-green); } .out { color: var(--neon-red); }
+.tot { display: flex; justify-content: space-between; font-weight: 800; font-size: 1rem; color: var(--text-primary); padding: .35rem 0; }
+.ok { color: var(--neon-green); font-weight: 700; } .bad { color: var(--neon-red); font-weight: 700; }
+@media print { .sidebar, .navbar, .flt { display: none !important; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cf">
+    <div class="cf-panel">
+        <h1>💧 قائمة التدفقات النقدية</h1>
+        <p class="note">كل الفلوس اللي دخلت أو خرجت من الخزائن والبنوك والمحافظ وماكينات الدفع في الفترة، متقسمة حسب مصدرها. التحويل بين خزينة وبنك مش بيظهر (حركة داخلية). دوس على أي بند تشوف حساباته.</p>
+        <form method="get" class="flt">
+            <label>من <input type="date" name="date_from" value="{{ date_from|date:'Y-m-d' }}"></label>
+            <label>إلى <input type="date" name="date_to" value="{{ date_to|date:'Y-m-d' }}"></label>
+            <button type="submit" class="cf-btn">عرض</button>
+            <button type="button" class="cf-btn" style="background:var(--bg-secondary); color:var(--text-primary);" onclick="window.print()">🖨️ طباعة</button>
+        </form>
+    </div>
+
+    <div class="cf-panel">
+        <div class="tot"><span>رصيد النقدية أول الفترة</span><span class="num">{{ opening|floatformat:"2g" }}</span></div>
+    </div>
+
+    {% for sec in sections %}
+    <div class="cf-panel sec">
+        <h2><span>{{ sec.label }}</span><span class="num {% if sec.net >= 0 %}in{% else %}out{% endif %}">{{ sec.net|floatformat:"2g" }}</span></h2>
+        {% for g in sec.groups %}
+        <details class="grp">
+            <summary><span>{{ g.label }}</span><span class="num {% if g.net >= 0 %}in{% else %}out{% endif %}">{{ g.net|floatformat:"2g" }}</span></summary>
+            {% for a in g.accounts %}<div class="acc"><span>{{ a.code }} — {{ a.name }}</span><span class="num">{{ a.effect|floatformat:"2g" }}</span></div>{% endfor %}
+        </details>
+        {% empty %}<p class="note">مفيش حركات.</p>{% endfor %}
+        {% if sec.groups %}<p class="note">داخل {{ sec.inflow|floatformat:"2g" }} · خارج {{ sec.outflow|floatformat:"2g" }}</p>{% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="cf-panel">
+        <div class="tot"><span>صافي التغير في النقدية</span><span class="num {% if change >= 0 %}in{% else %}out{% endif %}">{{ change|floatformat:"2g" }}</span></div>
+        <div class="tot"><span>رصيد النقدية آخر الفترة</span><span class="num">{{ closing|floatformat:"2g" }}</span></div>
+        <p class="note">{% if balanced %}<span class="ok">✔ الرصيد الأول + صافي التغير = الرصيد الأخير الفعلي.</span>{% else %}<span class="bad">⚠ فيه فرق بين الحساب والرصيد الفعلي — راجع القيود غير المتوازنة.</span>{% endif %}</p>
+    </div>
+</div>
+{% endblock %}

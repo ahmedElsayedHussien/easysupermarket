@@ -155,11 +155,8 @@ class Partner(models.Model):
                 else:
                     net_opening = -self.opening_balance
 
-        sales = self.invoices.filter(invoice_type='SALE', payment_type='CREDIT', status='POSTED').aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
-        split_sales = self.invoices.filter(invoice_type='SALE', payment_type='SPLIT', status='POSTED').aggregate(s=Sum('paid_credit'))['s'] or Decimal('0')
-
-        returns = self.invoices.filter(invoice_type='RETURN_SALE', payment_type='CREDIT', status='POSTED').aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
-        split_returns = self.invoices.filter(invoice_type='RETURN_SALE', payment_type='SPLIT', status='POSTED').aggregate(s=Sum('paid_credit'))['s'] or Decimal('0')
+        inv = _credit_invoice_sums(self, 'SALE', 'RETURN_SALE')   # one query for the four figures
+        sales, split_sales, returns, split_returns = inv['doc'], inv['doc_split'], inv['ret'], inv['ret_split']
 
         receipts = self.payments.filter(payment_type='RECEIPT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
         voucher_receipts = self.vouchers.filter(voucher_type='RECEIPT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
@@ -198,11 +195,9 @@ class Partner(models.Model):
                 else:
                     net_opening = -self.opening_balance
 
-        purchases = self.invoices.filter(invoice_type='PURCHASE', payment_type='CREDIT', status='POSTED').aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
-        split_purchases = self.invoices.filter(invoice_type='PURCHASE', payment_type='SPLIT', status='POSTED').aggregate(s=Sum('paid_credit'))['s'] or Decimal('0')
-
-        pur_returns = self.invoices.filter(invoice_type='RETURN_PURCHASE', payment_type='CREDIT', status='POSTED').aggregate(s=Sum('total_amount'))['s'] or Decimal('0')
-        split_pur_returns = self.invoices.filter(invoice_type='RETURN_PURCHASE', payment_type='SPLIT', status='POSTED').aggregate(s=Sum('paid_credit'))['s'] or Decimal('0')
+        inv = _credit_invoice_sums(self, 'PURCHASE', 'RETURN_PURCHASE')   # one query for the four figures
+        purchases, split_purchases, pur_returns, split_pur_returns = (inv['doc'], inv['doc_split'], inv['ret'],
+                                                                      inv['ret_split'])
 
         payments = self.payments.filter(payment_type='PAYMENT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
         voucher_payments = self.vouchers.filter(voucher_type='PAYMENT', status='POSTED').aggregate(s=Sum('amount'))['s'] or Decimal('0')
@@ -525,3 +520,18 @@ def create_partner_account(sender, instance, created, **kwargs):
         # sync_opening_journal_entry is atomic: on failure nothing is left half-written
         partner_logger.exception('Error syncing opening journal entry for partner %s (%s)', instance.pk, instance.name)
 
+
+def _credit_invoice_sums(partner, doc_type, return_type):
+    """On-account parts of the partner's posted invoices in ONE query: the full total of
+    CREDIT invoices and the credit leg (paid_credit) of SPLIT ones, for the document type
+    and its return type."""
+    from decimal import Decimal
+    from django.db.models import Q, Sum
+    posted = partner.invoices.filter(status='POSTED', invoice_type__in=[doc_type, return_type])
+    agg = posted.aggregate(
+        doc=Sum('total_amount', filter=Q(invoice_type=doc_type, payment_type='CREDIT')),
+        doc_split=Sum('paid_credit', filter=Q(invoice_type=doc_type, payment_type='SPLIT')),
+        ret=Sum('total_amount', filter=Q(invoice_type=return_type, payment_type='CREDIT')),
+        ret_split=Sum('paid_credit', filter=Q(invoice_type=return_type, payment_type='SPLIT')),
+    )
+    return {k: v or Decimal('0') for k, v in agg.items()}

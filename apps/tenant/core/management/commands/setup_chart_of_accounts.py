@@ -42,6 +42,7 @@ def setup_chart_of_accounts_data():
     Account.objects.get_or_create(code='2110', defaults={'name': 'ذمم دائنة - موردون', 'account_type': Account.LIABILITY, 'parent': curr_liab, 'allow_reconcile': True})
     Account.objects.get_or_create(code='2120', defaults={'name': 'ضريبة الخصم والإضافة', 'account_type': Account.LIABILITY, 'parent': curr_liab})
     Account.objects.get_or_create(code='2130', defaults={'name': 'ضريبة القيمة المضافة - مخرجات (مبيعات)', 'account_type': Account.LIABILITY, 'parent': curr_liab})
+    Account.objects.get_or_create(code='2135', defaults={'name': 'ضريبة القيمة المضافة المستحقة السداد', 'account_type': Account.LIABILITY, 'parent': curr_liab})
     Account.objects.get_or_create(code='2140', defaults={'name': 'مصروفات مستحقة الدفع', 'account_type': Account.LIABILITY, 'parent': curr_liab})
     Account.objects.get_or_create(code='2150', defaults={'name': 'أرصدة دائنة أخرى وتأمينات', 'account_type': Account.LIABILITY, 'parent': curr_liab})
     Account.objects.get_or_create(code='2155', defaults={'name': 'دفعات مقدمة من العملاء', 'account_type': Account.LIABILITY, 'parent': curr_liab, 'allow_reconcile': True})
@@ -88,6 +89,7 @@ def setup_chart_of_accounts_data():
     
     op_exp, _ = Account.objects.get_or_create(code='5200', defaults={'name': 'مصاريف تشغيلية', 'account_type': Account.EXPENSE, 'parent': exp, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5210', defaults={'name': 'رواتب وأجور', 'account_type': Account.EXPENSE, 'parent': op_exp, 'allow_direct_payment': True})
+    Account.objects.get_or_create(code='5212', defaults={'name': 'حصة المنشأة في التأمينات الاجتماعية', 'account_type': Account.EXPENSE, 'parent': op_exp})
     Account.objects.get_or_create(code='5215', defaults={'name': 'مصروف عمولات الموظفين', 'account_type': Account.EXPENSE, 'parent': op_exp, 'allow_direct_payment': True})
     Account.objects.get_or_create(code='5220', defaults={'name': 'مصروف الإهلاك', 'account_type': Account.EXPENSE, 'parent': op_exp, 'allow_direct_payment': False})
     Account.objects.get_or_create(code='5230', defaults={'name': 'مصاريف إيجار مقرات ومستودعات', 'account_type': Account.EXPENSE, 'parent': op_exp, 'allow_direct_payment': True})

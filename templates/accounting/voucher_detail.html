@@ -291,6 +291,16 @@
     </div>
     {% endif %}
 
+    <!-- ربط بالفواتير -->
+    {% with allocs=voucher.allocations.all %}{% if allocs %}
+    <div class="data-card" style="margin-bottom: 2rem; border-right: 4px solid #00e5ff !important;">
+        <h5 style="color: #00e5ff; margin-bottom: 1rem;">🔗 مربوط بالفواتير</h5>
+        {% for a in allocs %}
+        <div style="color:#fff; margin-bottom:.3rem;"><a href="{% url 'invoicing:invoice_detail' a.invoice_id %}" style="color:#00e5ff;">{{ a.invoice.invoice_number }}</a> — {{ a.amount|floatformat:2 }} ج.م</div>
+        {% endfor %}
+    </div>
+    {% endif %}{% endwith %}
+
     <!-- القيد المحاسبي -->
     {% if voucher.journal_entry %}
     <div style="margin-top: 3rem; padding-top: 2rem; border-top: 1px solid rgba(255,255,255,0.1);">

@@ -1,5 +1,8 @@
 from django.urls import path
 from . import views
+from . import po_views
+from . import rep_views
+from . import rep_app, van_views
 
 app_name = 'invoicing'
 urlpatterns = [
@@ -10,6 +13,27 @@ urlpatterns = [
     path('pos/api/shift-stats/', views.pos_shift_stats_api, name='pos_shift_stats_api'),
     path('purchase/create/', views.purchase_invoice_view, name='purchase_invoice'),
     path('sales/', views.sales_invoice_list, name='sales_invoice_list'),
+    path('sales-reps/', rep_views.rep_list, name='rep_list'),
+    path('sales-reps/<int:pk>/', rep_views.rep_detail, name='rep_detail'),
+    path('loading-orders/', van_views.loading_list, name='loading_list'),
+    path('loading-orders/<int:pk>/', van_views.loading_detail, name='loading_detail'),
+    path('unloading-orders/', van_views.unloading_list, name='unloading_list'),
+    path('unloading-orders/<int:pk>/', van_views.unloading_detail, name='unloading_detail'),
+    path('rep-handovers/', van_views.handover_list, name='handover_list'),
+    path('rep-app/', rep_app.home, name='rep_app_home'),
+    path('rep-app/sell/', rep_app.sell, name='rep_app_sell'),
+    path('rep-app/invoice/<int:pk>/', rep_app.invoice, name='rep_app_invoice'),
+    path('rep-app/customers/', rep_app.customers, name='rep_app_customers'),
+    path('rep-app/customers/<int:pk>/', rep_app.customer, name='rep_app_customer'),
+    path('rep-app/van/', rep_app.stock, name='rep_app_stock'),
+    path('rep-app/loading/', rep_app.loading, name='rep_app_loading'),
+    path('rep-app/loading/<int:pk>/', rep_app.loading_order, name='rep_app_loading_order'),
+    path('rep-app/unloading/', rep_app.unloading, name='rep_app_unloading'),
+    path('purchase-orders/', po_views.purchase_order_list, name='purchase_order_list'),
+    path('purchase-orders/new/', po_views.purchase_order_create, name='purchase_order_create'),
+    path('purchase-orders/suggest/', po_views.purchase_order_suggest, name='purchase_order_suggest'),
+    path('purchase-orders/<int:pk>/', po_views.purchase_order_detail, name='purchase_order_detail'),
+    path('sales/return-no-invoice/', views.sales_return_no_invoice, name='sales_return_no_invoice'),
     path('purchases/', views.purchase_invoice_list, name='purchase_invoice_list'),
     path('confirm/<int:invoice_id>/', views.confirm_invoice_view, name='confirm_invoice'),
     path('api/product/barcode/', views.get_product_by_barcode, name='product_by_barcode'),
@@ -24,8 +48,6 @@ urlpatterns = [
     path('invoice/<int:invoice_id>/cancel/', views.cancel_invoice_view, name='cancel_invoice'),
     path('receipt/<int:invoice_id>/', views.receipt_view, name='receipt'),
     path('shift-report/', views.shift_report, name='shift_report'),
-    path('sales-returns/', views.sales_returns_dashboard, name='sales_returns_dashboard'),
-    path('sales-returns/create-standalone/', views.create_standalone_sales_return, name='create_standalone_sales_return'),
 
     # Quotation URLs
     path('quotations/', views.quotation_list, name='quotation_list'),

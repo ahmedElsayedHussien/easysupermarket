@@ -13,10 +13,20 @@
             <a href="{% url 'invoicing:purchase_invoice' %}" class="btn-orange" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; padding: 0.6rem 1.4rem; border-radius: 8px; font-weight: bold; text-decoration: none; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); display: inline-flex; align-items: center; gap: 8px;">
                 <i class="fas fa-cart-arrow-down"></i> فاتورة مشتريات جديدة
             </a>
+            {% if perms.invoicing.add_purchase_invoice %}
+            <a href="{% url 'invoicing:purchase_invoice' %}?type=RETURN_PURCHASE" class="btn-ghost" style="padding: 0.6rem 1.1rem; border-radius: 8px; font-weight: bold; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;" title="مرتجع لمورد من غير فاتورة شراء في البرنامج — لو ليه فاتورة اعمله من الفاتورة">
+                ↩️ مرتجع مشتريات بدون فاتورة
+            </a>
+            {% endif %}
             {% elif list_type == 'sales' %}
             <a href="{% url 'invoicing:pos' %}" class="btn-orange" style="background: linear-gradient(135deg, #ff7300, #ff9500); color: white; padding: 0.6rem 1.4rem; border-radius: 8px; font-weight: bold; text-decoration: none; box-shadow: 0 4px 15px rgba(255, 115, 0, 0.4); display: inline-flex; align-items: center; gap: 8px;">
                 <i class="fas fa-cash-register"></i> نقطة البيع (POS)
             </a>
+            {% if perms.invoicing.add_sales_return_no_invoice %}
+            <a href="{% url 'invoicing:sales_return_no_invoice' %}" class="btn-ghost" style="padding: 0.6rem 1.1rem; border-radius: 8px; font-weight: bold; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;" title="لبضاعة اتباعت قبل البرنامج — لو ليها فاتورة اعمل المرتجع من الفاتورة">
+                ↩️ مرتجع مبيعات بدون فاتورة
+            </a>
+            {% endif %}
             {% endif %}
         </div>
     </div>

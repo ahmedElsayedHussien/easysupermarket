@@ -27,6 +27,72 @@ CHARGE_EXPENSE = 'EXPENSE'
 CHARGE_CASHIER = 'CASHIER'
 
 
+
+def invoice_figure_expressions():
+    """Aggregate expressions of a shift's invoice figures (sales, returns, cash / card /
+    wallet / bank / credit legs). Used with .aggregate() for one shift and with
+    .values('pos_session').annotate() for many shifts at once — same arithmetic."""
+    from django.db import models as m
+    from django.db.models import Case, Count, F, Q, Sum, When
+    from django.db.models.functions import Coalesce
+    from apps.tenant.invoicing.models import Invoice
+
+    DEC = m.DecimalField(max_digits=18, decimal_places=4)
+    S, R = Invoice.SALE, Invoice.RETURN_SALE
+
+    def signed(paid_field, ptype):
+        """Sale adds, return subtracts (non-cash methods)."""
+        return Coalesce(Sum(Case(
+            When(Q(invoice_type=S, payment_type=Invoice.SPLIT), then=F(paid_field)),
+            When(Q(invoice_type=S, payment_type=ptype), then=F('total_amount')),
+            When(Q(invoice_type=R, payment_type=Invoice.SPLIT), then=-F(paid_field)),
+            When(Q(invoice_type=R, payment_type=ptype), then=-F('total_amount')),
+            default=Decimal('0'), output_field=DEC)), Decimal('0'))
+
+    return dict(
+        total_gross_sales=Coalesce(Sum('total_amount', filter=Q(invoice_type=S)), Decimal('0')),
+        total_returns_amount=Coalesce(Sum('total_amount', filter=Q(invoice_type=R)), Decimal('0')),
+        sales_count=Count('id', filter=Q(invoice_type=S)),
+        returns_count=Count('id', filter=Q(invoice_type=R)),
+        total_cash_sales=Coalesce(Sum(Case(
+            When(Q(invoice_type=S, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+            When(Q(invoice_type=S, payment_type=Invoice.CASH), then=F('total_amount') + F('rounding_amount')),
+            default=Decimal('0'), output_field=DEC)), Decimal('0')),
+        total_cash_refunds=Coalesce(Sum(Case(
+            When(Q(invoice_type=R, payment_type=Invoice.SPLIT), then=F('paid_cash')),
+            When(Q(invoice_type=R, payment_type=Invoice.CASH), then=F('total_amount')),
+            default=Decimal('0'), output_field=DEC)), Decimal('0')),
+        total_card_sales=signed('paid_card', Invoice.CARD),
+        total_ewallet_sales=signed('paid_ewallet', Invoice.EWALLET),
+        total_bank_sales=signed('paid_bank', Invoice.BANK_TRANSFER),
+        total_credit_sales=signed('paid_credit', Invoice.CREDIT),
+    )
+
+
+def shifts_list_rows(sessions):
+    """Rows of the shifts report for a page of sessions without per-shift queries:
+    invoice figures in ONE grouped query; a closed shift shows the figures stored at
+    close, an open one (few) is computed live by shift_cash_summary()."""
+    from apps.tenant.invoicing.models import Invoice
+    sessions = list(sessions)
+    zero = {k: (0 if k.endswith('_count') else Decimal('0')) for k in invoice_figure_expressions()}
+    grouped = {r['pos_session']: r for r in Invoice.objects.filter(
+        pos_session__in=[s.id for s in sessions], status=Invoice.POSTED).order_by()
+        .values('pos_session').annotate(**invoice_figure_expressions())}
+    rows = []
+    for session in sessions:
+        figures = {**zero, **{k: v for k, v in grouped.get(session.id, {}).items() if k != 'pos_session'}}
+        row = {'session': session, **figures,
+               'net_sales_amount': figures['total_gross_sales'] - figures['total_returns_amount']}
+        if session.status == 'CLOSED':
+            row.update(expected_balance=session.closing_balance_expected,
+                       actual_balance=session.closing_balance_actual, difference=session.difference)
+        else:
+            live = shift_cash_summary(session)['expected_balance']
+            row.update(expected_balance=live, actual_balance=live, difference=Decimal('0'))
+        rows.append(row)
+    return rows
+
 def shift_cash_summary(session):
     """
     THE drawer arithmetic of a shift — used by the close screen, the shift report and
@@ -46,40 +112,13 @@ def shift_cash_summary(session):
     from apps.tenant.rentals.models import Rental
 
     DEC = m.DecimalField(max_digits=18, decimal_places=4)
-    S, R = Invoice.SALE, Invoice.RETURN_SALE
-
-    def signed(paid_field, ptype):
-        """Sale adds, return subtracts (non-cash methods)."""
-        return Coalesce(Sum(Case(
-            When(Q(invoice_type=S, payment_type=Invoice.SPLIT), then=F(paid_field)),
-            When(Q(invoice_type=S, payment_type=ptype), then=F('total_amount')),
-            When(Q(invoice_type=R, payment_type=Invoice.SPLIT), then=-F(paid_field)),
-            When(Q(invoice_type=R, payment_type=ptype), then=-F('total_amount')),
-            default=Decimal('0'), output_field=DEC)), Decimal('0'))
 
     start, end = session.start_time, session.end_time
     in_window = Q(created_at__gte=start) & (Q(created_at__lte=end) if end else Q())
 
     # --- invoices ---
     invoices = Invoice.objects.filter(pos_session=session, status=Invoice.POSTED)
-    agg = invoices.aggregate(
-        total_gross_sales=Coalesce(Sum('total_amount', filter=Q(invoice_type=S)), Decimal('0')),
-        total_returns_amount=Coalesce(Sum('total_amount', filter=Q(invoice_type=R)), Decimal('0')),
-        sales_count=Count('id', filter=Q(invoice_type=S)),
-        returns_count=Count('id', filter=Q(invoice_type=R)),
-        total_cash_sales=Coalesce(Sum(Case(
-            When(Q(invoice_type=S, payment_type=Invoice.SPLIT), then=F('paid_cash')),
-            When(Q(invoice_type=S, payment_type=Invoice.CASH), then=F('total_amount') + F('rounding_amount')),
-            default=Decimal('0'), output_field=DEC)), Decimal('0')),
-        total_cash_refunds=Coalesce(Sum(Case(
-            When(Q(invoice_type=R, payment_type=Invoice.SPLIT), then=F('paid_cash')),
-            When(Q(invoice_type=R, payment_type=Invoice.CASH), then=F('total_amount')),
-            default=Decimal('0'), output_field=DEC)), Decimal('0')),
-        total_card_sales=signed('paid_card', Invoice.CARD),
-        total_ewallet_sales=signed('paid_ewallet', Invoice.EWALLET),
-        total_bank_sales=signed('paid_bank', Invoice.BANK_TRANSFER),
-        total_credit_sales=signed('paid_credit', Invoice.CREDIT),
-    )
+    agg = invoices.aggregate(**invoice_figure_expressions())
 
     # --- cash vouchers on the drawer ---
     vouchers = (Voucher.objects.filter(status=Voucher.POSTED)
@@ -212,6 +251,10 @@ def post_shift_variance(session, charge_to=CHARGE_EXPENSE, user=None):
     entry = _post(f'SHIFT-{session.pk}-VAR', label, lines, user, session)
     session.variance_entry = entry
     session.save(update_fields=['variance_entry', 'variance_charged_to'])
+    if diff < 0 and session.variance_charged_to == CHARGE_CASHIER:
+        # the shortage is deducted from the cashier's salary as a one-instalment loan
+        from apps.tenant.hr.loan_services import shortage_loan_for_session
+        shortage_loan_for_session(session, user)
     return entry
 
 

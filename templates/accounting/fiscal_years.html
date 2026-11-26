@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.fy { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.fy-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.fy-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .55rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.in { color: var(--neon-green); } .out { color: var(--neon-red); }
+.st { font-size: .72rem; font-weight: 800; padding: .12rem .55rem; border-radius: 999px; }
+.st.c { background: rgba(46,213,115,.15); color: var(--neon-green); } .st.o { background: rgba(251,191,36,.15); color: var(--neon-gold); }
+.fy-btn { padding: .3rem .75rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; font-size: .8rem; cursor: pointer; }
+.fy-btn.ghost { background: transparent; color: var(--text-primary); border-color: var(--border-bright); }
+.sub { display: block; font-size: .72rem; color: var(--text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="fy">
+    <div class="fy-panel">
+        <h1>📕 إقفال السنة المالية</h1>
+        <p class="note">بعد ما السنة تخلص: قيد إقفال بتاريخ 31/12 بيصفّر الإيرادات والمصروفات، وصافي الربح أو الخسارة بيروح لـ«أرباح محتجزة» (3200)، والدفاتر بتتقفل لحد آخر السنة فمحدش يقدر يسجل فيها تاني. السنين بتتقفل بالترتيب، وتقدر تفتح آخر سنة مقفولة لو محتاج تصحيح.</p>
+    </div>
+    <div class="fy-panel">
+        {% if rows %}
+        <table class="tbl">
+            <thead><tr><th>السنة</th><th>الإيرادات</th><th>المصروفات</th><th>صافي الربح</th><th>الحالة</th><th></th></tr></thead>
+            <tbody>
+                {% for r in rows %}
+                <tr>
+                    <td><strong>{{ r.year|stringformat:"d" }}</strong></td>
+                    <td>{{ r.revenue|floatformat:"2g" }}</td>
+                    <td>{{ r.expenses|floatformat:"2g" }}</td>
+                    <td class="{% if r.net_profit >= 0 %}in{% else %}out{% endif %}">{{ r.net_profit|floatformat:"2g" }}</td>
+                    <td>{% if r.close %}<span class="st c">مقفولة</span><span class="sub">{{ r.close.closed_at|date:"Y-m-d" }}{% if r.close.closed_by %} · {{ r.close.closed_by|display_name }}{% endif %}</span>{% else %}<span class="st o">مفتوحة</span>{% endif %}</td>
+                    <td>
+                        {% if r.close.closing_entry_id %}<a class="fy-btn ghost" style="text-decoration:none;" href="{% url 'accounting:journal_detail' r.close.closing_entry_id %}">🧾 القيد</a>{% endif %}
+                        {% if can_close %}
+                        <form method="post" style="display:inline;">{% csrf_token %}<input type="hidden" name="year" value="{{ r.year|stringformat:'d' }}">
+                            {% if r.can_close %}<button name="action" value="close" class="fy-btn" onclick="return confirm('إقفال سنة {{ r.year|stringformat:'d' }} وقفل دفاترها؟');">إقفال</button>{% endif %}
+                            {% if r.can_reopen %}<button name="action" value="reopen" class="fy-btn ghost" onclick="return confirm('فتح سنة {{ r.year|stringformat:'d' }} تاني وعكس قيد إقفالها؟');">إعادة فتح</button>{% endif %}
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}<p class="note">مفيش حركات لسه.</p>{% endif %}
+    </div>
+</div>
+{% endblock %}

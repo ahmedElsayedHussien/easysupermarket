@@ -1,0 +1,17 @@
+{% load static %}{# Day / night theme: applied before the page paints (no dark flash). #}
+<link rel="stylesheet" href="{% static 'css/theme.css' %}">
+<script>
+  (function () {
+    try {
+      if (localStorage.getItem('masar_theme') === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    } catch (e) { /* storage blocked: stay dark */ }
+    window.toggleTheme = function () {
+      var root = document.documentElement;
+      var light = root.getAttribute('data-theme') !== 'light';
+      if (light) { root.setAttribute('data-theme', 'light'); } else { root.removeAttribute('data-theme'); }
+      try { localStorage.setItem('masar_theme', light ? 'light' : 'dark'); } catch (e) {}
+    };
+  })();
+</script>

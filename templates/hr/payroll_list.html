@@ -1,109 +1,205 @@
 {% extends "base.html" %}
-{% load i18n %}
+{% load i18n user_tags %}
 
-{% block title %}{{ title }}{% endblock %}
+{% block title %}{{ title }} — {{ month_name }} {{ year|stringformat:"d" }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.pr { max-width: 1250px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.pr-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.pr-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; }
+.pr-head h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.pr-tools { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-inline-start: auto; }
+.pr-tools select, .pr-btn { padding: .4rem .75rem; border-radius: 8px; border: 1px solid var(--border-bright);
+    background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .85rem; text-decoration: none; cursor: pointer; }
+.pr-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .7rem; }
+.kpi { background: var(--bg-card); border: 1px solid var(--border-default); border-top: 3px solid var(--k); border-radius: 12px; padding: .8rem .9rem; }
+.kpi .l { font-size: .78rem; color: var(--text-muted); font-weight: 700; }
+.kpi .v { font-size: 1.35rem; font-weight: 800; color: var(--text-primary); font-variant-numeric: tabular-nums; margin-top: .15rem; }
+.kpi .s { font-size: .74rem; color: var(--text-muted); font-weight: 600; }
+.pr-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.pr-table th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .55rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; white-space: nowrap; }
+.pr-table th:first-child, .pr-table td:first-child { text-align: right; }
+.pr-table td { padding: .55rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; vertical-align: middle; }
+.pr-table tfoot td { font-weight: 800; border-top: 2px solid var(--border-bright); border-bottom: none; }
+.sub { display: block; font-size: .72rem; color: var(--text-muted); font-weight: 600; }
+.neg { color: var(--neon-red); } .pos { color: var(--neon-green); }
+.net { font-weight: 800; font-size: .95rem; }
+.badge-st { font-size: .72rem; font-weight: 800; padding: .15rem .55rem; border-radius: 999px; white-space: nowrap; }
+.badge-st.paid { background: rgba(46,213,115,.15); color: var(--neon-green); }
+.badge-st.pending { background: rgba(251,191,36,.15); color: var(--neon-gold); }
+.empty { text-align: center; color: var(--text-muted); padding: 2rem 1rem; }
+.days { display: inline-flex; gap: .3rem; flex-wrap: wrap; justify-content: center; }
+.days span { font-size: .72rem; font-weight: 700; padding: .05rem .4rem; border-radius: 6px; background: var(--bg-secondary); }
+.table-scroll { overflow-x: auto; }
+.note { font-size: .78rem; color: var(--text-muted); }
+@media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h3 class="mb-0 text-primary"><i class="fas fa-money-check-alt me-2"></i> {{ title }}</h3>
-        
-        <form method="post" action="{% url 'hr:payroll_process' %}" class="d-flex align-items-center gap-2">
-            {% csrf_token %}
-            <select name="month" class="form-select form-select-sm" style="width: auto;">
-                {% for m in "123456789101112" %}
-                <option value="{{ forloop.counter }}" {% if forloop.counter == now.month %}selected{% endif %}>شهر {{ forloop.counter }}</option>
-                {% endfor %}
-            </select>
-            <input type="number" name="year" class="form-control form-control-sm" value="2026" style="width: 80px;">
-            <button type="submit" class="btn btn-warning btn-sm fw-bold">
-                <i class="fas fa-cogs"></i> معالجة مسير الرواتب
-            </button>
-        </form>
+<div class="pr">
+
+    <div class="pr-panel">
+        <div class="pr-head">
+            <h1>💸 مسير رواتب {{ month_name }} {{ year|stringformat:"d" }}</h1>
+            <form method="get" class="pr-tools">
+                <select name="month" onchange="this.form.submit()" aria-label="الشهر">
+                    {% for num, name in month_choices %}<option value="{{ num }}" {% if num == month %}selected{% endif %}>{{ name }}</option>{% endfor %}
+                </select>
+                <select name="year" onchange="this.form.submit()" aria-label="السنة">
+                    {% for y in year_choices %}<option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y|stringformat:"d" }}</option>{% endfor %}
+                </select>
+            </form>
+            <div class="pr-tools" style="margin-inline-start:0;">
+                {% if perms.hr.view_attendance %}
+                <a class="pr-btn" href="{% url 'hr:attendance_report' %}?month={{ month }}&year={{ year|stringformat:'d' }}">📊 تقرير الحضور والغياب</a>
+                {% endif %}
+                {% if perms.hr.change_payrolltaxsettings %}
+                <a class="pr-btn" href="{% url 'hr:payroll_tax_settings' %}">🧮 الضرايب والتأمينات</a>
+                {% endif %}
+                {% if perms.hr.add_payroll and not is_future %}
+                <form method="post" action="{% url 'hr:payroll_process' %}" style="display:inline;"
+                      onsubmit="return confirm('هيتحسب مسير {{ month_name }} {{ year|stringformat:'d' }} من الحضور (المسيرات المعتمدة مش بتتغير). تكمل؟');">
+                    {% csrf_token %}
+                    <input type="hidden" name="month" value="{{ month }}">
+                    <input type="hidden" name="year" value="{{ year|stringformat:'d' }}">
+                    <button type="submit" class="pr-btn primary">⚙️ {% if payrolls %}إعادة حساب{% else %}إصدار{% endif %} مسير {{ month_name }}</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        {% if periods %}
+        <div class="note" style="margin-top:.6rem;">الشهور اللي ليها مسيرات:
+            {% for p in periods %}<a href="?month={{ p.month }}&year={{ p.year|stringformat:'d' }}" style="color:{% if p.month == month and p.year == year %}var(--neon-orange){% else %}var(--text-primary){% endif %}; font-weight:700; text-decoration:none;">{{ p.label }}</a>{% if not forloop.last %} · {% endif %}{% endfor %}
+        </div>
+        {% endif %}
     </div>
 
-    <div class="table-container">
-        <table class="data-table">
+    {% if payrolls %}
+    <div class="kpis">
+        <div class="kpi" style="--k: var(--neon-blue);"><div class="l">👥 الموظفين</div><div class="v">{{ totals.n }}</div><div class="s">{{ totals.paid }} معتمد</div></div>
+        <div class="kpi" style="--k: var(--neon-cyan);"><div class="l">💼 الرواتب الأساسية</div><div class="v">{{ totals.base|floatformat:"2g" }}</div><div class="s">ج.م</div></div>
+        <div class="kpi" style="--k: var(--neon-red);"><div class="l">➖ الخصومات</div><div class="v">{{ totals.deductions|floatformat:"2g" }}</div><div class="s">غياب {{ totals.absence|floatformat:"2g" }} ({{ totals.absent_days }} يوم) · تأخير {{ totals.delay|floatformat:"2g" }}{% if totals.loans %} · سلف {{ totals.loans|floatformat:"2g" }}{% endif %}</div></div>
+        <div class="kpi" style="--k: var(--neon-green);"><div class="l">➕ الإضافي</div><div class="v">{{ totals.overtime|floatformat:"2g" }}</div><div class="s">ج.م</div></div>
+        <div class="kpi" style="--k: var(--neon-orange);"><div class="l">💰 صافي المستحق</div><div class="v">{{ totals.net|floatformat:"2g" }}</div><div class="s">ج.م</div></div>
+    </div>
+    {% endif %}
+
+    {% if payrolls and can_pay %}
+    <div class="pr-panel">
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem;">
+            <form method="post" action="{% url 'hr:payroll_pay' %}" onsubmit="return confirm('صرف المرتبات المعتمدة وعمل القيد؟');">
+                {% csrf_token %}<input type="hidden" name="kind" value="salaries"><input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="year" value="{{ year|stringformat:'d' }}">
+                <strong style="color:var(--text-primary);">💵 صرف المرتبات</strong>
+                <p class="note" style="margin:.3rem 0 .5rem;">{% if unpaid.n %}{{ unpaid.n }} مرتب معتمد مستني الصرف — <b>{{ unpaid.s|floatformat:"2g" }}</b> ج.م{% else %}مفيش مرتبات معتمدة مستنية صرف (اعتمد المسير الأول).{% endif %}</p>
+                {% if unpaid.n %}
+                <div class="pr-tools" style="margin:0;">
+                    <select name="source" required>{% for t in treasuries %}<option value="t:{{ t.id }}">🏧 {{ t.name }}</option>{% endfor %}{% for b in banks %}<option value="b:{{ b.id }}">🏦 {{ b.name }}</option>{% endfor %}</select>
+                    <button type="submit" class="pr-btn primary">صرف {{ unpaid.s|floatformat:"2g" }}</button>
+                </div>
+                {% endif %}
+            </form>
+            <form method="post" action="{% url 'hr:payroll_pay' %}" onsubmit="return confirm('سداد التأمينات والضرايب للجهات وعمل القيد؟');">
+                {% csrf_token %}<input type="hidden" name="kind" value="government"><input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="year" value="{{ year|stringformat:'d' }}">
+                <strong style="color:var(--text-primary);">🏛️ سداد التأمينات والضرايب</strong>
+                <p class="note" style="margin:.3rem 0 .5rem;">{% if gov_total %}مستحق: تأمينات {{ gov_insurance|floatformat:"2g" }} + ضريبة {{ gov_tax|floatformat:"2g" }} = <b>{{ gov_total|floatformat:"2g" }}</b>{% else %}مفيش مستحقات حكومية عن الشهر ده.{% endif %}</p>
+                {% if gov_total %}
+                <div class="pr-tools" style="margin:0;">
+                    <select name="source" required>{% for b in banks %}<option value="b:{{ b.id }}">🏦 {{ b.name }}</option>{% endfor %}{% for t in treasuries %}<option value="t:{{ t.id }}">🏧 {{ t.name }}</option>{% endfor %}</select>
+                    <button type="submit" class="pr-btn primary">سداد {{ gov_total|floatformat:"2g" }}</button>
+                </div>
+                {% endif %}
+            </form>
+        </div>
+        {% if payments %}
+        <div class="note" style="margin-top:.7rem;">{% for pm in payments %}<div>{{ pm.date|date:"Y-m-d" }} — {{ pm.get_kind_display }}: {{ pm.amount|floatformat:"2g" }} من {% if pm.treasury %}{{ pm.treasury.name }}{% else %}{{ pm.bank_account.name }}{% endif %}{% if pm.journal_entry_id %} · <a href="{% url 'accounting:journal_detail' pm.journal_entry_id %}" style="color:var(--neon-cyan);">{{ pm.journal_entry.reference }}</a>{% endif %}</div>{% endfor %}</div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="pr-panel">
+        {% if payrolls %}
+        <div class="table-scroll">
+        <table class="pr-table">
             <thead>
                 <tr>
-                    <th style="padding: 1rem; text-align: right;">الموظف</th>
-                    <th style="padding: 1rem; text-align: center;">الفترة</th>
-                    <th style="padding: 1rem; text-align: center;">الأساسي</th>
-                    <th style="padding: 1rem; text-align: center;">خصومات (تأخير)</th>
-                    <th style="padding: 1rem; text-align: center;">إضافي</th>
-                    <th style="padding: 1rem; text-align: center;">الصافي</th>
-                    <th style="padding: 1rem; text-align: center;">الحالة</th>
-                    <th style="padding: 1rem; text-align: center;">الإجراء</th>
+                    <th>الموظف</th>
+                    <th>الأيام<span class="sub">عمل · حضور · إجازة · غياب</span></th>
+                    <th>الأساسي</th>
+                    <th>خصم الغياب</th>
+                    <th>خصم التأخير</th>
+                    <th>الإضافي</th>
+                    <th>أقساط السلف</th>
+                    {% if totals.insurance or totals.tax %}<th>التأمينات</th><th>الضريبة</th>{% endif %}
+                    <th>الصافي</th>
+                    <th>الحالة</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
-                {% for payroll in payrolls %}
+                {% for p in payrolls %}
                 <tr>
-                    <td style="text-align: right;">
-                        <div class="fw-bold">{{ payroll.employee.user|display_name }}</div>
-                        <div class="small text-muted">{{ payroll.employee.branch.name }}</div>
+                    <td>
+                        <strong>{{ p.employee.user|display_name }}</strong>
+                        <span class="sub">{{ p.employee.branch.name|default:"بدون فرع" }}</span>
                     </td>
-                    <td style="text-align: center;">{{ payroll.month }} / {{ payroll.year }}</td>
-                    <td style="text-align: center;">{{ payroll.base_pay }}</td>
-                    <td class="text-danger" style="text-align: center;">{{ payroll.deductions }} <small>({{ payroll.total_delay_hours }} ساعة)</small></td>
-                    <td class="text-success" style="text-align: center;">{{ payroll.overtime_pay }} <small>({{ payroll.total_overtime_hours }} ساعة)</small></td>
-                    <td class="fw-bold text-primary" style="text-align: center;">{{ payroll.net_salary }}</td>
-                    <td style="text-align: center;">
-                        {% if payroll.is_paid %}
-                            <span class="badge bg-success">تم الاعتماد</span>
-                        {% else %}
-                            <span class="badge" style="background: rgba(255,171,0,0.2); color: var(--neon-gold);">معلق</span>
-                        {% endif %}
+                    <td>
+                        {% if p.working_days %}
+                        <span class="days"><span title="أيام العمل">{{ p.working_days }}</span><span class="pos" title="حضور">✅ {{ p.present_days }}</span><span title="إجازة">🌴 {{ p.leave_days }}</span><span class="{% if p.absent_days %}neg{% endif %}" title="غياب">❌ {{ p.absent_days }}</span></span>
+                        {% else %}<span class="sub">— أعد الحساب لعرض الأيام —</span>{% endif %}
                     </td>
-                    <td style="text-align: center;">
-                        {% if not payroll.is_paid %}
-                        <form method="post" action="{% url 'hr:payroll_confirm' payroll.id %}" style="display: inline;">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-orange btn-sm" onclick="return confirm('هل أنت متأكد من اعتماد الراتب وإنشاء القيد المحاسبي؟');" style="background-color: #ff7300; border-color: #ff7300; color: white;">
-                                <i class="fas fa-check"></i> اعتماد للقيد
-                            </button>
-                        </form>
-                        {% else %}
-                            {% if payroll.journal_entry %}
-                            <a href="#" class="btn btn-sm btn-outline-info">
-                                <i class="fas fa-file-invoice"></i> قيد #{{ payroll.journal_entry.reference }}
-                            </a>
+                    <td>{{ p.base_pay|floatformat:"2g" }}</td>
+                    <td class="{% if p.absence_deduction %}neg{% endif %}">{{ p.absence_deduction|floatformat:"2g" }}{% if p.absent_days %}<span class="sub">{{ p.absent_days }} يوم</span>{% endif %}</td>
+                    <td class="{% if p.delay_deduction %}neg{% endif %}">{{ p.delay_deduction|floatformat:"2g" }}{% if p.total_delay_hours %}<span class="sub">{{ p.total_delay_hours }} ساعة</span>{% endif %}</td>
+                    <td class="{% if p.overtime_pay %}pos{% endif %}">{{ p.overtime_pay|floatformat:"2g" }}{% if p.total_overtime_hours %}<span class="sub">{{ p.total_overtime_hours }} ساعة</span>{% endif %}</td>
+                    <td class="{% if p.loan_deduction %}neg{% endif %}">{{ p.loan_deduction|floatformat:"2g" }}</td>
+                    {% if totals.insurance or totals.tax %}
+                    <td class="{% if p.social_insurance %}neg{% endif %}">{{ p.social_insurance|floatformat:"2g" }}{% if p.employer_insurance %}<span class="sub">+ {{ p.employer_insurance|floatformat:"2g" }} على المحل</span>{% endif %}</td>
+                    <td class="{% if p.income_tax %}neg{% endif %}">{{ p.income_tax|floatformat:"2g" }}</td>
+                    {% endif %}
+                    <td class="net">{{ p.net_salary|floatformat:"2g" }}</td>
+                    <td>{% if p.salary_paid %}<span class="badge-st paid">💵 اتصرف</span>{% elif p.is_paid %}<span class="badge-st paid">✅ معتمد</span>{% else %}<span class="badge-st pending">⏳ معلق</span>{% endif %}</td>
+                    <td style="white-space:nowrap;">
+                        {% if perms.hr.view_attendance %}<a class="pr-btn" style="padding:.25rem .55rem; font-size:.75rem;" href="{% url 'hr:attendance_report' %}?month={{ month }}&year={{ year|stringformat:'d' }}&employee={{ p.employee_id }}" title="حضور الموظف يوم بيوم">📅</a>{% endif %}
+                        {% if not p.is_paid %}
+                            {% if perms.hr.change_payroll %}
+                            <form method="post" action="{% url 'hr:payroll_confirm' p.id %}" style="display:inline;" onsubmit="return confirm('اعتماد راتب {{ p.employee.user|display_name }} وعمل قيد الاستحقاق؟');">
+                                {% csrf_token %}
+                                <button type="submit" class="pr-btn primary" style="padding:.25rem .6rem; font-size:.75rem;">✔ اعتماد</button>
+                            </form>
                             {% endif %}
+                        {% elif p.journal_entry %}
+                            <a class="pr-btn" style="padding:.25rem .55rem; font-size:.75rem;" href="{% url 'accounting:journal_detail' p.journal_entry_id %}">🧾 {{ p.journal_entry.reference }}</a>
                         {% endif %}
                     </td>
-                </tr>
-                {% empty %}
-                <tr>
-                    <td colspan="8" class="text-center py-4 text-muted">لا توجد مسيرات رواتب مصدرة بعد.</td>
                 </tr>
                 {% endfor %}
             </tbody>
+            <tfoot>
+                <tr>
+                    <td>الإجمالي ({{ totals.n }})</td>
+                    <td></td>
+                    <td>{{ totals.base|floatformat:"2g" }}</td>
+                    <td class="neg">{{ totals.absence|floatformat:"2g" }}</td>
+                    <td class="neg">{{ totals.delay|floatformat:"2g" }}</td>
+                    <td class="pos">{{ totals.overtime|floatformat:"2g" }}</td>
+                    <td class="neg">{{ totals.loans|floatformat:"2g" }}</td>
+                    {% if totals.insurance or totals.tax %}<td class="neg">{{ totals.insurance|floatformat:"2g" }}</td><td class="neg">{{ totals.tax|floatformat:"2g" }}</td>{% endif %}
+                    <td class="net">{{ totals.net|floatformat:"2g" }}</td>
+                    <td colspan="2"></td>
+                </tr>
+            </tfoot>
         </table>
-    </div>
-
-    <!-- Pagination & Summary Footer -->
-    {% if is_paginated %}
-    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-top: 1.5rem; padding-top: 1.2rem; border-top: 1px solid rgba(255, 255, 255, 0.08);">
-        <div style="color: var(--text-muted); font-size: 0.9rem;">
-            عرض <b style="color: #fff;">{{ page_obj.start_index|default:0 }}</b> إلى <b style="color: #fff;">{{ page_obj.end_index|default:0 }}</b> من أصل <b style="color: #ff7300;">{{ total_count }}</b> مسير راتب
         </div>
-
-        <div class="pagination" style="display: flex; gap: 0.5rem; align-items: center; margin: 0;">
-            {% if page_obj.has_previous %}
-            <a href="?page=1" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأولى">⏮️ الأولى</a>
-            <a href="?page={{ page_obj.previous_page_number }}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة السابقة">⬅️ السابق</a>
-            {% endif %}
-
-            <span style="padding: 0.4rem 1rem; background: rgba(255, 255, 255, 0.08); color: #fff; font-weight: bold; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15); font-size: 0.85rem;">
-                صفحة {{ page_obj.number }} من {{ page_obj.paginator.num_pages }}
-            </span>
-
-            {% if page_obj.has_next %}
-            <a href="?page={{ page_obj.next_page_number }}" class="btn btn-sm btn-orange" style="padding: 0.4rem 0.9rem; border-radius: 6px; text-decoration: none; color: #fff; background: #ff7300; border: 1px solid #ff7300; font-weight: 700; box-shadow: 0 0 10px rgba(255, 115, 0, 0.35); font-size: 0.85rem;" title="الصفحة التالية">التالي ➡️</a>
-            <a href="?page={{ page_obj.paginator.num_pages }}" class="btn btn-sm btn-ghost" style="padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; color: #cbd5e1; border: 1px solid rgba(255, 255, 255, 0.2); font-size: 0.85rem;" title="الصفحة الأخيرة">الأخيرة ⏭️</a>
-            {% endif %}
+        <p class="note" style="margin-top:.7rem;">أقساط السلف بتتخصم من الصافي لوحدها (من شاشة سلف الموظفين) · خصم الغياب = أيام الغياب × أجر اليوم · خصم التأخير = ساعات التأخير (بعد السماحية) × قيمة ساعة الخصم · الإضافي = ساعات الإضافي × قيمة ساعة الإضافي. المسير المعتمد مش بيتغير عند إعادة الحساب.</p>
+        {% else %}
+        <div class="empty">
+            مفيش مسير رواتب لشهر {{ month_name }} {{ year|stringformat:"d" }}.
+            {% if perms.hr.add_payroll and not is_future %}<br>دوس «إصدار مسير {{ month_name }}» فوق عشان يتحسب من الحضور.{% endif %}
         </div>
+        {% endif %}
     </div>
-    {% endif %}
 </div>
 {% endblock %}

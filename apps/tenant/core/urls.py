@@ -1,6 +1,8 @@
 from django.urls import path
 from . import views
 from . import reports_views
+from . import reports_extra
+from . import pwa
 
 app_name = 'core'
 urlpatterns = [
@@ -12,6 +14,10 @@ urlpatterns = [
     path('settings/branches/<int:pk>/update/', views.BranchUpdateView.as_view(), name='branch_update'),
     path('settings/branches/<int:pk>/delete/', views.branch_delete, name='branch_delete'),
     path('settings/users/', views.UserListView.as_view(), name='user_list'),
+    path('settings/audit-log/', views.audit_log, name='audit_log'),
+    path('manifest.json', pwa.manifest, name='pwa_manifest'),
+    path('sw.js', pwa.service_worker, name='pwa_sw'),
+    path('api/alerts/', pwa.alerts_api, name='alerts_api'),
     path('settings/users/create/', views.UserCreateView.as_view(), name='user_create'),
     path('settings/users/<int:pk>/update/', views.UserUpdateView.as_view(), name='user_update'),
     path('reports/', views.ReportsIndexView.as_view(), name='reports_index'),
@@ -53,6 +59,10 @@ urlpatterns = [
     path('reports/inventory/movement/', reports_views.ItemMovementReportView.as_view(), name='report_item_movement'),
     path('reports/inventory/slow-moving/', reports_views.SlowMovingReportView.as_view(), name='report_slow_moving'),
     path('reports/accounting/income-statement/', reports_views.IncomeStatementReportView.as_view(), name='report_income_statement'),
+    path('reports/accounting/cash-flow/', reports_views.CashFlowReportView.as_view(), name='report_cash_flow'),
+    path('reports/inventory/turnover/', reports_extra.inventory_turnover, name='report_inventory_turnover'),
+    path('reports/inventory/wastage/', reports_extra.wastage_report, name='report_wastage'),
+    path('reports/inventory/batch-trace/', reports_extra.batch_traceability, name='report_batch_trace'),
     path('reports/accounting/income-statement/detail/', reports_views.IncomeStatementDetailView.as_view(), name='report_income_statement_detail'),
     path('reports/accounting/expenses/', reports_views.ExpenseReportView.as_view(), name='report_expenses'),
     path('reports/accounting/treasury/', reports_views.TreasuryStatementReportView.as_view(), name='report_treasury'),

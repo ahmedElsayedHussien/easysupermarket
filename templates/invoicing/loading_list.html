@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+{% block extra_css %}{% include "invoicing/_van_css.html" %}{% endblock %}
+
+{% block content %}
+<div class="vn">
+    <div class="vn-panel">
+        <div class="vn-head">
+            <h1>⬆️ طلبات التحميل</h1>
+            {% if perms.invoicing.view_unloadingorder %}<a class="vn-btn" style="margin-inline-start:auto;" href="{% url 'invoicing:unloading_list' %}">⬇️ طلبات التفريغ</a>{% endif %}
+        </div>
+        <p class="note">المندوب بيطلب البضاعة من موبايله ← المسؤول بيعتمد الكميات (ممكن يقلّلها) ← أمين المخزن بيصرف، والبضاعة بتتنقل لمخزن عربية المندوب بتحويل مخزني.</p>
+    </div>
+    <div class="vn-panel">
+        <div class="tabs">
+            <a href="?status=OPEN&rep={{ rep_id }}" class="{% if status == 'OPEN' %}on{% endif %}">المفتوحة</a>
+            {% for k, v in status_choices %}<a href="?status={{ k }}&rep={{ rep_id }}" class="{% if status == k %}on{% endif %}">{{ v }}</a>{% endfor %}
+            <a href="?status=ALL&rep={{ rep_id }}" class="{% if status == 'ALL' %}on{% endif %}">الكل</a>
+            <form method="get" style="margin-inline-start:auto;"><input type="hidden" name="status" value="{{ status }}">
+                <select name="rep" onchange="this.form.submit()"><option value="">كل المناديب</option>{% for r in reps %}<option value="{{ r.id }}" {% if r.id|stringformat:'s' == rep_id %}selected{% endif %}>{{ r }}</option>{% endfor %}</select></form>
+        </div>
+        {% if orders %}
+        <table class="tbl">
+            <thead><tr><th>رقم الطلب</th><th>التاريخ</th><th>المندوب</th><th>من مخزن</th><th>الأصناف</th><th>الحالة</th><th></th></tr></thead>
+            <tbody>
+                {% for o in orders %}
+                <tr><td><strong>{{ o.number }}</strong></td><td>{{ o.date|date:"Y-m-d" }}</td><td>{{ o.rep }}</td>
+                    <td>{{ o.from_warehouse.name }}</td><td>{{ o.lines_count }}</td>
+                    <td><span class="st {{ o.status }}">{{ o.get_status_display }}</span></td>
+                    <td><a class="vn-btn" href="{% url 'invoicing:loading_detail' o.id %}">فتح</a></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% include "invoicing/_van_pager.html" %}
+        {% else %}<p class="note" style="text-align:center; padding:1rem;">مفيش طلبات هنا.</p>{% endif %}
+    </div>
+</div>
+{% endblock %}

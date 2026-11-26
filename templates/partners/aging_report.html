@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.ag { max-width: 1250px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.ag-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.ag-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.ag-panel h2 { font-size: 1rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .6rem; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.tabs { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; margin-top: .7rem; }
+.tabs a { padding: .3rem .8rem; border-radius: 999px; font-size: .82rem; font-weight: 700; text-decoration: none; background: var(--bg-secondary); color: var(--text-muted); }
+.tabs a.on { background: var(--neon-orange); color: #fff; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; white-space: nowrap; }
+.tbl td { padding: .5rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td:first-child, .tbl th:first-child { text-align: right; }
+.tbl tfoot td { font-weight: 800; border-top: 2px solid var(--border-bright); border-bottom: none; }
+.tbl a { color: var(--text-primary); font-weight: 800; text-decoration: none; }
+.tbl a:hover { color: var(--neon-orange); }
+.b0 { color: var(--neon-green); } .b1 { color: var(--neon-gold); } .b2 { color: var(--neon-orange); } .b3 { color: var(--neon-red); font-weight: 800; }
+.sub { display: block; font-size: .72rem; color: var(--text-muted); font-weight: 600; }
+.table-scroll { overflow-x: auto; }
+@media print { .sidebar, .navbar, .tabs, .no-print { display: none !important; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ag">
+    <div class="ag-panel">
+        <h1>⏳ أعمار الديون بالفاتورة — {% if side == 'suppliers' %}المستحق للموردين{% else %}المستحق على العملاء{% endif %}</h1>
+        <p class="note">كل فاتورة آجلة لسه عليها فلوس، متقسمة حسب عدد الأيام بعد ميعاد استحقاقها (أو تاريخها لو مالهاش ميعاد). السندات المربوطة بفاتورة بتتخصم منها، والمبالغ اللي اتدفعت من غير ربط بتتوزع على الأقدم أولاً — فالإجمالي بيطابق رصيد كل {% if side == 'suppliers' %}مورد{% else %}عميل{% endif %}.</p>
+        <div class="tabs">
+            <a href="?side=customers" class="{% if side == 'customers' %}on{% endif %}">العملاء (لينا)</a>
+            <a href="?side=suppliers" class="{% if side == 'suppliers' %}on{% endif %}">الموردين (علينا)</a>
+            <button type="button" class="tabs-btn" onclick="window.print()" style="margin-inline-start:auto; padding:.3rem .8rem; border-radius:8px; border:1px solid var(--border-bright); background:var(--bg-secondary); color:var(--text-primary); font-weight:700; cursor:pointer;">🖨️ طباعة</button>
+        </div>
+    </div>
+
+    {% if detail %}
+    <div class="ag-panel">
+        <h2>📄 فواتير {{ detail.partner.name }} المفتوحة <a href="?side={{ side }}" class="sub" style="display:inline; margin-inline-start:.5rem;">✕ إغلاق</a></h2>
+        <div class="table-scroll">
+        <table class="tbl">
+            <thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الاستحقاق</th><th>الآجل</th><th>مرتجع</th><th>سندات مربوطة</th><th>اتسدد تلقائي</th><th>المتبقي</th><th>متأخرة</th></tr></thead>
+            <tbody>
+                {% for r in detail.rows %}
+                <tr><td><a href="{% url 'invoicing:invoice_detail' r.invoice.id %}">{{ r.invoice.invoice_number }}</a></td>
+                    <td>{{ r.invoice.date|date:"Y-m-d" }}</td><td>{{ r.due|date:"Y-m-d" }}</td>
+                    <td>{{ r.credit|floatformat:"2g" }}</td><td>{{ r.returned|floatformat:"2g" }}</td>
+                    <td>{{ r.allocated|floatformat:"2g" }}</td><td>{{ r.auto_settled|floatformat:"2g" }}</td>
+                    <td><strong>{{ r.outstanding|floatformat:"2g" }}</strong></td>
+                    <td class="{% if r.days_overdue > 90 %}b3{% elif r.days_overdue > 60 %}b2{% elif r.days_overdue > 30 %}b1{% else %}b0{% endif %}">{{ r.days_overdue }} يوم</td></tr>
+                {% endfor %}
+                {% if detail.not_on_invoices %}<tr><td colspan="7">رصيد مش على فواتير (رصيد أول المدة / أخرى)</td><td><strong>{{ detail.not_on_invoices|floatformat:"2g" }}</strong></td><td></td></tr>{% endif %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="ag-panel">
+        {% if rows %}
+        <div class="table-scroll">
+        <table class="tbl">
+            <thead><tr><th>{% if side == 'suppliers' %}المورد{% else %}العميل{% endif %}</th>{% for b in buckets %}<th>{{ b }}</th>{% endfor %}<th>على الفواتير</th><th>أخرى</th><th>الرصيد</th></tr></thead>
+            <tbody>
+                {% for r in rows %}
+                <tr>
+                    <td><a href="?side={{ side }}&partner={{ r.partner.pk }}">{{ r.partner.name }}</a><span class="sub">{{ r.rows|length }} فاتورة · أقدم {{ r.oldest }} يوم</span></td>
+                    {% for v in r.buckets %}<td class="b{{ forloop.counter0 }}">{% if v %}{{ v|floatformat:"2g" }}{% else %}—{% endif %}</td>{% endfor %}
+                    <td><strong>{{ r.open_total|floatformat:"2g" }}</strong></td>
+                    <td>{% if r.not_on_invoices %}{{ r.not_on_invoices|floatformat:"2g" }}{% else %}—{% endif %}</td>
+                    <td>{{ r.balance|floatformat:"2g" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot><tr><td>الإجمالي ({{ rows|length }})</td>{% for t in totals %}<td>{{ t|floatformat:"2g" }}</td>{% endfor %}<td>{{ grand_total|floatformat:"2g" }}</td><td>{{ not_on_invoices|floatformat:"2g" }}</td><td></td></tr></tfoot>
+        </table>
+        </div>
+        {% else %}<p class="note" style="text-align:center; padding:1rem;">مفيش فواتير آجلة مفتوحة.</p>{% endif %}
+    </div>
+</div>
+{% endblock %}

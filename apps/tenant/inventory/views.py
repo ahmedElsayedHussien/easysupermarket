@@ -64,15 +64,15 @@ from apps.tenant.core.company import company_profile
 @custom_permission_required('inventory.view_product', redirect_url='core:main_screen')
 def product_list(request):
     from django.core.paginator import Paginator
-    from django.db.models import Sum
+    from django.db.models import Count, Sum
     query = request.GET.get('q', '').strip()
     products = Product.objects.select_related('category').order_by('-id')
     
     if query:
-        products = products.filter(
-            Q(name__icontains=query) | 
-            Q(barcode__icontains=query)
-        )
+        # any barcode of the product: main, unit or extra (exact) — ids first, so no duplicates
+        products = products.filter(id__in=Product.objects.filter(
+            Q(name__icontains=query) | Q(barcode__icontains=query)
+            | Q(uoms__barcode=query) | Q(extra_barcodes__barcode=query)).values('id'))
         
     current_branch = get_branch_scope(request)
     
@@ -88,9 +88,14 @@ def product_list(request):
         .annotate(total=Sum('quantity_remaining'))
         .values_list('product_id', 'total')
     )
+    from .models import SerialItem
+    serial_map = dict(SerialItem.objects.filter(product_id__in=p_ids, is_sold=False)
+                      .values('product_id').annotate(c=Count('id')).values_list('product_id', 'c'))
+    branch_prices = Product.branch_price_map([p.id for p in page_obj], current_branch)
     for p in page_obj:
-        p.sale_price = p.get_price_for_branch(current_branch)
-        p.pos_stock = stock_map.get(p.id, 0)
+        p.sale_price = branch_prices.get(p.id, p.sale_price)
+        p.pos_stock = (serial_map.get(p.id, 0) if p.product_type == 'SERIALIZED'
+                       else stock_map.get(p.id) or 0)
         
     settings = SystemSetting.get_settings()
     context = {
@@ -595,6 +600,10 @@ def product_bulk_import(request):
                 p_norm = normalize_name(p.name)
                 if p_norm and p_norm not in existing_products_by_name:
                     existing_products_by_name[p_norm] = p
+            # a sheet barcode that is an EXTRA barcode of a product means that same product
+            from .models import ProductBarcode
+            for b in ProductBarcode.objects.filter(barcode__in=chunk).select_related('product'):
+                existing_products_by_barcode.setdefault(b.barcode.strip(), b.product)
 
         for i in range(0, len(sheet_names), CHUNK_LIMIT):
             chunk = sheet_names[i:i + CHUNK_LIMIT]
@@ -932,6 +941,7 @@ class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = 'إضافة منتج جديد'
+        context.update(_extra_barcode_context(self.request, None))
         context['cancel_url'] = reverse_lazy('inventory:product_list')
         context['expiry_tracking'] = _expiry_tracking_enabled()
         context['warehouses'] = Warehouse.objects.filter(is_active=True)
@@ -944,10 +954,19 @@ class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
     def form_valid(self, form):
         context = self.get_context_data()
         uom_formset = context['uom_formset']
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .barcodes import parse_extra_rows, save_extra_barcodes
+        try:
+            extra_rows = parse_extra_rows(self.request.POST, getattr(self, 'object', None))
+        except DjangoValidationError as e:
+            for msg in e.messages:
+                form.add_error(None, msg)
+            return self.render_to_response(self.get_context_data(form=form))
         if uom_formset.is_valid():
             self.object = form.save()
             uom_formset.instance = self.object
             uom_formset.save()
+            save_extra_barcodes(self.object, extra_rows)
 
             # Handle opening balance if specified
             op_qty_str = self.request.POST.get('opening_quantity', '').strip()
@@ -979,6 +998,25 @@ class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
         else:
             return self.render_to_response(self.get_context_data(form=form))
 
+
+def _extra_barcode_context(request, product):
+    """Rows of the "extra barcodes" section: the posted rows after a validation error,
+    else the product's saved ones; plus the product's saved units to choose from."""
+    if request.method == 'POST':
+        codes = request.POST.getlist('extra_barcode[]')
+        uoms = request.POST.getlist('extra_barcode_uom[]')
+        notes = request.POST.getlist('extra_barcode_note[]')
+        rows = [{'barcode': c, 'uom_id': uoms[i] if i < len(uoms) else '', 'note': notes[i] if i < len(notes) else ''}
+                for i, c in enumerate(codes) if (c or '').strip()]
+    elif product is not None and product.pk:
+        rows = [{'barcode': b.barcode, 'uom_id': str(b.uom_id or ''), 'note': b.note}
+                for b in product.extra_barcodes.all()]
+    else:
+        rows = []
+    units = list(product.uoms.select_related('uom')) if product is not None and product.pk else []
+    return {'extra_barcode_rows': rows, 'extra_barcode_units': units}
+
+
 class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
     model = Product
     form_class = ProductForm
@@ -991,6 +1029,7 @@ class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
         context = super().get_context_data(**kwargs)
         context['title'] = 'تعديل منتج'
         context['cancel_url'] = reverse_lazy('inventory:product_list')
+        context.update(_extra_barcode_context(self.request, self.object))
         context['expiry_tracking'] = _expiry_tracking_enabled()
         warehouses = Warehouse.objects.filter(is_active=True)
         context['warehouses'] = warehouses
@@ -1006,10 +1045,19 @@ class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
     def form_valid(self, form):
         context = self.get_context_data()
         uom_formset = context['uom_formset']
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .barcodes import parse_extra_rows, save_extra_barcodes
+        try:
+            extra_rows = parse_extra_rows(self.request.POST, getattr(self, 'object', None))
+        except DjangoValidationError as e:
+            for msg in e.messages:
+                form.add_error(None, msg)
+            return self.render_to_response(self.get_context_data(form=form))
         if uom_formset.is_valid():
             self.object = form.save()
             uom_formset.instance = self.object
             uom_formset.save()
+            save_extra_barcodes(self.object, extra_rows)
 
             # Handle opening balance update if specified
             op_qty_str = self.request.POST.get('opening_quantity', '').strip()
@@ -1184,7 +1232,7 @@ def adjustment_create(request):
         return redirect('inventory:adjustment_list')
         
     warehouses = Warehouse.objects.filter(is_active=True)
-    products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom')
+    products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom', 'extra_barcodes')
     return render(request, 'inventory/adjustment_form.html', {
         'warehouses': warehouses,
         'products': products,
@@ -1404,6 +1452,32 @@ def adjustment_confirm(request, pk):
     return redirect('inventory:adjustment_list')
 
 
+
+def _stocktake_snapshot(warehouse, product_ids=None):
+    """{product_id: (book quantity, average cost or None)} for one warehouse in 3 queries.
+    Serialized items count unsold serials; average cost is over positive batches."""
+    from django.db.models import Count, DecimalField, ExpressionWrapper, F, Sum
+    from .models import SerialItem
+    batches = InventoryBatch.objects.filter(warehouse=warehouse)
+    serials = SerialItem.objects.filter(warehouse=warehouse, is_sold=False)
+    products = Product.objects.all()
+    if product_ids is not None:
+        batches = batches.filter(product_id__in=product_ids)
+        serials = serials.filter(product_id__in=product_ids)
+        products = products.filter(id__in=product_ids)
+    qty = dict(batches.values('product_id').annotate(t=Sum('quantity_remaining')).values_list('product_id', 't'))
+    cost = {r['product_id']: r['v'] / r['q'] for r in batches.filter(quantity_remaining__gt=0).values('product_id').annotate(
+        q=Sum('quantity_remaining'),
+        v=Sum(ExpressionWrapper(F('quantity_remaining') * F('unit_cost'),
+                                output_field=DecimalField(max_digits=30, decimal_places=8)))) if r['q']}
+    serial = dict(serials.values('product_id').annotate(c=Count('id')).values_list('product_id', 'c'))
+    out = {}
+    for pid, ptype in products.values_list('id', 'product_type'):
+        q = Decimal(serial.get(pid, 0)) if ptype == 'SERIALIZED' else (qty.get(pid) or Decimal('0'))
+        out[pid] = (q, cost.get(pid))
+    return out
+
+
 @login_required
 @custom_permission_required('inventory.perform_stocktake', redirect_url='core:main_screen')
 def stocktake_create(request):
@@ -1464,8 +1538,8 @@ def stocktake_create(request):
                         'name': p['name'],
                         'barcode': p['barcode'] or '',
                         'sku': p['sku'] or '',
-                        'stock': float(stock),
-                        'cost': float(avg_cost)
+                        'stock': str(stock),
+                        'cost': str(Decimal(avg_cost).quantize(Decimal('0.0001')))
                     })
                 return JsonResponse({'status': 'success', 'products': data})
             except Warehouse.DoesNotExist:
@@ -1493,32 +1567,39 @@ def stocktake_create(request):
         )
 
         product_ids = request.POST.getlist('product_id[]')
-        system_qtys = request.POST.getlist('system_qty[]')
         physical_qtys = request.POST.getlist('physical_qty[]')
         unit_costs = request.POST.getlist('unit_cost[]')
 
-        lines_created = 0
-        for pid, s_qty, p_qty, cost in zip(product_ids, system_qtys, physical_qtys, unit_costs):
-            if pid and p_qty != '':
-                try:
-                    product = Product.objects.get(id=pid)
-                    sys_q = Decimal(str(s_qty)) if s_qty else product.get_stock(warehouse)
-                    phys_q = Decimal(str(p_qty))
-                    variance = phys_q - sys_q
-                    c = Decimal(str(cost)) if cost else (product.get_average_cost(warehouse) or product.last_purchase_price or Decimal('0'))
-
-                    StockAdjustmentLine.objects.create(
-                        adjustment=adj,
-                        product=product,
-                        system_quantity=sys_q,
-                        physical_quantity=phys_q,
-                        quantity=variance,
-                        unit_cost=c,
-                        conversion_factor=Decimal('1.0')
-                    )
-                    lines_created += 1
-                except (Product.DoesNotExist, InvalidOperation, ValueError):
+        # The system quantity and the average cost always come from the server (the
+        # browser copy may be stale); a cost the user really typed (differs by >= 0.01
+        # from the server cost) is kept as an override.
+        ids = [int(pid) for pid in product_ids if str(pid).isdigit()]
+        products_by_id = Product.objects.in_bulk(ids)
+        snapshot = _stocktake_snapshot(warehouse, ids)
+        new_lines = []
+        for pid, p_qty, cost in zip(product_ids, physical_qtys, unit_costs):
+            if not pid or p_qty == '':
+                continue
+            try:
+                product = products_by_id.get(int(pid))
+                if product is None:
                     continue
+                sys_q, server_cost = snapshot.get(product.id, (Decimal('0'), None))
+                server_cost = server_cost if server_cost is not None else (product.last_purchase_price or Decimal('0'))
+                phys_q = Decimal(str(p_qty))
+                c = server_cost
+                if cost not in (None, ''):
+                    typed = Decimal(str(cost))
+                    if abs(typed - server_cost) >= Decimal('0.01'):
+                        c = typed
+                new_lines.append(StockAdjustmentLine(
+                    adjustment=adj, product=product, system_quantity=sys_q, physical_quantity=phys_q,
+                    quantity=phys_q - sys_q, unit_cost=c, conversion_factor=Decimal('1'),
+                ))
+            except (InvalidOperation, ValueError):
+                continue
+        StockAdjustmentLine.objects.bulk_create(new_lines)
+        lines_created = len(new_lines)
 
         if lines_created == 0:
             adj.delete()
@@ -1533,7 +1614,7 @@ def stocktake_create(request):
             return redirect('inventory:adjustment_detail', pk=adj.id)
 
     warehouses = Warehouse.objects.filter(is_active=True)
-    products = Product.objects.filter(is_active=True)
+    products = Product.objects.filter(is_active=True).prefetch_related('extra_barcodes')
     return render(request, 'inventory/stocktake_form.html', {
         'warehouses': warehouses,
         'products': products,
@@ -1598,7 +1679,9 @@ def api_products(request):
     query = request.GET.get('q', '').strip()
     products_qs = Product.objects.filter(is_active=True).select_related('category').prefetch_related('uoms__uom')
     if query:
-        products_qs = products_qs.filter(Q(name__icontains=query) | Q(barcode__icontains=query))[:50]
+        products_qs = products_qs.filter(id__in=Product.objects.filter(
+            Q(name__icontains=query) | Q(barcode__icontains=query)
+            | Q(uoms__barcode=query) | Q(extra_barcodes__barcode=query)).values('id'))[:50]
     else:
         products_qs = products_qs[:50]
     products_list = list(products_qs)
@@ -1923,3 +2006,28 @@ def _eta_code_info(product):
     if pend is not None:
         return {'ok': False, 'text': f'كود الفئة "{pend.name}" في انتظار موافقة الضرائب.'}
     return {'ok': False, 'text': 'لا يوجد كود — سجّل كوداً لفئة الصنف من: منظومة الضرائب ← تسجيل أكواد الأصناف.'}
+
+
+@login_required
+@custom_permission_required('inventory.perform_stocktake', redirect_url='core:main_screen')
+def stocktake_sheet(request):
+    """ورقة جرد للطباعة: عمياء (من غير الرصيد) أو كاملة (بالرصيد)، لمخزن وفئة."""
+    from django.utils import timezone
+    from apps.tenant.core.access import filter_by_branch
+    from .models import Category
+    warehouses = list(filter_by_branch(Warehouse.objects.filter(is_active=True), request))
+    wh = next((w for w in warehouses if str(w.id) == request.GET.get('warehouse')), warehouses[0] if warehouses else None)
+    category = Category.objects.filter(pk=request.GET.get('category') or 0).first()
+    blind = request.GET.get('mode', 'blind') != 'full'
+    products = Product.objects.filter(is_active=True).exclude(product_type='SERVICE').select_related('category')
+    if category is not None:
+        products = products.filter(category__in=category.get_descendants(include_self=True))
+    products = list(products.order_by('category__name', 'name'))
+    snapshot = _stocktake_snapshot(wh, [p.id for p in products]) if (wh and not blind) else {}
+    rows = [{'product': p, 'stock': (snapshot.get(p.id) or (None, None))[0]} for p in products]
+    from apps.tenant.core.company import company_profile
+    return render(request, 'inventory/stocktake_sheet.html', {
+        'title': 'ورقة جرد', 'rows': rows, 'warehouses': warehouses, 'warehouse': wh, 'blind': blind,
+        'categories': Category.objects.all().order_by('name'), 'category': category,
+        'company': company_profile(request), 'today': timezone.localdate(),
+    })

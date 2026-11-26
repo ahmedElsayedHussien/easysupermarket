@@ -4,6 +4,14 @@ from django.contrib.auth.decorators import login_required
 from .models import Partner, Payment
 from apps.tenant.core.decorators import custom_permission_required
 
+ZERO = Decimal('0')
+
+
+def _dec(value):
+    """Money for the Excel statement: always Decimal (openpyxl writes it as a number)."""
+    return value if isinstance(value, Decimal) else Decimal(str(value or 0))
+
+
 @login_required
 @custom_permission_required('partners.view_partner', redirect_url='core:main_screen')
 def supplier_list(request):
@@ -497,7 +505,7 @@ def partner_ledger_export_excel(request, pk):
     meta_rows = [
         [("اسم الشريك:", partner.name, True), ("فترة كشف الحساب:", period_str, True)],
         [("نوع الشريك:", partner_type_str, False), ("تاريخ وتوقيت الاستخراج:", now_str, False)],
-        [("رقم الهاتف:", partner.phone or partner.mobile or "—", False), ("رصيد ما قبل الفترة (المنقول):", f"{float(stmt['opening_balance']):,.2f} ج.م", True)],
+        [("رقم الهاتف:", partner.phone or partner.mobile or "—", False), ("رصيد ما قبل الفترة (المنقول):", f"{_dec(stmt['opening_balance']):,.2f} ج.م", True)],
     ]
 
     curr_row = 4
@@ -597,7 +605,7 @@ def partner_ledger_export_excel(request, pk):
 
     # 4. Opening Balance Row (if any)
     if stmt['opening_balance'] != Decimal('0'):
-        op_val = float(stmt['opening_balance'])
+        op_val = _dec(stmt['opening_balance'])
         ws.row_dimensions[curr_row].height = 22
         if show_items:
             vals = [
@@ -613,8 +621,8 @@ def partner_ledger_export_excel(request, pk):
                 "—",
                 "—",
                 "—",
-                op_val if op_val > 0 else 0.0,
-                abs(op_val) if op_val < 0 else 0.0,
+                op_val if op_val > 0 else ZERO,
+                abs(op_val) if op_val < 0 else ZERO,
                 op_val
             ]
         else:
@@ -624,8 +632,8 @@ def partner_ledger_export_excel(request, pk):
                 f"OPN-{partner.id}",
                 "رصيد مرحل (سابق)",
                 "رصيد ما قبل الفترة المنقول للشريك",
-                op_val if op_val > 0 else 0.0,
-                abs(op_val) if op_val < 0 else 0.0,
+                op_val if op_val > 0 else ZERO,
+                abs(op_val) if op_val < 0 else ZERO,
                 op_val
             ]
 
@@ -650,7 +658,7 @@ def partner_ledger_export_excel(request, pk):
         row_counter += 1
 
     # 5. Data Rows
-    running_bal = float(stmt['opening_balance'])
+    running_bal = _dec(stmt['opening_balance'])
 
     if show_items:
         # Detailed items mode
@@ -664,15 +672,15 @@ def partner_ledger_export_excel(request, pk):
             if lines:
                 for l, d_dr, d_cr in _detail_lines_with_adjustment(t):
                     ws.row_dimensions[curr_row].height = 22
-                    q_num = float(l.get('quantity') or 0)
+                    q_num = _dec(l.get('quantity') or 0)
                     u_name = l.get('uom_name') or 'قطعة'
-                    p_num = float(l.get('unit_price') or 0)
-                    disc_num = float(l.get('discount_amount') or 0)
-                    tax_num = float(l.get('tax_amount') or 0)
-                    tot_num = float(l.get('total_amount') or 0)
+                    p_num = _dec(l.get('unit_price') or 0)
+                    disc_num = _dec(l.get('discount_amount') or 0)
+                    tax_num = _dec(l.get('tax_amount') or 0)
+                    tot_num = _dec(l.get('total_amount') or 0)
 
-                    line_dr = float(d_dr)
-                    line_cr = float(d_cr)
+                    line_dr = _dec(d_dr)
+                    line_cr = _dec(d_cr)
                     running_bal += line_dr - line_cr
 
                     is_even = (row_counter % 2 == 0)
@@ -689,8 +697,8 @@ def partner_ledger_export_excel(request, pk):
                         disc_num,
                         tax_num,
                         tot_num,
-                        line_dr if line_dr > 0 else 0.0,
-                        line_cr if line_cr > 0 else 0.0,
+                        line_dr if line_dr > 0 else ZERO,
+                        line_cr if line_cr > 0 else ZERO,
                         running_bal
                     ]
 
@@ -727,8 +735,8 @@ def partner_ledger_export_excel(request, pk):
                     row_counter += 1
             else:
                 ws.row_dimensions[curr_row].height = 22
-                dr_num = float(t.get('debit') or 0)
-                cr_num = float(t.get('credit') or 0)
+                dr_num = _dec(t.get('debit') or 0)
+                cr_num = _dec(t.get('credit') or 0)
                 running_bal += (dr_num - cr_num)
 
                 is_even = (row_counter % 2 == 0)
@@ -745,8 +753,8 @@ def partner_ledger_export_excel(request, pk):
                     "—",
                     "—",
                     "—",
-                    dr_num if dr_num > 0 else 0.0,
-                    cr_num if cr_num > 0 else 0.0,
+                    dr_num if dr_num > 0 else ZERO,
+                    cr_num if cr_num > 0 else ZERO,
                     running_bal
                 ]
 
@@ -784,8 +792,8 @@ def partner_ledger_export_excel(request, pk):
             ref_val = t.get('reference') or ''
             doc_type_val = t.get('doc_type') or ''
             desc_val = t.get('description') or ''
-            dr_num = float(t.get('debit') or 0)
-            cr_num = float(t.get('credit') or 0)
+            dr_num = _dec(t.get('debit') or 0)
+            cr_num = _dec(t.get('credit') or 0)
             running_bal += (dr_num - cr_num)
 
             is_even = (row_counter % 2 == 0)
@@ -795,8 +803,8 @@ def partner_ledger_export_excel(request, pk):
                 ref_val,
                 doc_type_val,
                 desc_val,
-                dr_num if dr_num > 0 else 0.0,
-                cr_num if cr_num > 0 else 0.0,
+                dr_num if dr_num > 0 else ZERO,
+                cr_num if cr_num > 0 else ZERO,
                 running_bal
             ]
 
@@ -839,7 +847,7 @@ def partner_ledger_export_excel(request, pk):
         ws.cell(row=curr_row, column=c_i).fill = fill_summary
         ws.cell(row=curr_row, column=c_i).border = border_summary
 
-    tot_dr = float(stmt['period_debit'] or 0)
+    tot_dr = _dec(stmt['period_debit'] or 0)
     dr_c_idx = 13 if show_items else 6
     c_dr = ws.cell(row=curr_row, column=dr_c_idx, value=tot_dr)
     c_dr.font = f_summary
@@ -848,7 +856,7 @@ def partner_ledger_export_excel(request, pk):
     c_dr.number_format = '#,##0.00'
     c_dr.border = border_summary
 
-    tot_cr = float(stmt['period_credit'] or 0)
+    tot_cr = _dec(stmt['period_credit'] or 0)
     cr_c_idx = 14 if show_items else 7
     c_cr = ws.cell(row=curr_row, column=cr_c_idx, value=tot_cr)
     c_cr.font = f_summary
@@ -857,7 +865,7 @@ def partner_ledger_export_excel(request, pk):
     c_cr.number_format = '#,##0.00'
     c_cr.border = border_summary
 
-    tot_bal = float(stmt['final_balance'] or 0)
+    tot_bal = _dec(stmt['final_balance'] or 0)
     bal_c_idx = 15 if show_items else 8
     c_bal = ws.cell(row=curr_row, column=bal_c_idx, value=tot_bal)
     c_bal.font = f_summary
@@ -953,3 +961,24 @@ def partner_ledger_export_excel(request, pk):
     )
     response['Content-Disposition'] = f"attachment; filename*=UTF-8''{encoded_filename}"
     return response
+
+
+@login_required
+@custom_permission_required('partners.view_partner', redirect_url='core:main_screen')
+def aging_report(request):
+    """أعمار الديون بالفاتورة: what each customer owes us (or we owe each supplier), invoice
+    by invoice, by days past the due date (accounting.allocation_services)."""
+    from apps.tenant.accounting.allocation_services import AGE_BUCKETS, aging
+    side = 'suppliers' if request.GET.get('side') == 'suppliers' else 'customers'
+    types = [Partner.SUPPLIER, Partner.BOTH] if side == 'suppliers' else [Partner.CUSTOMER, Partner.BOTH]
+    partners = Partner.objects.filter(is_active=True, partner_type__in=types)
+    rows = aging(partners, 'PURCHASE' if side == 'suppliers' else 'SALE')
+    totals = [sum((r['buckets'][i] for r in rows), Decimal('0')) for i in range(len(AGE_BUCKETS))]
+    selected = request.GET.get('partner') or ''
+    detail = next((r for r in rows if str(r['partner'].pk) == selected), None)
+    return render(request, 'partners/aging_report.html', {
+        'title': 'أعمار الديون بالفاتورة', 'side': side, 'rows': rows, 'buckets': [b[2] for b in AGE_BUCKETS],
+        'totals': totals, 'grand_total': sum(totals, Decimal('0')),
+        'not_on_invoices': sum((r['not_on_invoices'] for r in rows), Decimal('0')),
+        'detail': detail,
+    })

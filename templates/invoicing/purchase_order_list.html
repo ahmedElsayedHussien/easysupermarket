@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.po { max-width: 1150px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.po-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.po-head { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.po-head h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.po-btn { padding: .42rem .85rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .84rem; text-decoration: none; }
+.po-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: .6rem; }
+.tabs a { padding: .3rem .8rem; border-radius: 999px; font-size: .8rem; font-weight: 700; text-decoration: none; background: var(--bg-secondary); color: var(--text-muted); }
+.tabs a.on { background: var(--neon-orange); color: #fff; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .5rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td:first-child, .tbl th:first-child { text-align: right; }
+.st { font-size: .72rem; font-weight: 800; padding: .12rem .55rem; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); }
+.st.SENT, .st.DRAFT { background: rgba(251,191,36,.15); color: var(--neon-gold); }
+.st.PARTIAL { background: rgba(0,229,255,.12); color: var(--neon-cyan); }
+.st.RECEIVED { background: rgba(46,213,115,.15); color: var(--neon-green); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="po">
+    <div class="po-panel">
+        <div class="po-head">
+            <h1>📦 أوامر الشراء</h1>
+            {% if can_add %}
+            <a class="po-btn" style="margin-inline-start:auto;" href="{% url 'invoicing:purchase_order_suggest' %}">💡 اقتراح من النواقص</a>
+            <a class="po-btn primary" href="{% url 'invoicing:purchase_order_create' %}">➕ أمر شراء جديد</a>
+            {% endif %}
+        </div>
+        <p class="note">اطلب البضاعة من المورد بأمر شراء، ولما توصل دوس «استلام بفاتورة شراء» — الفاتورة بتتملى من الأمر والكميات المستلمة بتتحدث لوحدها.</p>
+    </div>
+    <div class="po-panel">
+        <div class="tabs">
+            <a href="?status=OPEN" class="{% if status == 'OPEN' %}on{% endif %}">المفتوحة</a>
+            {% for k, v in status_choices %}<a href="?status={{ k }}" class="{% if status == k %}on{% endif %}">{{ v }}</a>{% endfor %}
+            <a href="?status=ALL" class="{% if status == 'ALL' %}on{% endif %}">الكل</a>
+        </div>
+        {% if orders %}
+        <table class="tbl">
+            <thead><tr><th>رقم الأمر</th><th>التاريخ</th><th>المورد</th><th>المخزن</th><th>الأصناف</th><th>القيمة المتوقعة</th><th>الحالة</th><th></th></tr></thead>
+            <tbody>
+                {% for o in orders %}
+                <tr><td><strong>{{ o.number }}</strong></td><td>{{ o.date|date:"Y-m-d" }}</td><td>{{ o.supplier.name }}</td>
+                    <td>{{ o.warehouse.name }}</td><td>{{ o.lines_count }}</td><td>{{ o.total|floatformat:"2g" }}</td>
+                    <td><span class="st {{ o.status }}">{{ o.get_status_display }}</span></td>
+                    <td><a class="po-btn" href="{% url 'invoicing:purchase_order_detail' o.id %}">فتح</a></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if page_obj.has_other_pages %}
+        <div style="display:flex; gap:.5rem; justify-content:center; margin-top:.8rem;">
+            {% if page_obj.has_previous %}<a class="po-btn" href="?status={{ status }}&page={{ page_obj.previous_page_number }}">السابق</a>{% endif %}
+            {% if page_obj.has_next %}<a class="po-btn" href="?status={{ status }}&page={{ page_obj.next_page_number }}">التالي</a>{% endif %}
+        </div>
+        {% endif %}
+        {% else %}<p class="note" style="text-align:center; padding:1rem;">مفيش أوامر شراء هنا.</p>{% endif %}
+    </div>
+</div>
+{% endblock %}

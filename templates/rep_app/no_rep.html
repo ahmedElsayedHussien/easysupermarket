@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ title }}</title>
+<style>body{font-family:"Segoe UI",Tahoma,sans-serif;background:#f4f5f8;color:#1b1f2a;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;padding:1rem}
+.c{background:#fff;border-radius:14px;padding:1.4rem;max-width:420px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.06)}
+button{margin-top:1rem;padding:.7rem 1.2rem;border-radius:10px;border:0;background:#ff7300;color:#fff;font-weight:800;font-size:1rem}</style></head>
+<body><div class="c">
+    <div style="font-size:2.4rem">🚚</div>
+    <h2>حسابك مش مربوط بمندوب</h2>
+    <p>اطلب من الإدارة تضيفك كمندوب مبيعات (شاشة مناديب المبيعات) وتحدد لك مخزن عربية وخزنة.</p>
+    <form action="{% url 'logout' %}" method="post">{% csrf_token %}<button>تسجيل خروج</button></form>
+</div></body></html>

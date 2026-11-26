@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.rp { max-width: 1150px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.rp-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.rp-head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.rp-head h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.note { font-size: .82rem; color: var(--text-muted); margin: .35rem 0 0; }
+.rp select, .rp input { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .38rem .5rem; font-size: .84rem; }
+.frm { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; align-items: end; }
+.frm label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.rp-btn { padding: .4rem .85rem; border-radius: 8px; border: 1px solid var(--neon-orange); background: var(--neon-orange); color: #fff; font-weight: 700; cursor: pointer; text-decoration: none; font-size: .84rem; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th { color: var(--text-muted); font-weight: 700; font-size: .76rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); text-align: center; }
+.tbl td { padding: .5rem .4rem; border-bottom: 1px solid var(--border-default); text-align: center; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tbl td:first-child, .tbl th:first-child { text-align: right; }
+.tbl a { color: var(--text-primary); font-weight: 800; text-decoration: none; }
+.bar { height: 6px; background: var(--bg-secondary); border-radius: 3px; margin-top: .25rem; min-width: 90px; }
+.bar i { display: block; height: 100%; border-radius: 3px; background: var(--neon-orange); }
+.ok { color: var(--neon-green); font-weight: 700; }
+.sub { display: block; font-size: .72rem; color: var(--text-muted); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="rp">
+    <div class="rp-panel">
+        <div class="rp-head">
+            <h1>🚚 مناديب المبيعات — {{ month_name }} {{ year|stringformat:"d" }}</h1>
+            <form method="get" style="margin-inline-start:auto; display:flex; gap:.4rem;">
+                <select name="month" onchange="this.form.submit()">{% for n, nm in months %}<option value="{{ n }}" {% if n == month %}selected{% endif %}>{{ nm }}</option>{% endfor %}</select>
+                <input type="number" name="year" value="{{ year|stringformat:'d' }}" style="width:6rem;" onchange="this.form.submit()">
+            </form>
+        </div>
+        <p class="note">المندوب بيطلب التحميل ويبيع ويحصّل من واجهة الموبايل على مخزن عربيته وخزنته، وفواتيره بتتعلّم باسمه، وبيورّد الفلوس من «توريدات المناديب». صافي مبيعاته (بعد المرتجعات) بيتحسب قصاد التارجت، والعمولة لما تتعمد بتتضاف لمرتبه في المسير.</p>
+    </div>
+    <div class="rp-panel">
+        {% if rows %}
+        <table class="tbl">
+            <thead><tr><th>المندوب</th><th>عربيته</th><th>فواتير</th><th>عملاء</th><th>صافي المبيعات</th><th>التارجت</th><th>العمولة</th></tr></thead>
+            <tbody>
+                {% for r in rows %}
+                <tr><td><a href="{% url 'invoicing:rep_detail' r.rep.id %}?year={{ year|stringformat:'d' }}&month={{ month }}">{{ r.rep }}</a>{% if not r.rep.is_active %}<span class="sub">موقوف</span>{% endif %}</td>
+                    <td>{{ r.rep.van_warehouse.name|default:"—" }}</td><td>{{ r.invoices }}</td><td>{{ r.customers }}</td>
+                    <td><strong>{{ r.net|floatformat:"2g" }}</strong>{% if r.returns %}<span class="sub">مرتجع {{ r.returns|floatformat:"2g" }}</span>{% endif %}</td>
+                    <td>{% if r.target %}{{ r.target|floatformat:"2g" }}<div class="bar"><i style="width: {% if r.achievement > 100 %}100{% else %}{{ r.achievement }}{% endif %}%;"></i></div><span class="sub">{{ r.achievement }}%</span>{% else %}—{% endif %}</td>
+                    <td>{{ r.commission|floatformat:"2g" }}{% if r.approved %}<span class="sub ok">✔ معتمدة {{ r.approved.amount|floatformat:"2g" }}</span>{% endif %}</td></tr>
+                {% endfor %}
+            </tbody>
+            <tfoot><tr><td colspan="4"><strong>الإجمالي</strong></td><td><strong>{{ totals.net|floatformat:"2g" }}</strong></td><td>{{ totals.target|floatformat:"2g" }}</td><td>{{ totals.commission|floatformat:"2g" }}</td></tr></tfoot>
+        </table>
+        {% else %}<p class="note" style="text-align:center; padding:1rem;">مفيش مناديب لسه.</p>{% endif %}
+    </div>
+    {% if can_add %}
+    <form method="post" class="rp-panel">
+        {% csrf_token %}
+        <strong style="color:var(--text-primary);">➕ مندوب جديد</strong>
+        <div class="frm" style="margin-top:.6rem;">
+            <label>الموظف<select name="employee" required><option value="">— اختار —</option>{% for e in employees %}<option value="{{ e.id }}">{{ e.user|display_name }}</option>{% endfor %}</select></label>
+            <label>مخزن العربية<select name="van_warehouse"><option value="new">➕ اعمل له مخزن عربية جديد</option>{% for w in warehouses %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}</select></label>
+            <label>خزنته (الفلوس اللي معاه)<select name="treasury"><option value="new">➕ اعمل له خزنة جديدة</option>{% for t in treasuries %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select></label>
+            <label>بيحمّل من مخزن<select name="source_warehouse"><option value="">تلقائي (المخزن الرئيسي للفرع)</option>{% for w in warehouses %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}</select></label>
+            <label>نسبة العمولة %<input type="number" name="commission_rate" min="0" max="100" step="0.01" value="0"></label>
+            <label>التارجت الشهري<input type="number" name="monthly_target" min="0" step="0.01" value="0"></label>
+            <div><button class="rp-btn">إضافة</button></div>
+        </div>
+        <p class="note">كل مندوب ليه مخزن عربية وخزنة خاصة بيه: بيبيع من الموبايل على مخزن العربية، والفلوس بتنزل في خزنته لحد ما يورّدها. خلّي دور المستخدم بتاعه «مندوب مبيعات».</p>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}

@@ -292,6 +292,65 @@
                 </div>
             </div>
 
+            <!-- Extra barcodes (inventory.ProductBarcode) -->
+            <div class="card glass-panel border-neon mb-4" id="extraBarcodesCard">
+                <div class="card-header border-bottom border-secondary d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0 text-neon-pink">🏷️ باركودات إضافية للصنف</h5>
+                    <button type="button" class="btn btn-sm" id="add-extra-barcode" style="background-color: #ff8800; color: #ffffff; font-weight: bold; border: none; box-shadow: 0 0 8px rgba(255, 136, 0, 0.6); padding: 5px 15px;">
+                        <i class="fas fa-plus"></i> إضافة باركود
+                    </button>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small mb-3">لو نفس الصنف بييجي بأكتر من باركود (مورد تاني أو تعبئة مختلفة) ضيفه هنا — الكاشير يمسح أي واحد منهم ويطلع نفس الصنف. اختار الوحدة لو الباركود بتاع كرتونة مثلاً.{% if not extra_barcode_units %} (الوحدات تظهر هنا بعد حفظ الصنف أول مرة.){% endif %}</p>
+                    <div id="extra-barcode-rows">
+                        {% for row in extra_barcode_rows %}
+                        <div class="row g-2 align-items-center mb-2 extra-barcode-row">
+                            <div class="col-md-4"><input type="text" name="extra_barcode[]" value="{{ row.barcode }}" class="form-control" placeholder="الباركود" maxlength="100"></div>
+                            <div class="col-md-3">
+                                <select name="extra_barcode_uom[]" class="form-select">
+                                    <option value="">الوحدة الأساسية</option>
+                                    {% for u in extra_barcode_units %}<option value="{{ u.id }}" {% if row.uom_id == u.id|stringformat:'d' %}selected{% endif %}>{{ u.uom.name }} (×{{ u.conversion_factor|floatformat:"-4" }})</option>{% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-4"><input type="text" name="extra_barcode_note[]" value="{{ row.note }}" class="form-control" placeholder="ملاحظة: اسم المورد / التعبئة" maxlength="150"></div>
+                            <div class="col-md-1 text-center"><button type="button" class="btn btn-sm btn-outline-danger remove-extra-barcode" title="حذف">✕</button></div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <template id="extra-barcode-template">
+                        <div class="row g-2 align-items-center mb-2 extra-barcode-row">
+                            <div class="col-md-4"><input type="text" name="extra_barcode[]" class="form-control" placeholder="الباركود" maxlength="100"></div>
+                            <div class="col-md-3">
+                                <select name="extra_barcode_uom[]" class="form-select">
+                                    <option value="">الوحدة الأساسية</option>
+                                    {% for u in extra_barcode_units %}<option value="{{ u.id }}">{{ u.uom.name }} (×{{ u.conversion_factor|floatformat:"-4" }})</option>{% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-4"><input type="text" name="extra_barcode_note[]" class="form-control" placeholder="ملاحظة: اسم المورد / التعبئة" maxlength="150"></div>
+                            <div class="col-md-1 text-center"><button type="button" class="btn btn-sm btn-outline-danger remove-extra-barcode" title="حذف">✕</button></div>
+                        </div>
+                    </template>
+                    <script>
+                    (function () {
+                        var box = document.getElementById('extra-barcode-rows');
+                        var tpl = document.getElementById('extra-barcode-template');
+                        document.getElementById('add-extra-barcode').addEventListener('click', function () {
+                            box.appendChild(tpl.content.cloneNode(true));
+                            var inputs = box.querySelectorAll('input[name="extra_barcode[]"]');
+                            inputs[inputs.length - 1].focus();
+                        });
+                        box.addEventListener('click', function (e) {
+                            if (e.target.classList.contains('remove-extra-barcode')) e.target.closest('.extra-barcode-row').remove();
+                        });
+                        // a scanner sends Enter: move to the next row instead of submitting the product form
+                        box.addEventListener('keydown', function (e) {
+                            if (e.key === 'Enter' && e.target.name === 'extra_barcode[]') { e.preventDefault(); document.getElementById('add-extra-barcode').click(); }
+                        });
+                    })();
+                    </script>
+                </div>
+            </div>
+
             <div class="d-flex justify-content-between mb-5 pt-3 border-top border-secondary">
                 <button type="submit" class="btn btn-neon-cyan px-5 py-2 fs-5">
                     <i class="fas fa-save me-2"></i> حفظ المنتج

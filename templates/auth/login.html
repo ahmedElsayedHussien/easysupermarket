@@ -82,11 +82,12 @@
             font-size: 0.9rem;
         }
     </style>
+    {% include 'partials/theme_head.html' %}
 </head>
 <body>
 
     <div class="login-card">
-        <img src="{% static 'img/logo-on-dark.png' %}" alt="مسار" style="height:100px; margin-bottom:1.5rem; object-fit:contain;">
+        <img src="{% static 'img/logo-on-dark.png' %}" alt="مسار" class="brand-logo" style="height:100px; margin-bottom:1.5rem; object-fit:contain;">
         
         {% if form.errors %}
         <div class="error-message">

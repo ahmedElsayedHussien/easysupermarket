@@ -234,26 +234,26 @@ class PricingEngineService:
 
         from apps.tenant.inventory.models import ProductUoM
 
-        tiers = {}
+        from apps.tenant.inventory.models import Product
+
+        # All items first, then branch prices and unit factors for their products in
+        # 2 queries (not one query per product / per unit).
+        sources = [(tier_name, list(PriceListItem.objects.filter(price_list__in=lists_qs)
+                                    .select_related('product', 'price_list').order_by('product_id', 'min_quantity')))
+                   for tier_name, lists_qs in list_sources]
+        product_ids = {item.product_id for _, items in sources for item in items}
+        branch_prices = Product.branch_price_map(product_ids, branch) if branch else {}
         factor_cache = {}
-        base_cache = {}
-        for tier_name, lists_qs in list_sources:
-            items = (PriceListItem.objects.filter(price_list__in=lists_qs)
-                     .select_related('product', 'price_list').order_by('product_id', 'min_quantity'))
+        for pid, uom_id, f in ProductUoM.objects.filter(product_id__in=product_ids).values_list(
+                'product_id', 'uom_id', 'conversion_factor'):
+            factor_cache[(pid, uom_id)] = Decimal(str(f)) if f and f > 0 else Decimal('1')
+
+        tiers = {}
+        for tier_name, items in sources:
             for item in items:
                 pid = item.product_id
-                if pid not in base_cache:
-                    base = item.product.get_price_for_branch(branch) if branch else item.product.sale_price
-                    base_cache[pid] = Decimal(str(base or 0))
-                base = base_cache[pid]
-                factor = Decimal('1')
-                if item.uom_id:
-                    key = (pid, item.uom_id)
-                    if key not in factor_cache:
-                        puom = ProductUoM.objects.filter(product_id=pid, uom_id=item.uom_id).only('conversion_factor').first()
-                        f = Decimal(str(puom.conversion_factor)) if (puom and puom.conversion_factor and puom.conversion_factor > 0) else Decimal('1')
-                        factor_cache[key] = f
-                    factor = factor_cache[key]
+                base = Decimal(str(branch_prices.get(pid, item.product.sale_price) or 0))
+                factor = factor_cache.get((pid, item.uom_id), Decimal('1')) if item.uom_id else Decimal('1')
                 unit_base = base * factor
                 tiers.setdefault(str(pid), []).append({
                     'tier': tier_name,
@@ -268,7 +268,7 @@ class PricingEngineService:
         return tiers
 
     @classmethod
-    def get_customer_price_map(cls, partner, branch=None, as_of_date=None, include_tiers=True) -> dict:
+    def get_customer_price_map(cls, partner, branch=None, as_of_date=None, include_tiers=True, tiers=None) -> dict:
         """
         Returns a dictionary mapping product_id (str) -> {
             'price': float,            # price for quantity 1 of the BASE unit (legacy meaning)
@@ -284,7 +284,8 @@ class PricingEngineService:
         get_customer_price_tiers for products without a qty-1 base price).
         Tier 1 (Customer-specific) items override Tier 2 (Sector-specific) items.
         """
-        tiers = cls.get_customer_price_tiers(partner, branch=branch, as_of_date=as_of_date)
+        if tiers is None:   # callers that already have the tiers pass them (no second computation)
+            tiers = cls.get_customer_price_tiers(partner, branch=branch, as_of_date=as_of_date)
         if not tiers:
             return {}
 

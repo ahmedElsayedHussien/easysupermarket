@@ -60,8 +60,8 @@
                     <td class="en" style="color: #00e5ff; font-weight: bold;">{{ entry.reference }}</td>
                     <td class="en">{{ entry.date|date:"Y-m-d" }}</td>
                     <td title="{{ entry.description }}" style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ entry.description }}</td>
-                    <td class="en" style="color: #2ed573; font-weight: bold;">{{ entry.get_total_debit }}</td>
-                    <td class="en" style="color: #ff4757; font-weight: bold;">{{ entry.get_total_credit }}</td>
+                    <td class="en" style="color: #2ed573; font-weight: bold;">{{ entry.total_debit }}</td>
+                    <td class="en" style="color: #ff4757; font-weight: bold;">{{ entry.total_credit }}</td>
                     <td style="text-align: center;">
                         {% if entry.status == 'POSTED' %}
                         <span class="badge-status badge-success">مرحّل</span>

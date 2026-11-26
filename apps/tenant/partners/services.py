@@ -61,7 +61,7 @@ def get_partner_full_statement(partner, start_date=None, end_date=None):
     invoices = Invoice.objects.filter(
         partner=partner,
         status=Invoice.POSTED
-    ).select_related('partner').prefetch_related('lines__product', 'lines__uom__uom').order_by('date', 'created_at')
+    ).select_related('partner').prefetch_related('lines__product__uoms__uom', 'lines__uom__uom').order_by('date', 'created_at')
 
     for inv in invoices:
         inv_dt = inv.created_at or datetime.datetime.combine(inv.date, datetime.time.min)
@@ -304,7 +304,7 @@ def get_partner_full_statement(partner, start_date=None, end_date=None):
     from apps.tenant.accounting.models import EServiceTransaction
     for es in EServiceTransaction.objects.filter(
             agent=partner, transaction_type=EServiceTransaction.MERCHANT_RECHARGE,
-            paid_on_credit=True, status=EServiceTransaction.POSTED).order_by('date', 'created_at'):
+            paid_on_credit=True, status=EServiceTransaction.POSTED).select_related('pos_machine', 'ewallet').order_by('date', 'created_at'):
         es_url = None
         try:
             es_url = reverse('accounting:eservice_detail', kwargs={'pk': es.pk})
@@ -392,7 +392,7 @@ def get_partner_full_statement(partner, start_date=None, end_date=None):
             })
 
     # ب. شيكات الدفع الصادرة للمورد
-    for chq in partner.cheques.filter(cheque_type='PAYABLE'):
+    for chq in partner.cheques.filter(cheque_type='PAYABLE').select_related('bank_account'):
         chq_dt = chq.created_at or datetime.datetime.combine(chq.received_date, datetime.time.min)
         chq_url = get_cheque_url(chq.id)
 

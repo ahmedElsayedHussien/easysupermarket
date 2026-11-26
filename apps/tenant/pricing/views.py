@@ -598,7 +598,7 @@ def api_customer_prices(request):
         branch = get_branch_scope(request)
 
     tiers = PricingEngineService.get_customer_price_tiers(partner=partner, branch=branch)
-    prices_map = PricingEngineService.get_customer_price_map(partner=partner, branch=branch)
+    prices_map = PricingEngineService.get_customer_price_map(partner=partner, branch=branch, tiers=tiers)
     return JsonResponse({
         'success': True,
         'partner_id': partner.id,

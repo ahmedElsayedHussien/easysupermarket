@@ -1,0 +1,46 @@
+/* ==========================================================================
+   Day / night theme
+   --------------------------------------------------------------------------
+   The interface is designed dark. The day theme inverts the whole screen
+   (lightness) and rotates hues back, so accent colours keep their hue while
+   backgrounds turn light and text turns dark — for every page at once,
+   including colours written inline in templates.
+   Photos are inverted back so they show their real colours. The brand logo is
+   left inverted on purpose: its white wordmark becomes dark on the light page.
+   Printing is never affected (screen only).
+   ========================================================================== */
+@media screen {
+  html[data-theme="light"] {
+    filter: invert(1) hue-rotate(180deg);
+    background: #0b1220; /* inverted -> light page behind short content */
+  }
+  html[data-theme="light"] img:not(.brand-logo),
+  html[data-theme="light"] video,
+  html[data-theme="light"] picture,
+  html[data-theme="light"] iframe,
+  html[data-theme="light"] .theme-keep-colors {
+    filter: invert(1) hue-rotate(180deg);
+  }
+}
+
+/* Toggle button (header / POS) */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border-default, #334155);
+  background: var(--bg-card, #131c31);
+  color: var(--text-primary, #f8fafc);
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+  transition: border-color .15s ease;
+}
+.theme-toggle:hover { border-color: #ff7300; }
+.theme-toggle .ico-day { display: none; }
+html[data-theme="light"] .theme-toggle .ico-day { display: inline; }
+html[data-theme="light"] .theme-toggle .ico-night { display: none; }

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+{% load static %}
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <meta name="theme-color" content="#ff7300">
+    <link rel="manifest" href="{% url 'core:pwa_manifest' %}">
+    <link rel="apple-touch-icon" href="{% static 'img/app-icon.png' %}">
+    <title>{{ title }} — المندوب</title>
+    <style>
+        :root { --bg: #f4f5f8; --card: #ffffff; --ink: #1b1f2a; --muted: #6b7280; --line: #e5e7eb; --accent: #ff7300;
+                --accent-ink: #fff; --ok: #12924f; --bad: #d62839; --warn: #b7791f; --chip: #f1f2f5; --input: #fff; }
+        @media (prefers-color-scheme: dark) {
+            :root { --bg: #0d111b; --card: #161c29; --ink: #eef1f7; --muted: #9aa3b5; --line: #263042; --chip: #1f2737;
+                    --input: #0f1522; --ok: #34d399; --bad: #f87171; --warn: #fbbf24; }
+        }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Segoe UI", Tahoma, "Noto Sans Arabic", sans-serif; }
+        body { padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
+        .top { position: sticky; top: 0; z-index: 10; background: var(--accent); color: var(--accent-ink); padding: .7rem 1rem; display: flex; align-items: center; gap: .6rem; }
+        .top h1 { font-size: 1.05rem; margin: 0; font-weight: 800; flex: 1; }
+        .top .chip { background: rgba(255,255,255,.2); border-radius: 999px; padding: .2rem .7rem; font-size: .8rem; font-weight: 700; white-space: nowrap; }
+        main { padding: .8rem; max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: .8rem; }
+        .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: .9rem; }
+        .card h2 { font-size: .98rem; margin: 0 0 .6rem; }
+        .muted { color: var(--muted); font-size: .82rem; }
+        .ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+        .num { font-variant-numeric: tabular-nums; }
+        .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+        .kpi { background: var(--chip); border-radius: 12px; padding: .7rem; }
+        .kpi small { display: block; color: var(--muted); font-size: .76rem; font-weight: 700; }
+        .kpi b { font-size: 1.2rem; }
+        .btn { display: flex; align-items: center; justify-content: center; gap: .4rem; width: 100%; padding: .85rem; border-radius: 12px; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 1rem; font-weight: 800; text-decoration: none; cursor: pointer; font-family: inherit; }
+        .btn.ghost { background: var(--chip); color: var(--ink); }
+        .btn.ok { background: var(--ok); color: #fff; }
+        .btn.sm { width: auto; padding: .45rem .8rem; font-size: .85rem; border-radius: 9px; }
+        .btn:disabled { opacity: .5; }
+        .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+        .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1rem .6rem; text-align: center; text-decoration: none; color: var(--ink); font-weight: 800; font-size: .92rem; }
+        .tile span { display: block; font-size: 1.7rem; margin-bottom: .25rem; }
+        .list { display: flex; flex-direction: column; }
+        .item { display: flex; align-items: center; gap: .6rem; padding: .65rem 0; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
+        .item:last-child { border-bottom: 0; }
+        .item .grow { flex: 1; min-width: 0; }
+        .item .t { font-weight: 700; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        input, select, textarea { width: 100%; padding: .75rem; border-radius: 10px; border: 1px solid var(--line); background: var(--input); color: var(--ink); font-size: 1rem; font-family: inherit; }
+        label { display: block; font-size: .82rem; color: var(--muted); font-weight: 700; margin-bottom: .25rem; }
+        .field { margin-bottom: .65rem; }
+        .row { display: flex; gap: .5rem; align-items: center; }
+        .badge { font-size: .72rem; font-weight: 800; padding: .15rem .55rem; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+        .badge.PENDING { color: var(--warn); } .badge.APPROVED { color: #0891b2; } .badge.ISSUED, .badge.RECEIVED { color: var(--ok); } .badge.CANCELLED { color: var(--bad); }
+        .msg { border-radius: 12px; padding: .7rem .9rem; font-weight: 700; font-size: .9rem; }
+        .msg.success { background: rgba(18,146,79,.12); color: var(--ok); }
+        .msg.error { background: rgba(214,40,57,.12); color: var(--bad); }
+        nav.bottom { position: fixed; bottom: 0; inset-inline: 0; background: var(--card); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(5, 1fr); padding-bottom: env(safe-area-inset-bottom); z-index: 20; }
+        nav.bottom a { text-decoration: none; color: var(--muted); text-align: center; padding: .45rem 0 .5rem; font-size: .72rem; font-weight: 700; }
+        nav.bottom a span { display: block; font-size: 1.35rem; }
+        nav.bottom a.on { color: var(--accent); }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <header class="top">
+        <h1>{% block heading %}{{ title }}{% endblock %}</h1>
+        <span class="chip">🚚 {{ rep_name }}</span>
+    </header>
+    <main>
+        {% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}
+        {% block content %}{% endblock %}
+    </main>
+    <nav class="bottom">
+        <a href="{% url 'invoicing:rep_app_home' %}" class="{% if tab == 'home' %}on{% endif %}"><span>🏠</span>الرئيسية</a>
+        <a href="{% url 'invoicing:rep_app_sell' %}" class="{% if tab == 'sell' %}on{% endif %}"><span>🛒</span>بيع</a>
+        <a href="{% url 'invoicing:rep_app_customers' %}" class="{% if tab == 'customers' %}on{% endif %}"><span>👥</span>العملاء</a>
+        <a href="{% url 'invoicing:rep_app_stock' %}" class="{% if tab == 'van' %}on{% endif %}"><span>🚚</span>العربية</a>
+        <a href="{% url 'invoicing:rep_app_loading' %}" class="{% if tab == 'orders' %}on{% endif %}"><span>📋</span>الطلبات</a>
+    </nav>
+    <script>
+    function csrf() { return document.querySelector('meta[name="csrf-token"]').content; }
+    function money(v) { return (Math.round(parseFloat(v || 0) * 100) / 100).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+    function esc(t) { var d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; }
+    if ('serviceWorker' in navigator) { navigator.serviceWorker.register('{% url "core:pwa_sw" %}', {scope: '/'}).catch(function () {}); }
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

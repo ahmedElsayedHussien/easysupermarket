@@ -264,6 +264,14 @@ class Invoice(models.Model):
     eta_uuid = models.CharField(max_length=100, blank=True, null=True)
     eta_status = models.CharField(max_length=50, blank=True, null=True)
 
+    sales_rep = models.ForeignKey(
+        'invoicing.SalesRep', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='invoices', verbose_name='المندوب'
+    )
+    purchase_order = models.ForeignKey(
+        'invoicing.PurchaseOrder', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='invoices', verbose_name='أمر الشراء'
+    )
     parent_invoice = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -324,6 +332,12 @@ class Invoice(models.Model):
         verbose_name = 'فاتورة'
         verbose_name_plural = 'الفواتير'
         ordering = ['-date', '-created_at']
+        permissions = [
+            ('add_purchase_invoice', 'إنشاء فواتير ومرتجعات الشراء'),
+            ('add_sales_return', 'عمل مرتجع مبيعات'),
+            ('add_sales_return_no_invoice', 'مرتجع مبيعات بدون فاتورة (رصيد أول المدة)'),
+            ('cancel_invoice', 'إلغاء فاتورة مرحلة'),
+        ]
         indexes = [
             models.Index(fields=['-date', '-created_at'], name='inv_date_created_idx'),
             models.Index(fields=['invoice_type', '-date'], name='inv_type_date_idx'),
@@ -1010,3 +1024,292 @@ class QuotationLine(models.Model):
         self.total_amount = self.subtotal + self.tax_amount - self.wht_amount
         super().save(*args, **kwargs)
 
+
+
+class PurchaseOrder(models.Model):
+    """أمر شراء لمورد. بيتحول لفاتورة شراء (كلها أو جزء)؛ الفاتورة المرتبطة بتحدّث الكميات المستلمة."""
+    DRAFT = 'DRAFT'
+    SENT = 'SENT'
+    PARTIAL = 'PARTIAL'
+    RECEIVED = 'RECEIVED'
+    CANCELLED = 'CANCELLED'
+    STATUS_CHOICES = ((DRAFT, 'مسودة'), (SENT, 'اتبعت للمورد'), (PARTIAL, 'مستلم جزئياً'), (RECEIVED, 'مستلم بالكامل'),
+                      (CANCELLED, 'ملغي'))
+    OPEN_STATUSES = (DRAFT, SENT, PARTIAL)
+
+    number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم أمر الشراء')
+    date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
+    supplier = models.ForeignKey('partners.Partner', on_delete=models.PROTECT, related_name='purchase_orders',
+                                 verbose_name='المورد')
+    branch = models.ForeignKey('core.Branch', on_delete=models.PROTECT, related_name='purchase_orders', verbose_name='الفرع')
+    warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.PROTECT, related_name='purchase_orders',
+                                  verbose_name='المخزن')
+    expected_date = models.DateField(null=True, blank=True, verbose_name='ميعاد الاستلام المتوقع')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=DRAFT, db_index=True, verbose_name='الحالة')
+    notes = models.TextField(blank=True, default='', verbose_name='ملاحظات')
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                   verbose_name='بواسطة')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'أمر شراء'
+        verbose_name_plural = 'أوامر الشراء'
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return f'{self.number} — {self.supplier}'
+
+    def save(self, *args, **kwargs):
+        if not self.number:
+            from django.db import transaction
+            from apps.tenant.core.sequences import max_numeric_suffix, next_sequence
+            prefix = f'PO-{(self.date or datetime.date.today()).year}-'
+            with transaction.atomic():
+                n = next_sequence(f'purchase_order:{prefix}',
+                                  seed=lambda: max_numeric_suffix(PurchaseOrder.objects.all(), 'number', prefix))
+                self.number = f'{prefix}{n:05d}'
+                return super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
+
+
+class PurchaseOrderLine(models.Model):
+    order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='lines', verbose_name='أمر الشراء')
+    product = models.ForeignKey('inventory.Product', on_delete=models.PROTECT, related_name='purchase_order_lines',
+                                verbose_name='الصنف')
+    uom = models.ForeignKey('inventory.ProductUoM', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                            verbose_name='الوحدة')
+    quantity = models.DecimalField(max_digits=14, decimal_places=3, verbose_name='الكمية المطلوبة')
+    unit_price = models.DecimalField(max_digits=14, decimal_places=4, default=Decimal('0'), verbose_name='السعر المتوقع')
+    received_quantity = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal('0'), verbose_name='المستلم')
+
+    class Meta:
+        verbose_name = 'بند أمر شراء'
+        verbose_name_plural = 'بنود أوامر الشراء'
+
+    @property
+    def remaining(self):
+        return max(self.quantity - self.received_quantity, Decimal('0'))
+
+
+class SalesRep(models.Model):
+    """مندوب مبيعات: موظف ليه مخزن عربية، ونسبة عمولة على صافي مبيعاته، وتارجت شهري.
+    فواتير نقطة البيع اللي بيعملها بتتعلّم باسمه لوحدها (Invoice.sales_rep)."""
+    employee = models.OneToOneField('core.Employee', on_delete=models.CASCADE, related_name='sales_rep',
+                                    verbose_name='الموظف')
+    van_warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.SET_NULL, null=True, blank=True,
+                                      related_name='sales_reps', verbose_name='مخزن العربية')
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0'),
+                                          verbose_name='نسبة العمولة %')
+    monthly_target = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0'),
+                                         verbose_name='التارجت الشهري')
+    treasury = models.ForeignKey('accounting.Treasury', on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name='sales_reps', verbose_name='خزنة المندوب')
+    source_warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.SET_NULL, null=True, blank=True,
+                                         related_name='+', verbose_name='المخزن اللي بيحمّل منه')
+    is_active = models.BooleanField(default=True, verbose_name='نشط')
+
+    class Meta:
+        verbose_name = 'مندوب مبيعات'
+        verbose_name_plural = 'مناديب المبيعات'
+        permissions = [('use_rep_app', 'واجهة المندوب على الموبايل (بيع، تحصيل، طلب تحميل وتفريغ)')]
+
+    def __str__(self):
+        return self.employee.user.get_full_name() or self.employee.user.username
+
+
+class RepCommission(models.Model):
+    """عمولة مندوب عن شهر (بعد الاعتماد بتتضاف لمرتبه في المسير)."""
+    rep = models.ForeignKey(SalesRep, on_delete=models.CASCADE, related_name='commissions', verbose_name='المندوب')
+    year = models.PositiveIntegerField(verbose_name='السنة')
+    month = models.PositiveSmallIntegerField(verbose_name='الشهر')
+    net_sales = models.DecimalField(max_digits=16, decimal_places=2, verbose_name='صافي المبيعات')
+    rate = models.DecimalField(max_digits=5, decimal_places=2, verbose_name='النسبة %')
+    amount = models.DecimalField(max_digits=14, decimal_places=2, verbose_name='العمولة')
+    approved_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                    verbose_name='اعتمدها')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'عمولة مندوب'
+        verbose_name_plural = 'عمولات المناديب'
+        unique_together = ('rep', 'year', 'month')
+
+
+# ---------------------------------------------------------------------------
+# Van sales: loading / unloading requests and the rep's cash hand-over
+# (invoicing.van_services has the rules; invoicing.rep_app is the rep's mobile screen)
+# ---------------------------------------------------------------------------
+
+def _numbered_save(obj, model, prefix_code, *args, **kwargs):
+    if not obj.number:
+        from django.db import transaction
+        from apps.tenant.core.sequences import max_numeric_suffix, next_sequence
+        prefix = f'{prefix_code}-{(obj.date or datetime.date.today()).year}-'
+        with transaction.atomic():
+            n = next_sequence(f'{model._meta.model_name}:{prefix}',
+                              seed=lambda: max_numeric_suffix(model.objects.all(), 'number', prefix))
+            obj.number = f'{prefix}{n:05d}'
+            return models.Model.save(obj, *args, **kwargs)
+    return models.Model.save(obj, *args, **kwargs)
+
+
+class LoadingOrder(models.Model):
+    """طلب تحميل: المندوب بيطلب بضاعة من المخزن لعربيته ← اعتماد (بالكميات المعتمدة) ← صرف وترحيل
+    (تحويل مخزني من المخزن لعربية المندوب)."""
+    PENDING, APPROVED, ISSUED, CANCELLED = 'PENDING', 'APPROVED', 'ISSUED', 'CANCELLED'
+    STATUS_CHOICES = [(PENDING, 'مستني الاعتماد'), (APPROVED, 'معتمد — مستني الصرف'),
+                      (ISSUED, 'اتصرف واترحل'), (CANCELLED, 'ملغي')]
+
+    number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم الطلب')
+    date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
+    rep = models.ForeignKey('invoicing.SalesRep', on_delete=models.PROTECT, related_name='loading_orders',
+                            verbose_name='المندوب')
+    from_warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.PROTECT, related_name='+',
+                                       verbose_name='من مخزن')
+    to_warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.PROTECT, related_name='+',
+                                     verbose_name='لعربية المندوب')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING, db_index=True,
+                              verbose_name='الحالة')
+    notes = models.TextField(blank=True, default='', verbose_name='ملاحظات')
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                     verbose_name='طلبه')
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                    verbose_name='اعتمده')
+    approved_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الاعتماد')
+    issued_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                  verbose_name='صرفه')
+    issued_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الصرف')
+    transfer = models.OneToOneField('inventory.StockTransfer', on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='loading_order', verbose_name='التحويل المخزني')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'طلب تحميل'
+        verbose_name_plural = 'طلبات التحميل'
+        ordering = ['-date', '-id']
+        permissions = [('approve_loadingorder', 'اعتماد طلب التحميل'),
+                       ('issue_loadingorder', 'صرف طلب التحميل من المخزن وترحيله')]
+
+    def __str__(self):
+        return self.number
+
+    def save(self, *args, **kwargs):
+        return _numbered_save(self, LoadingOrder, 'LD', *args, **kwargs)
+
+
+class LoadingOrderLine(models.Model):
+    order = models.ForeignKey(LoadingOrder, on_delete=models.CASCADE, related_name='lines', verbose_name='الطلب')
+    product = models.ForeignKey('inventory.Product', on_delete=models.PROTECT, related_name='+', verbose_name='الصنف')
+    uom = models.ForeignKey('inventory.ProductUoM', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                            verbose_name='الوحدة')
+    conversion_factor = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('1'),
+                                            verbose_name='معامل التحويل')
+    requested_qty = models.DecimalField(max_digits=15, decimal_places=4, verbose_name='الكمية المطلوبة')
+    approved_qty = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True,
+                                       verbose_name='الكمية المعتمدة')
+
+    class Meta:
+        verbose_name = 'بند طلب تحميل'
+        verbose_name_plural = 'بنود طلبات التحميل'
+        ordering = ['id']
+
+    @property
+    def uom_name(self):
+        return self.uom.uom.name if self.uom_id else self.product.pos_unit_name
+
+    @property
+    def final_qty(self):
+        return self.requested_qty if self.approved_qty is None else self.approved_qty
+
+
+class UnloadingOrder(models.Model):
+    """طلب تفريغ: المندوب بيرجّع بضاعة من العربية للمخزن (سليم للمخزن، والتالف لمخزن التوالف لو محدد)
+    ← أمين المخزن بيستلم بالكميات الفعلية ويرحّل."""
+    PENDING, RECEIVED, CANCELLED = 'PENDING', 'RECEIVED', 'CANCELLED'
+    STATUS_CHOICES = [(PENDING, 'مستني الاستلام'), (RECEIVED, 'اتستلم واترحل'), (CANCELLED, 'ملغي')]
+
+    number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم الطلب')
+    date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
+    rep = models.ForeignKey('invoicing.SalesRep', on_delete=models.PROTECT, related_name='unloading_orders',
+                            verbose_name='المندوب')
+    from_warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.PROTECT, related_name='+',
+                                       verbose_name='من عربية المندوب')
+    to_warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.PROTECT, related_name='+',
+                                     verbose_name='للمخزن')
+    damaged_warehouse = models.ForeignKey('inventory.Warehouse', on_delete=models.PROTECT, null=True, blank=True,
+                                          related_name='+', verbose_name='مخزن التوالف')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING, db_index=True,
+                              verbose_name='الحالة')
+    notes = models.TextField(blank=True, default='', verbose_name='ملاحظات')
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                     verbose_name='طلبه')
+    received_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                    verbose_name='استلمه')
+    received_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الاستلام')
+    transfer = models.OneToOneField('inventory.StockTransfer', on_delete=models.SET_NULL, null=True, blank=True,
+                                    related_name='unloading_order', verbose_name='تحويل السليم')
+    damaged_transfer = models.OneToOneField('inventory.StockTransfer', on_delete=models.SET_NULL, null=True,
+                                            blank=True, related_name='unloading_damaged', verbose_name='تحويل التالف')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'طلب تفريغ'
+        verbose_name_plural = 'طلبات التفريغ'
+        ordering = ['-date', '-id']
+        permissions = [('receive_unloadingorder', 'استلام طلب التفريغ في المخزن وترحيله')]
+
+    def __str__(self):
+        return self.number
+
+    def save(self, *args, **kwargs):
+        return _numbered_save(self, UnloadingOrder, 'UL', *args, **kwargs)
+
+
+class UnloadingOrderLine(models.Model):
+    order = models.ForeignKey(UnloadingOrder, on_delete=models.CASCADE, related_name='lines', verbose_name='الطلب')
+    product = models.ForeignKey('inventory.Product', on_delete=models.PROTECT, related_name='+', verbose_name='الصنف')
+    sound_qty = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'),
+                                    verbose_name='سليم (بالوحدة الأساسية)')
+    damaged_qty = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'),
+                                      verbose_name='تالف (بالوحدة الأساسية)')
+
+    class Meta:
+        verbose_name = 'بند طلب تفريغ'
+        verbose_name_plural = 'بنود طلبات التفريغ'
+        ordering = ['id']
+
+
+class RepCashHandover(models.Model):
+    """توريد نقدية المندوب: فلوس خزنة المندوب بتتنقل للخزنة الرئيسية أو البنك
+    (Dr الخزنة المستلمة / Cr خزنة المندوب). العجز ممكن يتحمّل على المندوب
+    (Dr 1135 ذمم الموظفين / Cr خزنة المندوب) ويتخصم من مرتبه كسلفة عجز."""
+    number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم التوريد')
+    date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
+    rep = models.ForeignKey('invoicing.SalesRep', on_delete=models.PROTECT, related_name='handovers',
+                            verbose_name='المندوب')
+    expected = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'),
+                                   verbose_name='رصيد خزنة المندوب وقت التوريد')
+    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ المورّد')
+    shortage_charged = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'),
+                                           verbose_name='عجز اتحمّل على المندوب')
+    treasury = models.ForeignKey('accounting.Treasury', on_delete=models.PROTECT, null=True, blank=True,
+                                 related_name='+', verbose_name='الخزنة المستلمة')
+    bank_account = models.ForeignKey('accounting.BankAccount', on_delete=models.PROTECT, null=True, blank=True,
+                                     related_name='+', verbose_name='البنك المستلم')
+    notes = models.CharField(max_length=255, blank=True, default='', verbose_name='ملاحظات')
+    journal_entry = models.ForeignKey('accounting.JournalEntry', on_delete=models.SET_NULL, null=True, blank=True,
+                                      related_name='+', verbose_name='القيد')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                   verbose_name='استلمه')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'توريد نقدية مندوب'
+        verbose_name_plural = 'توريدات المناديب'
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return self.number
+
+    def save(self, *args, **kwargs):
+        return _numbered_save(self, RepCashHandover, 'RH', *args, **kwargs)

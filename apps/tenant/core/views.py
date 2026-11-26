@@ -82,106 +82,96 @@ class SystemSettingUpdateView(LoginRequiredMixin, AdminRequiredMixin, UpdateView
         return super().form_invalid(form)
 
 
+def low_stock_count_for(user):
+    """(active products, products at / under their reorder level) — 2 queries. Used by the
+    home page and the header bell."""
+    from apps.tenant.inventory.models import InventoryBatch, Product
+    from django.db.models import Subquery, OuterRef, F, Case, When
+    from django.db.models.functions import Coalesce
+    # Total active products
+    total_products = Product.objects.filter(is_active=True).count()
+
+    # Database-level calculation for low stock count (zero in-memory loops)
+    batch_stock_subquery = InventoryBatch.objects.filter(
+        product=OuterRef('pk'),
+        quantity_remaining__gt=0
+    ).values('product').annotate(
+        total=Sum('quantity_remaining')
+    ).values('total')
+
+    # Reorder level: the product's own min_stock_level when set (> 0), else the
+    # global SystemSetting.low_stock_threshold. Products whose effective level
+    # is 0 are not tracked. Still a single COUNT query.
+    from django.db.models import Value
+    from .settings_helpers import setting
+    try:
+        default_threshold = Decimal(str(setting('low_stock_threshold', 0) or 0))
+    except Exception:
+        default_threshold = Decimal('0')
+    low_stock_qs = Product.objects.filter(is_active=True)
+    if default_threshold <= 0:
+        low_stock_qs = low_stock_qs.filter(min_stock_level__gt=0)
+    low_stock_count = low_stock_qs.annotate(
+        current_stock=Coalesce(Subquery(batch_stock_subquery), Decimal('0')),
+        reorder_level=Case(
+            When(min_stock_level__gt=0, then=F('min_stock_level')),
+            default=Value(default_threshold),
+            output_field=DecimalField(max_digits=15, decimal_places=4),
+        ),
+    ).filter(
+        current_stock__lte=F('reorder_level')
+    ).count()
+    return total_products, low_stock_count
+
+
 @login_required
 def main_screen(request):
     """
-    Main command hub / cashier dashboard.
-    Shows today's KPIs, quick access tiles, and system summary.
-    Optimized with zero in-memory loops and direct database-level aggregation.
+    Home page: today's figures (admins), "needs your attention" alerts, quick actions,
+    a 7-day sales chart with today's top items, and the module cards — all following
+    the user's branch scope and permissions (see core.home_dashboard).
     """
-    from apps.tenant.invoicing.models import Invoice
     from apps.tenant.inventory.models import InventoryBatch, Product
-    from django.db.models import Subquery, OuterRef, F, Case, When, Count
+    from apps.tenant.inventory.dashboard_views import _can_view as can_inventory
+    from django.db.models import Subquery, OuterRef, F, Case, When
     from django.db.models.functions import Coalesce
+    from . import home_dashboard as home
 
-    today = timezone.now().date()
-    yesterday = today - timedelta(days=1)
+    # A sales rep works from his phone screen (invoicing.rep_app).
+    emp = getattr(request.user, 'employee_profile', None)
+    if emp is not None and emp.role == 'SALES_REP' and request.user.has_perm('invoicing.use_rep_app'):
+        return redirect('invoicing:rep_app_home')
 
-    # Determine if user is admin/superuser to load quick stats
-    is_admin_user = _is_admin(request.user)
+    now = timezone.localtime()
+    today = now.date()
+    is_admin_user_ = _is_admin(request.user)
 
-    today_sales = Decimal('0')
-    today_sales_change = 0
-    today_invoices = 0
     total_products = 0
     low_stock_count = 0
-
-    if is_admin_user:
-        # Today's gross sales, returns, and invoice count in one single database aggregation
-        today_stats = Invoice.objects.filter(
-            status='POSTED',
-            date=today,
-            invoice_type__in=['SALE', 'RETURN_SALE']
-        ).aggregate(
-            sales=Sum(Case(When(invoice_type='SALE', then='total_amount'), default=Decimal('0'))),
-            returns=Sum(Case(When(invoice_type='RETURN_SALE', then='total_amount'), default=Decimal('0'))),
-            invoices_count=Count(Case(When(invoice_type='SALE', then='id')))
-        )
-        today_gross = today_stats['sales'] or Decimal('0')
-        today_returns = today_stats['returns'] or Decimal('0')
-        today_sales = today_gross - today_returns
-        today_invoices = today_stats['invoices_count'] or 0
-
-        # Yesterday's net sales in one query
-        yesterday_stats = Invoice.objects.filter(
-            status='POSTED',
-            date=yesterday,
-            invoice_type__in=['SALE', 'RETURN_SALE']
-        ).aggregate(
-            sales=Sum(Case(When(invoice_type='SALE', then='total_amount'), default=Decimal('0'))),
-            returns=Sum(Case(When(invoice_type='RETURN_SALE', then='total_amount'), default=Decimal('0')))
-        )
-        yesterday_sales = (yesterday_stats['sales'] or Decimal('0')) - (yesterday_stats['returns'] or Decimal('0'))
-
-        if yesterday_sales > 0:
-            today_sales_change = round(((today_sales - yesterday_sales) / yesterday_sales) * 100, 1)
-        else:
-            today_sales_change = 100 if today_sales > 0 else 0
-
-        # Total active products
-        total_products = Product.objects.filter(is_active=True).count()
-
-        # Database-level calculation for low stock count (zero in-memory loops)
-        batch_stock_subquery = InventoryBatch.objects.filter(
-            product=OuterRef('pk'),
-            quantity_remaining__gt=0
-        ).values('product').annotate(
-            total=Sum('quantity_remaining')
-        ).values('total')
-
-        # Reorder level: the product's own min_stock_level when set (> 0), else the
-        # global SystemSetting.low_stock_threshold. Products whose effective level
-        # is 0 are not tracked. Still a single COUNT query.
-        from django.db.models import Value
-        from .settings_helpers import setting
-        try:
-            default_threshold = Decimal(str(setting('low_stock_threshold', 0) or 0))
-        except Exception:
-            default_threshold = Decimal('0')
-        low_stock_qs = Product.objects.filter(is_active=True)
-        if default_threshold <= 0:
-            low_stock_qs = low_stock_qs.filter(min_stock_level__gt=0)
-        low_stock_count = low_stock_qs.annotate(
-            current_stock=Coalesce(Subquery(batch_stock_subquery), Decimal('0')),
-            reorder_level=Case(
-                When(min_stock_level__gt=0, then=F('min_stock_level')),
-                default=Value(default_threshold),
-                output_field=DecimalField(max_digits=15, decimal_places=4),
-            ),
-        ).filter(
-            current_stock__lte=F('reorder_level')
-        ).count()
+    if can_inventory(request.user):
+        total_products, low_stock_count = low_stock_count_for(request.user)
 
     context = {
-        'user_role': 'Manager',
         'title': 'لوحة التحكم الرئيسية',
         'today': today,
-        'today_sales': today_sales,
-        'today_sales_change': today_sales_change,
-        'today_invoices': today_invoices,
+        'greeting': home.greeting(now),
+        'show_figures': is_admin_user_,
         'total_products': total_products,
         'low_stock_count': low_stock_count,
+        'alerts': home.alerts(request, today, low_stock_count),
+        'quick_actions': home.quick_actions(request.user),
+        'modules': home.modules(request.user),
     }
+    if is_admin_user_:
+        figures = home.day_figures(request, today)
+        context.update({
+            'figures': figures,
+            'today_sales': figures['sales'],
+            'today_sales_change': figures['change'],
+            'today_invoices': figures['invoices'],
+            'week': home.week_chart(request, today),
+            'top_items': home.top_items(request, today),
+        })
     return render(request, 'dashboard/main.html', context)
 
 
@@ -208,42 +198,34 @@ def admin_dashboard(request):
     labels = []
     
     from django.db.models import Case, When, DecimalField
+    # 7 days of net sales and margin in TWO grouped queries (was 3 queries per day)
+    money = DecimalField(max_digits=20, decimal_places=4)
+    week_start = today - timedelta(days=6)
+    day_sales = dict(Invoice.objects.filter(
+        invoice_type__in=['SALE', 'RETURN_SALE'], status='POSTED', date__gte=week_start, date__lte=today,
+    ).order_by().values('date').annotate(net=Sum(Case(
+        When(invoice_type='SALE', then=F('total_amount')),
+        When(invoice_type='RETURN_SALE', then=-F('total_amount')),
+        default=Decimal('0'), output_field=money))).values_list('date', 'net'))
+    day_lines = {r['invoice__date']: r for r in InvoiceLine.objects.filter(
+        invoice__invoice_type__in=['SALE', 'RETURN_SALE'], invoice__status='POSTED',
+        invoice__date__gte=week_start, invoice__date__lte=today,
+    ).order_by().values('invoice__date').annotate(
+        rev=Sum(Case(When(invoice__invoice_type='SALE', then=F('subtotal')),
+                     When(invoice__invoice_type='RETURN_SALE', then=-F('subtotal')),
+                     default=Decimal('0'), output_field=money)),
+        cogs=Sum(Case(When(invoice__invoice_type='SALE', then=F('cogs_amount')),
+                      When(invoice__invoice_type='RETURN_SALE', then=-F('cogs_amount')),
+                      default=Decimal('0'), output_field=money)),
+    )}
     for i in range(6, -1, -1):
         day = today - timedelta(days=i)
-        
-        # Day Sales (Net: SALE - RETURN_SALE)
-        sale_sum = Invoice.objects.filter(
-            invoice_type='SALE',
-            status='POSTED',
-            date=day
-        ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
-        return_sum = Invoice.objects.filter(
-            invoice_type='RETURN_SALE',
-            status='POSTED',
-            date=day
-        ).aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
-        day_sales = sale_sum - return_sum
-        sales_data.append(float(day_sales))
+        sales_data.append(float(day_sales.get(day) or Decimal('0')))   # chart JSON only
         labels.append(day.strftime('%d %b'))
-
-        # Day Profit (Net Revenue - Net COGS)
-        day_lines = InvoiceLine.objects.filter(
-            invoice__invoice_type__in=['SALE', 'RETURN_SALE'],
-            invoice__status='POSTED',
-            invoice__date=day
-        ).aggregate(
-            gross_rev=Sum(Case(When(invoice__invoice_type='SALE', then='subtotal'), default=0, output_field=DecimalField())),
-            ret_rev=Sum(Case(When(invoice__invoice_type='RETURN_SALE', then='subtotal'), default=0, output_field=DecimalField())),
-            gross_cogs=Sum(Case(When(invoice__invoice_type='SALE', then='cogs_amount'), default=0, output_field=DecimalField())),
-            ret_cogs=Sum(Case(When(invoice__invoice_type='RETURN_SALE', then='cogs_amount'), default=0, output_field=DecimalField())),
-        )
-        day_rev = (day_lines['gross_rev'] or Decimal('0')) - (day_lines['ret_rev'] or Decimal('0'))
-        day_cogs = (day_lines['gross_cogs'] or Decimal('0')) - (day_lines['ret_cogs'] or Decimal('0'))
-        day_profit = day_rev - day_cogs
-        
-        day_profit_margin = 0
-        if day_rev > 0:
-            day_profit_margin = float(day_profit / day_rev * 100)
+        row = day_lines.get(day) or {}
+        day_rev = row.get('rev') or Decimal('0')
+        day_profit = day_rev - (row.get('cogs') or Decimal('0'))
+        day_profit_margin = float(day_profit / day_rev * 100) if day_rev > 0 else 0
         profit_data.append(round(day_profit_margin, 1))
 
     # Calculate overall avg profit margin (Net Revenue - Net COGS)
@@ -476,6 +458,18 @@ class TenantUserQuerysetMixin:
         return tenant_users_queryset(self.request)
 
 
+
+def _permission_context(form):
+    """Permission sections for core/user_form.html (one query, no per-checkbox lookups)."""
+    from .permission_catalog import grouped_for_form, role_defaults_ids
+    if form.is_bound:
+        checked = [int(v) for v in form.data.getlist('user_permissions') if str(v).isdigit()]
+    else:
+        checked = form.fields['user_permissions'].initial or []
+    return {'permission_sections': grouped_for_form(checked),
+            'role_defaults_json': json.dumps(role_defaults_ids())}
+
+
 class UserListView(LoginRequiredMixin, AdminRequiredMixin, TenantUserQuerysetMixin, ListView):
     model = User
     template_name = 'core/user_list.html'
@@ -497,40 +491,7 @@ class UserCreateView(LoginRequiredMixin, AdminRequiredMixin, CreateView):
         context['title'] = 'إضافة مستخدم جديد'
         context['cancel_url'] = self.success_url
         
-        # Group permissions by app_label for the template
-        from django.contrib.auth.models import Permission
-        from collections import defaultdict
-        
-        excluded_models = ['logentry', 'contenttype', 'session', 'group', 'permission', 'employee']
-        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners', 'maintenance', 'einvoicing', 'hr', 'rentals', 'pricing'])\
-                                  .exclude(content_type__model__in=excluded_models)\
-                                  .select_related('content_type')
-        
-        APP_NAMES = {
-            'core': 'إعدادات النظام والفروع',
-            'accounting': 'الحسابات والمالية',
-            'inventory': 'المخزون والأصناف',
-            'invoicing': 'المبيعات والمشتريات',
-            'partners': 'العملاء والموردين',
-            'pricing': 'قوائم الأسعار والقطاعات',
-            'maintenance': 'المعدات وتذاكر الصيانة',
-            'einvoicing': 'الفاتورة والضرائب الإلكترونية',
-            'hr': 'الموارد البشرية والرواتب',
-            'rentals': 'تأجير المعدات والمساحات',
-        }
-        
-        grouped = defaultdict(list)
-        for p in perms:
-            name = str(p.name)
-            name = name.replace("Can add", "إضافة")
-            name = name.replace("Can change", "تعديل")
-            name = name.replace("Can delete", "حذف")
-            name = name.replace("Can view", "عرض")
-            p.translated_name = name
-            app_name = APP_NAMES.get(p.content_type.app_label, p.content_type.app_label)
-            grouped[app_name].append(p)
-            
-        context['grouped_permissions'] = dict(grouped)
+        context.update(_permission_context(context['form']))
         return context
 
     def form_valid(self, form):
@@ -570,39 +531,7 @@ class UserUpdateView(LoginRequiredMixin, AdminRequiredMixin, TenantUserQuerysetM
         context['title'] = 'تعديل بيانات وصلاحيات المستخدم'
         context['cancel_url'] = self.success_url
         
-        from django.contrib.auth.models import Permission
-        from collections import defaultdict
-        
-        excluded_models = ['logentry', 'contenttype', 'session', 'group', 'permission', 'employee']
-        perms = Permission.objects.filter(content_type__app_label__in=['core', 'accounting', 'inventory', 'invoicing', 'partners', 'maintenance', 'einvoicing', 'hr', 'rentals', 'pricing'])\
-                                  .exclude(content_type__model__in=excluded_models)\
-                                  .select_related('content_type')
-        
-        APP_NAMES = {
-            'core': 'إعدادات النظام والفروع',
-            'accounting': 'الحسابات والمالية',
-            'inventory': 'المخزون والأصناف',
-            'invoicing': 'المبيعات والمشتريات',
-            'partners': 'العملاء والموردين',
-            'pricing': 'قوائم الأسعار والقطاعات',
-            'maintenance': 'المعدات وتذاكر الصيانة',
-            'einvoicing': 'الفاتورة والضرائب الإلكترونية',
-            'hr': 'الموارد البشرية والرواتب',
-            'rentals': 'تأجير المعدات والمساحات',
-        }
-        
-        grouped = defaultdict(list)
-        for p in perms:
-            name = str(p.name)
-            name = name.replace("Can add", "إضافة")
-            name = name.replace("Can change", "تعديل")
-            name = name.replace("Can delete", "حذف")
-            name = name.replace("Can view", "عرض")
-            p.translated_name = name
-            app_name = APP_NAMES.get(p.content_type.app_label, p.content_type.app_label)
-            grouped[app_name].append(p)
-            
-        context['grouped_permissions'] = dict(grouped)
+        context.update(_permission_context(context['form']))
         return context
 
 class ReportsIndexView(LoginRequiredMixin, View):
@@ -889,3 +818,64 @@ def database_backup_restore(request, filename=None):
     else:
         messages.error(request, f'❌ {msg}')
     return redirect('core:database_backup')
+
+
+@login_required
+@custom_permission_required('core.view_auditlog', redirect_url='core:main_screen')
+def audit_log(request):
+    """سجل التعديلات: who changed what (filters: dates, user, section, action, search)."""
+    import datetime as _dt
+    from django.contrib.contenttypes.models import ContentType
+    from django.core.paginator import Paginator
+    from .audit import TRACKED
+    from .models import AuditLog
+
+    today = timezone.localdate()
+
+    def day(name, default):
+        try:
+            return _dt.datetime.strptime(request.GET.get(name) or '', '%Y-%m-%d').date()
+        except ValueError:
+            return default
+    date_from, date_to = day('from', today - timedelta(days=6)), day('to', today)
+    logs = (AuditLog.objects.select_related('user', 'content_type')
+            .filter(created_at__date__gte=date_from, created_at__date__lte=date_to))
+    user_id = request.GET.get('user') or ''
+    if user_id.isdigit():
+        logs = logs.filter(user_id=int(user_id))
+    section = request.GET.get('section') or ''
+    if section.isdigit():
+        logs = logs.filter(content_type_id=int(section))
+    action = request.GET.get('action') or ''
+    if action in dict(AuditLog.ACTION_CHOICES):
+        logs = logs.filter(action=action)
+    q = (request.GET.get('q') or '').strip()
+    if q:
+        logs = logs.filter(object_repr__icontains=q)
+
+    sections = []
+    for label in TRACKED:
+        app_label, model = label.split('.')
+        try:
+            ct = ContentType.objects.get_by_natural_key(app_label, model.lower())
+        except ContentType.DoesNotExist:
+            continue
+        sections.append({'id': ct.id, 'name': str(ct.model_class()._meta.verbose_name_plural)
+                         if ct.model_class() else ct.model})
+    sections.sort(key=lambda x: x['name'])
+    page = Paginator(logs, 50).get_page(request.GET.get('page'))
+    for log in page:
+        model = log.content_type.model_class() if log.content_type_id else None
+        log.section_name = str(model._meta.verbose_name) if model else ''
+    params = request.GET.copy()
+    params.pop('page', None)
+    context = {
+        'title': 'سجل التعديلات',
+        'logs': page, 'page_obj': page,
+        'date_from': date_from, 'date_to': date_to,
+        'users': tenant_users_queryset(request).order_by('username'),
+        'user_id': user_id, 'section': section, 'action': action, 'q': q,
+        'sections': sections, 'actions': AuditLog.ACTION_CHOICES,
+        'query': params.urlencode(),
+    }
+    return render(request, 'core/audit_log.html', context)

@@ -148,7 +148,7 @@ let availableProducts = [
     {
         id: {{ p.id }},
         name: "{{ p.name|escapejs }}",
-        barcode: "{{ p.barcode|default:''|escapejs }}",
+        barcode: "{{ p.barcode|default:''|escapejs }}{% for xb in p.extra_barcodes.all %} {{ xb.barcode|escapejs }}{% endfor %}",
         available_stock: null,
         base_uom: "{{ p.pos_unit_name|escapejs }}",
         uoms: [

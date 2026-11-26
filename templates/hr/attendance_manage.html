@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% load i18n user_tags %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.am { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.am-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; }
+.am-head { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; }
+.am-head h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0; }
+.am-help { color: var(--text-muted); font-size: .85rem; margin: .35rem 0 0; }
+.am-nav { display: flex; align-items: center; gap: .4rem; margin-inline-start: auto; }
+.am-nav a, .am-nav input, .am-btn { padding: .4rem .75rem; border-radius: 8px; border: 1px solid var(--border-bright);
+    background: var(--bg-secondary); color: var(--text-primary); text-decoration: none; font-weight: 700; font-size: .85rem; }
+.am-nav a.disabled { opacity: .35; pointer-events: none; }
+.am-btn { cursor: pointer; }
+.am-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.chip { font-size: .78rem; font-weight: 700; padding: .2rem .6rem; border-radius: 999px; background: var(--bg-secondary); color: var(--text-muted); }
+.chip b { color: var(--text-primary); }
+.am-warn { background: rgba(251,191,36,.12); border: 1px solid rgba(251,191,36,.4); color: var(--neon-gold); border-radius: 8px; padding: .55rem .8rem; font-size: .85rem; font-weight: 600; }
+.am-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.am-table th { text-align: right; color: var(--text-muted); font-weight: 700; font-size: .78rem; padding: .5rem .4rem; border-bottom: 1px solid var(--border-bright); white-space: nowrap; }
+.am-table td { padding: .45rem .4rem; border-bottom: 1px solid var(--border-default); vertical-align: middle; color: var(--text-primary); }
+.am-table tr.locked td { opacity: .55; }
+.am-table select, .am-table input { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary);
+    border-radius: 6px; padding: .3rem .4rem; font-size: .85rem; }
+.am-table input[type=time] { width: 7.2rem; }
+.am-table input.notes { width: 100%; min-width: 8rem; }
+.emp-name { font-weight: 800; }
+.emp-sub { font-size: .72rem; color: var(--text-muted); }
+.st-present { border-color: var(--neon-green) !important; }
+.st-absent { border-color: var(--neon-red) !important; }
+.st-leave { border-color: var(--neon-blue) !important; }
+.src { font-size: .7rem; font-weight: 800; padding: .1rem .45rem; border-radius: 999px; white-space: nowrap; }
+.src.gps { background: rgba(46,213,115,.15); color: var(--neon-green); }
+.src.manual { background: rgba(255,140,66,.15); color: var(--neon-orange); }
+.hrs { font-size: .75rem; color: var(--text-muted); white-space: nowrap; }
+.hrs .late { color: var(--neon-red); font-weight: 700; }
+.hrs .extra { color: var(--neon-green); font-weight: 700; }
+.am-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; margin-top: .8rem; }
+.period { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; }
+.period label { display: flex; flex-direction: column; gap: .25rem; font-size: .78rem; color: var(--text-muted); font-weight: 700; }
+.period input[type=date] { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 6px; padding: .35rem .5rem; }
+.emp-pick { margin-top: .6rem; }
+.emp-pick summary { cursor: pointer; font-size: .82rem; font-weight: 700; color: var(--text-muted); }
+.emp-pick .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .3rem .8rem; margin-top: .5rem; }
+.emp-pick label { font-size: .84rem; display: flex; gap: .4rem; align-items: center; color: var(--text-primary); }
+.table-scroll { overflow-x: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="am">
+
+    <div class="am-panel">
+        <div class="am-head">
+            <div>
+                <h1>📝 {{ title }}</h1>
+                <p class="am-help">سجّل حضور الموظفين بإيدك لما البصمة بالموقع مش متاحة (مثلاً البرنامج شغال لوكال). التأخير والإضافي بيتحسبوا من مواعيد وردية كل موظف — نفس حساب البصمة — والمسير بيقرا الحضور ده عادي.</p>
+            </div>
+            <form method="get" class="am-nav">
+                <a href="?date={{ prev_day|date:'Y-m-d' }}" title="اليوم السابق">→</a>
+                <input type="date" name="date" value="{{ day|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" onchange="this.form.submit()">
+                <a href="{% if next_day %}?date={{ next_day|date:'Y-m-d' }}{% endif %}" class="{% if not next_day %}disabled{% endif %}" title="اليوم التالي">←</a>
+                {% if day != today %}<a href="?">اليوم</a>{% endif %}
+            </form>
+        </div>
+        <div class="chips" style="margin-top:.7rem;">
+            <span class="chip">{{ day|date:"l j F Y" }}</span>
+            <span class="chip">✅ حاضر <b>{{ counts.present }}</b></span>
+            <span class="chip">🌴 إجازة <b>{{ counts.leave }}</b></span>
+            <span class="chip">❌ غائب <b>{{ counts.absent }}</b></span>
+            <span class="chip">⏳ بدون تسجيل <b>{{ counts.empty }}</b></span>
+        </div>
+    </div>
+
+    {% if is_off_day %}
+    <div class="am-warn">📅 اليوم ده إجازة أسبوعية حسب الإعدادات — المسير مش بيخصم غياب فيه، ولو حد اشتغل سجّله عادي.</div>
+    {% endif %}
+
+    <form method="post" class="am-panel" id="sheet">
+        {% csrf_token %}
+        <input type="hidden" name="date" value="{{ day|date:'Y-m-d' }}">
+        <div class="am-head" style="margin-bottom:.6rem;">
+            <strong style="color:var(--text-primary);">👥 حضور يوم {{ day|date:"j/n" }}</strong>
+            <button type="button" class="am-btn" id="allPresent" style="margin-inline-start:auto;">✅ اللي من غير تسجيل = حاضر بمواعيد الوردية</button>
+        </div>
+        {% if rows %}
+        <div class="table-scroll">
+        <table class="am-table">
+            <thead>
+                <tr>
+                    <th>الموظف</th>
+                    <th>الحالة</th>
+                    <th>الحضور</th>
+                    <th>الانصراف</th>
+                    <th>تأخير / إضافي</th>
+                    <th>المصدر</th>
+                    <th style="width:22%;">ملاحظات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rows %}
+                <tr class="{% if r.locked %}locked{% endif %}" data-shift-in="{{ r.shift_in }}" data-shift-out="{{ r.shift_out }}">
+                    <td>
+                        <div class="emp-name">{{ r.employee.user|display_name }}</div>
+                        <div class="emp-sub">{{ r.employee.branch.name|default:"بدون فرع" }}{% if r.shift_in %} · وردية {{ r.shift_in }}–{{ r.shift_out|default:"؟" }}{% else %} · <span style="color:var(--neon-gold);">بدون مواعيد وردية</span>{% endif %}</div>
+                    </td>
+                    {% if r.locked %}
+                    <td colspan="6" style="font-size:.8rem;">🔒 مسير شهر {{ day|date:"n/Y" }} اتصرف / اتعمد — {{ r.att.get_status_display|default:"بدون تسجيل" }} {% if r.in %}({{ r.in }}{% if r.out %} – {{ r.out }}{% endif %}){% endif %}</td>
+                    {% else %}
+                    <td>
+                        <input type="hidden" name="orig_{{ r.employee.id }}" value="{{ r.orig }}">
+                        <select name="status_{{ r.employee.id }}" class="st {% if r.status %}st-{{ r.status }}{% endif %}">
+                            <option value="" {% if not r.status %}selected{% endif %}>— بدون تسجيل —</option>
+                            <option value="present" {% if r.status == 'present' %}selected{% endif %}>✅ حاضر</option>
+                            <option value="absent" {% if r.status == 'absent' %}selected{% endif %}>❌ غائب</option>
+                            <option value="leave" {% if r.status == 'leave' %}selected{% endif %}>🌴 إجازة</option>
+                        </select>
+                    </td>
+                    <td><input type="time" name="in_{{ r.employee.id }}" value="{{ r.in }}" class="t-in"></td>
+                    <td><input type="time" name="out_{{ r.employee.id }}" value="{{ r.out }}" class="t-out"></td>
+                    <td class="hrs">
+                        {% if r.att and r.status == 'present' %}
+                            {% if r.att.delay_hours %}<span class="late">تأخير {{ r.att.delay_hours }} س</span>{% endif %}
+                            {% if r.att.overtime_hours %}<span class="extra">إضافي {{ r.att.overtime_hours }} س</span>{% endif %}
+                            {% if not r.att.delay_hours and not r.att.overtime_hours %}في الميعاد{% endif %}
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if r.att %}
+                        <span class="src {% if r.att.source == 'GPS' %}gps{% else %}manual{% endif %}" title="{% if r.att.entered_by %}أدخله {{ r.att.entered_by|display_name }}{% endif %}">
+                            {% if r.att.source == 'GPS' %}📍 بصمة{% else %}✍️ يدوي{% endif %}
+                        </span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td><input type="text" name="notes_{{ r.employee.id }}" value="{{ r.notes }}" class="notes" maxlength="255" placeholder="اختياري"></td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <div class="am-actions">
+            <button type="submit" class="am-btn primary">💾 حفظ حضور اليوم</button>
+        </div>
+        {% else %}
+        <p class="am-help">مفيش موظفين نشطين في فرعك.</p>
+        {% endif %}
+    </form>
+
+    <form method="post" class="am-panel" onsubmit="return confirm('هيتسجل حضور بمواعيد الوردية لكل يوم عمل في الفترة مالوش تسجيل. تكمل؟');">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="fill_period">
+        <strong style="color:var(--text-primary);">🗓️ تسجيل فترة بالكامل</strong>
+        <p class="am-help">لو البرنامج اشتغل أيام من غير بصمة: سجّل كل الموظفين حاضرين بمواعيد ورديتهم في كل أيام العمل من الفترة. الأيام اللي ليها تسجيل والإجازات الأسبوعية مش بتتلمس — وبعدين عدّل الغياب والتأخير يوم بيوم من فوق.</p>
+        <div class="period">
+            <label>من <input type="date" name="date_from" value="{{ month_start|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" required></label>
+            <label>إلى <input type="date" name="date_to" value="{{ day|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}" required></label>
+            <button type="submit" class="am-btn">✅ سجّل الفترة</button>
+        </div>
+        {% if rows %}
+        <details class="emp-pick">
+            <summary>موظفين معينين بس؟ (لو مختارتش حد = الكل)</summary>
+            <div class="grid">
+                {% for r in rows %}
+                <label><input type="checkbox" name="employees" value="{{ r.employee.id }}"> {{ r.employee.user|display_name }}</label>
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
+    </form>
+</div>
+
+<script>
+(function () {
+    var sheet = document.getElementById('sheet');
+    if (!sheet) return;
+    function paint(sel) {
+        sel.classList.remove('st-present', 'st-absent', 'st-leave');
+        if (sel.value) sel.classList.add('st-' + sel.value);
+    }
+    function onStatus(sel) {
+        var tr = sel.closest('tr'), tin = tr.querySelector('.t-in'), tout = tr.querySelector('.t-out');
+        if (sel.value === 'present') {
+            if (!tin.value) tin.value = tr.dataset.shiftIn || '';
+            if (!tout.value) tout.value = tr.dataset.shiftOut || '';
+        } else if (sel.value) {
+            tin.value = ''; tout.value = '';
+        }
+        paint(sel);
+    }
+    sheet.querySelectorAll('select.st').forEach(function (sel) {
+        sel.addEventListener('change', function () { onStatus(sel); });
+    });
+    sheet.querySelectorAll('.t-in').forEach(function (inp) {
+        inp.addEventListener('input', function () {
+            var sel = inp.closest('tr').querySelector('select.st');
+            if (inp.value && !sel.value) { sel.value = 'present'; paint(sel); }
+        });
+    });
+    document.getElementById('allPresent').addEventListener('click', function () {
+        sheet.querySelectorAll('select.st').forEach(function (sel) {
+            if (!sel.value && sel.closest('tr').dataset.shiftIn) { sel.value = 'present'; onStatus(sel); }
+        });
+    });
+})();
+</script>
+{% endblock %}

@@ -60,7 +60,7 @@
                 </div>
                 <div style="padding: 1.25rem;">
                     {% for field in form %}
-                        {% if field.name in 'base_salary,hourly_rate,shift_start_time,shift_end_time,deduction_per_hour,overtime_per_hour' %}
+                        {% if field.name in 'base_salary,hourly_rate,shift_start_time,shift_end_time,deduction_per_hour,overtime_per_hour,is_insured,insurance_wage,tax_exempt' %}
                         <div class="form-group" style="margin-bottom: 1rem;">
                             <label class="form-label">{{ field.label }}</label>
                             {{ field }}
@@ -77,48 +77,112 @@
             </div>
         </div>
 
-        <!-- Permissions Section -->
-        <div class="card">
-            <div class="card-header">
-                <span class="card-header-title">🛡️ الصلاحيات المخصصة</span>
+        <!-- Permissions Section (core/permission_catalog.py) -->
+        <div class="card" id="permCard">
+            <div class="card-header" style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;">
+                <span class="card-header-title">🛡️ الصلاحيات</span>
+                <input type="search" id="permSearch" placeholder="ابحث عن صلاحية..." autocomplete="off"
+                       style="margin-inline-start:auto; width:220px; padding:.35rem .6rem; background:var(--bg-input); border:1px solid var(--border-bright); color:var(--text-primary); border-radius:6px; font-size:.82rem;">
+                <button type="button" id="permApplyRole" class="btn btn-secondary" style="font-size:.8rem; padding:.35rem .8rem;">↺ تطبيق صلاحيات الدور</button>
+                <button type="button" id="permClear" class="btn btn-secondary" style="font-size:.8rem; padding:.35rem .8rem;">✕ مسح الكل</button>
             </div>
             <div style="padding: 1.25rem;">
-                {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}
-                    <div class="alert alert-success" style="padding: 1rem; background: rgba(33, 150, 243, 0.1); color: var(--neon-blue); border-radius: 8px; border: 1px solid rgba(33, 150, 243, 0.2); margin-bottom: 1.5rem;">
-                        <strong>ℹ️ مدير نظام عام:</strong> هذا المستخدم لديه كافة الصلاحيات على النظام بشكل تلقائي ولذلك جميع الخيارات مفعلة أدناه.
-                    </div>
-                {% else %}
-                    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
-                        اختر الصلاحيات الإضافية التي ترغب بمنحها لهذا المستخدم. (يجب أن يتم تحديدها ليتمكن من الدخول على الشاشات).
-                    </p>
+                {% if form.instance.is_superuser %}
+                <div class="perm-note">ℹ️ <strong>مدير المنصة:</strong> عنده كل الصلاحيات دايماً.</div>
                 {% endif %}
-                
-                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;">
-                    {% for app_label, perms in grouped_permissions.items %}
-                    <div style="border: 1px solid var(--border-default); border-radius: 8px; padding: 1rem; background: var(--bg-secondary);">
-                        <h4 style="margin-top: 0; margin-bottom: 0.75rem; color: var(--neon-blue); font-size: 0.95rem; text-transform: uppercase;">
-                            {{ app_label }}
-                        </h4>
-                        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                            {% for perm in perms %}
-                            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; cursor: {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}not-allowed{% else %}pointer{% endif %}; {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}opacity: 0.7;{% endif %}">
-                                <input type="checkbox" name="user_permissions" value="{{ perm.id }}"
-                                    {% if perm in form.instance.user_permissions.all or form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}checked{% endif %}
-                                    {% if form.instance.is_superuser or form.instance.employee_profile.role == 'ADMIN' or form.initial.role == 'ADMIN' %}disabled{% endif %}
-                                    style="accent-color: var(--neon-blue);">
-                                {{ perm.translated_name|default:perm.name }}
-                            </label>
-                            {% endfor %}
-                        </div>
-                    </div>
+                <div class="perm-note" id="permAdminNote" hidden>ℹ️ <strong>مدير النظام</strong> عنده كل الصلاحيات تلقائياً — مش محتاج تختار حاجة.</div>
+                <p class="perm-help" id="permHelp">اختار الشاشات والعمليات المسموحة للمستخدم ده. زرار «تطبيق صلاحيات الدور» بيختار الصلاحيات المقترحة للدور (كاشير / أمين مخزن / محاسب / مدير فرع) وتقدر تعدل عليها بعد كده.</p>
+
+                <div class="perm-grid">
+                    {% for sec in permission_sections %}
+                    <fieldset class="perm-sec">
+                        <legend>
+                            <label><input type="checkbox" class="perm-all" title="اختيار القسم كله"> {{ sec.icon }} {{ sec.title }}</label>
+                        </legend>
+                        {% for p in sec.items %}
+                        <label class="perm-item" data-q="{{ p.label }} {{ p.code }}" title="{{ p.code }}">
+                            <input type="checkbox" name="user_permissions" value="{{ p.id }}" {% if p.checked or form.instance.is_superuser %}checked{% endif %}>
+                            <span>{{ p.label }}</span>
+                        </label>
+                        {% endfor %}
+                    </fieldset>
                     {% endfor %}
                 </div>
-                
+
                 {% for error in form.user_permissions.errors %}
                     <div style="color: var(--neon-red); font-size: 0.8rem; margin-top: 0.5rem;">{{ error }}</div>
                 {% endfor %}
             </div>
         </div>
+        <style>
+            .perm-note { padding:.8rem 1rem; background:rgba(33,150,243,.1); color:var(--neon-blue); border-radius:8px; border:1px solid rgba(33,150,243,.25); margin-bottom:1rem; font-size:.88rem; }
+            .perm-help { font-size:.85rem; color:var(--text-muted); margin:0 0 1rem; }
+            .perm-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(290px, 1fr)); gap:1rem; }
+            .perm-sec { border:1px solid var(--border-default); border-radius:8px; padding:.6rem .9rem .9rem; background:var(--bg-secondary); margin:0; min-width:0; }
+            .perm-sec legend { padding:0 .4rem; font-weight:800; color:var(--neon-blue); font-size:.92rem; }
+            .perm-sec legend label { display:flex; align-items:center; gap:.4rem; cursor:pointer; }
+            .perm-item { display:flex; align-items:flex-start; gap:.5rem; font-size:.84rem; padding:.22rem 0; cursor:pointer; color:var(--text-primary); }
+            .perm-item input, .perm-sec legend input { accent-color:var(--neon-blue); margin-top:.15rem; flex-shrink:0; }
+            #permCard.is-admin .perm-grid { opacity:.55; pointer-events:none; }
+        </style>
+        <script id="roleDefaults" type="application/json">{{ role_defaults_json|safe }}</script>
+        <script>
+        (function () {
+            var card = document.getElementById('permCard');
+            var role = document.getElementById('id_role');
+            var defaults = JSON.parse(document.getElementById('roleDefaults').textContent || '{}');
+            function boxes() { return card.querySelectorAll('input[name="user_permissions"]'); }
+            function syncSections() {
+                card.querySelectorAll('.perm-sec').forEach(function (sec) {
+                    var all = sec.querySelectorAll('input[name="user_permissions"]');
+                    var on = sec.querySelectorAll('input[name="user_permissions"]:checked').length;
+                    var head = sec.querySelector('.perm-all');
+                    head.checked = on === all.length && on > 0;
+                    head.indeterminate = on > 0 && on < all.length;
+                });
+            }
+            function syncRole() {
+                var admin = !!role && role.value === 'ADMIN';
+                card.classList.toggle('is-admin', admin);
+                document.getElementById('permAdminNote').hidden = !admin;
+                document.getElementById('permHelp').hidden = admin;
+            }
+            card.querySelectorAll('.perm-all').forEach(function (head) {
+                head.addEventListener('change', function () {
+                    head.closest('.perm-sec').querySelectorAll('.perm-item').forEach(function (it) {
+                        if (it.style.display !== 'none') it.querySelector('input').checked = head.checked;
+                    });
+                    syncSections();
+                });
+            });
+            card.addEventListener('change', function (e) { if (e.target.name === 'user_permissions') syncSections(); });
+            document.getElementById('permApplyRole').addEventListener('click', function () {
+                if (!role || role.value === 'ADMIN') return;
+                var ids = (defaults[role.value] || []).map(String);
+                boxes().forEach(function (b) { b.checked = ids.indexOf(b.value) !== -1; });
+                syncSections();
+            });
+            document.getElementById('permClear').addEventListener('click', function () {
+                boxes().forEach(function (b) { b.checked = false; });
+                syncSections();
+            });
+            document.getElementById('permSearch').addEventListener('input', function () {
+                var q = this.value.trim().toLowerCase();
+                card.querySelectorAll('.perm-sec').forEach(function (sec) {
+                    var title = sec.querySelector('legend').textContent.toLowerCase();
+                    var shown = 0;
+                    sec.querySelectorAll('.perm-item').forEach(function (it) {
+                        var ok = !q || title.indexOf(q) !== -1 || it.dataset.q.toLowerCase().indexOf(q) !== -1;
+                        it.style.display = ok ? '' : 'none';
+                        if (ok) shown++;
+                    });
+                    sec.style.display = shown ? '' : 'none';
+                });
+            });
+            if (role) role.addEventListener('change', syncRole);
+            syncRole(); syncSections();
+        })();
+        </script>
 
     </div>
 

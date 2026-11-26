@@ -43,6 +43,18 @@ class ProductForm(BaseGlassForm):
 
     IMAGE_MAX_BYTES = 15 * 1024 * 1024
 
+    def clean_barcode(self):
+        """The main barcode must not be another product's / unit's / extra barcode."""
+        code = (self.cleaned_data.get('barcode') or '').strip() or None
+        if code:
+            from .barcodes import validate_main_barcode
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                validate_main_barcode(code, product_id=self.instance.pk)
+            except DjangoValidationError as e:
+                raise forms.ValidationError(e.messages)
+        return code
+
     def clean_image(self):
         from django.core.files.uploadedfile import UploadedFile
         img = self.cleaned_data.get('image')

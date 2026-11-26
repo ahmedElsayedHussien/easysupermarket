@@ -1,0 +1,19 @@
+{% extends "rep_app/base.html" %}
+{% block content %}
+<div class="card">
+    <div class="row"><h2 style="flex:1; margin:0;">🧾 {{ inv.invoice_number }}</h2><span class="badge">{{ inv.date|date:"j/n/Y" }}</span></div>
+    <p class="muted" style="margin:.3rem 0 0;">العميل: <b>{{ inv.partner.name|default:"عميل نقدي" }}</b></p>
+    <div class="list" style="margin-top:.6rem;">
+        {% for l in lines %}
+        <div class="item"><div class="grow"><div class="t">{{ l.product.name }}</div><div class="muted num">{{ l.quantity|floatformat:"-3" }} {{ l.display_unit_name }} × {{ l.unit_price|floatformat:2 }}</div></div><b class="num">{{ l.total_amount|floatformat:"2g" }}</b></div>
+        {% endfor %}
+    </div>
+    <div class="grid2" style="margin-top:.6rem;">
+        <div class="kpi"><small>الإجمالي</small><b class="num">{{ inv.total_amount|floatformat:"2g" }}</b></div>
+        <div class="kpi"><small>{% if inv.paid_credit %}آجل على العميل{% else %}اتدفع نقدي{% endif %}</small><b class="num {% if inv.paid_credit %}warn{% else %}ok{% endif %}">{% if inv.paid_credit %}{{ inv.paid_credit|floatformat:"2g" }}{% else %}{{ inv.paid_cash|floatformat:"2g" }}{% endif %}</b>{% if inv.paid_credit and inv.paid_cash %}<div class="muted">نقدي {{ inv.paid_cash|floatformat:2 }}</div>{% endif %}</div>
+    </div>
+</div>
+<a class="btn" href="https://wa.me/{% if inv.partner.mobile %}{{ inv.partner.mobile }}{% endif %}?text={{ share|urlencode }}" target="_blank" rel="noopener">📲 ابعتها واتساب</a>
+<a class="btn ghost" href="{% url 'invoicing:receipt' inv.id %}" target="_blank">🖨️ طباعة الإيصال</a>
+<a class="btn ok" href="{% url 'invoicing:rep_app_sell' %}">➕ فاتورة جديدة</a>
+{% endblock %}

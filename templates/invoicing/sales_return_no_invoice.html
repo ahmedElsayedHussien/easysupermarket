@@ -58,11 +58,14 @@
                 <i class="fas fa-undo-alt" style="color: var(--neon-orange); margin-left: 0.5rem;"></i> {{ title }}
             </h2>
             <p style="color: var(--text-secondary); margin-top: 0.3rem; font-size: 0.9rem;">
-                إدخال مرتجع مبيعات مباشر (لرصيد أول المدة أو مبيعات غير مسجلة بالنظام)
+                للبضاعة اللي اتباعت قبل البرنامج (رصيد أول المدة) ومالهاش فاتورة في السيستم.
+            </p>
+            <p style="color: var(--neon-gold); margin-top: 0.3rem; font-size: 0.85rem; font-weight: 600;">
+                ⚠️ لو المرتجع ليه فاتورة في البرنامج اعمله من الفاتورة نفسها (زرار «إرجاع أصناف»). السعر هنا ميزيدش عن سعر البيع الحالي للصنف.
             </p>
         </div>
-        <a href="{% url 'invoicing:sales_returns_dashboard' %}" class="btn-ghost" style="padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none;">
-            <i class="fas fa-arrow-right"></i> العودة للمرتجعات
+        <a href="{% url 'invoicing:sales_invoice_list' %}" class="btn-ghost" style="padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none;">
+            <i class="fas fa-arrow-right"></i> العودة لفواتير المبيعات
         </a>
     </div>
 
@@ -218,7 +221,7 @@
 
         <!-- Action Submit Button (Orange per rule) -->
         <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2rem;">
-            <a href="{% url 'invoicing:sales_returns_dashboard' %}" class="btn-ghost" style="padding: 0.8rem 1.5rem; font-size: 1rem; border-radius: 8px;">إلغاء</a>
+            <a href="{% url 'invoicing:sales_invoice_list' %}" class="btn-ghost" style="padding: 0.8rem 1.5rem; font-size: 1rem; border-radius: 8px;">إلغاء</a>
             <button type="submit" class="btn-orange" style="padding: 0.8rem 2.5rem; font-size: 1.1rem; font-weight: 700; border-radius: 8px; box-shadow: 0 0 20px rgba(255, 115, 0, 0.5);">
                 <i class="fas fa-check-circle me-2"></i> حفظ وتأكيد مرتجع المبيعات
             </button>

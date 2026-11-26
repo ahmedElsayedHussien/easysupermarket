@@ -254,8 +254,9 @@ class Account(MPTTModel):
             account__in=self.get_descendants(include_self=True),
             entry__status=JournalEntry.POSTED
         )
-        total_debit = items.aggregate(s=Sum('debit'))['s'] or Decimal('0')
-        total_credit = items.aggregate(s=Sum('credit'))['s'] or Decimal('0')
+        sums = items.aggregate(d=Sum('debit'), c=Sum('credit'))   # one query for both sides
+        total_debit = sums['d'] or Decimal('0')
+        total_credit = sums['c'] or Decimal('0')
         if self.normal_balance == 'DEBIT':
             return (total_debit - total_credit).quantize(Decimal('0.01'))
         return (total_credit - total_debit).quantize(Decimal('0.01'))
@@ -406,16 +407,21 @@ class JournalEntry(models.Model):
         """Sum of all credit amounts across journal items."""
         return self.items.aggregate(s=Sum('credit'))['s'] or Decimal('0')
 
+    def get_totals(self):
+        """(total debit, total credit) in one query."""
+        sums = self.items.aggregate(d=Sum('debit'), c=Sum('credit'))
+        return sums['d'] or Decimal('0'), sums['c'] or Decimal('0')
+
     def is_balanced(self):
         """Returns True if total debits equal total credits (within rounding tolerance)."""
-        return abs(self.get_total_debit() - self.get_total_credit()) < Decimal('0.0001')
+        debit, credit = self.get_totals()
+        return abs(debit - credit) < Decimal('0.0001')
 
     def clean(self):
         """Enforce balance constraint when posting."""
         if self.status == self.POSTED:
-            if not self.is_balanced():
-                debit = self.get_total_debit()
-                credit = self.get_total_credit()
+            debit, credit = self.get_totals()
+            if abs(debit - credit) >= Decimal('0.0001'):
                 diff = debit - credit
                 raise ValidationError(
                     f'القيد غير متوازن: مجموع المدين ({debit:.4f}) لا يساوي مجموع الدائن ({credit:.4f}).'
@@ -429,9 +435,8 @@ class JournalEntry(models.Model):
         closed accounting period.
         """
         ensure_open_period(self.date)
-        if not self.is_balanced():
-            debit = self.get_total_debit()
-            credit = self.get_total_credit()
+        debit, credit = self.get_totals()   # one query (was up to 4)
+        if abs(debit - credit) >= Decimal('0.0001'):
             diff = debit - credit
             raise ValidationError(
                 f'القيد غير متوازن. إجمالي المدين: {debit:.4f}, إجمالي الدائن: {credit:.4f}. الفرق: {diff:.4f}'
@@ -3107,12 +3112,23 @@ class FixedAsset(models.Model):
             return (annual / Decimal('12.0')).quantize(Decimal('0.01'))
         return Decimal('0.00')
 
+    @staticmethod
+    def with_totals(queryset):
+        """Assets with their logged depreciation summed by the database in the same query
+        (list pages and reports: no query per asset)."""
+        from django.db.models import DecimalField, Value
+        from django.db.models.functions import Coalesce
+        return queryset.annotate(_logged_dep=Coalesce(Sum('depreciation_logs__amount'), Value(Decimal('0')),
+                                                       output_field=DecimalField(max_digits=18, decimal_places=2)))
+
     @property
     def total_accumulated_depreciation(self):
         """إجمالي مجمع الإهلاك حتى اليوم (افتتاحي + أقساط مسجلة)"""
         opening = self.opening_accumulated_depreciation or Decimal('0.00')
         logged = Decimal('0.00')
-        if self.pk:
+        if '_logged_dep' in self.__dict__:          # annotated by FixedAsset.with_totals()
+            logged = self._logged_dep or Decimal('0.00')
+        elif self.pk:
             logged = self.depreciation_logs.aggregate(s=Sum('amount'))['s'] or Decimal('0.00')
         total = opening + logged
         return min(total, self.depreciable_base)
@@ -3279,9 +3295,28 @@ class Loan(models.Model):
         rate = (self.total_interest_amount / (self.principal_amount * years)) * Decimal('100.0')
         return round(rate, 2)
 
+    @staticmethod
+    def with_totals(queryset):
+        """Loans with paid principal / interest and overdue installments computed by the
+        database in the same query (list pages and reports: no queries per loan)."""
+        from django.db.models import Count, DecimalField, Q, Value
+        from django.db.models.functions import Coalesce
+        money = DecimalField(max_digits=18, decimal_places=2)
+        paid = Q(installments__is_paid=True)
+        return queryset.annotate(
+            _paid_principal=Coalesce(Sum('installments__principal_amount', filter=paid), Value(Decimal('0')),
+                                     output_field=money),
+            _paid_interest=Coalesce(Sum('installments__interest_amount', filter=paid), Value(Decimal('0')),
+                                    output_field=money),
+            _overdue_count=Count('installments', filter=Q(installments__is_paid=False,
+                                                          installments__due_date__lt=datetime.date.today())),
+        )
+
     @property
     def paid_principal(self):
         """إجمالي أصل القرض المسدد حتى اليوم"""
+        if '_paid_principal' in self.__dict__:
+            return self._paid_principal
         if not self.pk:
             return Decimal('0.00')
         return self.installments.filter(is_paid=True).aggregate(s=Sum('principal_amount'))['s'] or Decimal('0.00')
@@ -3289,6 +3324,8 @@ class Loan(models.Model):
     @property
     def paid_interest(self):
         """إجمالي الفوائد المسددة حتى اليوم"""
+        if '_paid_interest' in self.__dict__:
+            return self._paid_interest
         if not self.pk:
             return Decimal('0.00')
         return self.installments.filter(is_paid=True).aggregate(s=Sum('interest_amount'))['s'] or Decimal('0.00')
@@ -3319,6 +3356,8 @@ class Loan(models.Model):
     @property
     def overdue_count(self):
         """عدد الأقساط المتأخرة"""
+        if '_overdue_count' in self.__dict__:
+            return self._overdue_count
         if not self.pk:
             return 0
         return self.installments.filter(is_paid=False, due_date__lt=datetime.date.today()).count()
@@ -3422,3 +3461,183 @@ class LoanInstallment(models.Model):
 
 
 
+
+
+class Custody(models.Model):
+    """عهدة نقدية: مبلغ بيتصرف لموظف يشتري بيه حاجات للمحل، وبعدين بيتسوّى بالمصروفات
+    والباقي يرجع الخزينة (أو يتحول سلفة تتخصم من مرتبه).
+
+    صرف:   مدين 1135 ذمم الموظفين والعهد / دائن الخزينة
+    تسوية: مدين حسابات المصروفات + مدين الخزينة (المرتجع) / دائن 1135
+           (صرف أكتر من العهدة: الفرق دائن الخزينة — بيترد للموظف)"""
+    OPEN = 'OPEN'
+    SETTLED = 'SETTLED'
+    CANCELLED = 'CANCELLED'
+    STATUS_CHOICES = ((OPEN, 'مفتوحة'), (SETTLED, 'مسوّاة'), (CANCELLED, 'ملغاة'))
+
+    number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم العهدة')
+    date = models.DateField(default=datetime.date.today, verbose_name='تاريخ الصرف')
+    employee = models.ForeignKey('core.Employee', on_delete=models.PROTECT, related_name='custodies', verbose_name='الموظف')
+    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    purpose = models.CharField(max_length=255, verbose_name='الغرض')
+    treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, related_name='+', verbose_name='خزينة الصرف')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=OPEN, db_index=True, verbose_name='الحالة')
+    payout_entry = models.ForeignKey(JournalEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                     verbose_name='قيد الصرف')
+    # settlement
+    settled_at = models.DateField(null=True, blank=True, verbose_name='تاريخ التسوية')
+    returned_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المرتجع للخزينة')
+    return_treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+                                        verbose_name='خزينة المرتجع')
+    settlement_entry = models.ForeignKey(JournalEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                         verbose_name='قيد التسوية')
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                   related_name='+', verbose_name='بواسطة')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'عهدة نقدية'
+        verbose_name_plural = 'العهد النقدية'
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return f'{self.number} — {self.amount}'
+
+    def save(self, *args, **kwargs):
+        if not self.number:
+            from apps.tenant.core.sequences import max_numeric_suffix, next_sequence
+            prefix = f'CUS-{(self.date or datetime.date.today()).year}-'
+            with transaction.atomic():
+                n = next_sequence(f'custody:{prefix}', seed=lambda: max_numeric_suffix(Custody.objects.all(), 'number', prefix))
+                self.number = f'{prefix}{n:05d}'
+                return super().save(*args, **kwargs)
+        return super().save(*args, **kwargs)
+
+
+class CustodyExpense(models.Model):
+    """بند مصروف في تسوية عهدة."""
+    custody = models.ForeignKey(Custody, on_delete=models.CASCADE, related_name='expenses', verbose_name='العهدة')
+    account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='+', verbose_name='حساب المصروف')
+    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    description = models.CharField(max_length=255, blank=True, default='', verbose_name='البيان')
+
+    class Meta:
+        verbose_name = 'مصروف عهدة'
+        verbose_name_plural = 'مصروفات العهد'
+
+
+class VoucherAllocation(models.Model):
+    """ربط سند قبض / صرف بفاتورة آجلة: الجزء ده من السند سداد للفاتورة دي.
+    (اللي مش مربوط بيتوزع تلقائياً على الأقدم أولاً — accounting.allocation_services)."""
+    voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='allocations', verbose_name='السند')
+    invoice = models.ForeignKey('invoicing.Invoice', on_delete=models.PROTECT, related_name='voucher_allocations',
+                                verbose_name='الفاتورة')
+    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+
+    class Meta:
+        verbose_name = 'ربط سند بفاتورة'
+        verbose_name_plural = 'ربط السندات بالفواتير'
+        unique_together = ('voucher', 'invoice')
+
+
+class BankReconciliation(models.Model):
+    """تسوية بنكية: مطابقة كشف البنك مع حركات الحساب في الدفاتر حتى تاريخ الكشف.
+    الحركات اللي اتعلّم عليها في تسوية منتهية مبتظهرش تاني (accounting.bank_reconciliation)."""
+    DRAFT = 'DRAFT'
+    DONE = 'DONE'
+    STATUS_CHOICES = ((DRAFT, 'مسودة'), (DONE, 'منتهية'))
+
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='reconciliations',
+                                     verbose_name='الحساب البنكي')
+    statement_date = models.DateField(verbose_name='تاريخ كشف البنك')
+    statement_balance = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='الرصيد في كشف البنك')
+    book_balance = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='الرصيد في الدفاتر')
+    cleared_balance = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'),
+                                          verbose_name='رصيد الحركات المطابقة')
+    difference = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='الفرق')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=DRAFT, verbose_name='الحالة')
+    notes = models.CharField(max_length=255, blank=True, default='', verbose_name='ملاحظات')
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                   verbose_name='بواسطة')
+    created_at = models.DateTimeField(auto_now_add=True)
+    done_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الإنهاء')
+
+    class Meta:
+        verbose_name = 'تسوية بنكية'
+        verbose_name_plural = 'التسويات البنكية'
+        ordering = ['-statement_date', '-id']
+
+    def __str__(self):
+        return f'تسوية {self.bank_account} — {self.statement_date}'
+
+
+class BankReconciliationItem(models.Model):
+    """حركة دفاتر اتعلّم عليها إنها ظهرت في كشف البنك."""
+    reconciliation = models.ForeignKey(BankReconciliation, on_delete=models.CASCADE, related_name='items',
+                                       verbose_name='التسوية')
+    journal_item = models.ForeignKey(JournalItem, on_delete=models.PROTECT, related_name='bank_clearings',
+                                     verbose_name='الحركة')
+
+    class Meta:
+        verbose_name = 'حركة مطابقة'
+        verbose_name_plural = 'حركات مطابقة'
+        unique_together = ('reconciliation', 'journal_item')
+
+
+class TaxSettlement(models.Model):
+    """التسوية الضريبية:
+    VAT_CLOSE  إقفال ضريبة القيمة المضافة لفترة: مدين 2130 مخرجات / دائن 1190 مدخلات / دائن 2135 المستحق
+               (لو المدخلات أكبر: الفرق بيفضل في 1190 رصيد مرحّل)
+    VAT_PAY    سداد المستحق: مدين 2135 / دائن الخزينة أو البنك
+    WHT_PAY    سداد ضريبة الخصم والإضافة المحصّلة من الموردين: مدين 2120 / دائن الخزينة أو البنك"""
+    VAT_CLOSE = 'VAT_CLOSE'
+    VAT_PAY = 'VAT_PAY'
+    WHT_PAY = 'WHT_PAY'
+    KIND_CHOICES = ((VAT_CLOSE, 'إقفال ضريبة القيمة المضافة'), (VAT_PAY, 'سداد ضريبة القيمة المضافة'),
+                    (WHT_PAY, 'سداد ضريبة الخصم والإضافة'))
+
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES, verbose_name='النوع')
+    date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
+    period_end = models.DateField(verbose_name='حتى تاريخ')
+    output_vat = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='ضريبة المبيعات')
+    input_vat = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='ضريبة المشتريات')
+    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+                                 verbose_name='الخزينة')
+    bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+                                     verbose_name='الحساب البنكي')
+    journal_entry = models.ForeignKey(JournalEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                      verbose_name='القيد')
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                   verbose_name='بواسطة')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'تسوية ضريبية'
+        verbose_name_plural = 'التسويات الضريبية'
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return f'{self.get_kind_display()} — {self.period_end}'
+
+
+class FiscalYearClose(models.Model):
+    """إقفال سنة مالية: قيد يصفّر الإيرادات والمصروفات في 3200 أرباح محتجزة، وقفل الدفاتر لآخر السنة."""
+    year = models.PositiveIntegerField(unique=True, verbose_name='السنة')
+    revenue = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='الإيرادات')
+    expenses = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='المصروفات')
+    net_profit = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='صافي الربح')
+    closing_entry = models.ForeignKey(JournalEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                      verbose_name='قيد الإقفال')
+    previous_lock_date = models.DateField(null=True, blank=True, verbose_name='تاريخ القفل قبل الإقفال')
+    closed_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                  verbose_name='بواسطة')
+    closed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'إقفال سنة مالية'
+        verbose_name_plural = 'إقفال السنوات المالية'
+        ordering = ['-year']
+
+    def __str__(self):
+        return f'إقفال {self.year}'

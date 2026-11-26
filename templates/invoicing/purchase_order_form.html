@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.pf { max-width: 1100px; margin: 0 auto; }
+.pf-panel { background: var(--bg-card); border: 1px solid var(--border-default); border-radius: 12px; padding: 1rem 1.1rem; margin-bottom: 1rem; }
+.pf-panel h1 { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); margin: 0 0 .7rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .7rem; }
+.grid label { display: flex; flex-direction: column; gap: .25rem; font-size: .76rem; color: var(--text-muted); font-weight: 700; }
+.pf input, .pf select, .pf textarea { background: var(--bg-input); border: 1px solid var(--border-bright); color: var(--text-primary); border-radius: 8px; padding: .42rem .55rem; font-size: .86rem; width: 100%; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.tbl th { color: var(--text-muted); font-size: .76rem; padding: .45rem .3rem; border-bottom: 1px solid var(--border-bright); text-align: right; }
+.tbl td { padding: .35rem .3rem; border-bottom: 1px solid var(--border-default); }
+.pf-btn { padding: .45rem .9rem; border-radius: 8px; border: 1px solid var(--border-bright); background: var(--bg-secondary); color: var(--text-primary); font-weight: 700; font-size: .85rem; cursor: pointer; width: auto !important; }
+.pf-btn.primary { background: var(--neon-orange); border-color: var(--neon-orange); color: #fff; }
+.pf-btn.danger { border-color: var(--neon-red); color: var(--neon-red); background: transparent; padding: .25rem .6rem; }
+.total { font-weight: 800; color: var(--text-primary); margin-top: .6rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="post" class="pf">
+    {% csrf_token %}
+    <div class="pf-panel">
+        <h1>➕ أمر شراء جديد</h1>
+        <div class="grid">
+            <label>المورد<select name="supplier" required><option value="">— اختار —</option>{% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></label>
+            <label>المخزن المستلم<select name="warehouse" required>{% for w in warehouses %}<option value="{{ w.id }}" {% if default_warehouse and w.id == default_warehouse.id %}selected{% endif %}>{{ w.name }}{% if w.branch %} — {{ w.branch.name }}{% endif %}</option>{% endfor %}</select></label>
+            <label>ميعاد الاستلام المتوقع<input type="date" name="expected_date"></label>
+            <label>ملاحظات<input type="text" name="notes" placeholder="اختياري"></label>
+        </div>
+    </div>
+    <div class="pf-panel">
+        <table class="tbl">
+            <thead><tr><th style="width:42%;">الصنف</th><th>الوحدة</th><th>الكمية</th><th>السعر المتوقع</th><th></th></tr></thead>
+            <tbody id="poLines"></tbody>
+        </table>
+        <button type="button" class="pf-btn" id="addLine" style="margin-top:.6rem;">➕ صنف</button>
+        <div class="total" id="poTotal"></div>
+    </div>
+    <button type="submit" class="pf-btn primary">💾 حفظ أمر الشراء</button>
+</form>
+<template id="lineTpl">
+    <tr>
+        <td><select name="product[]" class="prod" required><option value="">— اختار الصنف —</option>{% for p in products %}<option value="{{ p.id }}" data-price="{{ p.last_purchase_price|default:0|stringformat:'s' }}">{% if p.barcode %}{{ p.barcode }} - {% endif %}{{ p.name }}</option>{% endfor %}</select></td>
+        <td><select name="uom[]" class="uom"><option value="">الأساسية</option></select></td>
+        <td><input type="number" name="qty[]" min="0" step="0.001" class="qty" required></td>
+        <td><input type="number" name="price[]" min="0" step="0.0001" class="price"></td>
+        <td><button type="button" class="pf-btn danger rm">✕</button></td>
+    </tr>
+</template>
+<script>
+(function () {
+    var units = { {% for p in products %}"{{ p.id }}": [{% for u in p.uoms.all %}{% if not u.is_base %}{id: "{{ u.id }}", name: "{{ u.uom.name|escapejs }}", f: {{ u.conversion_factor|stringformat:'s' }}},{% endif %}{% endfor %}],{% endfor %} };
+    var body = document.getElementById('poLines'), tpl = document.getElementById('lineTpl');
+    function total() {
+        var t = 0;
+        body.querySelectorAll('tr').forEach(function (tr) { t += (parseFloat(tr.querySelector('.qty').value) || 0) * (parseFloat(tr.querySelector('.price').value) || 0); });
+        document.getElementById('poTotal').textContent = 'القيمة المتوقعة: ' + t.toFixed(2) + ' ج.م';
+    }
+    function add() { body.appendChild(tpl.content.cloneNode(true)); }
+    body.addEventListener('change', function (e) {
+        var tr = e.target.closest('tr');
+        if (e.target.classList.contains('prod')) {
+            var opt = e.target.selectedOptions[0], u = tr.querySelector('.uom');
+            u.innerHTML = '<option value="">الأساسية</option>' + (units[e.target.value] || []).map(function (x) { return '<option value="' + x.id + '">' + x.name + ' (×' + x.f + ')</option>'; }).join('');
+            tr.querySelector('.price').value = opt ? (opt.dataset.price || '') : '';
+        }
+        total();
+    });
+    body.addEventListener('input', total);
+    body.addEventListener('click', function (e) { if (e.target.classList.contains('rm')) { e.target.closest('tr').remove(); total(); } });
+    document.getElementById('addLine').addEventListener('click', add);
+    add(); add(); add();
+})();
+</script>
+{% endblock %}
