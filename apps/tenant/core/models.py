@@ -234,12 +234,19 @@ class SystemSetting(models.Model):
     show_nav_quotations = models.BooleanField(default=True, verbose_name=_('عروض الأسعار'))
     show_nav_sales_invoices = models.BooleanField(default=True, verbose_name=_('فواتير المبيعات'))
     show_nav_pricelists = models.BooleanField(default=True, verbose_name=_('قوائم الأسعار'))
+    show_nav_sales_reps = models.BooleanField(default=True, verbose_name=_('مناديب المبيعات'))
+    show_nav_loading_orders = models.BooleanField(default=True, verbose_name=_('طلبات التحميل'))
+    show_nav_unloading_orders = models.BooleanField(default=True, verbose_name=_('طلبات التفريغ'))
+    show_nav_rep_handovers = models.BooleanField(default=True, verbose_name=_('توريدات المناديب'))
+    show_nav_rep_app = models.BooleanField(default=True, verbose_name=_('واجهة المندوب'))
 
     # Purchases
     show_nav_purchase_invoices = models.BooleanField(default=True, verbose_name=_('فواتير المشتريات'))
+    show_nav_purchase_orders = models.BooleanField(default=True, verbose_name=_('أوامر الشراء'))
     show_nav_create_purchase = models.BooleanField(default=True, verbose_name=_('إنشاء فاتورة مشتريات'))
 
     # Inventory
+    show_nav_inventory_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المخزون'))
 
     # Rentals
     show_nav_rentals_equipment = models.BooleanField(default=True, verbose_name=_('المعدات (إيجارات)'))
@@ -255,26 +262,40 @@ class SystemSetting(models.Model):
 
     # HR
     show_nav_hr_attendance = models.BooleanField(default=True, verbose_name=_('الحضور والانصراف'))
+    show_nav_hr_attendance_manage = models.BooleanField(default=True, verbose_name=_('إدخال الحضور اليدوي'))
+    show_nav_hr_attendance_report = models.BooleanField(default=True, verbose_name=_('تقرير الحضور والرواتب'))
     show_nav_hr_payroll = models.BooleanField(default=True, verbose_name=_('مسير الرواتب'))
+    show_nav_hr_employees = models.BooleanField(default=True, verbose_name=_('الموظفين'))
+    show_nav_hr_my_portal = models.BooleanField(default=True, verbose_name=_('صفحتي'))
+    show_nav_hr_leaves = models.BooleanField(default=True, verbose_name=_('الإجازات'))
+    show_nav_hr_loans = models.BooleanField(default=True, verbose_name=_('سلف الموظفين'))
 
     # Partners
+    show_nav_partners_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة الشركاء'))
 
     # Accounting
+    show_nav_accounting_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المحاسبة'))
+    show_nav_liquidity_dashboard = models.BooleanField(default=True, verbose_name=_('إدارة السيولة'))
+    show_nav_fiscal_years = models.BooleanField(default=True, verbose_name=_('إقفال السنة المالية'))
+    show_nav_account_mapping = models.BooleanField(default=True, verbose_name=_('ربط الحسابات'))
+    show_nav_intermediaries = models.BooleanField(default=True, verbose_name=_('الشركات الوسيطة'))
+    show_nav_tax_settlement = models.BooleanField(default=True, verbose_name=_('التسوية الضريبية'))
+    show_nav_bank_reconciliation = models.BooleanField(default=True, verbose_name=_('التسوية البنكية'))
+    show_nav_custody = models.BooleanField(default=True, verbose_name=_('العهد النقدية'))
+    show_nav_eservices = models.BooleanField(default=True, verbose_name=_('خدمات الدفع'))
 
     # Administration
     show_nav_admin_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المدير'))
     show_nav_branches = models.BooleanField(default=True, verbose_name=_('الفروع والكيانات'))
     show_nav_users = models.BooleanField(default=True, verbose_name=_('المستخدمين'))
+    show_nav_audit_log = models.BooleanField(default=True, verbose_name=_('سجل التعديلات'))
     show_nav_reports = models.BooleanField(default=True, verbose_name=_('التقارير الشاملة'))
 
     # Tax & E-Invoicing
     show_nav_einvoice_approval = models.BooleanField(default=True, verbose_name=_('إرسال للتوقيع'))
     show_nav_einvoice_history = models.BooleanField(default=True, verbose_name=_('سجل الفواتير المرسلة'))
+    show_nav_received_documents = models.BooleanField(default=True, verbose_name=_('الفواتير الواردة من الموردين'))
     show_nav_tax_settings = models.BooleanField(default=True, verbose_name=_('إعدادات الضرائب'))
-    show_nav_inventory_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المخزون'))
-    show_nav_partners_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة الشركاء'))
-    show_nav_liquidity_dashboard = models.BooleanField(default=True, verbose_name=_('إدارة السيولة'))
-    show_nav_accounting_dashboard = models.BooleanField(default=True, verbose_name=_('لوحة المحاسبة'))
     
     class Meta:
         verbose_name = _('إعدادات النظام')

@@ -1,0 +1,13 @@
+<div class="nav-item-row">
+    <span class="nav-item-label">{{ icon }} {{ field.label }}</span>
+    <div class="nav-radio-group">
+        {% for radio in field %}
+            <label>
+                {{ radio.tag }}
+                <span class="nav-radio-pill">
+                    {% if radio.data.value == True %}👁️ إظهار{% else %}🙈 إخفاء{% endif %}
+                </span>
+            </label>
+        {% endfor %}
+    </div>
+</div>

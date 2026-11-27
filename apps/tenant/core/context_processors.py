@@ -1,8 +1,8 @@
 from django.db import connection
 from apps.tenant.core.models import Branch, SystemSetting
 from apps.tenant.core.access import BRANCH_UNASSIGNED_MESSAGE
-
 from apps.tenant.core.company import company_profile
+from apps.tenant.core.nav import build_sidebar_nav
 
 
 def global_context(request):
@@ -12,7 +12,8 @@ def global_context(request):
     branches = Branch.objects.none()
     
     is_admin = False
-    if hasattr(request, 'user') and request.user.is_authenticated:
+    is_authenticated = hasattr(request, 'user') and request.user.is_authenticated
+    if is_authenticated:
         from apps.tenant.core.decorators import is_admin_user
         is_admin = is_admin_user(request.user)
         if is_admin:
@@ -33,6 +34,7 @@ def global_context(request):
         'current_branch': getattr(request, 'branch', None),
         'nav_branches': branches,
         'system_setting': system_setting,
+        'nav': build_sidebar_nav(request.user, system_setting, is_admin) if is_authenticated else {},
         # Organisation name / logo for printed documents (core.company)
         'company': company_profile(request, system_setting),
         'is_admin': is_admin,

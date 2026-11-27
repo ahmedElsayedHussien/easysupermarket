@@ -631,6 +631,12 @@
                                 {% endfor %}
                             </div>
                         </div>
+
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_sales_reps icon='🚚' %}
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_loading_orders icon='⬆️' %}
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_unloading_orders icon='⬇️' %}
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_rep_handovers icon='💵' %}
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_rep_app icon='📱' %}
                     </div>
                 </div>
 
@@ -652,6 +658,8 @@
                                 {% endfor %}
                             </div>
                         </div>
+
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_purchase_orders icon='📦' %}
 
                         <div class="nav-item-row">
                             <span class="nav-item-label">➕ {{ form.show_nav_create_purchase.label }}</span>
@@ -815,6 +823,9 @@
                             </div>
                         </div>
 
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_hr_attendance_manage icon='📝' %}
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_hr_attendance_report icon='📊' %}
+
                         <div class="nav-item-row">
                             <span class="nav-item-label">💸 {{ form.show_nav_hr_payroll.label }}</span>
                             <div class="nav-radio-group">
@@ -828,6 +839,11 @@
                                 {% endfor %}
                             </div>
                         </div>
+
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_hr_employees icon='👥' %}
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_hr_my_portal icon='🙋' %}
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_hr_leaves icon='🌴' %}
+                        {% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_hr_loans icon='💵' %}
                     </div>
                 </div>
 
@@ -889,6 +905,13 @@
                                     </div>
                                 </div>
                             </div>
+                            <div class="col-md-6">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_fiscal_years icon='📕' %}</div>
+                            <div class="col-md-6">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_account_mapping icon='🔗' %}</div>
+                            <div class="col-md-6">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_intermediaries icon='🏪' %}</div>
+                            <div class="col-md-6">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_tax_settlement icon='🧾' %}</div>
+                            <div class="col-md-6">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_bank_reconciliation icon='🏦' %}</div>
+                            <div class="col-md-6">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_custody icon='💼' %}</div>
+                            <div class="col-md-6">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_eservices icon='💳' %}</div>
                         </div>
                     </div>
                 </div>
@@ -944,6 +967,7 @@
                                     </div>
                                 </div>
                             </div>
+                            <div class="col-md-6">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_audit_log icon='🕵️' %}</div>
                             <div class="col-md-6">
                                 <div class="nav-item-row">
                                     <span class="nav-item-label">📊 {{ form.show_nav_reports.label }}</span>
@@ -969,7 +993,7 @@
                         <div class="nav-toggle-card-title">🧾 منظومة الضرائب والفواتير الإلكترونية</div>
                         
                         <div class="row">
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <div class="nav-item-row">
                                     <span class="nav-item-label">📤 {{ form.show_nav_einvoice_approval.label }}</span>
                                     <div class="nav-radio-group">
@@ -984,7 +1008,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">
                                 <div class="nav-item-row">
                                     <span class="nav-item-label">📖 {{ form.show_nav_einvoice_history.label }}</span>
                                     <div class="nav-radio-group">
@@ -999,7 +1023,8 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-md-4">
+                            <div class="col-md-3">{% include 'core/partials/nav_toggle_row.html' with field=form.show_nav_received_documents icon='📥' %}</div>
+                            <div class="col-md-3">
                                 <div class="nav-item-row">
                                     <span class="nav-item-label">🧾 {{ form.show_nav_tax_settings.label }}</span>
                                     <div class="nav-radio-group">
