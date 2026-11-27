@@ -28,7 +28,7 @@ class Warehouse(models.Model):
     """
     branch = models.ForeignKey(
         'core.Branch',
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='warehouses',
         verbose_name=_('الفرع')
     )
@@ -408,13 +408,13 @@ class InventoryBatch(models.Model):
     """
     product = models.ForeignKey(
         Product,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='batches',
         verbose_name=_('المنتج')
     )
     warehouse = models.ForeignKey(
         Warehouse,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='batches',
         verbose_name=_('المستودع')
     )
@@ -538,23 +538,25 @@ class StockMovement(models.Model):
         ('RETURN_OUT', 'مرتجع صادر'),
         ('CANCEL_IN', 'إلغاء بيع — رجوع للدفعة الأصلية'),
         ('CANCEL_OUT', 'إلغاء مرتجع — خروج من دفعة المرتجع'),
+        ('OPENING_ADJ_IN', 'تعديل رصيد أول المدة — زيادة'),
+        ('OPENING_ADJ_OUT', 'تعديل رصيد أول المدة — نقص'),
     ]
 
     product = models.ForeignKey(
         Product,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='movements',
         verbose_name=_('المنتج')
     )
     warehouse = models.ForeignKey(
         Warehouse,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='movements',
         verbose_name=_('المستودع')
     )
     batch = models.ForeignKey(
         InventoryBatch,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='movements',

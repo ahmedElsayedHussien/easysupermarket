@@ -9,6 +9,7 @@ Handles:
 """
 from decimal import Decimal, InvalidOperation
 from django.db import transaction, models
+from django.db.models import Q
 from django.core.exceptions import ValidationError
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
@@ -93,7 +94,8 @@ def get_product_opening_info(product: Product, warehouse: Warehouse = None):
         prod_ct = ContentType.objects.get_for_model(Product)
         mine = JournalEntry.objects.filter(content_type=prod_ct, object_id=product.id)
         je = (mine.filter(reference__startswith=f'OPN-ADJ-{product.id}-{warehouse.id}-').order_by('-date', '-id').first()
-              or JournalEntry.objects.filter(reference__startswith=f'OPN-PRD-{product.id}-{warehouse.id}')
+              or JournalEntry.objects.filter(Q(reference=f'OPN-PRD-{product.id}-{warehouse.id}')
+                                             | Q(reference__startswith=f'OPN-PRD-{product.id}-{warehouse.id}-'))
               .order_by('-id').first()
               or mine.order_by('-date', '-id').first())
 
@@ -243,7 +245,7 @@ def update_or_create_product_opening_stock(
                 product=prod_locked,
                 warehouse=wh_locked,
                 batch=batch,
-                movement_type='ADJUSTMENT_IN' if delta_qty > 0 else 'ADJUSTMENT_OUT',
+                movement_type='OPENING_ADJ_IN' if delta_qty > 0 else 'OPENING_ADJ_OUT',
                 quantity=abs(delta_qty),
                 unit_cost=unit_cost,
                 reference=f'{EDIT_REFERENCE}{prod_locked.id}',
@@ -253,8 +255,10 @@ def update_or_create_product_opening_stock(
         # Update or create Journal Entry
         dedicated_entry = JournalEntry.objects.filter(
             content_type=prod_ct,
-            object_id=prod_locked.id,
-            reference=f"OPN-PRD-{prod_locked.id}-{wh_locked.id}"
+            object_id=prod_locked.id
+        ).filter(
+            Q(reference=f"OPN-PRD-{prod_locked.id}-{wh_locked.id}")
+            | Q(reference__startswith=f"OPN-PRD-{prod_locked.id}-{wh_locked.id}-")
         ).order_by('-id').first()
 
         je = None

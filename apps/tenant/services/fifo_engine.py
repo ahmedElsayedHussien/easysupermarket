@@ -45,10 +45,12 @@ def lock_order(items, key=lambda x: x.product_id):
     return sorted(items, key=lambda x: (key(x) or 0))
 
 
-def _offset_deficits(product, warehouse, batch):
+def _offset_deficits(product, warehouse, batch, user=None):
     """
     Uses the quantity of a freshly created positive `batch` to fill existing negative
     (deficit) batches of the same product & warehouse, oldest first.
+    Reconciles any cost variance between actual batch cost and the estimated deficit cost
+    by posting an adjustment entry (Debit/Credit COGS 5100 vs Inventory 1140).
     Returns the batch with its quantity_remaining reduced accordingly.
     """
     from apps.tenant.inventory.models import InventoryBatch
@@ -62,6 +64,9 @@ def _offset_deficits(product, warehouse, batch):
     )
 
     remaining_to_offset = batch.quantity_remaining
+    total_cost_diff = Decimal('0')
+    total_offset_qty = Decimal('0')
+
     for neg_batch in negative_batches:
         if remaining_to_offset <= Decimal('0'):
             break
@@ -71,9 +76,67 @@ def _offset_deficits(product, warehouse, batch):
         neg_batch.save(update_fields=['quantity_remaining', 'updated_at'])
         remaining_to_offset -= offset
 
+        actual_cost = batch.unit_cost
+        estimated_cost = neg_batch.unit_cost
+        diff_per_unit = (actual_cost - estimated_cost).quantize(Decimal('0.0001'))
+        diff_for_batch = (diff_per_unit * offset).quantize(Decimal('0.01'))
+        total_cost_diff += diff_for_batch
+        total_offset_qty += offset
+
     if remaining_to_offset != batch.quantity_remaining:
         batch.quantity_remaining = remaining_to_offset
         batch.save(update_fields=['quantity_remaining', 'updated_at'])
+
+    # P1-4: Post COGS vs 1140 adjustment entry for the variance between actual & estimated cost
+    if total_cost_diff != Decimal('0') and total_offset_qty > Decimal('0'):
+        try:
+            from django.utils import timezone
+            from apps.tenant.accounting.models import JournalEntry, JournalItem
+            from apps.tenant.services.journal_service import _get_system_account, unique_reference
+            from django.contrib.contenttypes.models import ContentType
+
+            inv_acc = _get_system_account('1140')
+            cogs_acc = _get_system_account('5100')
+
+            today = timezone.localdate()
+            ref = unique_reference(f'ADJ-DEF-{batch.id}-{int(timezone.now().timestamp())}')
+            abs_diff = abs(total_cost_diff)
+
+            entry = JournalEntry.objects.create(
+                date=today,
+                reference=ref,
+                description=f'تسوية فروق تكلفة عجز المخزون (سالب) لصنف {product.name} مع دفعة #{batch.id}',
+                status=JournalEntry.DRAFT,
+                created_by=user,
+                content_type=ContentType.objects.get_for_model(product),
+                object_id=product.id,
+            )
+
+            if total_cost_diff > Decimal('0'):
+                # Actual cost > estimated: COGS was understated, 1140 was overstated
+                JournalItem.objects.create(
+                    entry=entry, account=cogs_acc, debit=abs_diff, credit=Decimal('0'),
+                    description=f'فروق تكلفة عجز صنف {product.name} ({total_offset_qty} وحدة)'
+                )
+                JournalItem.objects.create(
+                    entry=entry, account=inv_acc, debit=Decimal('0'), credit=abs_diff,
+                    description=f'تسوية عجز مخزون صنف {product.name} ({total_offset_qty} وحدة)'
+                )
+            else:
+                # Actual cost < estimated: COGS was overstated, 1140 was understated
+                JournalItem.objects.create(
+                    entry=entry, account=inv_acc, debit=abs_diff, credit=Decimal('0'),
+                    description=f'تسوية عجز مخزون صنف {product.name} ({total_offset_qty} وحدة)'
+                )
+                JournalItem.objects.create(
+                    entry=entry, account=cogs_acc, debit=Decimal('0'), credit=abs_diff,
+                    description=f'فروق تكلفة عجز صنف {product.name} ({total_offset_qty} وحدة)'
+                )
+
+            entry.post(user)
+        except Exception as e:
+            logger.warning(f"Could not post deficit reconciliation journal entry for product {product.id}: {e}")
+
     return batch
 
 
@@ -252,6 +315,7 @@ def add_inventory_batch(
     movement_type: str = 'IN',
     update_last_purchase_price: Optional[bool] = None,
     notes: str = '',
+    user=None,
 ) -> 'InventoryBatch':
     """
     Creates a new FIFO inventory batch (on purchase/stock-in) and offsets any
@@ -300,7 +364,7 @@ def add_inventory_batch(
         source_invoice_line=invoice_line,
     )
 
-    _offset_deficits(product, warehouse, batch)
+    _offset_deficits(product, warehouse, batch, user=user)
 
     if update_last_purchase_price is None:
         update_last_purchase_price = (movement_type == 'IN')

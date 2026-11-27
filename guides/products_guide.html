@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>دليل تجهيز الأصناف — مسار</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=block" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Tajawal', 'Segoe UI', Tahoma, sans-serif; color: #1f2937; font-size: 11.5pt; line-height: 1.75; margin: 0; }
+  header { display: flex; align-items: center; justify-content: space-between; border-bottom: 3px solid #ff7300; padding-bottom: 10px; margin-bottom: 18px; }
+  header h1 { margin: 0; font-size: 21pt; font-weight: 800; color: #111827; }
+  header p { margin: 2px 0 0; color: #6b7280; font-size: 10.5pt; }
+  header img { height: 46px; }
+  h2 { font-size: 14.5pt; font-weight: 800; color: #111827; margin: 20px 0 8px; display: flex; align-items: center; gap: 10px; break-after: avoid; }
+  h2 .n { background: #ff7300; color: #fff; border-radius: 50%; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; font-size: 12pt; flex-shrink: 0; }
+  h2 small { font-weight: 500; color: #6b7280; font-size: 10.5pt; }
+  .tree, .note, .warn, .ok, table, h2 + p { break-inside: avoid; }
+  ul, ol { margin: 4px 0 8px; padding-inline-start: 22px; }
+  li { margin: 2px 0; }
+  .path { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px; padding: 1px 8px; font-weight: 700; white-space: nowrap; }
+  .tree { background: #fafafa; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 14px; margin: 6px 0; font-size: 11pt; }
+  .tree div { margin: 1px 0; }
+  .tree .sub { color: #4b5563; padding-inline-start: 18px; }
+  .note { border-inline-start: 4px solid #3987e5; background: #eef5fd; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+  .warn { border-inline-start: 4px solid #c98500; background: #fdf6e7; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+  .ok { border-inline-start: 4px solid #199e70; background: #eaf7f2; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 10px; font-size: 10.5pt; }
+  th, td { border: 1px solid #e5e7eb; padding: 5px 8px; text-align: right; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 800; }
+  td.req { color: #b91c1c; font-weight: 700; white-space: nowrap; }
+  td.opt { color: #6b7280; white-space: nowrap; }
+  .golden { margin-top: 18px; text-align: center; border: 2px solid #ff7300; border-radius: 10px; padding: 12px; font-size: 13pt; font-weight: 800; break-inside: avoid; }
+  .golden span { color: #ff7300; }
+  footer { margin-top: 16px; color: #9ca3af; font-size: 9pt; text-align: center; }
+  code, .ltr { direction: ltr; unicode-bidi: embed; font-family: Consolas, monospace; font-size: 10pt; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>دليل تجهيز الأصناف من الصفر</h1>
+    <p>نظام مسار — الفئات، الأصناف، وأكواد الفاتورة الإلكترونية (EGS)</p>
+  </div>
+  <img src="../static/img/logo.png" alt="">
+</header>
+
+<section>
+  <h2><span class="n">١</span> الفئات أولاً <small>(أهم خطوة)</small></h2>
+  <p>من <span class="path">المخزون ← الفئات</span> اعمل الفئات حسب <strong>نوع السلعة</strong>، لأن كل فئة سيكون لها كود ضريبي. مثال:</p>
+  <div class="tree">
+    <div><strong>عدد يدوية</strong></div>
+    <div class="sub">↳ مفكات، زرادي، مفاتيح</div>
+    <div><strong>عدد كهربائية</strong></div>
+    <div class="sub">↳ شنيورات، صواريخ</div>
+    <div><strong>أسلاك وكابلات</strong></div>
+    <div><strong>إضاءة</strong></div>
+  </div>
+  <div class="warn"><strong>قاعدتان مهمتان:</strong>
+    <ul>
+      <li>الأصناف <strong>المعفاة من الضريبة</strong> تُوضع في <strong>فئة مستقلة</strong> — لا تخلطها مع أصناف عليها ضريبة ١٤٪.</li>
+      <li><strong>كود الفئة الرئيسية يغطي الفئات الفرعية تحتها</strong>، فلا يلزم تسجيل كود لكل فئة فرعية.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">٢</span> الأصناف <small>(الاستيراد من إكسيل أسرع)</small></h2>
+  <p>من <span class="path">المخزون ← استيراد الأصناف من إكسيل</span>:</p>
+  <ol>
+    <li>نزّل <strong>القالب</strong> من نفس الشاشة.</li>
+    <li>املأ لكل صنف:</li>
+  </ol>
+  <table>
+    <tr><th>العمود</th><th></th><th>ملاحظات</th></tr>
+    <tr><td>اسم المنتج</td><td class="req">إلزامي</td><td></td></tr>
+    <tr><td>سعر البيع</td><td class="req">إلزامي</td><td></td></tr>
+    <tr><td>الباركود</td><td class="opt">اختياري</td><td>لو تُرك فارغاً يولّد البرنامج باركوداً تلقائياً.</td></tr>
+    <tr><td>سعر التكلفة + الكمية</td><td class="opt">اختياري</td><td>يُسجَّلان كرصيد أول المدة للصنف.</td></tr>
+    <tr><td>القسم / الفئة</td><td class="opt">مهم</td><td>اكتب اسم الفئة <strong>كما هو بالضبط</strong> في البرنامج.</td></tr>
+    <tr><td>الوحدة</td><td class="opt">اختياري</td><td>قطعة، كيلو، لتر...</td></tr>
+    <tr><td>المخزن</td><td class="opt">اختياري</td><td>فقط لو عندك أكثر من مخزن؛ لو فارغ يدخل المخزن المختار في الشاشة.</td></tr>
+  </table>
+  <ol start="3">
+    <li>ارفع الملف واختر <strong>المخزن الافتراضي</strong>.</li>
+  </ol>
+  <div class="ok">النتيجة: الأصناف تُنشأ، أرصدتها تدخل المخازن، والقيد المحاسبي الافتتاحي يُعمل تلقائياً.</div>
+</section>
+
+<section>
+  <h2><span class="n">٣</span> الأكواد الضريبية <small>(لو ستعمل بالفاتورة الإلكترونية)</small></h2>
+  <div class="note"><strong>لا تحتاج أن تضع كوداً لأي صنف</strong> — يكفي تسجيل أكواد الفئات.</div>
+  <ol>
+    <li>افتح <span class="path">منظومة الضرائب ← تسجيل أكواد الأصناف ← أكواد الفئات</span>.</li>
+    <li>لكل فئة رئيسية اكتب: <strong>الاسم بالإنجليزي</strong> و<strong>كود GPC</strong> (٨ أرقام — تصنيف نوع السلعة).</li>
+    <li>علّم عليها واضغط <strong>«طلب تسجيل أكواد الفئات المحددة»</strong>.</li>
+    <li>بعد موافقة مصلحة الضرائب (قد تأخذ أياماً) اضغط <strong>«تحديث حالات الطلبات من الضرائب»</strong>.</li>
+  </ol>
+  <div class="ok">من هنا: أي صنف يُرسل في الفاتورة الإلكترونية <strong>بكود فئته، وباسمه وسعره الحقيقيين</strong> في وصف السطر.</div>
+  <p style="font-size:10.5pt; color:#4b5563;">الكود يتكوّن تلقائياً، مثال: <span class="ltr" style="background:#f3f4f6; padding:1px 6px; border-radius:4px;">EG-123456789-CAT5</span>
+  (رقم التسجيل الضريبي للشركة، ثم رقم الفئة). لا يُستخدم كود في الفواتير قبل موافقة الضرائب عليه.</p>
+</section>
+
+<section>
+  <h2><span class="n">٤</span> مراجعة سريعة</h2>
+  <ul>
+    <li><strong>تتبع المخزون:</strong> تأكد أن الكميات دخلت المخزن الصحيح.</li>
+    <li><strong>افتح صنفاً أو اثنين:</strong> في قسم «أكواد الضرائب (متقدم)» مكتوب بأي كود سيُرسل الصنف.</li>
+    <li><strong>جرّب بيعة</strong> من نقطة البيع، و<strong>فاتورة إلكترونية على البيئة التجريبية</strong> قبل التشغيل الفعلي.</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="n">٥</span> بعد ذلك: أي صنف جديد</h2>
+  <ul>
+    <li>أضفه في <strong>الفئة الصحيحة</strong> ← يأخذ كودها تلقائياً. <strong>لا خطوات ضريبية إضافية.</strong></li>
+    <li>لو أنشأت <strong>فئة جديدة كلياً</strong> ← سجّل كودها من نفس شاشة «تسجيل أكواد الأصناف».</li>
+  </ul>
+</section>
+
+<div class="golden">الترتيب الذهبي: <span>الفئات</span> ← <span>الأصناف</span> ← <span>أكواد الفئات</span></div>
+
+<footer>نظام مسار — Masar ERP</footer>
+</body>
+</html>

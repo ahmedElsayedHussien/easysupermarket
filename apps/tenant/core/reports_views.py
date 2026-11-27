@@ -1840,8 +1840,9 @@ class ItemMovementReportView(CsvExportMixin, CustomPermissionRequiredMixin, List
             else:
                 prev_qs = prev_qs.none()
                 
-            in_types = ['IN', 'TRANSFER_IN', 'ADJUSTMENT_IN', 'OPENING_BALANCE', 'RETURN_IN']
-            out_types = ['OUT', 'TRANSFER_OUT', 'ADJUSTMENT_OUT', 'RETURN_OUT']
+            in_types = ['IN', 'TRANSFER_IN', 'ADJUSTMENT_IN', 'OPENING_BALANCE', 'OPENING_ADJ_IN', 'RETURN_IN',
+                        'CANCEL_IN']
+            out_types = ['OUT', 'TRANSFER_OUT', 'ADJUSTMENT_OUT', 'OPENING_ADJ_OUT', 'RETURN_OUT', 'CANCEL_OUT']
             
             def in_out(qs):
                 """(quantity in, quantity out) of a movement queryset in ONE query."""

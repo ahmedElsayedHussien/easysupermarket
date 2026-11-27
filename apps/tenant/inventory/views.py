@@ -217,7 +217,9 @@ def warehouse_delete(request, pk):
             warehouse.delete()
             messages.success(request, f'تم حذف المستودع "{name}" بنجاح.')
         except ProtectedError:
-            messages.error(request, f'لا يمكن حذف المستودع "{warehouse.name}" لارتباطه ببيانات أخرى (مثل بضاعة أو فواتير).')
+            warehouse.is_active = False
+            warehouse.save(update_fields=['is_active'])
+            messages.warning(request, f'تعذر حذف المستودع "{warehouse.name}" لارتباطه ببيانات وسجلات مخزنية، وتم إيقاف تنشيطه (تعطيله) بدلاً من الحذف حفاظاً على سلامة الحسابات.')
         except Exception as e:
             messages.error(request, f'حدث خطأ أثناء الحذف: {str(e)}')
     return redirect('inventory:warehouse_list')
@@ -1941,7 +1943,7 @@ def product_opening_stock_view(request, pk):
     
     from apps.tenant.services.opening_stock_service import EDIT_REFERENCE
     opening_movements = StockMovement.objects.filter(
-        Q(movement_type='OPENING_BALANCE') | Q(reference=f'{EDIT_REFERENCE}{product.id}'),
+        Q(movement_type__in=['OPENING_BALANCE', 'OPENING_ADJ_IN', 'OPENING_ADJ_OUT']) | Q(reference=f'{EDIT_REFERENCE}{product.id}'),
         product=product, warehouse=warehouse,
     ).order_by('-created_at')[:20]
 

@@ -227,6 +227,41 @@ def ledger_totals():
 # The world
 # ---------------------------------------------------------------------------
 
+
+def assertInventoryMatchesLedger(test_case=None, warehouse=None, max_diff=Decimal('0.01')):
+    """
+    P1-1 Helper: Asserts that the sum value of active inventory batches (quantity_remaining * unit_cost)
+    matches the posted ledger balance of account 1140 (including sub-accounts).
+    """
+    from apps.tenant.accounting.models import Account
+    from apps.tenant.inventory.models import InventoryBatch
+    from django.db.models import DecimalField, F, Sum
+
+    batch_qs = InventoryBatch.objects.exclude(quantity_remaining=Decimal('0'))
+    if warehouse is not None:
+        batch_qs = batch_qs.filter(warehouse=warehouse)
+
+    batch_val = batch_qs.aggregate(
+        v=Sum(F('quantity_remaining') * F('unit_cost'), output_field=DecimalField(max_digits=20, decimal_places=4))
+    )['v'] or Decimal('0.0000')
+
+    inv_acc = Account.objects.filter(code='1140').first()
+    ledger_val = inv_acc.current_balance if inv_acc else Decimal('0.0000')
+
+    diff = batch_val - ledger_val
+    if abs(diff) > max_diff:
+        msg = (
+            f"فارق بين تقييم المخزون وحساب 1140: "
+            f"قيمة الدفعات = {batch_val:.2f} ج.م، "
+            f"رصيد الأستاذ (حساب 1140) = {ledger_val:.2f} ج.م، "
+            f"الفارق = {diff:.2f} ج.م"
+        )
+        if test_case is not None:
+            test_case.fail(msg)
+        else:
+            raise AssertionError(msg)
+
+
 def build_world():
     seed_chart_of_accounts()
     settings_obj = system_settings()

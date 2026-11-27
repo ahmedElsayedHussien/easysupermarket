@@ -363,6 +363,7 @@ def _process_purchase_invoice(invoice, lines):
             invoice_line=line,
             reference=invoice.invoice_number,
             movement_type=m_type,
+            user=getattr(invoice, 'cashier', None),
             # Only a real purchase updates last_purchase_price (not a customer return)
             update_last_purchase_price=not is_return_sale,
         )
@@ -572,10 +573,9 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                 )
 
         elif invoice.invoice_type == Invoice.PURCHASE:
-            from apps.tenant.core.models import SystemSetting
-            allow_negative = getattr(SystemSetting.get_settings(), 'allow_negative_stock', False)
+            from apps.tenant.inventory.models import InventoryBatch, StockMovement
 
-            # Pre-validate available stock before making any changes
+            # Pre-validate that all purchase batches are intact before making any changes
             for line in lines:
                 if line.product.product_type == 'SERVICE':
                     continue
@@ -584,12 +584,17 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                 if net_unreturned_qty <= Decimal('0'):
                     continue
                 base_qty = net_unreturned_qty * conv
-                available = line.product.get_stock(warehouse=invoice.warehouse)
-                if available < base_qty and not allow_negative:
+
+                if line.product.product_type == 'SERIALIZED' and line.serial_item:
+                    continue
+
+                line_batches = InventoryBatch.objects.select_for_update(of=('self',)).filter(source_invoice_line=line)
+                batch_remaining = sum((b.quantity_remaining for b in line_batches), Decimal('0'))
+                if batch_remaining < base_qty:
                     raise ValueError(
                         f'لا يمكن إلغاء فاتورة الشراء رقم "{invoice.invoice_number}". '
-                        f'الكمية المتاحة من المنتج "{line.product.name}" بالمستودع ({available}) '
-                        f'أقل من الكمية المطلوب إلغاؤها ({base_qty}) نظراً لبيع أو صرف جزء من المخزون.'
+                        f'تم بيع أو استهلاك جزء من بضاعة المنتج "{line.product.name}" بالفعل (المتبقي {batch_remaining} من أصل {base_qty}). '
+                        f'يرجى عمل فاتورة مرتجع مشتريات للكمية المتبقية بدلاً من الإلغاء.'
                     )
 
             for line in lines:
@@ -607,7 +612,6 @@ def _cancel_invoice_core(invoice_id: int, user=None):
 
                 qty_to_remove = net_unreturned_qty * conv
                 batches = InventoryBatch.objects.select_for_update(of=('self',)).filter(source_invoice_line=line).order_by('created_at')
-                from apps.tenant.inventory.models import StockMovement
                 for b in batches:
                     if qty_to_remove <= Decimal('0'):
                         break
@@ -626,8 +630,6 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                             notes=f'إلغاء فاتورة شراء {invoice.invoice_number}'
                         )
                         qty_to_remove -= to_deduct
-                    if b.quantity_remaining <= Decimal('0'):
-                        b.delete()
 
                 if qty_to_remove > Decimal('0'):
                     consume_fifo_batches(
@@ -640,10 +642,10 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                     )
 
         elif invoice.invoice_type == Invoice.RETURN_SALE:
+            # Pre-validate that all return batches are intact
             for line in lines:
                 if line.product.product_type == 'SERVICE':
                     continue
-
                 if line.product.product_type == 'SERIALIZED' and line.serial_item:
                     from apps.tenant.inventory.models import SerialItem
                     serial = SerialItem.objects.select_for_update(of=('self',)).get(pk=line.serial_item_id)
@@ -651,6 +653,26 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                         raise ValueError(
                             f'لا يمكن إلغاء المرتجع: السيريال الخاص بالمنتج "{line.product.name}" لم يعد في المستودع.'
                         )
+                    continue
+
+                conv = line.factor
+                base_qty = line.quantity * conv
+                ret_batches = InventoryBatch.objects.select_for_update(of=('self',)).filter(source_invoice_line=line)
+                batch_remaining = sum((b.quantity_remaining for b in ret_batches), Decimal('0'))
+                if batch_remaining < base_qty:
+                    raise ValueError(
+                        f'لا يمكن إلغاء مرتجع المبيعات رقم "{invoice.invoice_number}". '
+                        f'تم إعادة بيع أو صرف جزء من البضاعة المرتجعة للمنتج "{line.product.name}" بالفعل (المتبقي {batch_remaining} من أصل {base_qty}). '
+                        f'يرجى عمل فاتورة بيع جديدة بدلاً من الإلغاء.'
+                    )
+
+            for line in lines:
+                if line.product.product_type == 'SERVICE':
+                    continue
+
+                if line.product.product_type == 'SERIALIZED' and line.serial_item:
+                    from apps.tenant.inventory.models import SerialItem
+                    serial = SerialItem.objects.select_for_update(of=('self',)).get(pk=line.serial_item_id)
                     serial.is_sold = True
                     serial.warehouse = None
                     serial.save(update_fields=['is_sold', 'warehouse', 'updated_at'])
@@ -693,7 +715,7 @@ def _cancel_invoice_core(invoice_id: int, user=None):
 
                 conv = line.factor
                 base_qty = line.quantity * conv
-                unit_cost = line.product.get_average_cost(invoice.warehouse) or line.product.last_purchase_price
+                unit_cost = (line.unit_price / conv).quantize(Decimal('0.0001')) if conv else line.unit_price
                 add_inventory_batch(
                     product=line.product,
                     warehouse=invoice.warehouse,
@@ -701,7 +723,7 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                     unit_cost=unit_cost,
                     invoice_line=line,
                     reference=f'إلغاء مرتجع مشتريات {invoice.invoice_number}',
-                    movement_type='RETURN_IN',
+                    movement_type='CANCEL_IN',
                     update_last_purchase_price=False,
                 )
 
@@ -736,22 +758,35 @@ def _consumed_batches(invoice):
     for m in (StockMovement.objects.filter(reference=invoice.invoice_number, movement_type='OUT',
                                            warehouse=invoice.warehouse, batch__isnull=False)
               .select_related('batch').order_by('-id')):
-        out.setdefault(m.product_id, []).append([m.batch, m.quantity])
+        out.setdefault(m.product_id, []).append([m.batch, m.quantity, m.unit_cost])
     return out
 
 
 def _restore_consumed(invoice, product, qty, consumed):
-    """Give ``qty`` back to the batches the sale consumed; returns what was given back."""
+    """Give ``qty`` back to the batches the sale consumed; returns what was given back.
+    The goods come back at the cost they left at (the reversal entry credits COGS at that cost): if the
+    batch's cost was changed since (e.g. an opening-balance cost edit), they go to a new batch at the
+    original cost instead, so stock value and the inventory account stay equal."""
     from apps.tenant.inventory.models import InventoryBatch, StockMovement
+    from apps.tenant.services.fifo_engine import add_inventory_batch
     given = Decimal('0')
     for slot in consumed.get(product.id, []):
         if qty - given <= Decimal('0'):
             break
-        batch, left = slot
+        batch, left, out_cost = slot
         take = min(left, qty - given)
         if take <= Decimal('0'):
             continue
         b = InventoryBatch.objects.select_for_update(of=('self',)).get(pk=batch.pk)
+        if out_cost is not None and b.unit_cost != out_cost:
+            add_inventory_batch(product=product, warehouse=invoice.warehouse, quantity=take, unit_cost=out_cost,
+                                expiry_date=b.expiry_date, batch_number=(b.batch_number or '')[:90],
+                                reference=f'إلغاء {invoice.invoice_number}'[:100], movement_type='CANCEL_IN',
+                                update_last_purchase_price=False,
+                                notes=f'إلغاء فاتورة مبيعات {invoice.invoice_number} — بتكلفة البيع الأصلية')
+            slot[1] = left - take
+            given += take
+            continue
         b.quantity_remaining += take
         b.save(update_fields=['quantity_remaining', 'updated_at'])
         StockMovement.objects.create(

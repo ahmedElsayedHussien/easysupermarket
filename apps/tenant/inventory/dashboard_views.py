@@ -28,8 +28,8 @@ FLOW_DAYS = 30
 TOP_CATEGORIES = 8
 INVENTORY_VIEW_PERMS = ('inventory.view_product', 'inventory.view_inventorybatch', 'inventory.view_stockadjustment',
                         'inventory.view_warehouse')
-IN_TYPES = ('IN', 'ADJUSTMENT_IN', 'OPENING_BALANCE', 'RETURN_IN')
-OUT_TYPES = ('OUT', 'ADJUSTMENT_OUT', 'RETURN_OUT')   # transfers are internal moves: excluded
+IN_TYPES = ('IN', 'ADJUSTMENT_IN', 'OPENING_BALANCE', 'OPENING_ADJ_IN', 'RETURN_IN', 'CANCEL_IN')
+OUT_TYPES = ('OUT', 'ADJUSTMENT_OUT', 'OPENING_ADJ_OUT', 'RETURN_OUT', 'CANCEL_OUT')   # transfers: internal moves, excluded
 
 MONEY = DecimalField(max_digits=20, decimal_places=4)
 

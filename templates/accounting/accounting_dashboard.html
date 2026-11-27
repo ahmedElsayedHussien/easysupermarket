@@ -80,6 +80,10 @@
     <a class="lq-alert st-critical" href="{% url 'accounting:trial_balance' %}">
       <div class="k">❗ ميزان المراجعة غير متوازن</div><div class="v"><bdi dir="ltr">{{ ledger_diff|money }}</bdi></div><div class="s">راجع القيود فوراً</div></a>
     {% endif %}
+    {% if inventory_diff %}
+    <a class="lq-alert st-critical" href="{% url 'accounting:trial_balance' %}">
+      <div class="k">❗ فارق بين المخزون وحساب 1140</div><div class="v"><bdi dir="ltr">{{ inventory_diff|money }}</bdi></div><div class="s">راجع الدفعات والقيود</div></a>
+    {% endif %}
   </div>
 
   <div class="lq-grid2">

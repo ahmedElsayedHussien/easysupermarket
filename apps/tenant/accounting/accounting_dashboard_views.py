@@ -14,9 +14,11 @@ import datetime
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, DecimalField, Q, Sum, Value
+from django.db.models import Count, DecimalField, F, Q, Sum, Value
 from django.db.models.functions import Coalesce, TruncMonth
 from django.shortcuts import redirect, render
+
+from apps.tenant.inventory.models import InventoryBatch
 
 ZERO = Decimal('0')
 MONEY = DecimalField(max_digits=20, decimal_places=4)
@@ -149,6 +151,15 @@ def accounting_dashboard(request):
                                     c=Coalesce(Sum('credit'), Value(ZERO), output_field=MONEY))
     ledger_diff = (totals['d'] or ZERO) - (totals['c'] or ZERO)
 
+    inv_acc = Account.objects.filter(code='1140').first()
+    inv_ledger_val = inv_acc.current_balance if inv_acc else ZERO
+    inv_batches_val = InventoryBatch.objects.exclude(quantity_remaining=ZERO).aggregate(
+        v=Sum(F('quantity_remaining') * F('unit_cost'), output_field=MONEY)
+    )['v'] or ZERO
+    inventory_diff = inv_batches_val - inv_ledger_val
+    if abs(inventory_diff) < Decimal('0.01'):
+        inventory_diff = ZERO
+
     recent_entries = list(JournalEntry.objects.filter(status=JournalEntry.POSTED)
                           .annotate(total=Sum('items__debit')).order_by('-date', '-id')[:10])
 
@@ -174,6 +185,7 @@ def accounting_dashboard(request):
         'assets_pending_dep': assets_pending_dep,
         'prev_month_label': f'{ARABIC_MONTHS[prev_month_end.month - 1]} {prev_month_end.year}',
         'ledger_diff': ledger_diff,
+        'inventory_diff': inventory_diff,
         'lock_date': accounting_lock_date(),
         'due_days': DUE_SOON_DAYS,
         'recent_entries': recent_entries,

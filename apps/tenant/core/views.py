@@ -631,7 +631,9 @@ def branch_delete(request, pk):
             branch.delete()
             messages.success(request, f'تم حذف الفرع "{name}" بنجاح.')
         except ProtectedError:
-            messages.error(request, f'لا يمكن حذف الفرع "{branch.name}" لارتباطه ببيانات أخرى (مخازن، فواتير، موظفين...).')
+            branch.is_active = False
+            branch.save(update_fields=['is_active'])
+            messages.warning(request, f'تعذر حذف الفرع "{branch.name}" لارتباطه ببيانات وسجلات أخرى (مخازن، فواتير، موظفين...)، وتم إيقاف تنشيطه (تعطيله) بدلاً من الحذف حفاظاً على سلامة الحسابات.')
         except Exception as e:
             messages.error(request, f'حدث خطأ أثناء الحذف: {str(e)}')
     return redirect('core:branch_list')
