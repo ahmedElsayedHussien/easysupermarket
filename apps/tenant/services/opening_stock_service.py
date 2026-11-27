@@ -17,7 +17,11 @@ import logging
 
 from apps.tenant.inventory.models import Product, Warehouse, InventoryBatch, StockMovement
 from apps.tenant.accounting.models import JournalEntry, JournalItem, Account
-from apps.tenant.services.journal_service import _get_system_account
+from apps.tenant.services.journal_service import _get_system_account, unique_reference
+
+# an edit of the opening quantity is logged as an adjustment movement with this reference prefix
+# (never as another OPENING_BALANCE: stock cards count those as goods coming in)
+EDIT_REFERENCE = 'تعديل رصيد - '
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +88,14 @@ def get_product_opening_info(product: Product, warehouse: Warehouse = None):
         unit_cost = unit_cost.quantize(Decimal('0.01'))
         total_cost = (original_qty * unit_cost).quantize(Decimal('0.01'))
         
-        # Find linked journal entry if any
+        # The entry of THIS warehouse (its latest adjustment, else the opening one); any entry of the
+        # product only as a last resort (old data without the warehouse in the reference)
         prod_ct = ContentType.objects.get_for_model(Product)
-        je = JournalEntry.objects.filter(
-            content_type=prod_ct,
-            object_id=product.id
-        ).order_by('-date', '-id').first()
-        if not je:
-            je = JournalEntry.objects.filter(
-                reference=f"OPN-PRD-{product.id}-{warehouse.id}"
-            ).first()
+        mine = JournalEntry.objects.filter(content_type=prod_ct, object_id=product.id)
+        je = (mine.filter(reference__startswith=f'OPN-ADJ-{product.id}-{warehouse.id}-').order_by('-date', '-id').first()
+              or JournalEntry.objects.filter(reference__startswith=f'OPN-PRD-{product.id}-{warehouse.id}')
+              .order_by('-id').first()
+              or mine.order_by('-date', '-id').first())
 
         return {
             'has_opening': True,
@@ -139,6 +141,8 @@ def update_or_create_product_opening_stock(
     """
     if getattr(product, 'product_type', None) == 'SERVICE':
         raise ValidationError('لا يمكن إدخال رصيد مخزني للمنتجات الخدمية.')
+    if getattr(product, 'product_type', None) == 'SERIALIZED':
+        raise ValidationError('الأصناف بالسيريال (IMEI / S/N) رصيدها الافتتاحي بيتدخل بالسيريالات نفسها — مش بكمية.')
 
     try:
         new_quantity = Decimal(str(new_quantity)).quantize(Decimal('0.01'))
@@ -191,7 +195,7 @@ def update_or_create_product_opening_stock(
             models.Q(movements__movement_type='OPENING_BALANCE')
         ).distinct().order_by('created_at').first()
 
-    today = timezone.now().date()
+    today = timezone.localdate()
     inv_acc = _get_system_account('1140')
     opening_equity_acc = _get_system_account('3999')
     prod_ct = ContentType.objects.get_for_model(Product)
@@ -234,16 +238,17 @@ def update_or_create_product_opening_stock(
 
         # Audit movement
         audit_note = reason or f'تعديل رصيد أول المدة من {old_qty} إلى {new_quantity}'
-        StockMovement.objects.create(
-            product=prod_locked,
-            warehouse=wh_locked,
-            batch=batch,
-            movement_type='OPENING_BALANCE',
-            quantity=abs(delta_qty) if delta_qty != Decimal('0') else new_quantity,
-            unit_cost=unit_cost,
-            reference=f'تعديل رصيد - {prod_locked.id}',
-            notes=f'{audit_note} (الفارق: {delta_qty:+})'
-        )
+        if delta_qty != Decimal('0'):
+            StockMovement.objects.create(
+                product=prod_locked,
+                warehouse=wh_locked,
+                batch=batch,
+                movement_type='ADJUSTMENT_IN' if delta_qty > 0 else 'ADJUSTMENT_OUT',
+                quantity=abs(delta_qty),
+                unit_cost=unit_cost,
+                reference=f'{EDIT_REFERENCE}{prod_locked.id}',
+                notes=f'{audit_note} (الفارق: {delta_qty:+})'
+            )
 
         # Update or create Journal Entry
         dedicated_entry = JournalEntry.objects.filter(
@@ -275,7 +280,8 @@ def update_or_create_product_opening_stock(
         else:
             # Post an adjustment journal entry for the delta
             if delta_val != Decimal('0'):
-                ref = f'OPN-ADJ-{prod_locked.id}-{wh_locked.id}-{int(timezone.now().timestamp())}'
+                # two edits in the same second must not collide on the reference
+                ref = unique_reference(f'OPN-ADJ-{prod_locked.id}-{wh_locked.id}-{int(timezone.now().timestamp())}')
                 abs_delta = abs(delta_val)
                 je = JournalEntry.objects.create(
                     date=today,
@@ -304,7 +310,7 @@ def update_or_create_product_opening_stock(
                         entry=je, account=inv_acc, debit=Decimal('0'), credit=abs_delta,
                         description=f'فروق تخفيض رصيد أول مدة - {prod_locked.name} ({delta_qty} وحدة)'
                     )
-                je.post()
+                je.post(user)
 
         return {
             'action': 'updated',
@@ -356,7 +362,7 @@ def update_or_create_product_opening_stock(
         # Create Journal Entry
         je = None
         if total_val > Decimal('0'):
-            ref = f"OPN-PRD-{prod_locked.id}-{wh_locked.id}"
+            ref = unique_reference(f"OPN-PRD-{prod_locked.id}-{wh_locked.id}")
             je = JournalEntry.objects.create(
                 date=today,
                 reference=ref,
@@ -374,7 +380,7 @@ def update_or_create_product_opening_stock(
                 entry=je, account=opening_equity_acc, debit=Decimal('0'), credit=total_val,
                 description=f'مقابل رصيد أول المدة بضاعة رأس المال - {prod_locked.name}'
             )
-            je.post()
+            je.post(user)
 
         return {
             'action': 'created',

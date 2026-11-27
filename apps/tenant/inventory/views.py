@@ -1939,10 +1939,10 @@ def product_opening_stock_view(request, pk):
 
     opening_info = get_product_opening_info(product, warehouse)
     
+    from apps.tenant.services.opening_stock_service import EDIT_REFERENCE
     opening_movements = StockMovement.objects.filter(
-        product=product,
-        warehouse=warehouse,
-        movement_type='OPENING_BALANCE'
+        Q(movement_type='OPENING_BALANCE') | Q(reference=f'{EDIT_REFERENCE}{product.id}'),
+        product=product, warehouse=warehouse,
     ).order_by('-created_at')[:20]
 
     context = {
@@ -1992,6 +1992,8 @@ def opening_stock_list_view(request):
     paginator = Paginator(batches_qs, 30)
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
+    for b in page_obj:                       # value of the opening quantity (a batch has no stored total)
+        b.total_cost = ((b.quantity_original or 0) * (b.unit_cost or 0)).quantize(Decimal('0.01'))
 
     context = {
         'batches': page_obj,
