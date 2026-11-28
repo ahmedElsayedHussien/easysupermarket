@@ -120,6 +120,15 @@ def _plain(value):
     return str(value)
 
 
+def _label(obj):
+    """How an object is named in the log; a user by the name every screen shows (no internal tenant prefix)."""
+    from django.contrib.auth.models import AbstractBaseUser
+    if isinstance(obj, AbstractBaseUser):
+        from .usernames import display_username
+        return display_username(obj)
+    return str(obj)
+
+
 def _display(obj, field):
     """Readable value of ``field``: choice label, related object's name, formatted number."""
     if field.is_relation:
@@ -127,10 +136,13 @@ def _display(obj, field):
         if fk_id is None:
             return None
         try:
-            return str(getattr(obj, field.name))
+            return _label(getattr(obj, field.name))
         except Exception:
             return str(fk_id)
     value = getattr(obj, field.attname)
+    if field.name == 'username' and isinstance(value, str):
+        from .usernames import display_username
+        return display_username(value)
     if field.choices and value is not None:
         return str(dict(field.flatchoices).get(value, value))
     return _plain(value)
@@ -153,7 +165,7 @@ def _write(action, instance, changes=None, user=None, request=None, repr_text=No
                 action=action,
                 content_type=ContentType.objects.get_for_model(instance) if instance is not None else None,
                 object_id=str(getattr(instance, 'pk', '') or ''),
-                object_repr=(repr_text if repr_text is not None else str(instance))[:255],
+                object_repr=(repr_text if repr_text is not None else _label(instance))[:255],
                 changes=changes or {},
                 ip=_current_ip(request),
             )

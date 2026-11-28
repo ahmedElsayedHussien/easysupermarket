@@ -28,3 +28,23 @@ class AuditLogUserDeleteTests(TestCase):
         with self.assertRaises(DatabaseError), transaction.atomic():       # raw SQL: the trigger itself refuses
             with connection.cursor() as c:
                 c.execute('UPDATE core_auditlog SET object_repr = %s WHERE id = %s', ['y', log.pk])
+
+
+class AuditLogDeletedUserDisplayTests(TestCase):
+    """A deleted user's line shows the kept name the way every screen shows names — without the internal
+    tenant prefix ('shop__gone_user' -> 'gone_user')."""
+
+    def test_kept_username_shown_without_the_tenant_prefix(self):
+        from unittest import mock
+        from django.urls import reverse
+        from apps.tenant.core.tests.factories import build_world, login
+        w = build_world()
+        with mock.patch('apps.tenant.core.usernames.tenant_username_prefix', return_value='shop__'):
+            u = make_user('shop__gone_user', employee=False)
+            AuditLog.objects.create(user=u, action=AuditLog.LOGIN, object_repr='دخول')
+            u.delete()
+            login(self.client, w.admin)
+            r = self.client.get(reverse('core:audit_log'))
+        self.assertContains(r, 'gone_user')
+        self.assertContains(r, 'مستخدم محذوف')
+        self.assertNotContains(r, 'shop__gone_user')
