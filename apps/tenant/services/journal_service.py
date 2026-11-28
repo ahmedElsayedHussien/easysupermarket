@@ -75,6 +75,13 @@ def _get_system_account(code: str):
     acc = Account.objects.filter(code=code, is_active=True).first()
     if acc:
         return acc
+    if code in _LAZY_ACCOUNTS and not Account.objects.filter(code=code).exists():
+        name, acc_type, parent_codes, extra = _LAZY_ACCOUNTS[code]
+        parents = {a.code: a for a in Account.objects.filter(code__in=parent_codes)}
+        parent = next((parents[c] for c in parent_codes if c in parents), None)   # in preference order
+        acc, _ = Account.objects.get_or_create(code=code, defaults={'name': name, 'account_type': acc_type,
+                                                                   'parent': parent, 'is_active': True, **extra})
+        return acc
 
     raise ValueError(
         f'الحساب برقم الكود "{code}" غير موجود. '
@@ -260,10 +267,27 @@ def _money_account(candidates, parent_code: str, context: str = ''):
         acc = _linked_account(holder)
         if acc is not None:
             return acc
-    logger.warning(
-        'No specific treasury/bank/e-wallet for %s; posting on parent account %s.',
-        context or 'journal entry', parent_code,
-    )
+    parent = _get_system_account(parent_code)
+    if parent.children.exists():
+        # postings never go to a group account (JournalEntry.post refuses it): say what is missing
+        label = {'1110': 'الخزينة', '1120': 'الحساب البنكي', '1160': 'المحفظة الإلكترونية'}.get(parent_code, 'الحساب')
+        from django.core.exceptions import ValidationError
+        raise ValidationError(f'حدد {label} اللي الفلوس هتتسجّل عليها ({context or "القيد"}).')
+    logger.warning('No specific treasury/bank/e-wallet for %s; posting on %s (no sub-accounts yet).',
+                   context or 'journal entry', parent_code)
+    return parent
+
+
+def _partner_account(partner, field, parent_code):
+    """The partner's own receivable / payable sub-account (created now if missing); the parent only when
+    there is no partner at all."""
+    if partner is not None:
+        if not getattr(partner, f'{field}_id', None):
+            from apps.tenant.partners.models import create_partner_account
+            create_partner_account(type(partner), partner, False)
+        acc = getattr(partner, field, None)
+        if acc is not None:
+            return acc
     return _get_system_account(parent_code)
 
 
@@ -357,10 +381,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
 
     # --- Determine accounts ---
     # ALWAYS route through Accounts Receivable (for traceability)
-    if invoice.partner and invoice.partner.receivable_account:
-        debit_account = invoice.partner.receivable_account
-    else:
-        debit_account = _get_system_account('1130')  # Default A/R
+    debit_account = _partner_account(invoice.partner if invoice.partner_id else None, 'receivable_account', '1130')
 
     revenue_account = _get_system_account('4100')    # Sales Revenue
     cogs_account = _get_system_account('5100')        # COGS
@@ -384,12 +405,16 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
     )['c'] or Decimal('0')
 
     # --- Create Entry (Accounts Receivable) ---
-    reference = _next_reference('SALE')
+    is_return = invoice.invoice_type == 'RETURN_SALE'
+    reference = _next_reference('RSAL' if is_return else 'SALE')     # one number, the right series
+    user = invoice.cashier if getattr(invoice, 'cashier_id', None) else None
     entry = JournalEntry.objects.create(
         date=invoice.date,
         reference=reference,
-        description=f'قيد استحقاق مبيعات - فاتورة رقم {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}',
+        description=(f'قيد استحقاق {"مرتجع مبيعات" if is_return else "مبيعات"} - فاتورة رقم {invoice.invoice_number} - '
+                     f'{getattr(invoice.partner, "name", "")}'),
         status=JournalEntry.DRAFT,
+        created_by=user,
     )
 
     # Link to source document
@@ -537,7 +562,10 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
         ))
 
     if service_revenue_net > 0:
-        service_revenue_account = _get_system_account('4110') or revenue_account
+        try:
+            service_revenue_account = _get_system_account('4110')
+        except ValueError:
+            service_revenue_account = revenue_account
         items_to_create.append(JournalItem(
             entry=entry,
             account=service_revenue_account,
@@ -564,11 +592,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
         ))
         
     # Reverse entries for RETURN_SALE
-    if invoice.invoice_type == 'RETURN_SALE':
-        reference = _next_reference('RSAL')
-        entry.reference = reference
-        entry.description = f'قيد استحقاق مرتجع مبيعات - فاتورة رقم {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
-        entry.save(update_fields=['reference', 'description'])
+    if is_return:
         
         try:
             sales_return_account = _get_system_account('4120')
@@ -586,7 +610,7 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
             item.description = item.description.replace('مبيعات', 'مرتجع مبيعات').replace('استحقاق', 'عكس استحقاق')
 
     JournalItem.objects.bulk_create(items_to_create)
-    entry.post()
+    entry.post(user)
     logger.info(f'Journal posted for sale invoice {invoice.invoice_number}: {reference}')
 
     return entry
@@ -606,10 +630,7 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
     inventory_account = _get_system_account('1140')   # Inventory
 
     # ALWAYS route through Accounts Payable (for traceability)
-    if invoice.partner and invoice.partner.payable_account:
-        credit_account = invoice.partner.payable_account
-    else:
-        credit_account = _get_system_account('2110')  # Default A/P
+    credit_account = _partner_account(invoice.partner if invoice.partner_id else None, 'payable_account', '2110')
 
     # --- Totals ---
     subtotal = invoice.subtotal
@@ -619,12 +640,16 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
     total_amount = invoice.total_amount
 
     # --- Create Entry (Accounts Payable) ---
-    reference = _next_reference('PUR')
+    is_return = invoice.invoice_type == 'RETURN_PURCHASE'
+    reference = _next_reference('RPUR' if is_return else 'PUR')      # one number, the right series
+    user = invoice.cashier if getattr(invoice, 'cashier_id', None) else None
     entry = JournalEntry.objects.create(
         date=invoice.date,
         reference=reference,
-        description=f'قيد استحقاق مشتريات - فاتورة رقم {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}',
+        description=(f'قيد استحقاق {"مرتجع مشتريات" if is_return else "مشتريات"} - فاتورة رقم {invoice.invoice_number} - '
+                     f'{getattr(invoice.partner, "name", "")}'),
         status=JournalEntry.DRAFT,
+        created_by=user,
     )
 
     entry.content_type = ContentType.objects.get_for_model(invoice)
@@ -634,13 +659,32 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
     items_to_create = []
 
     # Dr: Inventory (net cost)
-    if net_subtotal > 0:
+    inventory_value, price_gap = net_subtotal, Decimal('0')
+    if is_return:
+        from django.db.models import Sum as _Sum
+        goods = invoice.lines.exclude(product__product_type='SERVICE').aggregate(
+            net=_Sum('subtotal'), cost=_Sum('cogs_amount'))
+        goods_net, goods_cost = goods['net'] or Decimal('0'), goods['cost'] or Decimal('0')
+        if goods_cost > 0:
+            inventory_value = net_subtotal - goods_net + goods_cost      # stock leaves at its batch cost
+            price_gap = goods_net - goods_cost                            # + : returned above cost
+    if inventory_value > 0:
         items_to_create.append(JournalItem(
             entry=entry,
             account=inventory_account,
-            debit=net_subtotal,
+            debit=inventory_value,
             credit=Decimal('0'),
             description=f'مخزون مشتريات - {invoice.invoice_number}'
+        ))
+    if price_gap:
+        try:
+            gap_account = _get_system_account('5110')     # مردودات ومسموحات المشتريات
+        except ValueError:
+            gap_account = _get_system_account('5100')
+        items_to_create.append(JournalItem(              # the whole entry is mirrored below for a return
+            entry=entry, account=gap_account,
+            debit=price_gap if price_gap > 0 else Decimal('0'), credit=-price_gap if price_gap < 0 else Decimal('0'),
+            description=f'فرق سعر المرتجع عن تكلفة المخزون - {invoice.invoice_number}'
         ))
 
     # Dr: Input VAT
@@ -734,20 +778,16 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
             ))
 
     # Reverse entries for RETURN_PURCHASE
-    if invoice.invoice_type == 'RETURN_PURCHASE':
-        reference = _next_reference('RPUR')
-        entry.reference = reference
-        entry.description = f'قيد استحقاق مرتجع مشتريات - فاتورة رقم {invoice.invoice_number} - {getattr(invoice.partner, "name", "")}'
-        entry.save(update_fields=['reference', 'description'])
+    if is_return:
         
-        # NOTE: In a perpetual inventory system, a purchase return correctly credits Inventory directly.
-        # We do not use a separate "Purchase Returns (5110)" account for the inventory value.
+        # Perpetual inventory: a purchase return credits Inventory at the batches' cost; only the gap between
+        # the return price and that cost goes to purchase returns & allowances (5110) — built above.
         for item in items_to_create:
             item.debit, item.credit = item.credit, item.debit
             item.description = item.description.replace('مشتريات', 'مرتجع مشتريات').replace('استحقاق', 'عكس استحقاق')
 
     JournalItem.objects.bulk_create(items_to_create)
-    entry.post()
+    entry.post(user)
     logger.info(f'Journal posted for purchase invoice {invoice.invoice_number}: {reference}')
 
     return entry
@@ -784,6 +824,9 @@ def post_payment(payment) -> 'JournalEntry':
     from apps.tenant.accounting.models import JournalEntry, JournalItem
     from django.contrib.contenttypes.models import ContentType
 
+    payment = type(payment).objects.select_for_update(of=('self',)).get(pk=payment.pk)
+    if payment.status != 'DRAFT' or payment.journal_entry_id:
+        raise ValueError(f'الدفعة {payment.reference} مرحّلة بالفعل.')
     if payment.amount <= Decimal('0'):
         raise ValueError('مبلغ الدفعة يجب أن يكون أكبر من صفر.')
 
