@@ -939,3 +939,53 @@ class VatCloseFromEtaDocumentsTests(ETATestBase):
         t = close_vat(datetime.date.today())
         self.assertEqual(t.output_vat, D('1.45'))                                      # 1.40 + money(0.05 − diff)
         self.assertEqual(t.rounding_adjustment, D('0.00'))
+
+
+class VatCloseSettlesEachDocumentOnceTests(ETATestBase):
+    """A document's rounding difference is settled ONCE, by the first VAT close after it is accepted — not by
+    the month of its invoice. Document VAT figures are set explicitly here (13.99 / 13.98 against the invoice's
+    14.00) so the differences are whole piasters and the two closes can be compared to Σ rounding_diff exactly;
+    the document arithmetic itself is covered by EtaRoundingRecordTests."""
+
+    def sale(self, day, doc_vat, status):
+        inv = make_invoice(self.w, lines=[(self.w.product, 10, 10, 14)], date=day)              # VAT 14.00
+        log = EInvoiceLog.objects.get(invoice=inv)
+        log.record_eta_totals({'taxTotals': [{'taxType': 'T1', 'amount': doc_vat}], 'totalAmount': 100 + doc_vat})
+        EInvoiceLog.objects.filter(pk=log.pk).update(status=status)
+        log.refresh_from_db()
+        return log
+
+    def test_a_document_accepted_after_its_month_closed_is_settled_by_the_next_close(self):
+        import datetime
+        from apps.tenant.accounting.tax_settlement import close_vat
+        nov30, dec15 = datetime.date(2026, 11, 30), datetime.date(2026, 12, 15)
+        nov = self.sale(nov30, 13.99, 'SUBMITTED')                                   # not accepted yet
+        november = close_vat(nov30)
+        nov.refresh_from_db()
+        self.assertIsNone(nov.settlement)                                            # not counted
+        self.assertEqual((november.output_vat, november.rounding_adjustment), (D('14.00'), D('0.00')))
+
+        EInvoiceLog.objects.filter(pk=nov.pk).update(status='VALID')                 # accepted in December
+        dec = self.sale(dec15, 13.98, 'VALID')
+        december = close_vat(datetime.date(2026, 12, 31))
+        nov.refresh_from_db()
+        dec.refresh_from_db()
+        self.assertEqual((nov.settlement, dec.settlement), (december, december))     # both settled by December
+        self.assertEqual(december.rounding_adjustment, D('0.03'))                    # 0.01 + 0.02
+        self.assertEqual(november.rounding_adjustment + december.rounding_adjustment,
+                         nov.rounding_diff + dec.rounding_diff)
+
+        # a third close finds nothing left to settle: each document only once
+        self.sale(datetime.date(2027, 1, 10), 14.00, 'VALID')
+        january = close_vat(datetime.date(2027, 1, 31))
+        self.assertEqual(january.rounding_adjustment, D('0.00'))
+        self.assertEqual(EInvoiceLog.objects.filter(settlement=december).count(), 2)
+
+    def test_a_settlement_with_documents_cannot_be_deleted(self):
+        import datetime
+        from django.db.models import ProtectedError
+        from apps.tenant.accounting.tax_settlement import close_vat
+        self.sale(datetime.date(2026, 11, 30), 13.99, 'VALID')
+        t = close_vat(datetime.date(2026, 11, 30))
+        with self.assertRaises(ProtectedError):
+            t.delete()

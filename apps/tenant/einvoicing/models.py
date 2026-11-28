@@ -113,6 +113,10 @@ class EInvoiceLog(models.Model):
                                     verbose_name='إجمالي المستند')
     rounding_diff = models.DecimalField(max_digits=18, decimal_places=5, null=True, blank=True,
                                         verbose_name='فرق التقريب (ضريبة الفاتورة − ضريبة المستند)')
+    # the VAT close that settled this document's rounding difference — once per document, whatever the
+    # invoice date (a document accepted after its month was closed is settled by the next close)
+    settlement = models.ForeignKey('accounting.TaxSettlement', on_delete=models.PROTECT, null=True, blank=True,
+                                   related_name='einvoice_logs', verbose_name='التسوية الضريبية اللي سوّت فرقه')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاريخ الإنشاء")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="تاريخ التحديث")
     

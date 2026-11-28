@@ -46,31 +46,33 @@ def _post(obj, label, lines, user):
                       user=user, source=obj)
 
 
-def eta_documents_vat(date_from, date_to):
-    """Output VAT of the period as the ETA holds it: the accepted documents (VALID, or a cancel / reject request
-    that was not granted) of invoices dated in (date_from, date_to]; a credit note counts negative.
-    Returns (VAT per the documents, sum of rounding_diff = invoice VAT − document VAT), both signed."""
+def eta_documents_vat(period_end):
+    """The accepted ETA documents (VALID, or a cancel / reject request that was not granted) not settled by any
+    VAT close yet, of invoices dated up to ``period_end`` — each document is settled ONCE, by the first close
+    after it is accepted, whatever its invoice date. A credit note counts negative. Locks the rows (call
+    inside the closing transaction). Returns (log ids, VAT per the documents, sum of rounding_diff), signed."""
     from apps.tenant.einvoicing.models import EInvoiceLog
     from apps.tenant.invoicing.models import Invoice
-    logs = EInvoiceLog.objects.filter(status__in=EInvoiceLog.ACCEPTED_STATES, invoice__status=Invoice.POSTED,
-                                      invoice__date__lte=date_to, eta_tax_total__isnull=False)
-    if date_from is not None:
-        logs = logs.filter(invoice__date__gt=date_from)
+    rows = list(EInvoiceLog.objects.select_for_update(of=('self',)).filter(
+        status__in=EInvoiceLog.ACCEPTED_STATES, settlement__isnull=True, invoice__status=Invoice.POSTED,
+        invoice__date__lte=period_end, eta_tax_total__isnull=False,
+    ).order_by('pk').values_list('pk', 'invoice__invoice_type', 'eta_tax_total', 'rounding_diff'))
     vat = diff = ZERO
-    for invoice_type, tax, rounding in logs.values_list('invoice__invoice_type', 'eta_tax_total', 'rounding_diff'):
+    for _pk, invoice_type, tax, rounding in rows:
         sign = -1 if invoice_type == Invoice.RETURN_SALE else 1
         vat += sign * tax
         diff += sign * (rounding or ZERO)
-    return vat, diff
+    return [r[0] for r in rows], vat, diff
 
 
 def close_vat(period_end, user=None):
     """Move the output / input VAT balances up to ``period_end`` into 2135 (payable).
 
     Output VAT is declared as the accepted ETA documents say (official 5-place formulas), not as the invoices'
-    own 2-place VAT: declared = money(books − Σ rounding_diff of the period's accepted documents) — exactly
-    money(Σ document VAT) when every sale of the period went to the ETA; a sale with no accepted document keeps
-    its booked VAT. The difference (books − declared) goes to the rounding account in the same entry:
+    own 2-place VAT: declared = money(books − Σ rounding_diff of the accepted documents not settled yet) —
+    exactly money(Σ document VAT) when every sale went to the ETA; a sale with no accepted document keeps its
+    booked VAT, and a document accepted after its month was closed is settled by the next close (each document
+    once — EInvoiceLog.settlement). The difference (books − declared) goes to the rounding account in the same entry:
         Dr 2130 (the whole balance)  Cr 1190 / 2135 (declared)  Cr|Dr rounding (the difference)"""
     from apps.tenant.accounting.models import ensure_open_period
     from apps.tenant.core.money import money
@@ -80,9 +82,7 @@ def close_vat(period_end, user=None):
         in_vat, in_acc = _balance(INPUT_VAT, period_end, credit_side=False)
         if out_vat <= 0:
             raise ValidationError('مفيش ضريبة مبيعات تتقفل لحد التاريخ ده (ضريبة المشتريات بتفضل رصيد مرحّل).')
-        previous = (TaxSettlement.objects.filter(kind=TaxSettlement.VAT_CLOSE, period_end__lt=period_end)
-                    .order_by('-period_end').values_list('period_end', flat=True).first())
-        eta_vat, eta_diff = eta_documents_vat(previous, period_end)
+        log_ids, eta_vat, eta_diff = eta_documents_vat(period_end)
         declared = money(out_vat - eta_diff)
         adjustment = out_vat - declared
         settled_input = max(min(in_vat, declared), ZERO)
@@ -105,6 +105,9 @@ def close_vat(period_end, user=None):
                           adjustment if adjustment > 0 else ZERO, rounding_label))
         obj.journal_entry = _post(obj, label, lines, user)
         obj.save(update_fields=['journal_entry'])
+        if log_ids:                                  # these documents' differences are settled — never again
+            from apps.tenant.einvoicing.models import EInvoiceLog
+            EInvoiceLog.objects.filter(pk__in=log_ids).update(settlement=obj)
     return obj
 
 
