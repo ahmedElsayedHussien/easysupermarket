@@ -187,7 +187,9 @@ def update_or_create_product_opening_stock(
         batch = InventoryBatch.objects.select_for_update(of=('self',)).filter(id=opening_movement.batch_id).first()
 
     if not batch:
-        batch = InventoryBatch.objects.select_for_update(of=('self',)).filter(
+        # pick the id first, then lock that row: PostgreSQL refuses FOR UPDATE together with DISTINCT
+        # (the join to movements needs the DISTINCT)
+        batch_id = InventoryBatch.objects.filter(
             product=prod_locked,
             warehouse=wh_locked,
             source_invoice_line__isnull=True
@@ -195,7 +197,9 @@ def update_or_create_product_opening_stock(
             # Only opening-balance batches: adjustment batches ('تسوية ...') are NOT opening stock
             models.Q(batch_number__startswith='رصيد') |
             models.Q(movements__movement_type='OPENING_BALANCE')
-        ).distinct().order_by('created_at').first()
+        ).order_by('created_at').values_list('id', flat=True).first()
+        if batch_id:
+            batch = InventoryBatch.objects.select_for_update(of=('self',)).filter(pk=batch_id).first()
 
     today = timezone.localdate()
     inv_acc = _get_system_account('1140')
