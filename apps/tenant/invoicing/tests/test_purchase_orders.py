@@ -43,7 +43,8 @@ class PurchaseOrderTests(TestCase):
         order = PurchaseOrder.objects.get()
         r = self.client.get(reverse('invoicing:purchase_invoice') + f'?po={order.id}')
         self.assertContains(r, f'name="po_id" value="{order.id}"')
-        self.assertIn('"quantity": "10', r.context['posted_lines_json'])
+        self.assertTrue(str(r.context['posted_lines'][0]['quantity']).startswith('10'))
+        self.assertContains(r, 'id="posted-lines" type="application/json"')
         base = {'invoice_type': 'PURCHASE', 'supplier_id': self.w.supplier.id, 'warehouse_id': self.w.warehouse.id,
                 'branch_id': self.w.branch.id, 'payment_type': 'CREDIT', 'po_id': order.id,
                 'product_id[]': [self.p.id], 'price[]': ['60'], 'uom_id[]': [''], 'expiry_date[]': ['']}

@@ -125,7 +125,7 @@
             .perm-item input, .perm-sec legend input { accent-color:var(--neon-blue); margin-top:.15rem; flex-shrink:0; }
             #permCard.is-admin .perm-grid { opacity:.55; pointer-events:none; }
         </style>
-        <script id="roleDefaults" type="application/json">{{ role_defaults_json|safe }}</script>
+        {{ role_defaults|json_script:"roleDefaults" }}
         <script>
         (function () {
             var card = document.getElementById('permCard');

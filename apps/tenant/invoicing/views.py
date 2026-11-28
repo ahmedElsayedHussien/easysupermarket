@@ -28,22 +28,6 @@ from apps.tenant.core.settings_helpers import get_pos_defaults, round_cash, sett
 logger = logging.getLogger(__name__)
 
 
-_JSON_SCRIPT_ESCAPES = {
-    ord('>'): r'\u003E',
-    ord('<'): r'\u003C',
-    ord('&'): r'\u0026',
-}
-
-
-def _safe_json_for_script(obj):
-    """
-    Serialize obj to JSON that is safe to embed inside an inline <script> with |safe
-    (same escaping Django's json_script uses: <, >, & and line separators are escaped).
-    """
-    from django.core.serializers.json import DjangoJSONEncoder
-    return json.dumps(obj, cls=DjangoJSONEncoder).translate(_JSON_SCRIPT_ESCAPES)
-
-
 def _scope_by_allowed_branches(qs, request, field='branch_id'):
     """
     Admins: unchanged (all branches). Non-admins: only rows of their own branch;
@@ -495,8 +479,6 @@ def purchase_invoice_view(request):
                 uoms.append({'id': puom.id, 'name': puom.uom.name, 'factor': factor})
                 seen_normalized.add(norm_name)
         product_uoms_map[p.id] = uoms
-    product_uoms_json = _safe_json_for_script(product_uoms_map)
-    product_last_prices_json = _safe_json_for_script(product_last_prices)
 
     from django.db.models import Sum, Count
     from apps.tenant.inventory.models import InventoryBatch, SerialItem
@@ -521,7 +503,6 @@ def purchase_invoice_view(request):
             'max_stock': float(p.max_stock_level) if p.max_stock_level else 0.0,
             'min_stock': float(p.min_stock_level) if p.min_stock_level else 0.0,
         }
-    product_stock_info_json = _safe_json_for_script(product_stock_info)
 
     is_admin = is_admin_user(request.user)
     # Working branch (header branch for admins, own branch for users); admins may
@@ -791,9 +772,9 @@ def purchase_invoice_view(request):
                 'suppliers': suppliers,
                 'warehouses': warehouses,
                 'products': products,
-                'product_uoms_json': product_uoms_json,
-                'product_last_prices_json': product_last_prices_json,
-                'product_stock_info_json': product_stock_info_json,
+                'product_uoms': product_uoms_map,
+                'product_last_prices': product_last_prices,
+                'product_stock_info': product_stock_info,
                 'branches': branches,
                 'treasuries': treasuries,
                 'bank_accounts': bank_accounts,
@@ -801,7 +782,7 @@ def purchase_invoice_view(request):
                 'title': 'إنشاء فاتورة مشتريات',
                 'expiry_tracking_enabled': expiry_tracking_enabled,
                 'posted_data': request.POST,
-                'posted_lines_json': _safe_json_for_script(posted_lines),
+                'posted_lines': posted_lines,
             }
             return render(request, 'invoicing/purchase_invoice.html', context)
             
@@ -809,9 +790,9 @@ def purchase_invoice_view(request):
         'suppliers': suppliers,
         'warehouses': warehouses,
         'products': products,
-        'product_uoms_json': product_uoms_json,
-        'product_last_prices_json': product_last_prices_json,
-        'product_stock_info_json': product_stock_info_json,
+        'product_uoms': product_uoms_map,
+        'product_last_prices': product_last_prices,
+        'product_stock_info': product_stock_info,
         'branches': branches,
         'treasuries': treasuries,
         'bank_accounts': bank_accounts,
@@ -831,7 +812,7 @@ def purchase_invoice_view(request):
         order = PurchaseOrder.objects.filter(pk=int(po_id), status__in=PurchaseOrder.OPEN_STATUSES).first()
         if order is not None:
             data, lines = invoice_prefill(order)
-            context.update(posted_data={**data, 'po_id': str(order.pk)}, posted_lines_json=_safe_json_for_script(lines),
+            context.update(posted_data={**data, 'po_id': str(order.pk)}, posted_lines=lines,
                            title=f'استلام أمر الشراء {order.number}', purchase_order=order)
     return render(request, 'invoicing/purchase_invoice.html', context)
 
@@ -2311,8 +2292,8 @@ def quotation_list(request):
     return render(request, 'invoicing/quotation_list.html', context)
 
 
-def _get_quotation_products_json():
-    import json
+def _get_quotation_products():
+    """Products for the quotation form, rendered with |json_script (never |safe)."""
     products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom')
     products_dict = {}
     for p in products:
@@ -2332,7 +2313,7 @@ def _get_quotation_products_json():
             'base_unit': base_unit_name,
             'uoms': p_uoms
         }
-    return _safe_json_for_script(products_dict)
+    return products_dict
 
 
 def _format_quotation_form_errors(form, formset):
@@ -2471,7 +2452,7 @@ def quotation_create(request):
         'formset': formset,
         'title': 'إنشاء عرض سعر جديد',
         'is_edit': False,
-        'products_json': _get_quotation_products_json(),
+        'products_data': _get_quotation_products(),
     }
     return render(request, 'invoicing/quotation_form.html', context)
 
@@ -2517,7 +2498,7 @@ def quotation_edit(request, quotation_id):
         'quotation': quotation,
         'title': f'تعديل عرض السعر {quotation.quotation_number}',
         'is_edit': True,
-        'products_json': _get_quotation_products_json(),
+        'products_data': _get_quotation_products(),
     }
     return render(request, 'invoicing/quotation_form.html', context)
 

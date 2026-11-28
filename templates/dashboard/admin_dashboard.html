@@ -357,12 +357,16 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ sales_chart_data|json_script:"sales-chart-data" }}
+{{ sales_chart_labels|json_script:"sales-chart-labels" }}
+{{ profit_chart_data|json_script:"profit-chart-data" }}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize all admin dashboard charts with context data
-    const salesData = {{ sales_chart_data|default:"[120000, 145000, 138000, 162000, 155000, 180000, 195000]"|safe }};
-    const salesLabels = {{ sales_chart_labels|default:"['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul']"|safe }};
-    const profitData = {{ profit_chart_data|default:"[22, 25, 23, 28, 26, 31, 29]"|safe }};
+    const readJson = (id) => { const v = JSON.parse(document.getElementById(id).textContent || '[]'); return Array.isArray(v) ? v : []; };
+    const salesData = readJson('sales-chart-data');
+    const salesLabels = readJson('sales-chart-labels');
+    const profitData = readJson('profit-chart-data');
     const branchData = {
         active: {{ active_branches|default:"12" }},
         total: {{ total_branches|default:"15" }}

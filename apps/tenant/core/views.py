@@ -9,7 +9,6 @@ from django.db.models import Sum, Count, Q, F, Min, Case, When, DecimalField
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
-import json
 from django.urls import reverse_lazy
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin, AccessMixin
 from django.views.generic import UpdateView, ListView, CreateView, View
@@ -383,9 +382,9 @@ def admin_dashboard(request):
         'user_role': 'Admin',
         'title': 'لوحة التحكم الإدارية',
         'today': today,
-        'sales_chart_labels': json.dumps(labels),
-        'sales_chart_data': json.dumps(sales_data),
-        'profit_chart_data': json.dumps(profit_data),
+        'sales_chart_labels': labels,
+        'sales_chart_data': sales_data,
+        'profit_chart_data': profit_data,
         'avg_profit_margin': avg_profit_margin,
         'total_sales': total_sales,
         'total_invoices': total_invoices,
@@ -467,7 +466,7 @@ def _permission_context(form):
     else:
         checked = form.fields['user_permissions'].initial or []
     return {'permission_sections': grouped_for_form(checked),
-            'role_defaults_json': json.dumps(role_defaults_ids())}
+            'role_defaults': role_defaults_ids()}
 
 
 class UserListView(LoginRequiredMixin, AdminRequiredMixin, TenantUserQuerysetMixin, ListView):

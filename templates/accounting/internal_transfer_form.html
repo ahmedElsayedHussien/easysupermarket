@@ -211,11 +211,12 @@
     </form>
 </div>
 
+{{ accounts_data|default:""|json_script:"accounts-data" }}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     let accountsData = {};
     try {
-        accountsData = JSON.parse('{{ accounts_data_json|default:"{}"|escapejs }}');
+        accountsData = JSON.parse(document.getElementById('accounts-data').textContent || '{}') || {};
     } catch(e) {
         console.error("Could not parse accounts data:", e);
     }

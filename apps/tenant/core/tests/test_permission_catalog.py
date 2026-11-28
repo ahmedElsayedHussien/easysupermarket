@@ -1,6 +1,5 @@
 """The user screen's permission list stays in step with the code."""
 import glob
-import json
 import os
 import re
 
@@ -69,7 +68,8 @@ class UserScreenTests(TestCase):
         self.assertContains(r, 'نقطة البيع والمبيعات')
         self.assertContains(r, 'إنشاء فواتير الشراء ومرتجعات الشراء')
         self.assertNotContains(r, 'Can add')
-        presets = json.loads(r.context['role_defaults_json'])
+        presets = r.context['role_defaults']
+        self.assertContains(r, 'id="roleDefaults" type="application/json"')
         self.assertIn('CASHIER', presets)
         shown = {i['code'] for s in r.context['permission_sections'] for i in s['items']}
         self.assertEqual(shown, set(ALL_PERMS))

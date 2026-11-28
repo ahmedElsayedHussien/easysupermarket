@@ -128,10 +128,10 @@ class AccountForm(BaseGlassForm):
             
         self.fields['parent'].queryset = qs
 
-    def parent_type_map_json(self):
-        import json
+    def parent_type_map(self):
+        """{parent_account_id: account_type} for the form's script (rendered with |json_script)."""
         parents = self.fields['parent'].queryset.values('id', 'account_type')
-        return json.dumps({str(p['id']): p['account_type'] for p in parents})
+        return {str(p['id']): p['account_type'] for p in parents}
 
 class ExpenseItemForm(BaseGlassForm):
     class Meta:

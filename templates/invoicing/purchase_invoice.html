@@ -237,10 +237,14 @@
 
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+{{ product_uoms|json_script:"product-uoms" }}
+{{ product_last_prices|json_script:"product-last-prices" }}
+{{ product_stock_info|json_script:"product-stock-info" }}
+{% if posted_lines %}{{ posted_lines|json_script:"posted-lines" }}{% endif %}
 <script>
-const productUoms = {{ product_uoms_json|safe }};
-const productLastPrices = {{ product_last_prices_json|safe }};
-const productStockInfo = {{ product_stock_info_json|safe }};
+const productUoms = JSON.parse(document.getElementById('product-uoms').textContent);
+const productLastPrices = JSON.parse(document.getElementById('product-last-prices').textContent);
+const productStockInfo = JSON.parse(document.getElementById('product-stock-info').textContent);
 
 function checkMaxStockWarning(row) {
     if (!row) return;
@@ -559,8 +563,8 @@ document.addEventListener('DOMContentLoaded', function() {
         initTomSelect(el);
     });
     
-    {% if posted_lines_json %}
-    const postedLines = {{ posted_lines_json|safe }};
+    {% if posted_lines %}
+    const postedLines = JSON.parse(document.getElementById('posted-lines').textContent);
     const tbody = document.getElementById('purchaseLines');
     
     // Only process if we have lines, else keep the default blank row

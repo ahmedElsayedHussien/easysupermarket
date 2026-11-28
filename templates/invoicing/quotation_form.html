@@ -187,9 +187,10 @@
     </tr>
 </template>
 
+{{ products_data|json_script:"quotation-products" }}
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const productsData = {{ products_json|safe }};
+    const productsData = JSON.parse(document.getElementById('quotation-products').textContent);
     const APPLY_VAT_BY_DEFAULT = {% if system_setting and not system_setting.apply_vat_by_default %}false{% else %}true{% endif %};
     const totalFormsInput = document.querySelector('#id_lines-TOTAL_FORMS') || document.querySelector('[name$="-TOTAL_FORMS"]');
     const template = document.getElementById('empty-row-template');

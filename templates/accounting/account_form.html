@@ -1,6 +1,7 @@
 {% extends 'core/generic_form.html' %}
 
 {% block extra_js %}
+{{ form.parent_type_map|json_script:"parent-type-map" }}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const typeSelect = document.getElementById('id_account_type');
@@ -9,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!typeSelect || !parentSelect) return;
 
     // JSON Map of { parent_account_id: account_type }
-    const parentMap = {{ form.parent_type_map_json|safe }};
+    const parentMap = JSON.parse(document.getElementById('parent-type-map').textContent);
 
     function filterParents() {
         const selectedType = typeSelect.value;

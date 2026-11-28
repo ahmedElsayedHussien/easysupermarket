@@ -2008,7 +2008,6 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
 
         # Prepare live balance data for frontend display (read-only GET).
         from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
-        import json
 
         # one balance batch for all three lists, reused by the JSON and the template
         from apps.tenant.services.journal_service import with_balances
@@ -2020,7 +2019,7 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
             'BANK': {str(b.id): {'name': b.name, 'balance': str(b.current_balance)} for b in banks},
             'EWALLET': {str(w.id): {'name': w.name, 'balance': str(w.current_balance)} for w in ewallets},
         }
-        context['accounts_data_json'] = json.dumps(accounts_data, ensure_ascii=False)
+        context['accounts_data'] = accounts_data
         context['treasuries_list'] = treasuries
         context['banks_list'] = banks
         context['ewallets_list'] = ewallets
