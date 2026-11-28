@@ -446,6 +446,20 @@ function confirmInvoice(invoiceId) {
     }
 }
 
+// an invoice of a CLOSED shift: no cancel / re-pay — offer the return from the invoice instead
+function offerReturn(data) {
+    if (confirm(data.error + '\n\nتفتح شاشة المرتجع دلوقتي؟')) {
+        window.location.href = data.return_url;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    if (new URLSearchParams(window.location.search).get('return') === '1' && typeof openReturnModal === 'function'
+        && document.getElementById('returnModal')) {
+        openReturnModal();
+    }
+});
+
 function cancelInvoice(invoiceId) {
     if (confirm('هل أنت متأكد من إلغاء هذه الفاتورة بالكامل؟\nسوف يتم تسجيل قيود عكسية لكافة القيود المحاسبية وعكس حركات المخزون المربوطة بها.')) {
         fetch(`/invoicing/invoice/${invoiceId}/cancel/`, {
@@ -460,6 +474,8 @@ function cancelInvoice(invoiceId) {
             if (data.success) {
                 alert(data.message);
                 window.location.reload();
+            } else if (data.return_url) {
+                offerReturn(data);
             } else {
                 alert('حدث خطأ: ' + data.error);
             }
@@ -820,6 +836,8 @@ function submitEditPayment() {
         if (data.success) {
             alert(data.message);
             window.location.reload();
+        } else if (data.return_url) {
+            offerReturn(data);
         } else {
             alert('حدث خطأ: ' + data.error);
         }

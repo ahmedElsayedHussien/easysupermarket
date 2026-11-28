@@ -65,3 +65,39 @@ class InvoiceServiceGuardTests(TestCase):
         with self.assertRaisesMessage(ValueError, 'اتباع'):
             cancel_invoice(pur.id, self.w.admin)
         self.assertTrue(SerialItem.objects.filter(pk=serial.pk).exists())
+
+
+class ClosedShiftReturnTests(TestCase):
+    """Decision: no cancel / re-pay on a closed shift (admin too) — the way out is a return, booked on the
+    open shift, the closed shift's report unchanged."""
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+
+    def test_cancel_points_to_the_return_and_the_return_lands_on_the_open_shift(self):
+        import json
+        from django.urls import reverse
+        from apps.tenant.core.tests.factories import login
+        from apps.tenant.invoicing.shift_services import shift_cash_summary
+        stock_in(self.w.product, self.w.warehouse, 50, D('4'))
+        old = POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.admin)
+        sale = make_invoice(self.w, lines=[(self.w.product, 3, 10)], pos_session=old)
+        POSSession.objects.filter(pk=old.pk).update(status=POSSession.CLOSED)
+        old.refresh_from_db()
+        before = {k: v for k, v in shift_cash_summary(old).items() if isinstance(v, (D, int))}
+        login(self.client, self.w.admin)
+        r = self.client.post(reverse('invoicing:cancel_invoice', args=[sale.id])).json()
+        self.assertFalse(r['success'])
+        self.assertIn('مرتجع', r['error'])
+        self.assertTrue(r['return_url'].endswith(f'/invoice/{sale.id}/?return=1'))
+        self.assertEqual(Invoice.objects.get(pk=sale.pk).status, Invoice.POSTED)
+        new = POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.admin)
+        line = sale.lines.get()
+        data = self.client.post(reverse('invoicing:process_invoice_return', args=[sale.id]),
+                                data=json.dumps({'items': [{'line_id': line.id, 'quantity': '1'}],
+                                                 'payment_type': 'CASH', 'treasury_id': self.w.treasury.id}),
+                                content_type='application/json').json()
+        ret = Invoice.objects.get(pk=data['invoice_id'])
+        self.assertEqual((ret.status, ret.pos_session_id), (Invoice.POSTED, new.pk))
+        after = {k: v for k, v in shift_cash_summary(old).items() if isinstance(v, (D, int))}
+        self.assertEqual(before, after)                                    # the closed shift's report is untouched

@@ -1066,9 +1066,14 @@ def update_invoice_payment_method_view(request, invoice_id):
             'success': True,
             'message': 'تم تحديث طريقة السداد والقيود المحاسبية المربوطة بنجاح.'
         })
+    except ClosedShiftInvoiceError as e:
+        return JsonResponse({'success': False, 'error': e.messages[0], 'return_url': e.return_url})
     except Exception as e:
         logger.exception("Error updating invoice payment method")
         return JsonResponse({'success': False, 'error': str(e)})
+
+
+from apps.tenant.services.invoice_service import ClosedShiftInvoiceError  # noqa: E402
 
 
 @login_required
@@ -1087,6 +1092,8 @@ def cancel_invoice_view(request, invoice_id):
             'success': True,
             'message': f'تم إلغاء الفاتورة رقم {invoice.invoice_number} وعكس كافة الآثار المخزنية والمحاسبية بنجاح.'
         })
+    except ClosedShiftInvoiceError as e:
+        return JsonResponse({'success': False, 'error': e.messages[0], 'return_url': e.return_url})
     except Exception as e:
         logger.exception("Error cancelling invoice")
         return JsonResponse({'success': False, 'error': str(e)})

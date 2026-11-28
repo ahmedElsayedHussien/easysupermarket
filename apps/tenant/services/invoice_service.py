@@ -124,12 +124,31 @@ def _confirm_invoice_core(invoice_id: int):
     return invoice
 
 
+class ClosedShiftInvoiceError(ValidationError):
+    """Cancelling / re-paying an invoice of a closed shift — with the way out: a return from the invoice."""
+
+    def __init__(self, message, return_url):
+        super().__init__(message)
+        self.return_url = return_url
+
+
+def invoice_return_url(invoice):
+    from django.urls import reverse
+    return reverse('invoicing:invoice_detail', kwargs={'invoice_id': invoice.pk}) + '?return=1'
+
+
 def _ensure_shift_open(invoice, action_label):
-    """A posted invoice of a CLOSED cashier shift is not cancelled / re-paid: the drawer was counted
-    against it (same rule as vouchers and transfers)."""
+    """A posted invoice of a CLOSED cashier shift is never cancelled / re-paid, not even by an admin: the
+    drawer was counted against it. The way out is a RETURN from the invoice — booked on today's open shift,
+    so the closed shift's report never changes. (A wrong payment method has its own correction screen.)"""
     if invoice.status == 'POSTED' and invoice.pos_session_id:
-        from apps.tenant.accounting.models import _ensure_pos_session_open
-        _ensure_pos_session_open(invoice.pos_session, action_label)
+        from apps.tenant.invoicing.models import POSSession
+        if invoice.pos_session.status == POSSession.CLOSED:
+            raise ClosedShiftInvoiceError(
+                f'مينفعش {action_label} الفاتورة {invoice.invoice_number}: وردية الكاشير بتاعتها (#{invoice.pos_session_id}) '
+                'اتقفلت واتجرد درجها. لو العميل رجّع البضاعة اعمل «مرتجع من الفاتورة» — بيتسجّل على الوردية '
+                'المفتوحة دلوقتي ومش بيغيّر تقرير الوردية القديمة.',
+                invoice_return_url(invoice))
 
 
 def _serial_movement(serial, warehouse, movement_type, reference, notes=''):
