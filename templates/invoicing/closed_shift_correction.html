@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+<div style="max-width: 720px; margin: 0 auto;">
+    <div class="card" style="padding: 1.2rem 1.4rem;">
+        <h1 style="font-size: 1.3rem; font-weight: 800; margin: 0 0 .4rem;">🛠 {{ title }}</h1>
+        <p style="color: var(--text-muted); font-size: .88rem; margin: 0 0 1rem;">
+            الفاتورة <strong>{{ invoice.invoice_number }}</strong> اتسجلت نقدي في الوردية
+            <strong>#{{ invoice.pos_session_id }}</strong> اللي اتقفلت بعجز. لو العميل دفع فعلاً بفيزا أو محفظة أو تحويل،
+            التصحيح بيعمل قيد بتاريخ النهارده: مدين الحساب اللي الفلوس راحت عليه، ودائن حساب العجز اللي اتسجّل
+            وقت قفل الوردية. الفاتورة والوردية وتقريرها مش بيتغيّروا، والتصحيح بيتعمل مرة واحدة بس للفاتورة.
+        </p>
+
+        {% if existing %}
+        <div class="alert alert-info" style="border-radius: 8px;">
+            اتصححت قبل كده: {{ existing.get_method_display }} — {{ existing.amount|floatformat:2 }} ج.م
+            (قيد {{ existing.journal_entry.reference }}، {{ existing.created_at|date:"Y-m-d H:i" }}).
+        </div>
+        {% else %}
+        <form method="post" style="display: flex; flex-direction: column; gap: .8rem;">
+            {% csrf_token %}
+            <label>الطريقة الصح
+                <select name="method" class="form-control" required onchange="pickTarget(this.value)">
+                    <option value="">— اختار —</option>
+                    {% for value, label in methods %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                </select>
+            </label>
+            <label id="bankBox">حساب الفيزا / البنك اللي الفلوس نزلت عليه
+                <select name="bank_account" class="form-control">
+                    <option value="">— اختار —</option>
+                    {% for b in banks %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
+                </select>
+            </label>
+            <label id="walletBox" style="display: none;">المحفظة
+                <select name="ewallet" class="form-control">
+                    <option value="">— اختار —</option>
+                    {% for w in ewallets %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}
+                </select>
+            </label>
+            <label>السبب (إجباري)
+                <input name="reason" class="form-control" required minlength="3" maxlength="255"
+                       placeholder="مثال: الكاشير سجّل فيزا على إنها كاش">
+            </label>
+            <div style="display: flex; gap: .6rem;">
+                <button class="btn btn-orange" onclick="return confirm('تسجيل قيد التصحيح؟ مش هينفع يتعمل تاني لنفس الفاتورة.');">تسجيل التصحيح</button>
+                <a class="btn btn-ghost" href="{% url 'invoicing:invoice_detail' invoice.id %}">رجوع للفاتورة</a>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+<script>
+function pickTarget(m) {
+    document.getElementById('walletBox').style.display = (m === 'EWALLET') ? '' : 'none';
+    document.getElementById('bankBox').style.display = (m === 'EWALLET') ? 'none' : '';
+}
+</script>
+{% endblock %}

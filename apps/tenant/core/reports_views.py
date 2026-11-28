@@ -3218,6 +3218,9 @@ class ShiftDetailView(CustomPermissionRequiredMixin, DetailView):
         context['title'] = f"تقرير مفصل للوردية #{self.object.id}"
         from apps.tenant.core.decorators import is_admin_user
         context['can_charge_cashier'] = is_admin_user(self.request.user)
+        # corrections made after the close: shown as notes, the shift's own figures never change
+        context['payment_corrections'] = self.object.payment_corrections.select_related(
+            'invoice', 'journal_entry', 'created_by')
         return context
 
 

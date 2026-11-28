@@ -31,6 +31,9 @@
                 {% endif %}
             {% endif %}
         {% endif %}
+        {% if invoice.status == 'POSTED' and invoice.invoice_type == 'SALE' and invoice.pos_session and invoice.pos_session.status == 'CLOSED' and perms.invoicing.correct_closed_shift_payment %}
+        <a class="btn" href="{% url 'invoicing:closed_shift_payment_correction' invoice.id %}" style="border:1px solid #ff7300; color:#ff7300; font-weight:bold; border-radius:8px;">🛠 تصحيح طريقة السداد (وردية مقفولة)</a>
+        {% endif %}
         <button class="btn btn-neon-green" onclick="printThermalReceipt({{ invoice.id }})">🖨 طباعة حرارية</button>
         {% if invoice.invoice_type == 'SALE' or invoice.invoice_type == 'RETURN_SALE' %}
         <a href="{% url 'invoicing:sales_invoice_list' %}" class="btn" style="background:#ff7300; color:#fff; font-weight:700; border-radius:8px;">⬅️ العودة لفواتير المبيعات</a>

@@ -16,6 +16,7 @@ SECTIONS = [
         ('invoicing.add_invoice', 'البيع من نقطة البيع وتقفيل الوردية'),
         ('invoicing.change_invoice', 'تأكيد فاتورة مسودة، تغيير طريقة الدفع، وخصم أكبر من الحد في نقطة البيع'),
         ('invoicing.cancel_invoice', 'إلغاء فاتورة مرحّلة'),
+        ('invoicing.correct_closed_shift_payment', 'تصحيح طريقة سداد فاتورة في وردية مقفولة (قيد بدل تعديل الفاتورة)'),
         ('invoicing.add_sales_return', 'عمل مرتجع مبيعات من الفاتورة'),
         ('invoicing.add_sales_return_no_invoice', 'مرتجع مبيعات بدون فاتورة (بضاعة اتباعت قبل البرنامج)'),
     ]),

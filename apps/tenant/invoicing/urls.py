@@ -49,6 +49,8 @@ urlpatterns = [
     path('invoice/<int:invoice_id>/', views.invoice_detail, name='invoice_detail'),
     path('invoice/<int:invoice_id>/update-payment/', views.update_invoice_payment_method_view, name='update_invoice_payment_method'),
     path('invoice/<int:invoice_id>/cancel/', views.cancel_invoice_view, name='cancel_invoice'),
+    path('invoice/<int:invoice_id>/closed-shift-correction/', views.closed_shift_payment_correction,
+         name='closed_shift_payment_correction'),
     path('receipt/<int:invoice_id>/', views.receipt_view, name='receipt'),
     path('shift-report/', views.shift_report, name='shift_report'),
 

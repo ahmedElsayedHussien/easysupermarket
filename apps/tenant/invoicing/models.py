@@ -1395,3 +1395,35 @@ class RepCashHandover(models.Model):
 
     def save(self, *args, **kwargs):
         return _numbered_save(self, RepCashHandover, 'RH', *args, **kwargs)
+
+
+class ClosedShiftPaymentCorrection(models.Model):
+    """A CASH sale of a closed shift that was really paid by card / e-wallet / transfer: one entry (Dr where the
+    money went / Cr the shift's shortage account) — see invoicing.closed_shift_correction. Once per invoice."""
+    CARD, EWALLET, BANK_TRANSFER = 'CARD', 'EWALLET', 'BANK_TRANSFER'
+    METHOD_CHOICES = [(CARD, 'فيزا'), (EWALLET, 'محفظة إلكترونية'), (BANK_TRANSFER, 'تحويل بنكي / إنستاباي')]
+
+    invoice = models.OneToOneField(Invoice, on_delete=models.PROTECT, related_name='closed_shift_correction',
+                                   verbose_name='الفاتورة')
+    session = models.ForeignKey(POSSession, on_delete=models.PROTECT, related_name='payment_corrections',
+                                verbose_name='الوردية')
+    method = models.CharField(max_length=20, choices=METHOD_CHOICES, verbose_name='الطريقة الصح')
+    bank_account = models.ForeignKey('accounting.BankAccount', on_delete=models.PROTECT, null=True, blank=True,
+                                     related_name='+', verbose_name='الحساب البنكي / ماكينة الفيزا')
+    ewallet = models.ForeignKey('accounting.EWallet', on_delete=models.PROTECT, null=True, blank=True,
+                                related_name='+', verbose_name='المحفظة')
+    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    shortage_account = models.ForeignKey('accounting.Account', on_delete=models.PROTECT, related_name='+',
+                                         verbose_name='حساب العجز (من قيد قفل الوردية)')
+    reason = models.CharField(max_length=255, verbose_name='السبب')
+    journal_entry = models.ForeignKey('accounting.JournalEntry', on_delete=models.PROTECT, related_name='+',
+                                      verbose_name='القيد')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                   verbose_name='صحّحها')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'تصحيح طريقة سداد (وردية مقفولة)'
+        verbose_name_plural = 'تصحيحات طريقة السداد (ورديات مقفولة)'
+        ordering = ['-created_at']
+        permissions = [('correct_closed_shift_payment', 'تصحيح طريقة سداد فاتورة في وردية مقفولة')]
