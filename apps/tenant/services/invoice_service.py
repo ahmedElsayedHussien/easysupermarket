@@ -473,14 +473,15 @@ def update_invoice_payment_method(
         invoice.partner = new_partner
 
     total = invoice.total_amount or Decimal('0')
-    paid_cash, paid_card = Decimal(paid_cash or 0), Decimal(paid_card or 0)
-    paid_ewallet, paid_bank = Decimal(paid_ewallet or 0), Decimal(paid_bank or 0)
+    from apps.tenant.core.money import money
+    paid_cash, paid_card = money(paid_cash or 0), money(paid_card or 0)
+    paid_ewallet, paid_bank = money(paid_ewallet or 0), money(paid_bank or 0)
     if min(paid_cash, paid_card, paid_ewallet, paid_bank) < 0:
         raise ValueError('مبالغ السداد مينفعش تكون بالسالب.')
     if payment_type == 'SPLIT':
         # an on-account part only when it is given explicitly: the legs must still add up to the total
         # (a shortfall is never turned into credit silently)
-        paid_credit = Decimal(paid_credit or 0)
+        paid_credit = money(paid_credit or 0)
         if paid_credit < 0:
             raise ValueError('الجزء الآجل مينفعش يكون بالسالب.')
     else:
@@ -497,11 +498,11 @@ def update_invoice_payment_method(
         if not curr_partner or 'عميل نقدي' in curr_partner.name or curr_partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']:
             raise ValueError('لا يمكن تغيير طريقة السداد إلى (آجل) لـ "عميل نقدي". يرجى اختيار عميل/مورد آخر مخصص للآجل.')
 
-    # Split payment: the legs must add up to the invoice total (the screen checks this in the
-    # browser, but the server never trusts it). 0.05 covers piastre rounding.
+    # Split payment: the legs add up to the invoice total EXACTLY (the screen checks this in the browser,
+    # but the server never trusts it). Amounts are money (2 places), so there is no rounding to cover.
     if payment_type == 'SPLIT':
         legs = paid_cash + paid_card + paid_ewallet + paid_bank + paid_credit
-        if abs(legs - invoice.total_amount) > Decimal('0.05'):
+        if legs != invoice.total_amount:
             raise ValueError(f'مجموع مبالغ الدفع المقسّم ({legs:.2f}) لا يساوي إجمالي الفاتورة '
                              f'({invoice.total_amount:.2f}).')
 

@@ -25,6 +25,7 @@ Required Chart of Accounts codes (created by setup_chart_of_accounts command):
   4100 - المبيعات
   5100 - تكلفة البضاعة المباعة (COGS)
 """
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 from decimal import Decimal
@@ -392,9 +393,10 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
         ]
         active_splits = [[acc, amt, desc] for acc, amt, desc in splits if amt > 0]
         split_sum = sum((item[1] for item in active_splits), Decimal('0'))
-        diff = total_amount + rounding_amount - split_sum
-        if diff != 0 and abs(diff) <= Decimal('0.05') and active_splits:
-            active_splits[0][1] += diff
+        # the legs are the total exactly (+ the POS cash rounding, the one rounding there is): never absorbed
+        if split_sum != total_amount + rounding_amount:
+            raise ValidationError(f'مجموع مبالغ الدفع المقسّم ({split_sum:.2f}) لا يساوي إجمالي الفاتورة '
+                                  f'{invoice.invoice_number} ({total_amount + rounding_amount:.2f}).')
 
         for acc, amt, desc in active_splits:
             if amt > 0:
@@ -677,9 +679,9 @@ def post_purchase_invoice(invoice) -> 'JournalEntry':
         ]
         active_splits = [[acc, amt, desc] for acc, amt, desc in splits if amt > 0]
         split_sum = sum((item[1] for item in active_splits), Decimal('0'))
-        diff = total_amount - split_sum
-        if diff != 0 and abs(diff) <= Decimal('0.05') and active_splits:
-            active_splits[0][1] += diff
+        if split_sum != total_amount:
+            raise ValidationError(f'مجموع مبالغ الدفع المقسّم ({split_sum:.2f}) لا يساوي إجمالي الفاتورة '
+                                  f'{invoice.invoice_number} ({total_amount:.2f}).')
 
         for acc, amt, desc in active_splits:
             if amt > 0:

@@ -134,6 +134,28 @@ const POS = {
         return Math.round(units * step * 100) / 100;
     },
 
+    // Money to 2 places, half away from zero — like core.money.money() on the server.
+    // toPrecision(12) first drops the binary noise of floats (1.005 * 100 = 100.49999999999999).
+    money(x) {
+        const v = parseFloat(x) || 0;
+        const sign = v < 0 ? -1 : 1;
+        return sign * Math.round(parseFloat((Math.abs(v) * 100).toPrecision(12))) / 100;
+    },
+
+    // One line's figures exactly as the server saves them (core.money.line_amounts): the discount % the
+    // POS sends (4 places), then discount, subtotal, VAT, WHT each to 2 places once.
+    lineFigures(item, globalDiscountPct, applyTax, applyWht) {
+        const gross = item.price * item.quantity;
+        const itemDiscAmt = gross * ((item.discount || 0) / 100);
+        const globalDiscAmt = (gross - itemDiscAmt) * ((globalDiscountPct || 0) / 100);
+        const effPct = gross > 0 ? parseFloat((((itemDiscAmt + globalDiscAmt) / gross) * 100).toFixed(4)) : 0;
+        const discount = this.money(gross * effPct / 100);
+        const subtotal = Math.max(0, this.money(gross - discount));
+        const tax = this.money(subtotal * ((applyTax ? item.tax_rate : 0) || 0) / 100);
+        const wht = this.money(subtotal * ((applyWht ? item.wht_rate : 0) || 0) / 100);
+        return {gross, effPct, discount, subtotal, tax, wht, total: this.money(subtotal + tax - wht)};
+    },
+
     // Cash due after rounding when `nonCash` is paid by other means.
     cashDueAfterRounding(total, nonCash = 0) {
         const exact = Math.max(0, (parseFloat(total) || 0) - (parseFloat(nonCash) || 0));
@@ -1324,35 +1346,23 @@ const POS = {
         
         const globalDiscountPct = this.getGlobalDiscountPct();
 
+        // each line as the server saves it; the totals are sums of 2-place figures (= the invoice total)
+        let netTotal = 0;
         this.cart.forEach(item => {
-            const lineGross = item.price * item.quantity;
-            // First apply item specific discount if any
-            const itemDiscount = lineGross * (item.discount / 100);
-            let lineNet = lineGross - itemDiscount;
-            
-            // Then apply global discount pct
-            const lineGlobalDiscount = lineNet * (globalDiscountPct / 100);
-            lineNet = lineNet - lineGlobalDiscount;
-            
-            totalDiscount += (itemDiscount + lineGlobalDiscount);
-
-            const effectiveTaxRate = applyTax ? item.tax_rate : 0;
-            const lineTax = lineNet * (effectiveTaxRate / 100);
-            
-            const effectiveWhtRate = applyWht ? item.wht_rate : 0;
-            const lineWht = lineNet * (effectiveWhtRate / 100);
-
-            grossTotal += lineGross; // or track net? usually subtotal is gross
-            totalTax += lineTax;
-            totalWht += lineWht;
+            const f = this.lineFigures(item, globalDiscountPct, applyTax, applyWht);
+            grossTotal += f.gross;
+            totalDiscount += f.discount;
+            netTotal += f.subtotal;
+            totalTax += f.tax;
+            totalWht += f.wht;
         });
 
         return {
             subtotal: grossTotal,
-            discount: totalDiscount,
-            tax: totalTax,
-            wht: totalWht,
-            total: grossTotal - totalDiscount + totalTax - totalWht
+            discount: this.money(totalDiscount),
+            tax: this.money(totalTax),
+            wht: this.money(totalWht),
+            total: this.money(netTotal + totalTax - totalWht)
         };
     },
 
@@ -2112,18 +2122,13 @@ const POS = {
         const payload = {
             idempotency_key: idemKey,
             cart: this.cart.map(item => {
-                const lineGross = item.price * item.quantity;
-                const itemDiscAmt = lineGross * ((item.discount || 0) / 100);
-                const lineNet = lineGross - itemDiscAmt;
-                const globalDiscAmt = lineNet * (globalDiscountPct / 100);
-                const totalLineDiscAmt = itemDiscAmt + globalDiscAmt;
-                const effectiveDiscPct = lineGross > 0 ? (totalLineDiscAmt / lineGross) * 100 : 0;
+                const effectiveDiscPct = this.lineFigures(item, globalDiscountPct, applyTax, applyWht).effPct;
 
                 return {
                     product_id: item.id,
                     quantity: item.quantity,
                     unit_price: item.price,
-                    discount_percent: parseFloat(effectiveDiscPct.toFixed(4)),
+                    discount_percent: effectiveDiscPct,
                     tax_rate: applyTax ? item.tax_rate : 0,
                     wht_rate: applyWht ? item.wht_rate : 0,
                     uom_id: item.uom_id,

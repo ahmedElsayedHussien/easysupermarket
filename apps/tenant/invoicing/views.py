@@ -25,6 +25,8 @@ from django.views.decorators.cache import never_cache
 from django.utils.dateparse import parse_date
 from apps.tenant.core.settings_helpers import get_pos_defaults, round_cash, setting as setting_value
 
+from apps.tenant.core.money import money  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -1456,11 +1458,11 @@ def complete_sale(request):
 
                 # Client-declared split amounts (validated against the server total later)
                 if payment_type == 'SPLIT':
-                    cl_cash = _to_decimal(payments.get('cash', 0), 'نقدي')
-                    cl_card = _to_decimal(payments.get('card', 0), 'بطاقة')
-                    cl_ewallet = _to_decimal(payments.get('ewallet', 0), 'محفظة')
-                    cl_bank = _to_decimal(payments.get('bank', 0), 'تحويل بنكي')
-                    cl_credit = _to_decimal(payments.get('credit', 0), 'آجل')
+                    cl_cash = money(_to_decimal(payments.get('cash', 0), 'نقدي'))
+                    cl_card = money(_to_decimal(payments.get('card', 0), 'بطاقة'))
+                    cl_ewallet = money(_to_decimal(payments.get('ewallet', 0), 'محفظة'))
+                    cl_bank = money(_to_decimal(payments.get('bank', 0), 'تحويل بنكي'))
+                    cl_credit = money(_to_decimal(payments.get('credit', 0), 'آجل'))
                     if min(cl_cash, cl_card, cl_ewallet, cl_bank, cl_credit) < 0:
                         raise _SaleAbort('مبالغ الدفع لا يمكن أن تكون سالبة.')
                 else:
@@ -1658,8 +1660,7 @@ def complete_sale(request):
 
                 # --- Server-side totals and payment reconciliation ---
                 invoice.recalculate_totals()
-                total = Decimal(str(invoice.total_amount)).quantize(Decimal('0.01'))
-                tolerance = Decimal('0.05')
+                total = invoice.total_amount             # money: the sum of 2-place lines, nothing to round
 
                 if large_amount_threshold > 0 and total >= large_amount_threshold and _is_generic_cash_customer(partner):
                     raise _SaleAbort(
@@ -1674,14 +1675,14 @@ def complete_sale(request):
                         'paid_bank': Decimal('0'), 'paid_credit': Decimal('0')}
                 if payment_type == 'SPLIT':
                     non_cash = cl_card + cl_ewallet + cl_bank + cl_credit
-                    if non_cash > total + tolerance:
+                    if non_cash > total:
                         raise _SaleAbort(
                             f'مجموع المبالغ غير النقدية ({non_cash:.2f}) يتجاوز إجمالي الفاتورة ({total:.2f}).'
                         )
                     exact_cash_due = max(Decimal('0'), total - non_cash)
                     cash_due = round_cash(exact_cash_due) if exact_cash_due > 0 else exact_cash_due
                     rounding_amount = cash_due - exact_cash_due
-                    if cl_cash + tolerance < cash_due:
+                    if cl_cash < cash_due:
                         raise _SaleAbort(
                             f'المبالغ المدفوعة ({(cl_cash + non_cash):.2f}) أقل من إجمالي الفاتورة ({total:.2f}).'
                         )
@@ -1698,8 +1699,8 @@ def complete_sale(request):
                         amount_due = round_cash(total)
                         rounding_amount = amount_due - total
                     if payment_type == 'CASH' and data.get('cash_received') not in (None, ''):
-                        cash_received = _to_decimal(data.get('cash_received'), 'المبلغ المستلم')
-                        if cash_received + tolerance < amount_due:
+                        cash_received = money(_to_decimal(data.get('cash_received'), 'المبلغ المستلم'))
+                        if cash_received < amount_due:
                             raise _SaleAbort(
                                 f'المبلغ المستلم ({cash_received:.2f}) أقل من المبلغ المطلوب ({amount_due:.2f}).'
                             )
@@ -2032,14 +2033,14 @@ def process_invoice_return(request, invoice_id):
             # Set Paid Breakdown
             is_cash_partner = not original_invoice.partner or 'عميل نقدي' in original_invoice.partner.name or 'مورد نقدي' in original_invoice.partner.name or original_invoice.partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']
             if payment_type == Invoice.SPLIT:
-                paid_cash = Decimal(str(split_data.get('cash', 0) or 0))
-                paid_card = Decimal(str(split_data.get('card', 0) or 0))
-                paid_ewallet = Decimal(str(split_data.get('ewallet', 0) or 0))
-                paid_bank = Decimal(str(split_data.get('bank', 0) or 0))
-                paid_credit = Decimal(str(split_data.get('credit', 0) or 0))
+                paid_cash = money(split_data.get('cash', 0) or 0)
+                paid_card = money(split_data.get('card', 0) or 0)
+                paid_ewallet = money(split_data.get('ewallet', 0) or 0)
+                paid_bank = money(split_data.get('bank', 0) or 0)
+                paid_credit = money(split_data.get('credit', 0) or 0)
                 
                 total_split = paid_cash + paid_card + paid_ewallet + paid_bank + paid_credit
-                if abs(total_split - total_amount) > Decimal('0.05'):
+                if total_split != total_amount:
                     raise Exception(f'إجمالي مبالغ رد المرتجع ({total_split}) لا يساوي قيمة المرتجع ({total_amount}).')
                     
                 if paid_credit > 0 and is_cash_partner:
