@@ -61,7 +61,7 @@ class IdempotencyTests(TestCase):
             1,
         )
         self.assertEqual(self.w.product.get_stock(self.w.warehouse), D('8'))
-        assertInventoryMatchesLedger(self, warehouse=self.w.warehouse)
+        assertInventoryMatchesLedger(self)
 
     def test_complete_sale_handles_race_integrity_error(self):
         stock_in(self.w.product, self.w.warehouse, 10, D('5'))

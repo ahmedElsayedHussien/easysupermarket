@@ -228,18 +228,17 @@ def ledger_totals():
 # ---------------------------------------------------------------------------
 
 
-def assertInventoryMatchesLedger(test_case=None, warehouse=None, max_diff=Decimal('0.01')):
+def assertInventoryMatchesLedger(test_case=None, max_diff=Decimal('0.01')):
     """
-    P1-1 Helper: Asserts that the sum value of active inventory batches (quantity_remaining * unit_cost)
-    matches the posted ledger balance of account 1140 (including sub-accounts).
+    P1-1 Helper: Asserts that the sum value of ALL active inventory batches (quantity_remaining * unit_cost)
+    matches the posted ledger balance of account 1140 (including sub-accounts). Company-wide on purpose:
+    1140 is one account for every warehouse, so comparing one warehouse with it would mean nothing.
     """
     from apps.tenant.accounting.models import Account
     from apps.tenant.inventory.models import InventoryBatch
     from django.db.models import DecimalField, F, Sum
 
     batch_qs = InventoryBatch.objects.exclude(quantity_remaining=Decimal('0'))
-    if warehouse is not None:
-        batch_qs = batch_qs.filter(warehouse=warehouse)
 
     batch_val = batch_qs.aggregate(
         v=Sum(F('quantity_remaining') * F('unit_cost'), output_field=DecimalField(max_digits=20, decimal_places=4))
