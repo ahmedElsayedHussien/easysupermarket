@@ -503,6 +503,26 @@
         <div style="font-size:.88rem; margin-top:.3rem;">الفاتورة {{ c.invoice.invoice_number }}: {{ c.get_method_display }} بدل {{ c.get_recorded_method_display }} — {{ c.amount|floatformat:2 }} ج.م
             · {{ c.reason }} · قيد {{ c.journal_entry.reference }} · {{ c.created_at|date:"Y-m-d H:i" }}{% if c.created_by %} · {{ c.created_by|display_name }}{% endif %}</div>
         {% endfor %}
+        {% if correction_rows %}
+        <table style="width:100%; max-width:560px; margin-top:.6rem; font-size:.85rem; border-collapse:collapse;">
+            <thead><tr style="color:var(--text-muted);">
+                <th style="text-align:right; padding:.2rem .4rem;">الطريقة</th>
+                <th style="padding:.2rem .4rem;">كما اتسجّل في الوردية</th>
+                <th style="padding:.2rem .4rem;">تسوية التصحيحات</th>
+                <th style="padding:.2rem .4rem;">بعد التصحيح (زي الدفاتر)</th>
+            </tr></thead>
+            <tbody>
+            {% for label, recorded, adj, after in correction_rows %}
+            <tr style="border-top:1px solid rgba(255,255,255,.08);">
+                <td style="padding:.2rem .4rem;">{{ label }}</td>
+                <td style="padding:.2rem .4rem; text-align:center;">{{ recorded|floatformat:2 }}</td>
+                <td style="padding:.2rem .4rem; text-align:center; color:#ff7300;">{% if adj > 0 %}+{% endif %}{{ adj|floatformat:2 }}</td>
+                <td style="padding:.2rem .4rem; text-align:center; font-weight:bold;">{{ after|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
     </div>
     {% endif %}
 

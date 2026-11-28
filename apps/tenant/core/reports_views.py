@@ -3039,7 +3039,13 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
             page_sessions = list(page_obj.object_list)
 
         from apps.tenant.invoicing.shift_services import shifts_list_rows
+        from apps.tenant.invoicing.closed_shift_correction import corrections_by_session
         sessions_data = shifts_list_rows(page_sessions)
+        # payment-method corrections made after a shift closed: an adjustment column, so the cash / electronic
+        # figures per method can be brought to what the books say (the shift's own figures stay as closed)
+        adjustments = corrections_by_session(s.id for s in page_sessions)
+        for row in sessions_data:
+            row['correction'] = adjustments.get(row['session'].id)
 
         # Grand totals over the whole filtered range (not just the current page).
         # Closed shifts use the figures stored when the shift was closed (one
@@ -3134,7 +3140,8 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
             headers = [
                 'رقم الوردية', 'تاريخ الفتح', 'تاريخ الإغلاق', 'الكاشير', 'الخزنة',
                 'صافي المبيعات', 'مبيعات كاش', 'إلكتروني/شبكة', 'عهدة افتتاحية',
-                'متوقع بالدرج', 'فعلي مسلّم', 'العجز / الزيادة', 'الحالة'
+                'متوقع بالدرج', 'فعلي مسلّم', 'العجز / الزيادة', 'الحالة',
+                'تسوية تصحيحات: كاش', 'تسوية تصحيحات: إلكتروني', 'كاش بعد التصحيح', 'إلكتروني بعد التصحيح',
             ]
             ws.append(headers)
             header_row_idx = ws.max_row
@@ -3165,15 +3172,19 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
                     to_dec(item.get('expected_balance')),
                     to_dec(item.get('actual_balance')),
                     to_dec(item.get('difference')),
-                    status_str
+                    status_str,
                 ]
+                corr = item.get('correction') or {}
+                adj_cash, adj_digital = to_dec(corr.get('cash')), to_dec(corr.get('digital'))
+                row += [adj_cash, adj_digital, to_dec(item.get('total_cash_sales')) + adj_cash,
+                        digital_sales + adj_digital]
                 ws.append(row)
                 r_idx = ws.max_row
                 for col_idx in range(1, len(row) + 1):
                     cell = ws.cell(row=r_idx, column=col_idx)
                     cell.font = data_font
                     cell.border = thin_border
-                    if col_idx in [6, 7, 8, 9, 10, 11, 12]:
+                    if col_idx in [6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17]:
                         cell.number_format = '#,##0.00'
                         cell.alignment = align_right
                     else:
@@ -3219,8 +3230,17 @@ class ShiftDetailView(CustomPermissionRequiredMixin, DetailView):
         from apps.tenant.core.decorators import is_admin_user
         context['can_charge_cashier'] = is_admin_user(self.request.user)
         # corrections made after the close: shown as notes, the shift's own figures never change
-        context['payment_corrections'] = self.object.payment_corrections.select_related(
-            'invoice', 'journal_entry', 'created_by')
+        corrections = list(self.object.payment_corrections.select_related('invoice', 'journal_entry', 'created_by'))
+        context['payment_corrections'] = corrections
+        if corrections:
+            # sales by method as recorded, the corrections' adjustment, and the result that matches the books
+            from apps.tenant.invoicing.closed_shift_correction import correction_adjustments
+            adj = correction_adjustments(corrections)
+            context['correction_rows'] = [
+                (label, details.get(key) or Decimal('0'), adj[short], (details.get(key) or Decimal('0')) + adj[short])
+                for label, key, short in (('كاش', 'total_cash_sales', 'cash'), ('فيزا / كارت', 'total_card_sales', 'card'),
+                                          ('محفظة إلكترونية', 'total_ewallet_sales', 'ewallet'),
+                                          ('تحويل بنكي', 'total_bank_sales', 'bank'))]
         return context
 
 

@@ -196,3 +196,31 @@ def correct_payment(invoice, method, user, reason, bank_account=None, ewallet=No
             changes={'تصحيح طريقة السداد (وردية مقفولة)': [names[recorded], names[method]],
                      'المبلغ': str(amount), 'السبب': reason[:255], 'القيد': entry.reference})
     return correction
+
+
+ADJUST_KEYS = {'CASH': 'cash', 'CARD': 'card', 'EWALLET': 'ewallet', 'BANK_TRANSFER': 'bank'}
+
+
+def correction_adjustments(corrections):
+    """Net per payment method of a set of corrections: + to the method really paid with, - from the method
+    recorded. Added to a shift's (or a range's) sales by method, the totals match the books. ``digital`` =
+    card + wallet + transfer; ``any`` says whether there was a correction at all."""
+    adj = {k: ZERO for k in ADJUST_KEYS.values()}
+    count = 0
+    for c in corrections:
+        adj[ADJUST_KEYS[c.method]] += c.amount
+        adj[ADJUST_KEYS[c.recorded_method]] -= c.amount
+        count += 1
+    adj['digital'] = adj['card'] + adj['ewallet'] + adj['bank']
+    adj['any'] = count > 0
+    return adj
+
+
+def corrections_by_session(session_ids):
+    """{session_id: correction_adjustments(...)} for the shifts that have corrections — one query."""
+    from apps.tenant.invoicing.models import ClosedShiftPaymentCorrection
+    grouped = {}
+    for c in ClosedShiftPaymentCorrection.objects.filter(session_id__in=list(session_ids)).only(
+            'session_id', 'method', 'recorded_method', 'amount'):
+        grouped.setdefault(c.session_id, []).append(c)
+    return {sid: correction_adjustments(cs) for sid, cs in grouped.items()}

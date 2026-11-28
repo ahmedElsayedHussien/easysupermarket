@@ -102,6 +102,7 @@
                     <th>صافي المبيعات</th>
                     <th style="color: #10b981;">مبيعات كاش</th>
                     <th style="color: #f59e0b;">إلكتروني/شبكة</th>
+                    <th style="color: #ff7300;" title="تصحيحات طريقة السداد اللي اتعملت بعد قفل الوردية — كاش / إلكتروني">تسوية تصحيحات</th>
                     <th style="color: #00e5ff;">عهدة افتتاحية</th>
                     <th style="color: #f59e0b;">متوقع</th>
                     <th style="color: #10b981;">فعلي مسلم</th>
@@ -123,6 +124,12 @@
                     </td>
                     <td class="text-success fw-bold">{{ item.total_cash_sales|floatformat:2 }}</td>
                     <td class="text-warning fw-bold">{{ item.total_card_sales|add:item.total_ewallet_sales|add:item.total_bank_sales|floatformat:2 }}</td>
+                    <td style="font-size: .82rem; color: #ff7300;">
+                        {% if item.correction %}
+                        كاش {% if item.correction.cash > 0 %}+{% endif %}{{ item.correction.cash|floatformat:2 }}
+                        <br>إلكتروني {% if item.correction.digital > 0 %}+{% endif %}{{ item.correction.digital|floatformat:2 }}
+                        {% else %}<span class="text-muted">—</span>{% endif %}
+                    </td>
                     <td class="text-cyan">{{ item.session.opening_balance|floatformat:2 }}</td>
                     <td class="text-warning fw-bold">{{ item.expected_balance|floatformat:2 }}</td>
                     <td class="text-success fw-bold">{{ item.actual_balance|floatformat:2 }}</td>
@@ -144,7 +151,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="13" class="text-center py-4 text-muted">لا توجد ورديات مسجلة في هذه الفترة</td>
+                    <td colspan="14" class="text-center py-4 text-muted">لا توجد ورديات مسجلة في هذه الفترة</td>
                 </tr>
                 {% endfor %}
             </tbody>
