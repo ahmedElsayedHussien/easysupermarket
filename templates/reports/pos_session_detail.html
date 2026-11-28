@@ -500,7 +500,7 @@
         <strong style="color:#ff7300;">🛠 تصحيحات طريقة سداد بعد قفل الوردية</strong>
         <span style="color:var(--text-muted); font-size:.82rem;"> — أرقام الوردية تحت زي ما اتقفلت؛ التصحيح اتسجّل بقيد منفصل بتاريخه.</span>
         {% for c in payment_corrections %}
-        <div style="font-size:.88rem; margin-top:.3rem;">الفاتورة {{ c.invoice.invoice_number }}: {{ c.get_method_display }} بدل نقدي — {{ c.amount|floatformat:2 }} ج.م
+        <div style="font-size:.88rem; margin-top:.3rem;">الفاتورة {{ c.invoice.invoice_number }}: {{ c.get_method_display }} بدل {{ c.get_recorded_method_display }} — {{ c.amount|floatformat:2 }} ج.م
             · {{ c.reason }} · قيد {{ c.journal_entry.reference }} · {{ c.created_at|date:"Y-m-d H:i" }}{% if c.created_by %} · {{ c.created_by|display_name }}{% endif %}</div>
         {% endfor %}
     </div>

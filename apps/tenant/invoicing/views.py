@@ -1103,11 +1103,12 @@ def cancel_invoice_view(request, invoice_id):
 @login_required
 @custom_permission_required('invoicing.correct_closed_shift_payment', redirect_url='core:main_screen')
 def closed_shift_payment_correction(request, invoice_id):
-    """«تصحيح طريقة سداد لوردية مقفولة»: a cash sale of a closed shift really paid by card / wallet / transfer."""
+    """«تصحيح طريقة سداد لوردية مقفولة»: a sale of a closed shift recorded cash but paid by card / wallet /
+    transfer — or the other way round."""
     from django.core.exceptions import ValidationError as _VE
     from django.shortcuts import get_object_or_404, redirect, render
     from apps.tenant.accounting.models import BankAccount, EWallet
-    from apps.tenant.invoicing.closed_shift_correction import correct_payment
+    from apps.tenant.invoicing.closed_shift_correction import correct_payment, recorded_legs
     from apps.tenant.invoicing.models import ClosedShiftPaymentCorrection
     invoice = get_object_or_404(_scope_by_allowed_branches(Invoice.objects.select_related('pos_session'), request),
                                 id=invoice_id)
@@ -1116,16 +1117,26 @@ def closed_shift_payment_correction(request, invoice_id):
         wallet = EWallet.objects.filter(pk=request.POST.get('ewallet') or 0).first()
         try:
             c = correct_payment(invoice, request.POST.get('method', ''), request.user, request.POST.get('reason', ''),
-                                bank_account=bank, ewallet=wallet)
+                                bank_account=bank, ewallet=wallet, amount=request.POST.get('amount') or None,
+                                wrong_method=request.POST.get('wrong_method') or None)
             messages.success(request, f'اتصححت طريقة سداد الفاتورة {invoice.invoice_number} '
                                       f'({c.get_method_display()}) بقيد {c.journal_entry.reference} — '
                                       'الوردية القديمة وتقريرها زي ما هم.')
             return redirect('invoicing:invoice_detail', invoice_id=invoice.id)
         except _VE as e:
             messages.error(request, ' '.join(e.messages))
+    C = ClosedShiftPaymentCorrection
+    names = dict(C.METHOD_CHOICES)
+    legs = recorded_legs(invoice)
+    # a recorded cash part can become card / wallet / transfer; a recorded card / wallet / transfer part -> cash
+    non_cash_legs = [(m, names[m], a) for m, a in legs.items() if m != C.CASH]
+    methods = [m for m in C.METHOD_CHOICES if m[0] != C.CASH] if legs.get(C.CASH) else []
+    if non_cash_legs:
+        methods.append((C.CASH, names[C.CASH]))
     return render(request, 'invoicing/closed_shift_correction.html', {
-        'title': 'تصحيح طريقة سداد لوردية مقفولة', 'invoice': invoice,
-        'methods': ClosedShiftPaymentCorrection.METHOD_CHOICES,
+        'title': 'تصحيح طريقة سداد لوردية مقفولة', 'invoice': invoice, 'methods': methods,
+        'cash_leg': legs.get(C.CASH), 'non_cash_legs': non_cash_legs,
+        'is_split': invoice.payment_type == 'SPLIT',
         'banks': BankAccount.objects.order_by('name'), 'ewallets': EWallet.objects.order_by('name'),
         'existing': ClosedShiftPaymentCorrection.objects.filter(invoice=invoice).first(),
     })

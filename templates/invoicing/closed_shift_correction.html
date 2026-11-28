@@ -7,15 +7,22 @@
     <div class="card" style="padding: 1.2rem 1.4rem;">
         <h1 style="font-size: 1.3rem; font-weight: 800; margin: 0 0 .4rem;">🛠 {{ title }}</h1>
         <p style="color: var(--text-muted); font-size: .88rem; margin: 0 0 1rem;">
-            الفاتورة <strong>{{ invoice.invoice_number }}</strong> اتسجلت نقدي في الوردية
-            <strong>#{{ invoice.pos_session_id }}</strong> اللي اتقفلت بعجز. لو العميل دفع فعلاً بفيزا أو محفظة أو تحويل،
-            التصحيح بيعمل قيد بتاريخ النهارده: مدين الحساب اللي الفلوس راحت عليه، ودائن حساب العجز اللي اتسجّل
-            وقت قفل الوردية. الفاتورة والوردية وتقريرها مش بيتغيّروا، والتصحيح بيتعمل مرة واحدة بس للفاتورة.
+            الفاتورة <strong>{{ invoice.invoice_number }}</strong> ({{ invoice.get_payment_type_display }}) في الوردية
+            المقفولة <strong>#{{ invoice.pos_session_id }}</strong>. التصحيح بيعمل قيد بتاريخ النهارده:
+            <br>• اتسجل كاش والعميل دفع فيزا / محفظة / تحويل (الوردية طلعت بعجز): مدين الحساب اللي الفلوس راحت عليه،
+            ودائن حساب العجز من قيد قفل الوردية.
+            <br>• اتسجل فيزا / محفظة / تحويل والعميل دفع كاش (الوردية طلعت بزيادة): مدين حساب الزيادة من قيد قفل
+            الوردية، ودائن البنك أو المحفظة اللي قيد البيع اتقيد عليه.
+            <br>الفاتورة والوردية وتقريرها مش بيتغيّروا، والتصحيح بيتعمل مرة واحدة بس للفاتورة.
+        </p>
+        <p style="color: var(--text-muted); font-size: .8rem; margin: 0 0 1rem; border-right: 3px solid #ff7300; padding-right: .6rem;">
+            لو في نفس الوردية فيه غلطتين عكس بعض (فاتورة اتسجلت كاش وهي فيزا، وفاتورة اتسجلت فيزا وهي كاش)، الدرج
+            بيطلع مظبوط أو بفرق صغير ومش هيكفي للتصحيح هنا — صحّح الحسابين بقيد يدوي من القيود اليومية.
         </p>
 
         {% if existing %}
         <div class="alert alert-info" style="border-radius: 8px;">
-            اتصححت قبل كده: {{ existing.get_method_display }} — {{ existing.amount|floatformat:2 }} ج.م
+            اتصححت قبل كده: {{ existing.get_method_display }} بدل {{ existing.get_recorded_method_display }} — {{ existing.amount|floatformat:2 }} ج.م
             (قيد {{ existing.journal_entry.reference }}، {{ existing.created_at|date:"Y-m-d H:i" }}).
         </div>
         {% else %}
@@ -27,6 +34,14 @@
                     {% for value, label in methods %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
                 </select>
             </label>
+            {% if non_cash_legs and is_split %}
+            <label id="legBox" style="display: none;">الجزء اللي اتسجل غلط
+                <select name="wrong_method" class="form-control">
+                    {% for m, label, amt in non_cash_legs %}<option value="{{ m }}">{{ label }} — {{ amt|floatformat:2 }}</option>{% endfor %}
+                </select>
+            </label>
+            {% endif %}
+            {% if cash_leg %}
             <label id="bankBox">حساب الفيزا / البنك اللي الفلوس نزلت عليه
                 <select name="bank_account" class="form-control">
                     <option value="">— اختار —</option>
@@ -38,6 +53,11 @@
                     <option value="">— اختار —</option>
                     {% for w in ewallets %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}
                 </select>
+            </label>
+            {% endif %}
+            <label>المبلغ (فاضي = الجزء اللي اتسجل غلط كله)
+                <input name="amount" class="form-control" type="number" step="0.01" min="0.01"
+                       placeholder="{% if cash_leg %}النقدي المسجل: {{ cash_leg|floatformat:2 }}{% endif %}">
             </label>
             <label>السبب (إجباري)
                 <input name="reason" class="form-control" required minlength="3" maxlength="255"
@@ -53,8 +73,10 @@
 </div>
 <script>
 function pickTarget(m) {
-    document.getElementById('walletBox').style.display = (m === 'EWALLET') ? '' : 'none';
-    document.getElementById('bankBox').style.display = (m === 'EWALLET') ? 'none' : '';
+    var show = function (id, on) { var el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+    show('legBox', m === 'CASH');                      // to cash: which card / wallet / transfer leg was wrong
+    show('walletBox', m === 'EWALLET');
+    show('bankBox', m !== 'EWALLET' && m !== 'CASH');  // to cash: the account comes from the sale entry
 }
 </script>
 {% endblock %}

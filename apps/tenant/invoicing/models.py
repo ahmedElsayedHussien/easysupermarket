@@ -1398,23 +1398,29 @@ class RepCashHandover(models.Model):
 
 
 class ClosedShiftPaymentCorrection(models.Model):
-    """A CASH sale of a closed shift that was really paid by card / e-wallet / transfer: one entry (Dr where the
-    money went / Cr the shift's shortage account) — see invoicing.closed_shift_correction. Once per invoice."""
-    CARD, EWALLET, BANK_TRANSFER = 'CARD', 'EWALLET', 'BANK_TRANSFER'
-    METHOD_CHOICES = [(CARD, 'فيزا'), (EWALLET, 'محفظة إلكترونية'), (BANK_TRANSFER, 'تحويل بنكي / إنستاباي')]
+    """A sale of a closed shift recorded with the wrong payment method, fixed by one entry — see
+    invoicing.closed_shift_correction. Once per invoice, both ways:
+      * recorded CASH, really card / wallet / transfer: Dr where the money went / Cr the shift's SHORTAGE account;
+      * recorded card / wallet / transfer, really CASH: Dr the shift's OVERAGE account / Cr the bank / wallet
+        the invoice was booked to."""
+    CASH, CARD, EWALLET, BANK_TRANSFER = 'CASH', 'CARD', 'EWALLET', 'BANK_TRANSFER'
+    METHOD_CHOICES = [(CASH, 'نقدي'), (CARD, 'فيزا'), (EWALLET, 'محفظة إلكترونية'),
+                      (BANK_TRANSFER, 'تحويل بنكي / إنستاباي')]
 
     invoice = models.OneToOneField(Invoice, on_delete=models.PROTECT, related_name='closed_shift_correction',
                                    verbose_name='الفاتورة')
     session = models.ForeignKey(POSSession, on_delete=models.PROTECT, related_name='payment_corrections',
                                 verbose_name='الوردية')
+    recorded_method = models.CharField(max_length=20, choices=METHOD_CHOICES, default=CASH,
+                                       verbose_name='الطريقة اللي اتسجلت')
     method = models.CharField(max_length=20, choices=METHOD_CHOICES, verbose_name='الطريقة الصح')
     bank_account = models.ForeignKey('accounting.BankAccount', on_delete=models.PROTECT, null=True, blank=True,
                                      related_name='+', verbose_name='الحساب البنكي / ماكينة الفيزا')
     ewallet = models.ForeignKey('accounting.EWallet', on_delete=models.PROTECT, null=True, blank=True,
                                 related_name='+', verbose_name='المحفظة')
     amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
-    shortage_account = models.ForeignKey('accounting.Account', on_delete=models.PROTECT, related_name='+',
-                                         verbose_name='حساب العجز (من قيد قفل الوردية)')
+    variance_account = models.ForeignKey('accounting.Account', on_delete=models.PROTECT, related_name='+',
+                                         verbose_name='حساب العجز / الزيادة (من قيد قفل الوردية)')
     reason = models.CharField(max_length=255, verbose_name='السبب')
     journal_entry = models.ForeignKey('accounting.JournalEntry', on_delete=models.PROTECT, related_name='+',
                                       verbose_name='القيد')
