@@ -87,6 +87,23 @@ class TestEnvironmentAndDeployCheckTests(TestCase):
         self.assertEqual(batch.quantity_remaining, D('2.0000'))
 
 
+def _isolated_world():
+    """build_world() with unique names: on django-tenants a TransactionTestCase flush clears the PUBLIC
+    schema only, so the tenant rows of an earlier test are still there (fixed 'tenant_admin' would clash)."""
+    from types import SimpleNamespace
+    from apps.tenant.core.tests.factories import (
+        _uid, make_branch, make_category, make_partner, make_product, make_treasury, make_user, make_warehouse,
+        seed_chart_of_accounts, system_settings)
+    seed_chart_of_accounts()
+    branch = make_branch()
+    category = make_category(_uid('cat'))
+    return SimpleNamespace(
+        settings=system_settings(), branch=branch, warehouse=make_warehouse(branch), treasury=make_treasury(branch),
+        admin=make_user(role='ADMIN', branch=branch), category=category,
+        product=make_product(category, _uid('prod')), customer=make_partner(partner_type='CUSTOMER'),
+        supplier=make_partner(partner_type='SUPPLIER'))
+
+
 class PostgreSQLConcurrencyTests(TransactionTestCase):
     """Multi-threaded concurrency tests designed for PostgreSQL + django-tenants CI runs."""
 
@@ -113,7 +130,7 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
     def test_concurrent_consume_fifo_batches_prevents_double_spend(self):
         if connection.vendor != 'postgresql':
             self.skipTest('Multi-threaded FIFO SELECT FOR UPDATE test requires PostgreSQL.')
-        w = build_world()
+        w = _isolated_world()
         batch = stock_in(w.product, w.warehouse, 5, D('10.0000'))
 
         def attempt(i):
@@ -134,7 +151,7 @@ class PostgreSQLConcurrencyTests(TransactionTestCase):
     def test_concurrent_run_idempotent_creates_single_invoice(self):
         if connection.vendor != 'postgresql':
             self.skipTest('Multi-threaded idempotency test requires PostgreSQL.')
-        w = build_world()
+        w = _isolated_world()
         idem_uuid = str(uuid.uuid4())
 
         def attempt(_i):
