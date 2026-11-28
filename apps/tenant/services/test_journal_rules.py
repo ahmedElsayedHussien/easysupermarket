@@ -47,15 +47,13 @@ class JournalServiceRuleTests(TestCase):
         ledger = sum((i.debit - i.credit for i in inv.journal_items.filter(entry__status='POSTED')), D('0'))
         self.assertEqual(ledger, stock_value)                                               # 8 x 5 = 40
 
-    def test_payment_posted_once(self):
-        import datetime
-        from apps.tenant.partners.models import Payment
-        from apps.tenant.services.journal_service import post_payment
-        p = Payment.objects.create(payment_type=Payment.RECEIPT, partner=self.w.customer, branch=self.w.branch,
-                                   amount=D('50'), date=datetime.date.today(), method=Payment.CASH)
-        post_payment(p)
-        with self.assertRaisesMessage(ValueError, 'مرحّلة بالفعل'):
-            post_payment(p)
+    def test_unused_payment_posting_is_gone(self):
+        """post_payment had no screen (its only view was an empty stub): removed with its URL."""
+        from django.urls import NoReverseMatch, reverse
+        from apps.tenant.services import journal_service
+        self.assertFalse(hasattr(journal_service, 'post_payment'))
+        with self.assertRaises(NoReverseMatch):
+            reverse('partners:post_payment')
 
     def test_purchase_return_and_its_cancellation_keep_stock_equal_to_1140(self):
         from django.db.models import F, Sum

@@ -260,12 +260,6 @@ def partner_edit(request, pk):
         'sectors': sectors
     })
 
-@login_required
-def post_payment_view(request):
-    if request.method == 'POST':
-        # Logic to create and post payment using journal_service
-        pass
-    return redirect('core:main_screen')
 
 def _detail_lines_with_adjustment(t):
     """

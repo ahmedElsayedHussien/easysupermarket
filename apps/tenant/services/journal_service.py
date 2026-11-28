@@ -6,7 +6,6 @@ Creates balanced double-entry journal entries for financial transactions.
 Functions:
   - post_sale_invoice(): Revenue + VAT + COGS entries for sales
   - post_purchase_invoice(): Inventory + payable/cash entries for purchases
-  - post_payment(): Cash receipt/payment entries
 
 All functions:
   - Are decorated with @transaction.atomic
@@ -338,39 +337,6 @@ def _invoice_ewallet_account(invoice):
     return _money_account(
         [invoice.ewallet if getattr(invoice, 'ewallet_id', None) else None],
         '1160', f'invoice {invoice.invoice_number} (e-wallet)',
-    )
-
-
-def _payment_money_account(payment):
-    """
-    Specific treasury / bank sub-account for a partners.Payment.
-    Payment has no treasury/bank field today, so the account is resolved from (in order):
-    an explicit treasury / bank_account attribute (if the model gains one), the branch's
-    single treasury (CASH) / the single bank account or the system default (CARD/BANK).
-    Falls back to the parent 1110 / 1120 with a warning when ambiguous.
-    """
-    from apps.tenant.accounting.models import BankAccount
-    from apps.tenant.core.settings_helpers import get_pos_defaults
-    branch = payment.branch if getattr(payment, 'branch_id', None) else None
-    defaults = get_pos_defaults(branch)  # per-branch defaults, then global; never another branch's treasury
-    ctx = f'payment {payment.reference}'
-    if payment.method == 'CASH':
-        default_tr = defaults['treasury']
-        return _money_account(
-            [
-                getattr(payment, 'treasury', None),
-                _branch_treasury(payment.branch if getattr(payment, 'branch_id', None) else None),
-                default_tr,
-            ],
-            '1110', ctx,
-        )
-    return _money_account(
-        [
-            getattr(payment, 'bank_account', None),
-            defaults['bank_account'],
-            _single(BankAccount.objects.order_by('pk')),
-        ],
-        '1120', ctx,
     )
 
 
@@ -797,114 +763,6 @@ def _create_purchase_payment_entry(invoice):
     """Deprecated: Settlement accounts are integrated directly in post_purchase_invoice."""
     return None
 
-
-
-@transaction.atomic
-def post_payment(payment) -> 'JournalEntry':
-    """
-    Creates and posts a journal entry for a customer receipt or supplier payment.
-
-    Customer Receipt (RECEIPT):
-      Dr 1110-<id>/1120-<id> (Treasury/Bank) amount
-        Cr 1130 (A/R - Customer)          amount
-
-    Supplier Payment (PAYMENT):
-      Dr 2110 (A/P - Supplier)            amount
-        Cr 1110-<id>/1120-<id> (Treasury/Bank) amount
-
-    Args:
-        payment: Payment instance
-
-    Returns:
-        JournalEntry instance (POSTED status)
-
-    Raises:
-        ValueError: If required accounts are missing or amount is zero
-    """
-    from apps.tenant.accounting.models import JournalEntry, JournalItem
-    from django.contrib.contenttypes.models import ContentType
-
-    payment = type(payment).objects.select_for_update(of=('self',)).get(pk=payment.pk)
-    if payment.status != 'DRAFT' or payment.journal_entry_id:
-        raise ValueError(f'الدفعة {payment.reference} مرحّلة بالفعل.')
-    if payment.amount <= Decimal('0'):
-        raise ValueError('مبلغ الدفعة يجب أن يكون أكبر من صفر.')
-
-    # Specific treasury / bank sub-account (1110-<id> / 1120-<id>); parent only as a logged fallback
-    cash_account = _payment_money_account(payment)
-
-    reference = _next_reference('PAY')
-
-    if payment.payment_type == 'RECEIPT':
-        # Receiving money from customer
-        if payment.partner.receivable_account:
-            partner_account = payment.partner.receivable_account
-        else:
-            partner_account = _get_system_account('1130')
-
-        description = (
-            f'تحصيل من عميل - {payment.partner.name} - {payment.reference}'
-        )
-        entry = JournalEntry.objects.create(
-            date=payment.date,
-            reference=reference,
-            description=description,
-            status=JournalEntry.DRAFT,
-        )
-        entry.content_type = ContentType.objects.get_for_model(payment)
-        entry.object_id = payment.id
-        entry.save(update_fields=['content_type', 'object_id'])
-
-        JournalItem.objects.create(
-            entry=entry, account=cash_account,
-            debit=payment.amount, credit=Decimal('0'),
-            description=description
-        )
-        JournalItem.objects.create(
-            entry=entry, account=partner_account,
-            debit=Decimal('0'), credit=payment.amount,
-            description=description
-        )
-
-    else:  # PAYMENT - paying supplier
-        if payment.partner.payable_account:
-            partner_account = payment.partner.payable_account
-        else:
-            partner_account = _get_system_account('2110')
-
-        description = (
-            f'دفع لمورد - {payment.partner.name} - {payment.reference}'
-        )
-        entry = JournalEntry.objects.create(
-            date=payment.date,
-            reference=reference,
-            description=description,
-            status=JournalEntry.DRAFT,
-        )
-        entry.content_type = ContentType.objects.get_for_model(payment)
-        entry.object_id = payment.id
-        entry.save(update_fields=['content_type', 'object_id'])
-
-        JournalItem.objects.create(
-            entry=entry, account=partner_account,
-            debit=payment.amount, credit=Decimal('0'),
-            description=description
-        )
-        JournalItem.objects.create(
-            entry=entry, account=cash_account,
-            debit=Decimal('0'), credit=payment.amount,
-            description=description
-        )
-
-    entry.post()
-
-    # Link the journal entry back to the payment
-    payment.journal_entry = entry
-    payment.status = 'POSTED'
-    payment.save(update_fields=['journal_entry', 'status', 'updated_at'])
-
-    logger.info(f'Journal posted for payment {payment.reference}: {reference}')
-    return entry
 
 
 def _own_sums(account_ids):
