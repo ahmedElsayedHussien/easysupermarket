@@ -66,3 +66,23 @@ class DeficitCostReconciliationTests(TestCase):
 
         # Crucial: Inventory Batches value MUST match Ledger 1140 exactly
         assertInventoryMatchesLedger(self)
+
+    def test_failed_adjustment_entry_fails_the_purchase(self):
+        """The ADJ-DEF entry can't be posted (dated today, period closed up to today): the purchase is
+        refused as a whole — never saved with the stock and 1140 apart."""
+        import datetime
+        from apps.tenant.invoicing.models import Invoice
+        p3 = make_product(self.w.category, 'منتج عجز مقفول', sale_price=D('100'), tax_rate=D('0'),
+                          last_purchase_price=D('50'))
+        make_invoice(self.w, invoice_type='SALE', lines=[(p3, 3, 100)], partner=self.w.customer)
+        today = datetime.date.today()
+        system_settings(accounting_lock_date=today)
+        purchase = make_invoice(self.w, invoice_type='PURCHASE', lines=[(p3, 10, 70)], partner=self.w.supplier,
+                                confirm=False, date=today + datetime.timedelta(days=1))
+        from apps.tenant.services.invoice_service import confirm_invoice
+        with self.assertRaises(Exception):
+            confirm_invoice(purchase.id)
+        system_settings(accounting_lock_date=None)
+        self.assertEqual(Invoice.objects.get(pk=purchase.pk).status, Invoice.DRAFT)
+        self.assertEqual(p3.get_stock(self.w.warehouse), D('-3'))          # nothing of the purchase stayed
+        assertInventoryMatchesLedger(self)

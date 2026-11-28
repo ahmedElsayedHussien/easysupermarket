@@ -87,55 +87,29 @@ def _offset_deficits(product, warehouse, batch, user=None):
         batch.quantity_remaining = remaining_to_offset
         batch.save(update_fields=['quantity_remaining', 'updated_at'])
 
-    # P1-4: Post COGS vs 1140 adjustment entry for the variance between actual & estimated cost
+    # P1-4: Post COGS vs 1140 adjustment entry for the variance between actual & estimated cost.
+    # No try/except: if this entry can't be posted (e.g. the period is closed) the whole operation fails —
+    # otherwise the stock and account 1140 would silently drift apart.
     if total_cost_diff != Decimal('0') and total_offset_qty > Decimal('0'):
-        try:
-            from django.utils import timezone
-            from apps.tenant.accounting.models import JournalEntry, JournalItem
-            from apps.tenant.services.journal_service import _get_system_account, unique_reference
-            from django.contrib.contenttypes.models import ContentType
+        from django.utils import timezone
+        from apps.tenant.accounting.posting import post_entry
+        from apps.tenant.services.journal_service import _get_system_account
 
-            inv_acc = _get_system_account('1140')
-            cogs_acc = _get_system_account('5100')
-
-            today = timezone.localdate()
-            ref = unique_reference(f'ADJ-DEF-{batch.id}-{int(timezone.now().timestamp())}')
-            abs_diff = abs(total_cost_diff)
-
-            entry = JournalEntry.objects.create(
-                date=today,
-                reference=ref,
-                description=f'تسوية فروق تكلفة عجز المخزون (سالب) لصنف {product.name} مع دفعة #{batch.id}',
-                status=JournalEntry.DRAFT,
-                created_by=user,
-                content_type=ContentType.objects.get_for_model(product),
-                object_id=product.id,
-            )
-
-            if total_cost_diff > Decimal('0'):
-                # Actual cost > estimated: COGS was understated, 1140 was overstated
-                JournalItem.objects.create(
-                    entry=entry, account=cogs_acc, debit=abs_diff, credit=Decimal('0'),
-                    description=f'فروق تكلفة عجز صنف {product.name} ({total_offset_qty} وحدة)'
-                )
-                JournalItem.objects.create(
-                    entry=entry, account=inv_acc, debit=Decimal('0'), credit=abs_diff,
-                    description=f'تسوية عجز مخزون صنف {product.name} ({total_offset_qty} وحدة)'
-                )
-            else:
-                # Actual cost < estimated: COGS was overstated, 1140 was understated
-                JournalItem.objects.create(
-                    entry=entry, account=inv_acc, debit=abs_diff, credit=Decimal('0'),
-                    description=f'تسوية عجز مخزون صنف {product.name} ({total_offset_qty} وحدة)'
-                )
-                JournalItem.objects.create(
-                    entry=entry, account=cogs_acc, debit=Decimal('0'), credit=abs_diff,
-                    description=f'فروق تكلفة عجز صنف {product.name} ({total_offset_qty} وحدة)'
-                )
-
-            entry.post(user)
-        except Exception as e:
-            logger.warning(f"Could not post deficit reconciliation journal entry for product {product.id}: {e}")
+        inv_acc = _get_system_account('1140')
+        cogs_acc = _get_system_account('5100')
+        abs_diff = abs(total_cost_diff)
+        cost_desc = f'فروق تكلفة عجز صنف {product.name} ({total_offset_qty} وحدة)'
+        stock_desc = f'تسوية عجز مخزون صنف {product.name} ({total_offset_qty} وحدة)'
+        if total_cost_diff > Decimal('0'):
+            # actual cost > estimated: COGS was understated, 1140 overstated
+            lines = [(cogs_acc, abs_diff, Decimal('0'), cost_desc), (inv_acc, Decimal('0'), abs_diff, stock_desc)]
+        else:
+            # actual cost < estimated: COGS was overstated, 1140 understated
+            lines = [(inv_acc, abs_diff, Decimal('0'), stock_desc), (cogs_acc, Decimal('0'), abs_diff, cost_desc)]
+        post_entry(date=timezone.localdate(),
+                   reference=f'ADJ-DEF-{batch.id}-{int(timezone.now().timestamp())}',
+                   description=f'تسوية فروق تكلفة عجز المخزون (سالب) لصنف {product.name} مع دفعة #{batch.id}',
+                   lines=lines, user=user, source=product)
 
     return batch
 
