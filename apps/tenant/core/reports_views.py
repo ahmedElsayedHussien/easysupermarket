@@ -2517,10 +2517,7 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
             bank_accounts = list(BankAccount.objects.select_related('account'))
             ewallets = list(EWallet.objects.select_related('account'))
 
-        # Auto-healing ensuring GL accounts exist, then every
-        # balance of the dropdown in one batch instead of 2 queries per row.
-        for obj in treasuries + bank_accounts + ewallets:
-            obj.ensure_account()   # no query when the (preloaded) account is fine
+        # Compute every dropdown balance in one batch (read-only).
         from apps.tenant.services.journal_service import with_balances
         with_balances(treasuries + bank_accounts + ewallets)
 
@@ -2591,7 +2588,7 @@ class TreasuryStatementReportView(CustomPermissionRequiredMixin, TemplateView):
                             val_str = f"wallet_{selected_obj.id}"
 
             if selected_obj:
-                account = selected_obj.ensure_account()
+                account = selected_obj.account
                 if account:
                     starting_balance = getattr(selected_obj, 'opening_balance', Decimal('0')) or Decimal('0')
                     
@@ -2669,21 +2666,14 @@ class LiquidityPositionReportView(CustomPermissionRequiredMixin, TemplateView):
         from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
         from decimal import Decimal
 
-        treasuries = list(_scope_treasuries(Treasury.objects.all(), self.request).select_related('branch'))
+        treasuries = list(_scope_treasuries(Treasury.objects.all(), self.request).select_related('branch', 'account'))
         if is_branch_restricted(self.request):
             # Bank accounts / e-wallets are company-level (no branch): hidden from branch staff.
             bank_accounts = []
             ewallets = []
         else:
-            bank_accounts = list(BankAccount.objects.all())
-            ewallets = list(EWallet.objects.all())
-
-        for t in treasuries:
-            t.ensure_account()
-        for b in bank_accounts:
-            b.ensure_account()
-        for w in ewallets:
-            w.ensure_account()
+            bank_accounts = list(BankAccount.objects.select_related('account').all())
+            ewallets = list(EWallet.objects.select_related('account').all())
 
         # تجميع وحساب أرصدة كافة الخزن والحسابات دفعة واحدة في استعلام تجميعي واحد (SQL)
         from apps.tenant.services.journal_service import batch_get_account_balances

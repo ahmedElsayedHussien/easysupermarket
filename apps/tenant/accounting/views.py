@@ -1945,16 +1945,9 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
         context['title'] = 'إضافة تحويل مالي جديد'
         context['cancel_url'] = reverse_lazy('accounting:transfer_list')
 
-        # Auto-heal and prepare live balance data for frontend display
+        # Prepare live balance data for frontend display (read-only GET).
         from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
         import json
-
-        for t in Treasury.objects.filter(account__isnull=True):
-            t.ensure_account()
-        for b in BankAccount.objects.filter(account__isnull=True):
-            b.ensure_account()
-        for w in EWallet.objects.filter(account__isnull=True):
-            w.ensure_account()
 
         # one balance batch for all three lists, reused by the JSON and the template
         from apps.tenant.services.journal_service import with_balances

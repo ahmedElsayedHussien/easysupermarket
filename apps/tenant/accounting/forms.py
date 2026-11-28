@@ -83,7 +83,7 @@ class BaseGlassForm(forms.ModelForm):
             else:
                 field.widget.attrs['class'] = 'form-control bg-dark-glass text-white'
                 
-            if field_name == 'opening_balance' and self.instance and self.instance.pk:
+            if field_name in ('opening_balance', 'opening_balance_date') and self.instance and self.instance.pk:
                 field.disabled = True
                 field.help_text = 'لا يمكن تعديل الرصيد الافتتاحي بعد الإنشاء. قم بعمل قيد تسوية بدلاً من ذلك.'
 
@@ -270,17 +270,26 @@ class ExpenseForm(OpenPeriodDateMixin, BaseGlassForm):
 class TreasuryForm(BaseGlassForm):
     class Meta:
         model = Treasury
-        fields = ['name', 'branch', 'opening_balance']
+        fields = ['name', 'branch', 'treasury_type', 'opening_balance', 'opening_balance_date']
+        widgets = {
+            'opening_balance_date': forms.DateInput(attrs={'type': 'date'}),
+        }
 
 class BankAccountForm(BaseGlassForm):
     class Meta:
         model = BankAccount
-        fields = ['name', 'opening_balance']
+        fields = ['name', 'opening_balance', 'opening_balance_date']
+        widgets = {
+            'opening_balance_date': forms.DateInput(attrs={'type': 'date'}),
+        }
 
 class EWalletForm(BaseGlassForm):
     class Meta:
         model = EWallet
-        fields = ['name', 'opening_balance']
+        fields = ['name', 'opening_balance', 'opening_balance_date']
+        widgets = {
+            'opening_balance_date': forms.DateInput(attrs={'type': 'date'}),
+        }
 
 class VoucherForm(OpenPeriodDateMixin, BaseGlassForm):
     expense_account = forms.ModelChoiceField(

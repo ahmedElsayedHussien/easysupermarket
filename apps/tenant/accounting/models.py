@@ -640,10 +640,19 @@ def is_rep_cash_box(treasury_id):
 
 
 class Treasury(models.Model):
+    CASH = 'CASH'
+    BANK = 'BANK'
+    TREASURY_TYPE_CHOICES = [
+        (CASH, 'خزينة نقدية'),
+        (BANK, 'بنك'),
+    ]
+
     objects = TreasuryQuerySet.as_manager()
     name = models.CharField(max_length=100, verbose_name='اسم الخزينة')
     branch = models.ForeignKey('core.Branch', on_delete=models.PROTECT, verbose_name='الفرع')
+    treasury_type = models.CharField(max_length=20, choices=TREASURY_TYPE_CHOICES, default=CASH, verbose_name='نوع الخزينة')
     opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
+    opening_balance_date = models.DateField(null=True, blank=True, verbose_name='تاريخ رصيد أول المدة')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, verbose_name='حساب الخزينة')
 
     class Meta:
@@ -666,7 +675,7 @@ class Treasury(models.Model):
         from apps.tenant.services.journal_service import _get_system_account
         try:
             with transaction.atomic():
-                parent_code = '1120' if 'بنك' in self.name else '1110'
+                parent_code = '1120' if self.treasury_type == self.BANK else '1110'
                 parent_acc = _get_system_account(parent_code)
                 if parent_acc:
                     acc, _ = Account.objects.get_or_create(
@@ -689,16 +698,18 @@ class Treasury(models.Model):
 
     def save(self, *args, **kwargs):
         created = self._state.adding
-        super().save(*args, **kwargs)
-        # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
-        self.ensure_account()
-        if created and (self.opening_balance or 0) > 0 and self.account_id:
-            _book_opening_balance_safely(self)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
+            self.ensure_account()
+            if created and (self.opening_balance or 0) > 0 and self.account_id:
+                _book_opening_balance_safely(self)
 
 
 class BankAccount(models.Model):
     name = models.CharField(max_length=100, verbose_name='اسم الحساب البنكي')
     opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
+    opening_balance_date = models.DateField(null=True, blank=True, verbose_name='تاريخ رصيد أول المدة')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, verbose_name='حساب الدليل')
 
     class Meta:
@@ -743,15 +754,17 @@ class BankAccount(models.Model):
 
     def save(self, *args, **kwargs):
         created = self._state.adding
-        super().save(*args, **kwargs)
-        # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
-        self.ensure_account()
-        if created and (self.opening_balance or 0) > 0 and self.account_id:
-            _book_opening_balance_safely(self)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
+            self.ensure_account()
+            if created and (self.opening_balance or 0) > 0 and self.account_id:
+                _book_opening_balance_safely(self)
 
 class EWallet(models.Model):
     name = models.CharField(max_length=100, verbose_name='اسم المحفظة')
     opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
+    opening_balance_date = models.DateField(null=True, blank=True, verbose_name='تاريخ رصيد أول المدة')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, verbose_name='حساب الدليل')
 
     class Meta:
@@ -796,11 +809,12 @@ class EWallet(models.Model):
 
     def save(self, *args, **kwargs):
         created = self._state.adding
-        super().save(*args, **kwargs)
-        # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
-        self.ensure_account()
-        if created and (self.opening_balance or 0) > 0 and self.account_id:
-            _book_opening_balance_safely(self)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            # explicit ledger setup (no signal): its own sub-account, then the opening-balance entry
+            self.ensure_account()
+            if created and (self.opening_balance or 0) > 0 and self.account_id:
+                _book_opening_balance_safely(self)
 
 
 OPENING_REFERENCE_PREFIXES = {
@@ -814,8 +828,8 @@ OPENING_REFERENCE_PREFIXES = {
 def book_opening_balance(instance, ref_prefix=None):
     """
     Posts the opening-balance entry of a Treasury / BankAccount / EWallet / POSMachine:
-        Dr  <instance ledger account>   opening_balance
-        Cr  3100 رأس المال              opening_balance
+        Dr  <instance ledger account>            opening_balance
+        Cr  3999 أرصدة افتتاحية وتسويات رأس المال  opening_balance
 
     Atomic and idempotent (keyed by reference '<PREFIX>-<pk>'):
       - a POSTED entry that already has items is returned untouched;
@@ -838,10 +852,11 @@ def book_opening_balance(instance, ref_prefix=None):
         if entry is not None and entry.status == JournalEntry.POSTED and entry.items.exists():
             return entry
 
-        capital_acc = _get_system_account('3100')
+        opening_equity_acc = _get_system_account('3999')
+        entry_date = getattr(instance, 'opening_balance_date', None) or datetime.date.today()
         if entry is None:
             entry = JournalEntry.objects.create(
-                date=datetime.date.today(),
+                date=entry_date,
                 reference=ref,
                 description=f"رصيد افتتاحي - {instance.name}",
                 status=JournalEntry.DRAFT,
@@ -858,21 +873,15 @@ def book_opening_balance(instance, ref_prefix=None):
 
         JournalItem.objects.create(entry=entry, account=account, debit=amount, credit=0,
                                    description=f"رصيد افتتاحي - {instance.name}")
-        JournalItem.objects.create(entry=entry, account=capital_acc, debit=0, credit=amount,
+        JournalItem.objects.create(entry=entry, account=opening_equity_acc, debit=0, credit=amount,
                                    description=f"رصيد افتتاحي - {instance.name}")
         entry.post()
         return entry
 
 
 def _book_opening_balance_safely(instance):
-    """Called from save(): never breaks the save of the treasury/bank/wallet itself."""
-    try:
-        book_opening_balance(instance)
-    except Exception:
-        logger.exception(
-            "Error booking opening balance for %s #%s (run 'manage.py repair_opening_balances' to retry)",
-            type(instance).__name__, instance.pk,
-        )
+    """Called from save(): propagates errors so atomic save rolls back."""
+    book_opening_balance(instance)
 
 
 # ---------------------------------------------------------------------------

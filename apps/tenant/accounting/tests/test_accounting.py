@@ -98,7 +98,7 @@ class OpeningBalanceTests(TestCase):
         self.assertEqual(dr, cr)
         self.assertEqual(dr, amount)
         self.assertEqual(account_net(je, obj.account.code), amount)
-        self.assertEqual(account_net(je, '3100'), -amount)
+        self.assertEqual(account_net(je, '3999'), -amount)
         self.assertEqual(obj.current_balance, amount)
 
     def test_treasury_opening_balance(self):
