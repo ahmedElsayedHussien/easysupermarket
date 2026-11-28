@@ -56,3 +56,21 @@ class JournalServiceRuleTests(TestCase):
         post_payment(p)
         with self.assertRaisesMessage(ValueError, 'مرحّلة بالفعل'):
             post_payment(p)
+
+    def test_purchase_return_and_its_cancellation_keep_stock_equal_to_1140(self):
+        from django.db.models import F, Sum
+        from apps.tenant.inventory.models import InventoryBatch
+        from apps.tenant.services.invoice_service import cancel_invoice
+
+        def check(expected_value):
+            stock = InventoryBatch.objects.aggregate(v=Sum(F('quantity_remaining') * F('unit_cost')))['v'] or D('0')
+            inv = account('1140')
+            ledger = sum((i.debit - i.credit for i in inv.journal_items.filter(entry__status='POSTED')), D('0'))
+            self.assertEqual((stock, ledger), (expected_value, expected_value))
+
+        make_invoice(self.w, 'PURCHASE', lines=[(self.w.product, 10, 50)])
+        ret = make_invoice(self.w, 'RETURN_PURCHASE', lines=[(self.w.product, 4, 45)])     # returned below cost
+        check(D('300'))                                                                     # 6 x 50
+        cancel_invoice(ret.id, self.w.admin)
+        check(D('500'))                                                                     # 10 x 50 again
+        self.assertEqual(self.w.product.get_stock(self.w.warehouse), D('10'))

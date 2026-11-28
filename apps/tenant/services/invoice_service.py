@@ -760,6 +760,9 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                     )
 
         elif invoice.invoice_type == Invoice.RETURN_PURCHASE:
+            # the goods go back to the very batches the return took them from, at the cost they left at
+            # (the reversal entry puts them back on 1140 at that cost)
+            consumed = _consumed_batches(invoice, 'RETURN_OUT')
             for line in lines:
                 if line.product.product_type == 'SERVICE':
                     continue
@@ -775,7 +778,14 @@ def _cancel_invoice_core(invoice_id: int, user=None):
 
                 conv = line.factor
                 base_qty = line.quantity * conv
-                unit_cost = (line.unit_price / conv).quantize(Decimal('0.0001')) if conv else line.unit_price
+                base_qty -= _restore_consumed(invoice, line.product, base_qty, consumed,
+                                              reference=f'إلغاء مرتجع مشتريات {invoice.invoice_number}')
+                if base_qty <= Decimal('0'):
+                    continue
+                # no movement found (old data): at the cost booked on the line, else the price net of discount
+                full_qty = line.quantity * conv
+                unit_cost = ((line.cogs_amount / full_qty) if (line.cogs_amount and full_qty) else
+                             (line.subtotal / full_qty if full_qty else Decimal('0'))).quantize(Decimal('0.0001'))
                 add_inventory_batch(
                     product=line.product,
                     warehouse=invoice.warehouse,
@@ -810,19 +820,19 @@ def _cancel_invoice_core(invoice_id: int, user=None):
     return invoice
 
 
-def _consumed_batches(invoice):
-    """{product_id: [[batch, qty still to give back], ...]} — the batches the sale's FIFO consumption
-    took from (its OUT stock movements, newest first)."""
+def _consumed_batches(invoice, movement_type='OUT'):
+    """{product_id: [[batch, qty still to give back, cost it left at], ...]} — the batches the document
+    took its goods from (its OUT / RETURN_OUT stock movements, newest first)."""
     from apps.tenant.inventory.models import StockMovement
     out = {}
-    for m in (StockMovement.objects.filter(reference=invoice.invoice_number, movement_type='OUT',
+    for m in (StockMovement.objects.filter(reference=invoice.invoice_number, movement_type=movement_type,
                                            warehouse=invoice.warehouse, batch__isnull=False)
               .select_related('batch').order_by('-id')):
         out.setdefault(m.product_id, []).append([m.batch, m.quantity, m.unit_cost])
     return out
 
 
-def _restore_consumed(invoice, product, qty, consumed):
+def _restore_consumed(invoice, product, qty, consumed, reference=None):
     """Give ``qty`` back to the batches the sale consumed; returns what was given back.
     The goods come back at the cost they left at (the reversal entry credits COGS at that cost): if the
     batch's cost was changed since (e.g. an opening-balance cost edit), they go to a new batch at the
@@ -841,9 +851,9 @@ def _restore_consumed(invoice, product, qty, consumed):
         if out_cost is not None and b.unit_cost != out_cost:
             add_inventory_batch(product=product, warehouse=invoice.warehouse, quantity=take, unit_cost=out_cost,
                                 expiry_date=b.expiry_date, batch_number=(b.batch_number or '')[:90],
-                                reference=f'إلغاء {invoice.invoice_number}'[:100], movement_type='CANCEL_IN',
+                                reference=(reference or f'إلغاء {invoice.invoice_number}')[:100], movement_type='CANCEL_IN',
                                 update_last_purchase_price=False,
-                                notes=f'إلغاء فاتورة مبيعات {invoice.invoice_number} — بتكلفة البيع الأصلية')
+                                notes=f'إلغاء {invoice.invoice_number} — بتكلفة خروجها الأصلية')
             slot[1] = left - take
             given += take
             continue
@@ -851,8 +861,8 @@ def _restore_consumed(invoice, product, qty, consumed):
         b.save(update_fields=['quantity_remaining', 'updated_at'])
         StockMovement.objects.create(
             product=product, warehouse=invoice.warehouse, batch=b, movement_type='CANCEL_IN', quantity=take,
-            unit_cost=b.unit_cost, reference=f'إلغاء {invoice.invoice_number}'[:100],
-            notes=f'إلغاء فاتورة مبيعات {invoice.invoice_number} — رجوع لنفس الدفعة')
+            unit_cost=b.unit_cost, reference=(reference or f'إلغاء {invoice.invoice_number}')[:100],
+            notes=f'إلغاء {invoice.invoice_number} — رجوع لنفس الدفعة')
         slot[1] = left - take
         given += take
     return given
