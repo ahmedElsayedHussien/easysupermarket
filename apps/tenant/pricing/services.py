@@ -16,6 +16,7 @@ from decimal import Decimal
 from django.utils import timezone
 from django.db.models import Q
 from apps.tenant.pricing.models import PriceList, PriceListItem
+from apps.tenant.core.money import money, unit
 
 
 def _active_lists(qs, as_of_date):
@@ -123,14 +124,14 @@ class PricingEngineService:
                 price, original, is_per_uom = unit_price, unit_original, True
             else:
                 price = (unit_price / factor) if factor != 1 else unit_price
-                price = price.quantize(Decimal('0.0001'))
+                price = unit(price)
                 original, is_per_uom = base_price, False
             discount_amount = max(Decimal('0'), original - price)
-            discount_pct = ((discount_amount / original) * Decimal('100')).quantize(Decimal('0.01')) if original > 0 else Decimal('0')
+            discount_pct = money((discount_amount / original) * Decimal('100')) if original > 0 else Decimal('0')
             return {
                 'price': price,
-                'unit_price': unit_price.quantize(Decimal('0.0001')),
-                'base_unit_price': (unit_price / factor).quantize(Decimal('0.0001')) if factor else unit_price,
+                'unit_price': unit(unit_price),
+                'base_unit_price': unit(unit_price / factor) if factor else unit_price,
                 'uom_factor': factor,
                 'price_is_per_uom': is_per_uom,
                 'tier': tier,

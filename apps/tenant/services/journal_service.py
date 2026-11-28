@@ -31,6 +31,7 @@ from django.utils import timezone
 from decimal import Decimal
 from typing import Optional
 import logging
+from apps.tenant.core.money import money
 
 logger = logging.getLogger(__name__)
 
@@ -494,8 +495,8 @@ def post_sale_invoice(invoice) -> 'JournalEntry':
     service_revenue_gross = revenue['services']
     total_gross = product_revenue_gross + service_revenue_gross
 
-    product_revenue_net = product_revenue_gross.quantize(Decimal('0.00'))
-    service_revenue_net = service_revenue_gross.quantize(Decimal('0.00'))
+    product_revenue_net = money(product_revenue_gross)
+    service_revenue_net = money(service_revenue_gross)
 
     # If rounding causes a tiny discrepancy, adjust the largest one
     diff = net_subtotal - (product_revenue_net + service_revenue_net)
@@ -772,8 +773,8 @@ def _own_sums(account_ids):
 
 def _signed_balance(acc, total_d, total_c):
     if acc.normal_balance == 'DEBIT':
-        return (total_d - total_c).quantize(Decimal('0.01'))
-    return (total_c - total_d).quantize(Decimal('0.01'))
+        return money(total_d - total_c)
+    return money(total_c - total_d)
 
 
 def _is_leaf_account(acc):

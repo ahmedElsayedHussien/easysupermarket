@@ -10,6 +10,7 @@ from django.db.models import Case, Count, DecimalField, F, Q, Sum, Value, When
 from django.db.models.functions import Coalesce
 
 from .models import Invoice, RepCommission, SalesRep
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 MONEY = DecimalField(max_digits=18, decimal_places=2)
@@ -43,7 +44,7 @@ def month_performance(reps, year, month):
             'rep': rep, 'sales': r.get('sales') or ZERO, 'returns': r.get('returns') or ZERO, 'net': net,
             'invoices': r.get('count') or 0, 'customers': r.get('customers') or 0, 'target': target,
             'achievement': round(net * 100 / target) if target > 0 else None,
-            'commission': (max(net, ZERO) * (rep.commission_rate or ZERO) / 100).quantize(Decimal('0.01')),
+            'commission': money(max(net, ZERO) * (rep.commission_rate or ZERO) / 100),
             'approved': approved.get(rep.id),
         }
     return out

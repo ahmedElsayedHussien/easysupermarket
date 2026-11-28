@@ -17,6 +17,7 @@ from django.db import models, transaction
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 from django.utils import timezone
+from apps.tenant.core.money import unit
 
 
 User = settings.AUTH_USER_MODEL
@@ -348,7 +349,7 @@ class TicketPart(models.Model):
                 serial.save()
             return
         if self.quantity and self.quantity > 0:
-            unit_cost = (Decimal(self.actual_cost or 0) / self.quantity).quantize(Decimal('0.0001'))
+            unit_cost = unit(Decimal(self.actual_cost or 0) / self.quantity)
             add_inventory_batch(product=product, warehouse=self.warehouse, quantity=self.quantity,
                                 unit_cost=unit_cost, reference=f'صيانة-#{self.ticket_id}', movement_type='RETURN_IN',
                                 update_last_purchase_price=False,
@@ -391,7 +392,7 @@ class TicketPart(models.Model):
             reference=f'صيانة-#{self.ticket_id}',
             notes=f'استهلاك قطعة غيار في تذكرة صيانة #{self.ticket_id}'
         )
-        self.actual_cost = Decimal(str(sum(c['total_cost'] for c in consumptions))).quantize(Decimal('0.0001'))
+        self.actual_cost = unit(Decimal(str(sum(c['total_cost'] for c in consumptions))))
         self.stock_deducted = True
 
 

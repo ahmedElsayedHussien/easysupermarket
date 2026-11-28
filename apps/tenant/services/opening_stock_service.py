@@ -19,6 +19,7 @@ import logging
 from apps.tenant.inventory.models import Product, Warehouse, InventoryBatch, StockMovement
 from apps.tenant.accounting.models import JournalEntry, JournalItem, Account
 from apps.tenant.services.journal_service import _get_system_account, unique_reference
+from apps.tenant.core.money import money
 
 # an edit of the opening quantity is logged as an adjustment movement with this reference prefix
 # (never as another OPENING_BALANCE: stock cards count those as goods coming in)
@@ -40,7 +41,7 @@ def get_product_opening_info(product: Product, warehouse: Warehouse = None):
             default_cost = product.get_average_cost(warehouse) or Decimal('0')
         except Exception:
             default_cost = Decimal('0')
-    default_cost = default_cost.quantize(Decimal('0.01'))
+    default_cost = money(default_cost)
 
     if not warehouse:
         return {
@@ -80,14 +81,14 @@ def get_product_opening_info(product: Product, warehouse: Warehouse = None):
         ).distinct().order_by('created_at').first()
 
     if batch:
-        original_qty = (batch.quantity_original or Decimal('0')).quantize(Decimal('0.01'))
-        remaining_qty = (batch.quantity_remaining or Decimal('0')).quantize(Decimal('0.01'))
-        consumed_qty = max(Decimal('0.00'), (original_qty - remaining_qty).quantize(Decimal('0.01')))
+        original_qty = money(batch.quantity_original or Decimal('0'))
+        remaining_qty = money(batch.quantity_remaining or Decimal('0'))
+        consumed_qty = max(Decimal('0.00'), money(original_qty - remaining_qty))
         unit_cost = batch.unit_cost or Decimal('0')
         if unit_cost <= Decimal('0'):
             unit_cost = default_cost
-        unit_cost = unit_cost.quantize(Decimal('0.01'))
-        total_cost = (original_qty * unit_cost).quantize(Decimal('0.01'))
+        unit_cost = money(unit_cost)
+        total_cost = money(original_qty * unit_cost)
         
         # The entry of THIS warehouse (its latest adjustment, else the opening one); any entry of the
         # product only as a last resort (old data without the warehouse in the reference)
@@ -147,12 +148,12 @@ def update_or_create_product_opening_stock(
         raise ValidationError('الأصناف بالسيريال (IMEI / S/N) رصيدها الافتتاحي بيتدخل بالسيريالات نفسها — مش بكمية.')
 
     try:
-        new_quantity = Decimal(str(new_quantity)).quantize(Decimal('0.01'))
+        new_quantity = money(Decimal(str(new_quantity)))
     except (InvalidOperation, TypeError, ValueError):
         raise ValidationError('كمية رصيد أول المدة غير صالحة.')
 
     try:
-        unit_cost = Decimal(str(unit_cost)).quantize(Decimal('0.01'))
+        unit_cost = money(Decimal(str(unit_cost)))
     except (InvalidOperation, TypeError, ValueError):
         raise ValidationError('سعر التكلفة غير صالح.')
 
@@ -173,7 +174,7 @@ def update_or_create_product_opening_stock(
             except Exception:
                 fallback_cost = Decimal('0')
         if fallback_cost > Decimal('0'):
-            unit_cost = fallback_cost.quantize(Decimal('0.01'))
+            unit_cost = money(fallback_cost)
 
     # 1. Look for existing opening batch
     opening_movement = StockMovement.objects.select_for_update(of=('self',)).filter(
@@ -221,15 +222,15 @@ def update_or_create_product_opening_stock(
                 f'تم بيعها/صرفها بالفعل من هذا الرصيد الافتتاحي. الحد الأدنى المسموح به هو {consumed_qty}.'
             )
 
-        delta_qty = (new_quantity - old_qty).quantize(Decimal('0.01'))
+        delta_qty = money(new_quantity - old_qty)
         old_remaining = batch.quantity_remaining
         new_remaining = old_remaining + delta_qty
         # Units already sold/consumed were costed (COGS) at the old cost: they keep it.
         # A cost change only revalues the quantity still on hand.
-        consumed_val = (consumed_qty * old_cost).quantize(Decimal('0.01'))
-        old_total_val = (consumed_val + old_remaining * old_cost).quantize(Decimal('0.01'))
-        new_total_val = (consumed_val + new_remaining * unit_cost).quantize(Decimal('0.01'))
-        delta_val = (new_total_val - old_total_val).quantize(Decimal('0.01'))
+        consumed_val = money(consumed_qty * old_cost)
+        old_total_val = money(consumed_val + old_remaining * old_cost)
+        new_total_val = money(consumed_val + new_remaining * unit_cost)
+        delta_val = money(new_total_val - old_total_val)
 
         # Update batch
         batch.quantity_original = new_quantity
@@ -350,7 +351,7 @@ def update_or_create_product_opening_stock(
                 'journal_entry': None
             }
 
-        total_val = (new_quantity * unit_cost).quantize(Decimal('0.01'))
+        total_val = money(new_quantity * unit_cost)
 
         # Create batch through the FIFO engine so existing deficit (negative) batches
         # in this warehouse are offset first; records the OPENING_BALANCE movement.

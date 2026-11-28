@@ -6,6 +6,7 @@ Called from the commission report view.
 from decimal import Decimal
 from datetime import date, timedelta
 from django.contrib.auth import get_user_model
+from apps.tenant.core.money import money
 
 User = get_user_model()
 
@@ -111,7 +112,7 @@ def calculate_commissions(period: str, target_date: date, branch=None):
     # Group by cashier
     cashier_data = defaultdict(list)  # cashier_id → [(category_id, sales_total)]
     for (cashier_id, category_id), sales in totals.items():
-        sales = max(Decimal('0'), sales).quantize(Decimal('0.01'))
+        sales = money(max(Decimal('0'), sales))
         cashier_data[cashier_id].append((category_id, sales))
 
     # Build report

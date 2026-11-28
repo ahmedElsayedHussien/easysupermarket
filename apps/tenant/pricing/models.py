@@ -9,6 +9,7 @@ from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from decimal import Decimal
+from apps.tenant.core.money import unit
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +227,7 @@ class PriceListItem(models.Model):
         if self.pricing_method == self.DISCOUNT and self.discount_percentage is not None:
             discount_amount = (Decimal(str(base_price)) * Decimal(str(self.discount_percentage))) / Decimal('100')
             calc = Decimal(str(base_price)) - discount_amount
-            return max(Decimal('0'), calc).quantize(Decimal('0.0001'))
+            return unit(max(Decimal('0'), calc))
         elif self.custom_price is not None:
             return Decimal(str(self.custom_price))
         return Decimal(str(base_price))

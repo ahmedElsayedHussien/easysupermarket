@@ -25,7 +25,7 @@ from django.views.decorators.cache import never_cache
 from django.utils.dateparse import parse_date
 from apps.tenant.core.settings_helpers import get_pos_defaults, round_cash, setting as setting_value
 
-from apps.tenant.core.money import money  # noqa: E402
+from apps.tenant.core.money import money, unit  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -367,7 +367,7 @@ def pos_close_shift(request):
             actual_balance = Decimal(actual_balance_str)
             if actual_balance < 0:
                 raise _VE('النقدية الفعلية لا يمكن أن تكون بالسالب.')
-            difference = (actual_balance - expected_balance).quantize(Decimal('0.01'))
+            difference = money(actual_balance - expected_balance)
             notes = request.POST.get('notes', '').strip()
             # Who bears a shortage is the manager's call; a cashier closing alone books it
             # as a shop expense (an admin can charge it to the cashier later from the report).
@@ -1304,7 +1304,7 @@ def _pos_unit_price(product, puom, partner, branch, quantity):
         if pb and pb.min_sale_price is not None:
             min_price = pb.min_sale_price
     min_price = Decimal(str(min_price or 0)) * factor
-    return price.quantize(Decimal('0.0001')), min_price.quantize(Decimal('0.0001'))
+    return unit(price), unit(min_price)
 
 
 GENERIC_CASH_CUSTOMER_NAMES = ('عميل نقدي', 'نقدي', 'طياري')
@@ -1324,7 +1324,7 @@ def _sale_json_response(confirmed_invoice, deduplicated=False):
         'deduplicated': deduplicated,
         'invoice_number': confirmed_invoice.invoice_number,
         'invoice_id': confirmed_invoice.id,
-        'total_amount': str(Decimal(str(confirmed_invoice.total_amount)).quantize(Decimal('0.01'))),
+        'total_amount': str(money(Decimal(str(confirmed_invoice.total_amount)))),
         'rounding_amount': str(confirmed_invoice.rounding_amount or Decimal('0')),
         'paid_cash': str(confirmed_invoice.paid_cash or Decimal('0')),
         'partner_id': confirmed_invoice.partner_id if confirmed_invoice.partner else None,
@@ -1707,7 +1707,7 @@ def complete_sale(request):
                     paid[field] = amount_due
                 for k, v in paid.items():
                     setattr(invoice, k, v)
-                invoice.rounding_amount = rounding_amount.quantize(Decimal('0.01'))
+                invoice.rounding_amount = money(rounding_amount)
                 invoice.save(update_fields=list(paid.keys()) + ['rounding_amount', 'updated_at'])
 
                 return confirm_invoice(invoice.id)
@@ -1855,7 +1855,7 @@ def receipt_view(request, invoice_id):
     cash_after_rounding = None
     if rounding_amount != 0:
         if invoice.payment_type == Invoice.CASH:
-            cash_after_rounding = (Decimal(str(invoice.total_amount)) + rounding_amount).quantize(Decimal('0.01'))
+            cash_after_rounding = money(Decimal(str(invoice.total_amount)) + rounding_amount)
         else:
             cash_after_rounding = invoice.paid_cash
 
@@ -2184,7 +2184,7 @@ def sales_return_no_invoice(request):
                     if not uom_obj:
                         uom_obj = prod.uoms.filter(is_base=True).first()   # empty = base unit
                     factor = (uom_obj.conversion_factor if uom_obj and uom_obj.conversion_factor else Decimal('1'))
-                    ceiling = (Decimal(branch_prices.get(prod.id, prod.sale_price) or 0) * factor).quantize(Decimal('0.01'))
+                    ceiling = money(Decimal(branch_prices.get(prod.id, prod.sale_price) or 0) * factor)
                     if price > ceiling + Decimal('0.005'):
                         raise ValueError(f'سعر "{prod.name}" ({price}) أعلى من سعر البيع الحالي ({ceiling}). '
                                          'المرتجع بدون فاتورة ميزيدش عن سعر البيع.')

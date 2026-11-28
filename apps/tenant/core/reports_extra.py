@@ -12,6 +12,7 @@ from django.shortcuts import render
 from django.utils import timezone
 
 from .decorators import custom_permission_required
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 MONEY = DecimalField(max_digits=20, decimal_places=2)
@@ -74,7 +75,7 @@ def inventory_turnover(request):
         else:
             klass = ('slow', 'بطيء')
         rows.append({'name': names.get(pid, ''), 'qty_sold': qty_sold, 'cogs': cogs, 'qty_now': qty_now,
-                     'value': value, 'turnover': turnover.quantize(Decimal('0.01')) if turnover is not None else None,
+                     'value': value, 'turnover': money(turnover) if turnover is not None else None,
                      'cover': cover, 'klass': klass[0], 'klass_label': klass[1]})
     order = {'dead': 0, 'slow': 1, 'mid': 2, 'fast': 3}
     sort = request.GET.get('sort', 'slow')
@@ -83,7 +84,7 @@ def inventory_turnover(request):
     else:
         rows.sort(key=lambda r: (order[r['klass']], -(r['value'])))
     totals = {'cogs': sum((r['cogs'] for r in rows), ZERO), 'value': sum((r['value'] for r in rows), ZERO)}
-    totals['turnover'] = (totals['cogs'] / totals['value']).quantize(Decimal('0.01')) if totals['value'] > 0 else None
+    totals['turnover'] = money(totals['cogs'] / totals['value']) if totals['value'] > 0 else None
     dead_value = sum((r['value'] for r in rows if r['klass'] == 'dead'), ZERO)
     return render(request, 'reports/inventory_turnover.html', {
         'title': 'دوران المخزون', 'rows': rows, 'totals': totals, 'dead_value': dead_value, 'days': days,

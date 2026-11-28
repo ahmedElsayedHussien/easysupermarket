@@ -17,6 +17,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 CENT = Decimal('0.01')
@@ -243,7 +244,7 @@ def post_shift_variance(session, charge_to=CHARGE_EXPENSE, user=None):
     charge_to=CASHIER, to the employees' receivable 1135. Returns the entry or None.
     """
     from apps.tenant.services.journal_service import _get_system_account
-    diff = (session.difference or ZERO).quantize(CENT)
+    diff = money(session.difference or ZERO)
     if abs(diff) < CENT:
         return None
     treasury_acc = session.treasury.ensure_account()
@@ -292,7 +293,7 @@ def charge_shortage_to_cashier(session, user=None):
 def deposit_drawer_cash(session, dest_type, dest_id, amount, user=None):
     """Cash drop at close: InternalTransfer drawer -> treasury/bank/e-wallet, confirmed now."""
     from apps.tenant.accounting.models import BankAccount, EWallet, InternalTransfer, Treasury
-    amount = Decimal(str(amount)).quantize(CENT)
+    amount = money(Decimal(str(amount)))
     if amount <= 0:
         return None
     model = {InternalTransfer.TREASURY: Treasury, InternalTransfer.BANK: BankAccount,

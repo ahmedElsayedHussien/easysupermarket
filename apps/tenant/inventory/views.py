@@ -7,6 +7,7 @@ from apps.tenant.core.models import SystemSetting
 from apps.tenant.core.access import (
     allowed_branches, get_allowed_branch_ids, get_branch_scope, is_branch_restricted,
 )
+from apps.tenant.core.money import money, unit
 
 PAGE_SIZE_CHOICES = ('25', '50', '100')
 
@@ -992,10 +993,10 @@ class ProductCreateView(CustomPermissionRequiredMixin, CreateView):
             op_wh_id = self.request.POST.get('opening_warehouse')
             if op_qty_str and op_wh_id:
                 try:
-                    op_qty = Decimal(op_qty_str).quantize(Decimal('0.01'))
+                    op_qty = money(Decimal(op_qty_str))
                     op_expiry = _parse_opening_expiry(self.request.POST)
                     wh = Warehouse.objects.filter(id=op_wh_id, is_active=True).first()
-                    op_cost = (Decimal(op_cost_str) if op_cost_str else (self.object.last_purchase_price or Decimal('0.00'))).quantize(Decimal('0.01'))
+                    op_cost = money(Decimal(op_cost_str) if op_cost_str else (self.object.last_purchase_price or Decimal('0.00')))
                     if wh and op_qty > Decimal('0'):
                         from apps.tenant.services.opening_stock_service import update_or_create_product_opening_stock
                         res = update_or_create_product_opening_stock(
@@ -1083,10 +1084,10 @@ class ProductUpdateView(CustomPermissionRequiredMixin, UpdateView):
             op_wh_id = self.request.POST.get('opening_warehouse')
             if op_qty_str != '' and op_wh_id:
                 try:
-                    op_qty = Decimal(op_qty_str).quantize(Decimal('0.01'))
+                    op_qty = money(Decimal(op_qty_str))
                     op_expiry = _parse_opening_expiry(self.request.POST)
                     wh = Warehouse.objects.filter(id=op_wh_id, is_active=True).first()
-                    op_cost = (Decimal(op_cost_str) if op_cost_str else (self.object.last_purchase_price or Decimal('0.00'))).quantize(Decimal('0.01'))
+                    op_cost = money(Decimal(op_cost_str) if op_cost_str else (self.object.last_purchase_price or Decimal('0.00')))
                     if wh:
                         from apps.tenant.services.opening_stock_service import update_or_create_product_opening_stock
                         res = update_or_create_product_opening_stock(
@@ -1237,7 +1238,7 @@ def adjustment_create(request):
                 final_cost = entered_cost
             else:
                 base_avg = product.get_average_cost(warehouse) or Decimal('0')
-                final_cost = (base_avg * conversion).quantize(Decimal('0.0001'))
+                final_cost = unit(base_avg * conversion)
 
             StockAdjustmentLine.objects.create(
                 adjustment=adj,
@@ -1341,8 +1342,8 @@ def adjustment_confirm(request, pk):
                         system_base = _locked_stock(line.product, adj.warehouse)
                         physical_base = line.physical_quantity * factor
                         base_variance = physical_base - system_base
-                        line.system_quantity = (system_base / factor).quantize(Decimal('0.0001'))
-                        line.quantity = (base_variance / factor).quantize(Decimal('0.0001'))
+                        line.system_quantity = unit(system_base / factor)
+                        line.quantity = unit(base_variance / factor)
                         line.save(update_fields=['system_quantity', 'quantity'])
                     else:
                         base_variance = line.quantity * factor
@@ -1571,7 +1572,7 @@ def stocktake_create(request):
                         'barcode': p['barcode'] or '',
                         'sku': p['sku'] or '',
                         'stock': str(stock),
-                        'cost': str(Decimal(avg_cost).quantize(Decimal('0.0001')))
+                        'cost': str(unit(Decimal(avg_cost)))
                     })
                 return JsonResponse({'status': 'success', 'products': data})
             except Warehouse.DoesNotExist:
@@ -1829,7 +1830,7 @@ def api_product_opening_stock(request, pk):
                     val = Decimal(str(val))
                 except Exception:
                     return '0.00'
-            return str(val.quantize(Decimal('0.01')))
+            return str(money(val))
 
         return JsonResponse({
             'status': 'success',
@@ -1874,14 +1875,14 @@ def api_product_opening_stock(request, pk):
                     val = Decimal(str(val))
                 except Exception:
                     return '0.00'
-            return str(val.quantize(Decimal('0.01')))
+            return str(money(val))
 
         try:
-            qty = Decimal(qty_str).quantize(Decimal('0.01')) if qty_str else Decimal('0.00')
-            cost = Decimal(cost_str).quantize(Decimal('0.01')) if cost_str else Decimal('0.00')
+            qty = money(Decimal(qty_str)) if qty_str else Decimal('0.00')
+            cost = money(Decimal(cost_str)) if cost_str else Decimal('0.00')
             op_expiry = _parse_opening_expiry(request.POST, field='expiry_date')
             if cost <= Decimal('0.00'):
-                cost = (product.last_purchase_price or Decimal('0.00')).quantize(Decimal('0.01'))
+                cost = money(product.last_purchase_price or Decimal('0.00'))
             res = update_or_create_product_opening_stock(
                 product=product,
                 warehouse=warehouse,
@@ -1930,11 +1931,11 @@ def product_opening_stock_view(request, pk):
         cost_str = request.POST.get('unit_cost', '').strip()
         reason = request.POST.get('reason', '').strip()
         try:
-            qty = Decimal(qty_str).quantize(Decimal('0.01')) if qty_str else Decimal('0.00')
-            cost = Decimal(cost_str).quantize(Decimal('0.01')) if cost_str else Decimal('0.00')
+            qty = money(Decimal(qty_str)) if qty_str else Decimal('0.00')
+            cost = money(Decimal(cost_str)) if cost_str else Decimal('0.00')
             op_expiry = _parse_opening_expiry(request.POST, field='expiry_date')
             if cost <= Decimal('0.00'):
-                cost = (product.last_purchase_price or Decimal('0.00')).quantize(Decimal('0.01'))
+                cost = money(product.last_purchase_price or Decimal('0.00'))
             res = update_or_create_product_opening_stock(
                 product=product,
                 warehouse=warehouse,
@@ -2008,7 +2009,7 @@ def opening_stock_list_view(request):
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
     for b in page_obj:                       # value of the opening quantity (a batch has no stored total)
-        b.total_cost = ((b.quantity_original or 0) * (b.unit_cost or 0)).quantize(Decimal('0.01'))
+        b.total_cost = money((b.quantity_original or 0) * (b.unit_cost or 0))
 
     context = {
         'batches': page_obj,

@@ -18,6 +18,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Case, DecimalField, F, OuterRef, Subquery, Sum, Value, When
 from django.db.models.functions import Coalesce
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 MONEY = DecimalField(max_digits=18, decimal_places=2)
@@ -119,7 +120,7 @@ def save_allocations(voucher, amounts):
     from apps.tenant.invoicing.models import Invoice
     from .models import VoucherAllocation
     kind = KIND_OF_VOUCHER.get(voucher.voucher_type)
-    amounts = {int(k): Decimal(v).quantize(Decimal('0.01')) for k, v in amounts.items() if Decimal(v or 0) > 0}
+    amounts = {int(k): money(Decimal(v)) for k, v in amounts.items() if Decimal(v or 0) > 0}
     with transaction.atomic():
         voucher.allocations.all().delete()
         if not amounts:

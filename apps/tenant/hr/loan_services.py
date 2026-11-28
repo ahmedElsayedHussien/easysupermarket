@@ -15,6 +15,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from .models import EmployeeLoan, Payroll, PayrollLoanDeduction
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 CENT = Decimal('0.01')
@@ -31,7 +32,7 @@ def with_balances(queryset):
 
 def _split(amount, count):
     count = max(int(count or 1), 1)
-    return (Decimal(amount) / count).quantize(CENT)
+    return money(Decimal(amount) / count)
 
 
 def create_cash_loan(employee, amount, installments, start_year, start_month, treasury, reason='', user=None):
@@ -40,7 +41,7 @@ def create_cash_loan(employee, amount, installments, start_year, start_month, tr
     from apps.tenant.invoicing.shift_services import _post
     from apps.tenant.services.journal_service import _get_system_account
 
-    amount = Decimal(amount).quantize(CENT)
+    amount = money(Decimal(amount))
     if amount <= 0:
         raise ValidationError('مبلغ السلفة لازم يكون أكبر من صفر.')
     if int(installments or 0) < 1:
@@ -77,7 +78,7 @@ def shortage_loan_for_session(session, user=None):
     (the money is already on 1135 from the shift close). Once per shift; None when the
     cashier has no employee profile."""
     employee = getattr(session.user, 'employee_profile', None) if session.user_id else None
-    amount = abs(session.difference or ZERO).quantize(CENT)
+    amount = money(abs(session.difference or ZERO))
     if employee is None or amount < CENT:
         return None
     day = timezone.localdate(session.end_time) if session.end_time else timezone.localdate()
@@ -123,7 +124,7 @@ def due_installments(employees, year, month, exclude_payroll_ids=()):
         left = loan.amount - (other.get(loan.id) or ZERO)
         due = min(loan.monthly_installment, left)
         if due >= CENT:
-            out.setdefault(loan.employee_id, []).append((loan, due.quantize(CENT)))
+            out.setdefault(loan.employee_id, []).append((loan, money(due)))
     return out
 
 

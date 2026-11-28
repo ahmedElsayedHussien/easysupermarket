@@ -27,6 +27,7 @@ from .forms import (
 )
 from django.db import transaction
 from django.core.exceptions import ValidationError
+from apps.tenant.core.money import money
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +171,10 @@ class JournalEntryListView(CustomPermissionRequiredMixin, ListView):
     def get_queryset(self):
         from django.db.models import DecimalField, Sum, Value
         from django.db.models.functions import Coalesce
-        money = DecimalField(max_digits=20, decimal_places=2)
+        money_field = DecimalField(max_digits=20, decimal_places=2)
         queryset = (JournalEntry.objects.select_related('reversal_of', 'reversed_by')
-                    .annotate(total_debit=Coalesce(Sum('items__debit'), Value(Decimal('0')), output_field=money),
-                              total_credit=Coalesce(Sum('items__credit'), Value(Decimal('0')), output_field=money))
+                    .annotate(total_debit=Coalesce(Sum('items__debit'), Value(Decimal('0')), output_field=money_field),
+                              total_credit=Coalesce(Sum('items__credit'), Value(Decimal('0')), output_field=money_field))
                     .order_by('-date', '-created_at'))
         
         start_date = self.request.GET.get('start_date')
@@ -642,7 +643,7 @@ def trial_balance(request):
     total_debit = Decimal('0.00')
     total_credit = Decimal('0.00')
     for acc in accounts:
-        net = (acc.own_debit - acc.own_credit).quantize(Decimal('0.01'))
+        net = money(acc.own_debit - acc.own_credit)
         if net == 0:
             continue
         acc.tb_debit = net if net > 0 else Decimal('0.00')

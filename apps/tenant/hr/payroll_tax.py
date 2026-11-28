@@ -9,6 +9,7 @@
 All Decimal, rounded to the piastre.
 """
 from decimal import Decimal
+from apps.tenant.core.money import money
 
 CENT = Decimal('0.01')
 ZERO = Decimal('0')
@@ -36,9 +37,9 @@ def compute(employee, gross, settings):
     if settings.insurance_enabled and employee.is_insured:
         wage = employee.insurance_wage if employee.insurance_wage else employee.base_salary
         wage = min(max(Decimal(wage or 0), settings.insurance_min_wage), settings.insurance_max_wage)
-        out['social_insurance'] = (wage * settings.employee_insurance_rate / 100).quantize(CENT)
-        out['employer_insurance'] = (wage * settings.employer_insurance_rate / 100).quantize(CENT)
+        out['social_insurance'] = money(wage * settings.employee_insurance_rate / 100)
+        out['employer_insurance'] = money(wage * settings.employer_insurance_rate / 100)
     if settings.tax_enabled and not employee.tax_exempt and gross > 0:
         yearly = (gross - out['social_insurance']) * 12 - settings.personal_exemption
-        out['income_tax'] = (annual_tax(yearly, settings.brackets) / 12).quantize(CENT)
+        out['income_tax'] = money(annual_tax(yearly, settings.brackets) / 12)
     return out

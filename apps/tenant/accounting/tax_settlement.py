@@ -11,6 +11,7 @@ from django.db.models import DecimalField, F, Sum, Value
 from django.db.models.functions import Coalesce
 
 from .models import JournalEntry, JournalItem, TaxSettlement
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 MONEY = DecimalField(max_digits=20, decimal_places=2)
@@ -117,7 +118,7 @@ def pay(kind, amount, treasury, bank, user=None, date=None):
     from apps.tenant.services.journal_service import _get_system_account
     date = date or datetime.date.today()
     code = VAT_PAYABLE if kind == TaxSettlement.VAT_PAY else WHT_PAYABLE
-    amount = Decimal(amount or 0).quantize(Decimal('0.01'))
+    amount = money(Decimal(amount or 0))
     with transaction.atomic():
         due, acc = _balance(code, date)
         if amount <= 0 or amount > due:

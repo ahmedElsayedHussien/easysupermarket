@@ -19,6 +19,7 @@ from apps.tenant.core.decorators import custom_permission_required, is_admin_use
 from .services import post_payroll
 from .attendance_services import compute_hours
 from apps.tenant.core.usernames import display_username
+from apps.tenant.core.money import money
 
 # An open attendance (checked-in, not checked-out) is matched for check-out as long as it
 # started within this window, so overnight shifts work; older forgotten ones are ignored.
@@ -65,7 +66,7 @@ def _deductible_delay(delays, grace_hours):
         d = d or Decimal('0')
         if d > grace_hours:
             total += d - grace_hours
-    return total.quantize(Decimal('0.01'))
+    return money(total)
 
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -392,11 +393,11 @@ def payroll_process(request):
             total_delay = att['deductible_delay']
             total_overtime = att['overtime_hours']
             daily_rate = _daily_rate(emp.base_salary, year, month, cfg['day_basis'], cfg['weekly_off'])
-            absence_deduction = (daily_rate * att['absent_days']).quantize(Decimal('0.01'))
-            delay_deduction = (total_delay * emp.deduction_per_hour).quantize(Decimal('0.01'))
+            absence_deduction = money(daily_rate * att['absent_days'])
+            delay_deduction = money(total_delay * emp.deduction_per_hour)
 
             deductions = delay_deduction + absence_deduction
-            overtime_pay = (total_overtime * emp.overtime_per_hour).quantize(Decimal('0.01'))
+            overtime_pay = money(total_overtime * emp.overtime_per_hour)
 
             commission_pay = commissions.get(emp.id) or Decimal('0.00')
             net_salary = emp.base_salary - deductions + overtime_pay + commission_pay

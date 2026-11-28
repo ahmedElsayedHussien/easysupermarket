@@ -18,6 +18,7 @@ from django.core.exceptions import ValidationError
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 import logging
+from apps.tenant.core.money import unit
 
 
 logger = logging.getLogger(__name__)
@@ -288,7 +289,7 @@ def _process_sale_invoice(invoice, lines):
 
         # Sum COGS from all consumed batches for this line
         line_cogs = sum(c['total_cost'] for c in consumptions)
-        line.cogs_amount = Decimal(str(line_cogs)).quantize(Decimal('0.0001'))
+        line.cogs_amount = unit(Decimal(str(line_cogs)))
         line.save(update_fields=['cogs_amount'])
         total_cogs += line.cogs_amount
 
@@ -345,7 +346,7 @@ def _consume_from_source_batches(product, warehouse, original_line, quantity, re
             'batch': b,
             'quantity_consumed': take,
             'unit_cost': b.unit_cost,
-            'total_cost': (take * b.unit_cost).quantize(Decimal('0.0001')),
+            'total_cost': unit(take * b.unit_cost),
         })
         remaining -= take
     return consumptions, remaining
@@ -391,9 +392,9 @@ def _process_purchase_invoice(invoice, lines):
                 if orig_line and orig_line.quantity > 0 and orig_line.cogs_amount > 0:
                     orig_conv = orig_line.factor
                     orig_base_qty = orig_line.quantity * orig_conv
-                    unit_cost = (orig_line.cogs_amount / orig_base_qty).quantize(Decimal('0.0001'))
+                    unit_cost = unit(orig_line.cogs_amount / orig_base_qty)
         else:
-            unit_cost = (line.subtotal / base_quantity).quantize(Decimal('0.0001')) if base_quantity > 0 else (line.unit_price / conversion_factor)
+            unit_cost = unit(line.subtotal / base_quantity) if base_quantity > 0 else (line.unit_price / conversion_factor)
 
         add_inventory_batch(
             product=line.product,
@@ -413,7 +414,7 @@ def _process_purchase_invoice(invoice, lines):
         )
 
         if invoice.invoice_type == Invoice.RETURN_SALE:
-            line.cogs_amount = (unit_cost * base_quantity).quantize(Decimal('0.0001'))
+            line.cogs_amount = unit(unit_cost * base_quantity)
             line.save(update_fields=['cogs_amount'])
 
     # --- Recalculate invoice totals ---
@@ -628,7 +629,7 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                 base_qty -= _restore_consumed(invoice, line.product, base_qty, consumed)
                 if base_qty <= Decimal('0'):
                     continue
-                unit_cost = (line.cogs_amount / (line.quantity * conv)).quantize(Decimal('0.0001')) if (line.cogs_amount > 0 and line.quantity > 0) else (line.product.get_average_cost(invoice.warehouse) or Decimal('0'))
+                unit_cost = unit(line.cogs_amount / (line.quantity * conv)) if (line.cogs_amount > 0 and line.quantity > 0) else (line.product.get_average_cost(invoice.warehouse) or Decimal('0'))
 
                 add_inventory_batch(
                     product=line.product,
@@ -804,8 +805,8 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                     continue
                 # no movement found (old data): at the cost booked on the line, else the price net of discount
                 full_qty = line.quantity * conv
-                unit_cost = ((line.cogs_amount / full_qty) if (line.cogs_amount and full_qty) else
-                             (line.subtotal / full_qty if full_qty else Decimal('0'))).quantize(Decimal('0.0001'))
+                unit_cost = unit((line.cogs_amount / full_qty) if (line.cogs_amount and full_qty) else
+                             (line.subtotal / full_qty if full_qty else Decimal('0')))
                 add_inventory_batch(
                     product=line.product,
                     warehouse=invoice.warehouse,

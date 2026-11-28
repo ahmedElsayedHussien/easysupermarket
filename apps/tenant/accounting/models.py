@@ -17,6 +17,7 @@ from mptt.models import MPTTModel, TreeForeignKey
 from decimal import Decimal
 import datetime
 import logging
+from apps.tenant.core.money import money, unit
 
 logger = logging.getLogger(__name__)
 
@@ -273,8 +274,8 @@ class Account(MPTTModel):
         total_debit = sums['d'] or Decimal('0')
         total_credit = sums['c'] or Decimal('0')
         if self.normal_balance == 'DEBIT':
-            return (total_debit - total_credit).quantize(Decimal('0.0001'))
-        return (total_credit - total_debit).quantize(Decimal('0.0001'))
+            return unit(total_debit - total_credit)
+        return unit(total_credit - total_debit)
 
     @property
     def has_children(self):
@@ -923,8 +924,8 @@ class Expense(models.Model):
 
     def save(self, *args, **kwargs):
         # Calculate amounts
-        self.vat_amount = (self.amount * (self.vat_percent / Decimal('100.0'))).quantize(Decimal('0.01'))
-        self.withholding_tax_amount = (self.amount * (self.withholding_tax_percent / Decimal('100.0'))).quantize(Decimal('0.01'))
+        self.vat_amount = money(self.amount * (self.vat_percent / Decimal('100.0')))
+        self.withholding_tax_amount = money(self.amount * (self.withholding_tax_percent / Decimal('100.0')))
         self.total_amount = self.amount + self.vat_amount - self.withholding_tax_amount
 
         if not self.expense_number:
@@ -1733,13 +1734,13 @@ class EServiceTransaction(models.Model):
         rule = EServiceCommissionRule.match(self.transaction_type, machine)
         self.commission_overridden = False
         if rule is None:
-            setattr(self, self.commission_field, Decimal(str(entered or 0)).quantize(Decimal('0.01')))
+            setattr(self, self.commission_field, money(Decimal(str(entered or 0))))
             return None
         computed = rule.compute(self.principal_amount)
         if entered is None:
             setattr(self, self.commission_field, computed)
             return rule
-        entered = Decimal(str(entered)).quantize(Decimal('0.01'))
+        entered = money(Decimal(str(entered)))
         if entered != computed:
             if not can_override:
                 raise ValidationError(
@@ -1993,7 +1994,7 @@ class EServiceCommissionRule(models.Model):
             value = self.min_amount
         if self.max_amount and value > self.max_amount:
             value = self.max_amount
-        return Decimal(value).quantize(Decimal('0.01'))
+        return money(Decimal(value))
 
     @classmethod
     def match(cls, transaction_type, pos_machine=None):
@@ -3109,9 +3110,9 @@ class FixedAsset(models.Model):
 
         # Automatic sync between useful_life_years and depreciation_rate
         if self.useful_life_years and self.useful_life_years > Decimal('0'):
-            self.depreciation_rate = (Decimal('100.0') / self.useful_life_years).quantize(Decimal('0.01'))
+            self.depreciation_rate = money(Decimal('100.0') / self.useful_life_years)
         elif self.depreciation_rate and self.depreciation_rate > Decimal('0'):
-            self.useful_life_years = (Decimal('100.0') / self.depreciation_rate).quantize(Decimal('0.01'))
+            self.useful_life_years = money(Decimal('100.0') / self.depreciation_rate)
 
         # Auto-update status if fully depreciated and still active
         if self.pk and self.status == self.AssetStatus.ACTIVE:
@@ -3134,10 +3135,10 @@ class FixedAsset(models.Model):
             return Decimal('0.00')
         if self.useful_life_years and self.useful_life_years > Decimal('0'):
             total_months = self.useful_life_years * Decimal('12.0')
-            return (self.depreciable_base / total_months).quantize(Decimal('0.01'))
+            return money(self.depreciable_base / total_months)
         if self.depreciation_rate and self.depreciation_rate > Decimal('0'):
             annual = self.depreciable_base * (self.depreciation_rate / Decimal('100.0'))
-            return (annual / Decimal('12.0')).quantize(Decimal('0.01'))
+            return money(annual / Decimal('12.0'))
         return Decimal('0.00')
 
     @staticmethod
@@ -3329,13 +3330,13 @@ class Loan(models.Model):
         database in the same query (list pages and reports: no queries per loan)."""
         from django.db.models import Count, DecimalField, Q, Value
         from django.db.models.functions import Coalesce
-        money = DecimalField(max_digits=18, decimal_places=2)
+        money_field = DecimalField(max_digits=18, decimal_places=2)
         paid = Q(installments__is_paid=True)
         return queryset.annotate(
             _paid_principal=Coalesce(Sum('installments__principal_amount', filter=paid), Value(Decimal('0')),
-                                     output_field=money),
+                                     output_field=money_field),
             _paid_interest=Coalesce(Sum('installments__interest_amount', filter=paid), Value(Decimal('0')),
-                                    output_field=money),
+                                    output_field=money_field),
             _overdue_count=Count('installments', filter=Q(installments__is_paid=False,
                                                           installments__due_date__lt=datetime.date.today())),
         )
@@ -3406,8 +3407,8 @@ class Loan(models.Model):
         self.installments.filter(is_paid=False).delete()
 
         n = self.installments_count
-        base_p = (self.principal_amount / Decimal(n)).quantize(Decimal('0.01'))
-        base_int = (self.total_interest_amount / Decimal(n)).quantize(Decimal('0.01'))
+        base_p = money(self.principal_amount / Decimal(n))
+        base_int = money(self.total_interest_amount / Decimal(n))
 
         current_date = self.first_due_date
         accumulated_p = Decimal('0.00')

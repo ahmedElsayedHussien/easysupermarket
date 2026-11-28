@@ -43,3 +43,24 @@ class FieldDigitsTests(SimpleTestCase):
                 for m in apps.get_models() for f in m._meta.get_fields()
                 if isinstance(f, models.DecimalField) and f.model is m and (f.max_digits, f.decimal_places) in narrow]
         self.assertEqual(left, [])
+
+
+class OneRoundingRuleTests(SimpleTestCase):
+    """Phase 5: amounts are rounded through money() / unit() only — no hand-written quantize to 0.01 / 0.0001
+    (whose default rounding is half-even) outside core.money; einvoicing keeps its own ETA formulas."""
+
+    def test_no_hand_written_cent_or_unit_quantize(self):
+        import re
+        from pathlib import Path
+        from django.conf import settings
+        pattern = re.compile(r"\.quantize\(\s*(Decimal\(['\"]0\.0(0|1|001)['\"]\)|CENT|Q4|van\.CENT)\s*[,)]")
+        found = []
+        for path in (Path(settings.BASE_DIR) / 'apps').rglob('*.py'):
+            rel = path.relative_to(settings.BASE_DIR).as_posix()
+            if ('/migrations/' in rel or '/tests/' in rel or rel.endswith('tests.py') or '/einvoicing/' in rel
+                    or rel.endswith('core/money.py')):
+                continue
+            for n, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                if pattern.search(line):
+                    found.append(f'{rel}:{n}: {line.strip()}')
+        self.assertEqual(found, [], 'use apps.tenant.core.money.money() / unit()')

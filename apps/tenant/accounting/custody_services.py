@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .models import Account, Custody, CustodyExpense
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 CENT = Decimal('0.01')
@@ -44,7 +45,7 @@ def expense_accounts():
 def create_custody(employee, amount, treasury, purpose, date=None, user=None):
     from apps.tenant.invoicing.shift_services import treasury_book_balance
     from apps.tenant.services.journal_service import _get_system_account
-    amount = Decimal(amount).quantize(CENT)
+    amount = money(Decimal(amount))
     if amount <= 0:
         raise ValidationError('مبلغ العهدة لازم يكون أكبر من صفر.')
     if treasury is None:
@@ -75,7 +76,7 @@ def settle_custody(custody, expenses, returned=ZERO, return_treasury=None, lefto
     spent + returned <  amount   -> the rest must become a salary loan (leftover_to_loan)
     spent > amount (returned 0)  -> the extra is paid back to the employee from return_treasury"""
     from apps.tenant.services.journal_service import _get_system_account
-    returned = Decimal(returned or 0).quantize(CENT)
+    returned = money(Decimal(returned or 0))
     with transaction.atomic():
         c = Custody.objects.select_for_update(of=('self',)).select_related('employee__user', 'treasury').get(pk=custody.pk)
         if c.status != Custody.OPEN:
@@ -83,7 +84,7 @@ def settle_custody(custody, expenses, returned=ZERO, return_treasury=None, lefto
         allowed = {a.id: a for a in expense_accounts()}
         rows = []
         for account, amount, desc in expenses:
-            amount = Decimal(amount or 0).quantize(CENT)
+            amount = money(Decimal(amount or 0))
             if amount <= 0:
                 continue
             if account is None or account.id not in allowed:

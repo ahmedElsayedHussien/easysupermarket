@@ -9,6 +9,7 @@ the global default, and never returns a treasury that belongs to another branch.
 """
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
+from apps.tenant.core.money import money
 
 
 def get_settings():
@@ -92,7 +93,7 @@ def round_cash(amount):
     amount = Decimal(str(amount))
     if step <= 0:
         return amount
-    return ((amount / step).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * step).quantize(Decimal('0.01'))
+    return money((amount / step).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * step)
 
 
 # ---------------------------------------------------------------------------

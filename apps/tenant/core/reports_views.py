@@ -22,6 +22,7 @@ from apps.tenant.core.access import (
     is_branch_unassigned,
 )
 from apps.tenant.core.usernames import display_username
+from apps.tenant.core.money import money
 
 # Hard cap on the number of rows written to an Excel export.
 EXPORT_MAX_ROWS = 50000
@@ -3143,7 +3144,7 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
             def to_dec(val):
                 if val is None:
                     return Decimal('0.00')
-                return Decimal(str(val)).quantize(Decimal('0.01'))
+                return money(Decimal(str(val)))
 
             # KPI Summary
             ws.append([])
@@ -3727,7 +3728,7 @@ def export_shift_detail_excel(request, pk):
     def to_dec(val):
         if val is None:
             return Decimal('0.00')
-        return Decimal(str(val)).quantize(Decimal('0.01'))
+        return money(Decimal(str(val)))
 
     # 1. Main Title
     ws.merge_cells('A1:F1')

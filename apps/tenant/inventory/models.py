@@ -15,6 +15,7 @@ from mptt.models import MPTTModel, TreeForeignKey
 from decimal import Decimal
 import datetime
 from django.conf import settings
+from apps.tenant.core.money import unit
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +290,7 @@ class Product(models.Model):
         total_qty = agg['q'] or Decimal('0')
         if total_qty == 0:
             return self.last_purchase_price
-        return ((agg['v'] or Decimal('0')) / total_qty).quantize(Decimal('0.0001'))
+        return unit((agg['v'] or Decimal('0')) / total_qty)
 
     @property
     def is_low_stock(self):
@@ -709,7 +710,7 @@ class StockAdjustmentLine(models.Model):
     @property
     def base_quantity(self):
         qty = self.quantity or Decimal('0')
-        return (qty * self.factor).quantize(Decimal('0.0001'))
+        return unit(qty * self.factor)
 
     @property
     def base_unit_cost(self):
@@ -718,7 +719,7 @@ class StockAdjustmentLine(models.Model):
             return Decimal('0')
         f = self.factor
         if f > Decimal('0'):
-            return (cost / f).quantize(Decimal('0.0001'))
+            return unit(cost / f)
         return cost
 
 # ---------------------------------------------------------------------------

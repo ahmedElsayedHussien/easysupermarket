@@ -18,6 +18,7 @@ from django.db import transaction
 from decimal import Decimal
 from typing import List, Optional
 import logging
+from apps.tenant.core.money import money, unit
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,8 @@ def _offset_deficits(product, warehouse, batch, user=None):
 
         actual_cost = batch.unit_cost
         estimated_cost = neg_batch.unit_cost
-        diff_per_unit = (actual_cost - estimated_cost).quantize(Decimal('0.0001'))
-        diff_for_batch = (diff_per_unit * offset).quantize(Decimal('0.01'))
+        diff_per_unit = unit(actual_cost - estimated_cost)
+        diff_for_batch = money(diff_per_unit * offset)
         total_cost_diff += diff_for_batch
         total_offset_qty += offset
 
@@ -206,7 +207,7 @@ def consume_fifo_batches(
         batch.quantity_remaining -= consume_from_this
         batch.save(update_fields=['quantity_remaining', 'updated_at'])
 
-        total_cost = (consume_from_this * batch.unit_cost).quantize(Decimal('0.0001'))
+        total_cost = unit(consume_from_this * batch.unit_cost)
 
         StockMovement.objects.create(
             product=product,
@@ -259,7 +260,7 @@ def consume_fifo_batches(
             notes=notes or f'استهلاك رصيد سالب - عجز {remaining_to_consume}'
         )
 
-        total_cost = (remaining_to_consume * estimated_unit_cost).quantize(Decimal('0.0001'))
+        total_cost = unit(remaining_to_consume * estimated_unit_cost)
         consumptions.append({
             'batch': deficit_batch,
             'quantity_consumed': remaining_to_consume,
@@ -380,7 +381,7 @@ def get_stock_value(warehouse=None, product=None) -> Decimal:
     for batch in qs:
         total += batch.quantity_remaining * batch.unit_cost
 
-    return total.quantize(Decimal('0.0001'))
+    return unit(total)
 
 
 def _transfer_serialized(product, from_warehouse, to_warehouse, quantity, reference, serial_ids=None):

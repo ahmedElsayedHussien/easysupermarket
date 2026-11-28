@@ -18,6 +18,7 @@ from apps.tenant.core.models import Employee
 from .models import (Department, EmployeeAsset, EmployeeDocument, EmployeeLoan, EmployeeProfile, EndOfService, JobTitle,
                      LeaveRequest, LeaveType, LoanRequest, Payroll)
 from .views import _employee_name, _scope_by_branch
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 MONEY = DecimalField(max_digits=14, decimal_places=2)
@@ -145,13 +146,13 @@ def employee_file(request, pk):
 def eos_preview(emp, termination_date):
     from .loan_services import with_balances
     hire = getattr(getattr(emp, 'hr_profile', None), 'hire_date', None) or timezone.localdate(emp.user.date_joined)
-    years = max(Decimal((termination_date - hire).days) / Decimal('365'), ZERO).quantize(Decimal('0.01'))
-    daily = (emp.base_salary / Decimal(30)).quantize(Decimal('0.01')) if emp.base_salary else ZERO
+    years = money(max(Decimal((termination_date - hire).days) / Decimal('365'), ZERO))
+    daily = money(emp.base_salary / Decimal(30)) if emp.base_salary else ZERO
     leave_left, _ = _leave_remaining(emp, termination_date.year)
     loans_left = sum((l.remaining for l in with_balances(EmployeeLoan.objects.filter(employee=emp, status=EmployeeLoan.ACTIVE))), ZERO)
     open_assets = list(emp.assets.filter(returned_on__isnull=True))
     return {'hire': hire, 'years': years, 'daily_rate': daily, 'leave_days': max(leave_left, ZERO),
-            'leave_encashment': (max(leave_left, ZERO) * daily).quantize(Decimal('0.01')),
+            'leave_encashment': money(max(leave_left, ZERO) * daily),
             'loans_left': loans_left, 'open_assets': open_assets}
 
 
@@ -163,9 +164,9 @@ def post_end_of_service(emp, termination_date, reason, severance, leave_days, tr
     p = eos_preview(emp, termination_date)
     if p['open_assets']:
         raise ValidationError('فيه عهد عينية لسه مرجعتش: ' + '، '.join(a.item for a in p['open_assets']))
-    severance = Decimal(severance or 0).quantize(Decimal('0.01'))
+    severance = money(Decimal(severance or 0))
     leave_days = Decimal(leave_days or 0)
-    encash = (leave_days * p['daily_rate']).quantize(Decimal('0.01'))
+    encash = money(leave_days * p['daily_rate'])
     if severance < 0 or leave_days < 0:
         raise ValidationError('المكافأة وأيام الإجازة مينفعش يكونوا بالسالب.')
     gross = severance + encash

@@ -25,6 +25,7 @@ from apps.tenant.inventory.models import Product
 from . import van_services as van
 from .models import Invoice, InvoiceLine, LoadingOrder, RepCashHandover, UnloadingOrder
 from .rep_services import rep_for_user
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 
@@ -206,8 +207,8 @@ def _rep_price_edit():
 
 
 def _quote_json(cart):
-    s = lambda d: str(d.quantize(van.CENT))  # noqa: E731
-    pct = lambda d: f'{d.quantize(van.CENT).normalize():f}'  # noqa: E731
+    s = lambda d: str(money(d))  # noqa: E731
+    pct = lambda d: f'{money(d).normalize():f}'  # noqa: E731
     return {'lines': [{'product_id': l['product'].id, 'uom_id': l['uom'].id if l['uom'] else '',
                        'price': s(l['price']), 'list_price': s(l['list_price']), 'disc_pct': pct(l['disc_pct']), 'disc_amount': s(l['disc_amount']),
                        'tax_rate': pct(l['tax_rate']), 'tax': s(l['tax']), 'wht_rate': pct(l['wht_rate']),
@@ -427,7 +428,7 @@ def _box_balance_until(rep, day, inclusive=True):
     flt = {'entry__date__lte': day} if inclusive else {'entry__date__lt': day}
     s = JournalItem.objects.filter(account_id=rep.treasury.account_id, entry__status=JournalEntry.POSTED, **flt) \
         .aggregate(d=Sum('debit'), c=Sum('credit'))
-    return ((s['d'] or ZERO) - (s['c'] or ZERO)).quantize(van.CENT)
+    return money((s['d'] or ZERO) - (s['c'] or ZERO))
 
 
 @rep_app_view
@@ -443,20 +444,20 @@ def day(request):
     d = parse_date(request.GET.get('date') or '') or today
     if d > today:
         d = today
-    money = DecimalField(max_digits=18, decimal_places=2)
+    money_field = DecimalField(max_digits=18, decimal_places=2)
     invoices = list(Invoice.objects.filter(sales_rep=rep, status__in=[Invoice.POSTED, Invoice.CANCELLED], date=d,
                                            invoice_type__in=[Invoice.SALE, Invoice.RETURN_SALE])
                     .select_related('partner').order_by('-id'))
     _decorate(invoices)
     agg = Invoice.objects.filter(sales_rep=rep, status=Invoice.POSTED, date=d).aggregate(
-        sales=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.SALE)), ZERO, output_field=money),
+        sales=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.SALE)), ZERO, output_field=money_field),
         sales_n=Count('id', filter=Q(invoice_type=Invoice.SALE)),
-        sales_cash=Coalesce(Sum('paid_cash', filter=Q(invoice_type=Invoice.SALE)), ZERO, output_field=money),
-        sales_credit=Coalesce(Sum('paid_credit', filter=Q(invoice_type=Invoice.SALE)), ZERO, output_field=money),
-        ret=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.RETURN_SALE)), ZERO, output_field=money),
+        sales_cash=Coalesce(Sum('paid_cash', filter=Q(invoice_type=Invoice.SALE)), ZERO, output_field=money_field),
+        sales_credit=Coalesce(Sum('paid_credit', filter=Q(invoice_type=Invoice.SALE)), ZERO, output_field=money_field),
+        ret=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.RETURN_SALE)), ZERO, output_field=money_field),
         ret_n=Count('id', filter=Q(invoice_type=Invoice.RETURN_SALE)),
         ret_cash=Coalesce(Sum('total_amount', filter=Q(invoice_type=Invoice.RETURN_SALE, payment_type='CASH')),
-                          ZERO, output_field=money),
+                          ZERO, output_field=money_field),
         customers=Count('partner', filter=Q(invoice_type=Invoice.SALE), distinct=True))
     agg['ret_credit'] = agg['ret'] - agg['ret_cash']
     agg['net'] = agg['sales'] - agg['ret']
@@ -476,7 +477,7 @@ def day(request):
                      sold=Coalesce(Sum(base, filter=Q(invoice__invoice_type=Invoice.SALE)), ZERO, output_field=qty),
                      back=Coalesce(Sum(base, filter=Q(invoice__invoice_type=Invoice.RETURN_SALE)), ZERO, output_field=qty),
                      amount=Coalesce(Sum('total_amount', filter=Q(invoice__invoice_type=Invoice.SALE)), ZERO,
-                                     output_field=money))
+                                     output_field=money_field))
                  .order_by('-amount', 'product__name'))
     for it in items:
         it['sold'], it['back'] = f"{it['sold'].normalize():f}", f"{it['back'].normalize():f}"

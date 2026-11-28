@@ -10,6 +10,7 @@ from apps.tenant.core.models import Employee, Branch, Role
 from django.db import transaction
 from .models import SystemSetting
 from .usernames import namespace_username, display_username
+from apps.tenant.core.money import money
 
 USERNAME_TAKEN_MSG = 'اسم المستخدم هذا مستخدم بالفعل.'
 NO_BRANCH_HELP = 'الموظفون غير المديرين بدون فرع لن يروا أي بيانات خاصة بالفروع.'
@@ -176,7 +177,7 @@ class SystemSettingForm(forms.ModelForm):
             # Decimal('0') must render as the '0.00' option to be pre-selected.
             rounding = self.initial.get('pos_cash_rounding')
             if rounding is not None:
-                self.initial['pos_cash_rounding'] = Decimal(str(rounding)).quantize(Decimal('0.01'))
+                self.initial['pos_cash_rounding'] = money(Decimal(str(rounding)))
 
         treasury = self.fields.get('default_pos_treasury')
         if treasury is not None:

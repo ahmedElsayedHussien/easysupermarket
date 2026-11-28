@@ -28,6 +28,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 CENT = Decimal('0.01')
@@ -80,8 +81,8 @@ def _booked_money_line(invoice, leg, leg_amount):
     if entry is None or entry.status != 'POSTED' or entry.is_reversed:
         raise ValidationError(f'قيد بيع الفاتورة {invoice.invoice_number} مش مرحّل — صحّح يدوي من القيود.')
     holders = EWallet if leg == 'EWALLET' else BankAccount
-    money = set(holders.objects.exclude(account=None).values_list('account_id', flat=True))
-    lines = [i for i in entry.items.select_related('account') if i.debit > 0 and i.account_id in money]
+    money_accounts = set(holders.objects.exclude(account=None).values_list('account_id', flat=True))
+    lines = [i for i in entry.items.select_related('account') if i.debit > 0 and i.account_id in money_accounts]
     if len(lines) > 1:
         lines = [i for i in lines if i.debit == leg_amount]
     if len(lines) != 1:
@@ -139,14 +140,14 @@ def correct_payment(invoice, method, user, reason, bank_account=None, ewallet=No
             recorded = C.CASH
             if legs.get(C.CASH, ZERO) <= 0:
                 raise ValidationError('الفاتورة مفيهاش مبلغ نقدي يتصحح.')
-        leg_amount = legs[recorded].quantize(CENT)
+        leg_amount = money(legs[recorded])
         booked = _booked_money_line(inv, recorded, leg_amount) if to_cash else None
         if booked is not None:
             leg_amount = min(leg_amount, booked.debit)
         if amount in (None, ''):
             amount = leg_amount
         try:
-            amount = Decimal(str(amount)).quantize(CENT)
+            amount = money(Decimal(str(amount)))
         except Exception:
             raise ValidationError('المبلغ مش رقم صحيح.')
         if amount < CENT:
@@ -155,7 +156,7 @@ def correct_payment(invoice, method, user, reason, bank_account=None, ewallet=No
             raise ValidationError(f'المبلغ أكبر من اللي اتسجل {names[recorded]} على الفاتورة ({leg_amount:.2f}).')
         variance_acc = _variance_account(session, shortage=not to_cash)
         already = sum((c.amount for c in session.payment_corrections.all()), ZERO)
-        left = abs(session.difference or ZERO).quantize(CENT) - already
+        left = money(abs(session.difference or ZERO)) - already
         if amount > left:
             kind = 'الزيادة المتبقية' if to_cash else 'العجز المتبقي'
             raise ValidationError(f'{kind} في الوردية #{session.pk} {left:.2f} بس — أقل من مبلغ الفاتورة '

@@ -19,6 +19,7 @@ from django.shortcuts import redirect, render
 from apps.tenant.core.decorators import custom_permission_required
 
 from .models import BankAccount, IntermediaryCompany, IntermediarySettlement, JournalEntry, JournalItem
+from apps.tenant.core.money import money
 
 ZERO = Decimal('0')
 CENT = Decimal('0.01')
@@ -34,7 +35,7 @@ def balances(companies):
                 .values('account_id').annotate(b=Coalesce(Sum(F('debit') - F('credit'),
                                                               output_field=DecimalField(max_digits=18, decimal_places=2)), ZERO))
                 .values_list('account_id', 'b'))
-    return {cid: (rows.get(acc) or ZERO).quantize(CENT) for acc, cid in by_acc.items()}
+    return {cid: money(rows.get(acc) or ZERO) for acc, cid in by_acc.items()}
 
 
 def _dec(v, label):
@@ -44,7 +45,7 @@ def _dec(v, label):
         raise ValidationError(f'{label}: رقم غير صالح.')
     if not d.is_finite() or d < 0:
         raise ValidationError(f'{label}: لازم رقم موجب.')
-    return d.quantize(CENT)
+    return money(d)
 
 
 def settle(company, gross, fee, bank_account, user=None, reference='', vat=ZERO, vat_recoverable=True):

@@ -23,7 +23,7 @@ from django.utils import timezone
 from .models import (Invoice, InvoiceLine, LoadingOrder, LoadingOrderLine, RepCashHandover, SalesRep,
                      UnloadingOrder, UnloadingOrderLine)
 
-from apps.tenant.core.money import line_amounts, money
+from apps.tenant.core.money import line_amounts, money, unit
 
 ZERO = Decimal('0')
 CENT = Decimal('0.01')
@@ -127,7 +127,7 @@ def cash_balances(reps):
                 .order_by().values('account_id').annotate(
                     b=Coalesce(Sum(F('debit') - F('credit'), output_field=DecimalField(max_digits=18, decimal_places=2)),
                                ZERO)).values_list('account_id', 'b'))
-    return {rep_id: (sums.get(acc) or ZERO).quantize(CENT) for acc, rep_id in by_acc.items()}
+    return {rep_id: money(sums.get(acc) or ZERO) for acc, rep_id in by_acc.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +448,7 @@ def price_cart(rep, user, rows, partner=None, invoice_disc=ZERO, invoice_disc_ty
     for i, share in zip(items, shares):
         p = i['product']
         disc = min(i['line_disc'] + share, money(i['gross']))
-        eff = (disc * HUNDRED / i['gross']).quantize(Q4) if i['gross'] else ZERO
+        eff = unit(disc * HUNDRED / i['gross']) if i['gross'] else ZERO
         if cap is not None and eff > cap + Decimal('0.01'):
             raise ValidationError(f'"{p.name}": الخصم ({eff:.2f}%) أكبر من المسموح لك ({cap.normalize():f}%).')
         rate = vat_rate if (p.tax_rate or ZERO) > 0 else ZERO
@@ -483,11 +483,11 @@ def returnable_for(partner, product_ids=None, rep=None):
     if product_ids is not None:
         qs = qs.filter(product_id__in=list(product_ids))
     base = F('quantity') * Coalesce(F('conversion_factor'), F('uom__conversion_factor'), Decimal('1'))
-    money = DecimalField(max_digits=20, decimal_places=4)
+    money_field = DecimalField(max_digits=20, decimal_places=4)
     rows = qs.order_by().values('product_id').annotate(
-        sold=Coalesce(Sum(Case(When(invoice__invoice_type=Invoice.SALE, then=base), default=0, output_field=money)), ZERO),
+        sold=Coalesce(Sum(Case(When(invoice__invoice_type=Invoice.SALE, then=base), default=0, output_field=money_field)), ZERO),
         back=Coalesce(Sum(Case(When(invoice__invoice_type=Invoice.RETURN_SALE, then=base), default=0,
-                               output_field=money)), ZERO))
+                               output_field=money_field)), ZERO))
     return {r['product_id']: max(r['sold'] - r['back'], ZERO) for r in rows if r['sold'] - r['back'] > 0}
 
 
@@ -500,7 +500,7 @@ def _new_invoice(rep, user, kind, partner, cart, notes, **extra):
         f'{"بيع" if kind == Invoice.SALE else "مرتجع"} مندوب — {rep_name(rep)}', **extra)
     for l in cart['lines']:
         InvoiceLine.objects.create(invoice=invoice, product=l['product'], quantity=l['qty'], unit_price=l['price'],
-                                   discount_fixed=l['disc_amount'], discount_pct=min(l['disc_pct'], Decimal('100')).quantize(CENT),
+                                   discount_fixed=l['disc_amount'], discount_pct=money(min(l['disc_pct'], Decimal('100'))),
                                    uom=l['uom'], tax_rate=l['tax_rate'], wht_rate=l['wht_rate'])
     invoice.recalculate_totals()
     return invoice, confirm_invoice
@@ -536,7 +536,7 @@ def rep_sale(rep, user, rows, partner=None, payment='CASH', paid_amount=None, di
     elif payment == 'CREDIT':
         cash = ZERO
     else:
-        cash = _dec(paid_amount, 'المدفوع').quantize(CENT)
+        cash = money(_dec(paid_amount, 'المدفوع'))
         if cash >= total:
             raise ValidationError('المدفوع مغطّي الفاتورة كلها — اختار نقدي.')
     credit = total - cash
@@ -625,7 +625,7 @@ def rep_collect(rep, user, partner, amount, notes='', idempotency_key=None):
     existing = find_by_idempotency_key(Voucher, parsed_key)
     if existing is not None:
         return existing
-    amount = _dec(amount, 'المبلغ').quantize(CENT)
+    amount = money(_dec(amount, 'المبلغ'))
     if amount <= 0:
         raise ValidationError('اكتب المبلغ المحصّل.')
     if not rep.treasury_id:
@@ -656,7 +656,7 @@ def post_handover(rep, amount, user=None, treasury=None, bank_account=None, char
     from apps.tenant.accounting.models import Treasury
     from apps.tenant.services.journal_service import _get_system_account
     from .shift_services import _post
-    amount = _dec(amount, 'المبلغ').quantize(CENT)
+    amount = money(_dec(amount, 'المبلغ'))
     if not rep.treasury_id:
         raise ValidationError('المندوب مالوش خزنة.')
     if sum(x is not None for x in (treasury, bank_account, intermediary)) != 1:
@@ -674,7 +674,7 @@ def post_handover(rep, amount, user=None, treasury=None, bank_account=None, char
         dest_acc = (treasury or bank_account or intermediary).ensure_account()
         if rep_acc is None or dest_acc is None:
             raise ValidationError('الخزنة أو البنك مش مربوط بحساب.')
-        balance = (rep_acc.current_balance or ZERO).quantize(CENT)
+        balance = money(rep_acc.current_balance or ZERO)
         if amount <= 0 and not (charge_shortage and balance > 0):
             raise ValidationError('اكتب المبلغ المورّد.')
         if amount > balance:
