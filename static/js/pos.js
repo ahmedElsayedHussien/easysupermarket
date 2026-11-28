@@ -2949,7 +2949,14 @@ const POS = {
             const url = this.currentShiftId
                 ? `/invoicing/pos/api/shift-stats/?session_id=${encodeURIComponent(this.currentShiftId)}`
                 : '/invoicing/pos/api/shift-stats/';
-            const resp = await fetch(url);
+            const resp = await fetch(url, {headers: {'Accept': 'application/json'}});
+            if (resp.status === 401) {
+                // the session ended: go to the login page and come back to the POS after
+                const info = await resp.json().catch(() => ({}));
+                const next = encodeURIComponent(window.location.pathname + window.location.search);
+                window.location.href = `${info.login_url || '/login/'}?next=${next}`;
+                return;
+            }
             if (!resp.ok) return;
             const data = await resp.json();
             if (!data.has_open_shift) return;

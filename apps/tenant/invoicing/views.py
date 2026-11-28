@@ -2734,9 +2734,14 @@ def get_shift_stats_data(open_session):
     }
 
 
-@login_required
 def pos_shift_stats_api(request):
-    """API endpoint returning live cashier shift stats and recent invoices."""
+    """API endpoint returning live cashier shift stats and recent invoices.
+    Polled by pos.js: a logged-out session gets JSON 401 (with the login URL), never an HTML redirect."""
+    if not request.user.is_authenticated:
+        from django.conf import settings as _settings
+        from django.shortcuts import resolve_url
+        return JsonResponse({'error': 'انتهت الجلسة — سجّل الدخول تاني.',
+                             'login_url': resolve_url(_settings.LOGIN_URL)}, status=401)
     scoped_qs = filter_by_branch(POSSession.objects.filter(status=POSSession.OPEN), request)
     requested_session_id = (request.GET.get('session_id') or '').strip()
     open_session = None
