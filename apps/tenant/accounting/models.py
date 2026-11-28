@@ -1112,6 +1112,8 @@ class Voucher(models.Model):
         related_name='voucher', verbose_name='قيد اليومية'
     )
     idempotency_key = models.UUIDField(null=True, blank=True, editable=False, verbose_name='مفتاح منع التكرار')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+                                   verbose_name='سجّله')
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

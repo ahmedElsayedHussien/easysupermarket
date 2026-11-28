@@ -1005,6 +1005,8 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
         context['title'] = 'إضافة سند قبض' if v_type == Voucher.RECEIPT else 'إضافة سند صرف'
         context['cancel_url'] = reverse_lazy('accounting:receipt_list') if v_type == Voucher.RECEIPT else reverse_lazy('accounting:payment_list')
         context['voucher_type'] = v_type
+        from apps.tenant.core.idempotency import new_form_key
+        context['idempotency_key'] = new_form_key(self.request)      # double-click on save = one voucher
         return context
 
     def form_valid(self, form):
@@ -1093,20 +1095,22 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
         idem_key = parse_idempotency_key(
             self.request.POST.get('idempotency_key') or self.request.headers.get('X-Idempotency-Key')
         )
-        existing = find_by_idempotency_key(Voucher, idem_key)
+        existing = find_by_idempotency_key(Voucher, idem_key, created_by=self.request.user)
         if existing is not None:
             self.object = existing
             return redirect(self.get_success_url())
         form.instance.idempotency_key = idem_key
+        form.instance.created_by = self.request.user
         try:
             with transaction.atomic():
                 response = super().form_valid(form)
         except IntegrityError:
-            existing = find_by_idempotency_key(Voucher, idem_key)
+            existing = find_by_idempotency_key(Voucher, idem_key, created_by=self.request.user)
             if existing is not None:
                 self.object = existing
                 return redirect(self.get_success_url())
-            raise
+            form.add_error(None, 'حصل تعارض في الحفظ — حدّث الصفحة وجرّب تاني.')
+            return self.form_invalid(form)
 
         # SystemSetting.auto_post_journals: confirm and post right away (so it immediately
         # reflects in the shift), or leave a DRAFT to be approved from the detail page.
@@ -1999,6 +2003,8 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
         context = super().get_context_data(**kwargs)
         context['title'] = 'إضافة تحويل مالي جديد'
         context['cancel_url'] = reverse_lazy('accounting:transfer_list')
+        from apps.tenant.core.idempotency import new_form_key
+        context['idempotency_key'] = new_form_key(self.request)      # double-click on save = one transfer
 
         # Prepare live balance data for frontend display (read-only GET).
         from apps.tenant.accounting.models import Treasury, BankAccount, EWallet
@@ -2031,7 +2037,7 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
         idem_key = parse_idempotency_key(
             self.request.POST.get('idempotency_key') or self.request.headers.get('X-Idempotency-Key')
         )
-        existing = find_by_idempotency_key(InternalTransfer, idem_key)
+        existing = find_by_idempotency_key(InternalTransfer, idem_key, created_by=self.request.user)
         if existing is not None:
             self.object = existing
             return redirect(self.get_success_url())
@@ -2040,11 +2046,12 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
             with transaction.atomic():
                 response = super().form_valid(form)
         except IntegrityError:
-            existing = find_by_idempotency_key(InternalTransfer, idem_key)
+            existing = find_by_idempotency_key(InternalTransfer, idem_key, created_by=self.request.user)
             if existing is not None:
                 self.object = existing
                 return redirect(self.get_success_url())
-            raise
+            form.add_error(None, 'حصل تعارض في الحفظ — حدّث الصفحة وجرّب تاني.')
+            return self.form_invalid(form)
         messages.success(self.request, 'تم حفظ مسودة التحويل بنجاح.')
         return response
 
