@@ -15,6 +15,7 @@ from .models import JournalEntry, JournalItem, TaxSettlement
 ZERO = Decimal('0')
 MONEY = DecimalField(max_digits=20, decimal_places=2)
 OUTPUT_VAT, INPUT_VAT, VAT_PAYABLE, WHT_PAYABLE, WHT_RECEIVABLE = '2130', '1190', '2135', '2120', '1155'
+ROUNDING = '5115'          # فروق التقريب — resolved through account_mapping like every system account
 
 
 def _balance(code, as_of, credit_side=True):
@@ -45,19 +46,50 @@ def _post(obj, label, lines, user):
                       user=user, source=obj)
 
 
+def eta_documents_vat(date_from, date_to):
+    """Output VAT of the period as the ETA holds it: the accepted documents (VALID, or a cancel / reject request
+    that was not granted) of invoices dated in (date_from, date_to]; a credit note counts negative.
+    Returns (VAT per the documents, sum of rounding_diff = invoice VAT − document VAT), both signed."""
+    from apps.tenant.einvoicing.models import EInvoiceLog
+    from apps.tenant.invoicing.models import Invoice
+    logs = EInvoiceLog.objects.filter(status__in=EInvoiceLog.ACCEPTED_STATES, invoice__status=Invoice.POSTED,
+                                      invoice__date__lte=date_to, eta_tax_total__isnull=False)
+    if date_from is not None:
+        logs = logs.filter(invoice__date__gt=date_from)
+    vat = diff = ZERO
+    for invoice_type, tax, rounding in logs.values_list('invoice__invoice_type', 'eta_tax_total', 'rounding_diff'):
+        sign = -1 if invoice_type == Invoice.RETURN_SALE else 1
+        vat += sign * tax
+        diff += sign * (rounding or ZERO)
+    return vat, diff
+
+
 def close_vat(period_end, user=None):
-    """Move the output / input VAT balances up to ``period_end`` into 2135 (payable)."""
+    """Move the output / input VAT balances up to ``period_end`` into 2135 (payable).
+
+    Output VAT is declared as the accepted ETA documents say (official 5-place formulas), not as the invoices'
+    own 2-place VAT: declared = money(books − Σ rounding_diff of the period's accepted documents) — exactly
+    money(Σ document VAT) when every sale of the period went to the ETA; a sale with no accepted document keeps
+    its booked VAT. The difference (books − declared) goes to the rounding account in the same entry:
+        Dr 2130 (the whole balance)  Cr 1190 / 2135 (declared)  Cr|Dr rounding (the difference)"""
     from apps.tenant.accounting.models import ensure_open_period
+    from apps.tenant.core.money import money
     ensure_open_period(period_end)
     with transaction.atomic():
         out_vat, out_acc = _balance(OUTPUT_VAT, period_end)
         in_vat, in_acc = _balance(INPUT_VAT, period_end, credit_side=False)
         if out_vat <= 0:
             raise ValidationError('مفيش ضريبة مبيعات تتقفل لحد التاريخ ده (ضريبة المشتريات بتفضل رصيد مرحّل).')
-        settled_input = max(min(in_vat, out_vat), ZERO)
-        payable = max(out_vat - in_vat, ZERO)
+        previous = (TaxSettlement.objects.filter(kind=TaxSettlement.VAT_CLOSE, period_end__lt=period_end)
+                    .order_by('-period_end').values_list('period_end', flat=True).first())
+        eta_vat, eta_diff = eta_documents_vat(previous, period_end)
+        declared = money(out_vat - eta_diff)
+        adjustment = out_vat - declared
+        settled_input = max(min(in_vat, declared), ZERO)
+        payable = max(declared - in_vat, ZERO)
         obj = TaxSettlement.objects.create(kind=TaxSettlement.VAT_CLOSE, date=period_end, period_end=period_end,
-                                           output_vat=out_vat, input_vat=in_vat, amount=payable, created_by=user)
+                                           output_vat=declared, input_vat=in_vat, amount=payable,
+                                           eta_output_vat=eta_vat, rounding_adjustment=adjustment, created_by=user)
         label = f'إقفال ضريبة القيمة المضافة حتى {period_end}'
         from apps.tenant.services.journal_service import _get_system_account
         lines = []
@@ -67,6 +99,10 @@ def close_vat(period_end, user=None):
             lines.append((in_acc, ZERO, settled_input, f'{label} - ضريبة المشتريات المخصومة'))
         if payable > 0:
             lines.append((_get_system_account(VAT_PAYABLE), ZERO, payable, f'{label} - المستحق للمصلحة'))
+        if adjustment:
+            rounding_label = f'{label} - فروق تقريب بين الفواتير ومستندات الضرائب'
+            lines.append((_get_system_account(ROUNDING), ZERO if adjustment > 0 else -adjustment,
+                          adjustment if adjustment > 0 else ZERO, rounding_label))
         obj.journal_entry = _post(obj, label, lines, user)
         obj.save(update_fields=['journal_entry'])
     return obj

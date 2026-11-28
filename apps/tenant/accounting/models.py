@@ -3630,6 +3630,12 @@ class TaxSettlement(models.Model):
     output_vat = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='ضريبة المبيعات')
     input_vat = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='ضريبة المشتريات')
     amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ')
+    # VAT_CLOSE: output VAT per the accepted ETA documents of the period (5 places, as declared) and the
+    # rounding difference against the books, booked to the rounding account in the same entry
+    eta_output_vat = models.DecimalField(max_digits=18, decimal_places=5, null=True, blank=True,
+                                         verbose_name='ضريبة المبيعات حسب مستندات الضرائب المقبولة')
+    rounding_adjustment = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'),
+                                              verbose_name='فروق تقريب (الدفاتر − المستندات)')
     treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
                                  verbose_name='الخزينة')
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, null=True, blank=True, related_name='+',

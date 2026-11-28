@@ -887,3 +887,55 @@ class EtaRoundingRecordTests(ETATestBase):
         doc = build_invoice_json(inv.id)
         self.assertEqual(doc['invoiceLines'][0]['taxableItems'][0]['amount'], 13.99999)   # 5 places, official
         self.check_identities(doc)
+
+
+class VatCloseFromEtaDocumentsTests(ETATestBase):
+    """VAT close: output VAT as the accepted ETA documents say; the books' difference goes to the rounding
+    account (5115 via account_mapping) in the same entry.
+
+    0.3333 at 14%: the invoice books 0.05 (0.33 × 14% to 2 places), the document's VAT has 5 places — the
+    difference of three such sales adds up to a piaster in the books."""
+
+    def accepted_sale(self, price, qty=1):
+        inv = make_invoice(self.w, lines=[(self.w.product, qty, D(price), 14)])
+        log = EInvoiceLog.objects.get(invoice=inv)
+        log.record_eta_totals(build_invoice_json(inv.id))
+        EInvoiceLog.objects.filter(pk=log.pk).update(status='VALID')
+        log.refresh_from_db()
+        return inv, log
+
+    def balance(self, code):
+        from apps.tenant.core.tests.factories import account
+        acc = account(code)
+        return sum((i.credit - i.debit for i in acc.journal_items.filter(entry__status='POSTED')), D('0'))
+
+    def test_output_vat_after_close_is_the_documents_vat(self):
+        import datetime
+        from apps.tenant.accounting.models import TaxSettlement
+        from apps.tenant.accounting.tax_settlement import close_vat
+        from apps.tenant.core.money import money
+        logs = [self.accepted_sale('0.3333')[1] for _ in range(3)]
+        for l in logs:
+            self.assertEqual(l.rounding_diff, D('0.05') - l.eta_tax_total)
+            self.assertNotEqual(l.rounding_diff, 0)
+        self.assertEqual(self.balance('2130'), D('0.15'))                              # 3 × 0.05 in the books
+        t = close_vat(datetime.date.today())
+        eta_vat = sum((l.eta_tax_total for l in logs), D('0'))
+        self.assertEqual(t.eta_output_vat, eta_vat)
+        self.assertEqual(t.output_vat, money(eta_vat))                                 # declared 0.14
+        self.assertEqual(t.rounding_adjustment, D('0.15') - money(eta_vat))
+        self.assertNotEqual(t.rounding_adjustment, 0)
+        self.assertEqual(self.balance('2130'), D('0'))                                 # closed
+        self.assertEqual(self.balance('2135'), money(eta_vat))                         # payable = the documents'
+        self.assertEqual(self.balance('5115'), t.rounding_adjustment)                  # the rounding, same entry
+        self.assertEqual(TaxSettlement.objects.get().journal_entry.status, 'POSTED')
+
+    def test_a_sale_without_an_accepted_document_keeps_its_booked_vat(self):
+        import datetime
+        from apps.tenant.accounting.tax_settlement import close_vat
+        self.accepted_sale('0.3333')
+        pending = make_invoice(self.w, lines=[(self.w.product, 1, D('10'), 14)])        # 1.40, still not accepted
+        self.assertEqual(EInvoiceLog.objects.get(invoice=pending).status, 'WAITING_APPROVAL')
+        t = close_vat(datetime.date.today())
+        self.assertEqual(t.output_vat, D('1.45'))                                      # 1.40 + money(0.05 − diff)
+        self.assertEqual(t.rounding_adjustment, D('0.00'))
