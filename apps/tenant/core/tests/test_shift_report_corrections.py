@@ -57,7 +57,9 @@ class ShiftReportCorrectionTests(TestCase):
         row = next(i for i in r.context['sessions_data'] if i['session'].id == self.session.id)
         self.assertEqual((row['correction']['cash'], row['correction']['digital']), (D('-100'), D('100')))
         self.assertEqual(row['total_cash_sales'], D('100'))                       # the shift itself as closed
+        self.assertEqual((row['difference'], row['difference_after']), (D('-100'), D('0')))   # explained
         self.assertContains(r, 'تسوية تصحيحات')
+        self.assertContains(r, 'اتفسر')
         x = self.client.get(url, {'export': 'excel'})
         ws = openpyxl.load_workbook(io.BytesIO(x.content)).active
         rows = list(ws.iter_rows(values_only=True))
@@ -67,6 +69,7 @@ class ShiftReportCorrectionTests(TestCase):
         self.assertEqual(float(got['تسوية تصحيحات: كاش']), -100.0)
         self.assertEqual(float(got['إلكتروني بعد التصحيح']), 100.0)
         self.assertEqual(float(got['كاش بعد التصحيح']), 0.0)
+        self.assertEqual(float(got['العجز / الزيادة بعد التصحيح']), 0.0)
 
     def test_shift_without_corrections_shows_nothing_extra(self):
         other = POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.admin)
@@ -75,6 +78,7 @@ class ShiftReportCorrectionTests(TestCase):
         r = self.client.get(reverse('core:report_shifts'))
         row = next(i for i in r.context['sessions_data'] if i['session'].id == other.id)
         self.assertIsNone(row['correction'])
+        self.assertIsNone(row['difference_after'])
 
 
 class PeriodTotalsByEntryDateTests(TestCase):
@@ -130,3 +134,26 @@ class PeriodTotalsByEntryDateTests(TestCase):
         row = next(i for i in r.context['sessions_data'] if i['session'].id == session.id)
         self.assertEqual(row['correction']['card'], D('100'))
         self.assertContains(r, 'محسوبة بتاريخ قيد التصحيح')
+
+
+class OverageExplainedTests(TestCase):
+    """The other way: a card sale really paid cash, shift closed +100 -> after the correction the overage is 0."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+        cls.bank = make_bank_account('ماكينة فيزا الفرع')
+
+    def test_overage_after_correction_is_zero(self):
+        stock_in(self.w.product, self.w.warehouse, 50, D('4'))
+        session = POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.admin)
+        sale = make_invoice(self.w, lines=[(self.w.product, 10, 10)], pos_session=session, payment_type='CARD',
+                            bank_account=self.bank)
+        POSSession.objects.filter(pk=session.pk).update(status=POSSession.CLOSED, difference=D('100'))
+        session.refresh_from_db()
+        post_shift_variance(session, 'EXPENSE', self.w.admin)
+        correct_payment(sale, ClosedShiftPaymentCorrection.CASH, self.w.admin, 'كاش')
+        login(self.client, self.w.admin)
+        r = self.client.get(reverse('core:report_shifts'))
+        row = next(i for i in r.context['sessions_data'] if i['session'].id == session.id)
+        self.assertEqual((row['difference'], row['difference_after']), (D('100'), D('0')))

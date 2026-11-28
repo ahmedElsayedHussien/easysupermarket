@@ -3066,6 +3066,9 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
         adjustments = corrections_by_session(s.id for s in page_sessions)
         for row in sessions_data:
             row['correction'] = adjustments.get(row['session'].id)
+            # what is left of the shortage / overage once the corrections explained it: a cash sale really paid
+            # by card took cash -X off the sales, so the drawer was never short of it (and the other way round)
+            row['difference_after'] = (row['difference'] or Decimal('0')) - row['correction']['cash']                 if row['correction'] else None
 
         # Grand totals over the whole filtered range (not just the current page).
         # Closed shifts use the figures stored when the shift was closed (one
@@ -3163,6 +3166,7 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
                 'صافي المبيعات', 'مبيعات كاش', 'إلكتروني/شبكة', 'عهدة افتتاحية',
                 'متوقع بالدرج', 'فعلي مسلّم', 'العجز / الزيادة', 'الحالة',
                 'تسوية تصحيحات: كاش', 'تسوية تصحيحات: إلكتروني', 'كاش بعد التصحيح', 'إلكتروني بعد التصحيح',
+                'العجز / الزيادة بعد التصحيح',
             ]
             ws.append(headers)
             header_row_idx = ws.max_row
@@ -3198,14 +3202,14 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
                 corr = item.get('correction') or {}
                 adj_cash, adj_digital = to_dec(corr.get('cash')), to_dec(corr.get('digital'))
                 row += [adj_cash, adj_digital, to_dec(item.get('total_cash_sales')) + adj_cash,
-                        digital_sales + adj_digital]
+                        digital_sales + adj_digital, to_dec(item.get('difference')) - adj_cash]
                 ws.append(row)
                 r_idx = ws.max_row
                 for col_idx in range(1, len(row) + 1):
                     cell = ws.cell(row=r_idx, column=col_idx)
                     cell.font = data_font
                     cell.border = thin_border
-                    if col_idx in [6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17]:
+                    if col_idx in [6, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18]:
                         cell.number_format = '#,##0.00'
                         cell.alignment = align_right
                     else:

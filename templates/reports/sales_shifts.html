@@ -157,6 +157,12 @@
                     <td class="text-success fw-bold">{{ item.actual_balance|floatformat:2 }}</td>
                     <td class="fw-bold {% if item.difference > 0 %}text-success{% elif item.difference < 0 %}text-danger{% else %}text-light{% endif %}">
                         {% if item.difference > 0 %}+{% endif %}{{ item.difference|floatformat:2 }}
+                        {% if item.correction %}
+                        <br><small style="color: #ff7300; font-weight: normal;" title="العجز / الزيادة بعد تصحيحات طريقة السداد">
+                            بعد التصحيح: {% if item.difference_after > 0 %}+{% endif %}{{ item.difference_after|floatformat:2 }}
+                            {% if item.difference_after == 0 %}✓ اتفسر{% endif %}
+                        </small>
+                        {% endif %}
                     </td>
                     <td>
                         {% if item.session.status == 'OPEN' %}
