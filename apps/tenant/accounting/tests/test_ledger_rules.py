@@ -3,7 +3,7 @@ from decimal import Decimal as D
 from unittest.mock import MagicMock
 
 from django.core.exceptions import ValidationError
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, transaction
 from django.test import TestCase
 
 from apps.tenant.accounting.models import JournalEntry, JournalItem
@@ -207,13 +207,15 @@ class DatabaseImmutabilityTriggerTests(TestCase):
 
         install_sqlite_posted_journalitem_trigger(connection)
         try:
+            # each refused statement in its own savepoint: on PostgreSQL an error aborts the whole
+            # transaction, and every statement after it would "fail" for that reason alone
             with connection.cursor() as cur:
-                with self.assertRaises(DatabaseError):
+                with self.assertRaises(DatabaseError), transaction.atomic():
                     cur.execute("UPDATE accounting_journalitem SET debit = '999.0000' WHERE id = %s", [item.pk])
-                with self.assertRaises(DatabaseError):
+                with self.assertRaises(DatabaseError), transaction.atomic():
                     cur.execute("DELETE FROM accounting_journalitem WHERE id = %s", [item.pk])
                 # Moving a draft item into a POSTED entry must also be blocked
-                with self.assertRaises(DatabaseError):
+                with self.assertRaises(DatabaseError), transaction.atomic():
                     cur.execute(
                         "UPDATE accounting_journalitem SET entry_id = %s WHERE id = %s",
                         [posted_entry.pk, draft_item.pk],
@@ -263,9 +265,9 @@ class DatabaseImmutabilityTriggerTests(TestCase):
         install_sqlite_auditlog_trigger(connection)
         try:
             with connection.cursor() as cur:
-                with self.assertRaises(DatabaseError):
+                with self.assertRaises(DatabaseError), transaction.atomic():
                     cur.execute("UPDATE core_auditlog SET action = 'DELETE' WHERE id = %s", [log.pk])
-                with self.assertRaises(DatabaseError):
+                with self.assertRaises(DatabaseError), transaction.atomic():
                     cur.execute("DELETE FROM core_auditlog WHERE id = %s", [log.pk])
         finally:
             drop_sqlite_auditlog_trigger(connection)
