@@ -87,6 +87,11 @@ for d in INCLUDE_DIRS:
     if os.path.exists(src_d):
         print(f"Copying directory: {d}...")
         shutil.copytree(src_d, os.path.join(DEST_DIR, d), dirs_exist_ok=True, ignore=IGNORE)
+# The signing tool's exe is a build artifact (not in git): build it before a release if it is missing
+_signer_exe = os.path.join(SOURCE_DIR, 'local_signer', 'dist', 'signer_app.exe')
+if not os.path.exists(_signer_exe):
+    print("WARNING: local_signer/dist/signer_app.exe is missing - the release will ship without the signing tool.")
+    print("         Build it first:  cd local_signer  &&  ..\venv\Scripts\python -m PyInstaller signer_app.spec --noconfirm")
 for src_rel, dst_rel in EXTRA_DIRS.items():
     src_d = os.path.join(SOURCE_DIR, src_rel)
     if os.path.exists(src_d):
