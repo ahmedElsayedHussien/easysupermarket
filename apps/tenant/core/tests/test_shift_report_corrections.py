@@ -157,3 +157,39 @@ class OverageExplainedTests(TestCase):
         r = self.client.get(reverse('core:report_shifts'))
         row = next(i for i in r.context['sessions_data'] if i['session'].id == session.id)
         self.assertEqual((row['difference'], row['difference_after']), (D('100'), D('0')))
+
+
+class PeriodTotalsByInvoiceDateTests(TestCase):
+    """A shift opened 30/11 at 22:00 and closed after midnight: each invoice counts in the month of ITS date,
+    the same month the books put it in."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+        cls.bank = make_bank_account('ماكينة فيزا الفرع')
+
+    def test_shift_past_midnight_splits_like_the_books(self):
+        import datetime
+        from django.utils import timezone
+        stock_in(self.w.product, self.w.warehouse, 50, D('4'))
+        session = POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.admin)
+        POSSession.objects.filter(pk=session.pk).update(
+            start_time=timezone.make_aware(datetime.datetime(2026, 11, 30, 22, 0)))
+        for qty, day in ((5, datetime.date(2026, 11, 30)), (3, datetime.date(2026, 12, 1))):   # 50 / 30 by card
+            make_invoice(self.w, lines=[(self.w.product, qty, 10)], pos_session=session, payment_type='CARD',
+                         bank_account=self.bank, date=day)
+        login(self.client, self.w.admin)
+
+        def card_total(date_from, date_to):
+            r = self.client.get(reverse('core:report_shifts'), {'date_from': date_from, 'date_to': date_to})
+            return {label: total for label, _rec, _adj, total in r.context['period_methods']}['فيزا / كارت']
+
+        def bank_movement(date_from, date_to):
+            items = self.bank.account.journal_items.filter(entry__status='POSTED', entry__date__gte=date_from,
+                                                           entry__date__lte=date_to)
+            return sum((i.debit - i.credit for i in items), D('0'))
+
+        self.assertEqual(card_total('2026-11-01', '2026-11-30'), D('50'))
+        self.assertEqual(card_total('2026-12-01', '2026-12-31'), D('30'))
+        self.assertEqual(card_total('2026-11-01', '2026-11-30'), bank_movement('2026-11-01', '2026-11-30'))
+        self.assertEqual(card_total('2026-12-01', '2026-12-31'), bank_movement('2026-12-01', '2026-12-31'))

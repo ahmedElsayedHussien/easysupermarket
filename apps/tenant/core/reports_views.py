@@ -2982,14 +2982,15 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
     @staticmethod
     def _period_methods(scoped_sessions, date_from, date_to):
         """Sales per payment method for the period, to match the bank / card-machine statements:
-        the shifts OPENED in the period as recorded, plus the closed-shift corrections whose ENTRY is dated in
-        the period — whatever the shift's date, since that entry is where the books show the money.
+        the shifts' invoices DATED in the period as recorded (a shift running past midnight splits as the books
+        do), plus the closed-shift corrections whose ENTRY is dated in the period — whatever the shift's date,
+        since that entry is where the books show the money.
         Rows: (label, recorded, corrections, total)."""
         from apps.tenant.invoicing.closed_shift_correction import correction_adjustments
         from apps.tenant.invoicing.models import ClosedShiftPaymentCorrection, Invoice
         from apps.tenant.invoicing.shift_services import invoice_figure_expressions
-        period_ids = scoped_sessions.filter(start_time__date__gte=date_from, start_time__date__lte=date_to).values('id')
-        f = Invoice.objects.filter(pos_session__in=period_ids, status=Invoice.POSTED).order_by().aggregate(
+        f = Invoice.objects.filter(pos_session__in=scoped_sessions.values('id'), status=Invoice.POSTED,
+                                   date__gte=date_from, date__lte=date_to).order_by().aggregate(
             **invoice_figure_expressions())
         adj = correction_adjustments(ClosedShiftPaymentCorrection.objects.filter(
             session__in=scoped_sessions.values('id'),
