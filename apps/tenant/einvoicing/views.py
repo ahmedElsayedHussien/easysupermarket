@@ -112,7 +112,7 @@ def approve_invoice_for_eta(request, log_id):
         if log.status == 'WAITING_APPROVAL':
             from .services import ETAValidationError, build_invoice_json
             try:
-                build_invoice_json(log.invoice_id)
+                log.record_eta_totals(build_invoice_json(log.invoice_id), save=False)
             except ETAValidationError as e:
                 messages.error(request, f'الفاتورة {log.invoice.invoice_number} لن تقبلها الضرائب بحالتها — '
                                         + ' • '.join(e.errors))

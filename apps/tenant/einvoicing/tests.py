@@ -864,3 +864,26 @@ class BuilderRulesTests(ETATestBase):
         with self.assertRaises(ETAValidationError) as cm:
             build_invoice_json(ret.id)
         self.assertIn('Valid', ' '.join(cm.exception.errors))
+
+
+class EtaRoundingRecordTests(ETATestBase):
+    """The document keeps the official 5-place formulas; the log records what it says next to the invoice's
+    own 2-place VAT: 3 × 33.3333 at 14% -> invoice 14.00, document 13.99999, difference 0.00001."""
+
+    def test_difference_recorded_when_the_document_is_built(self):
+        inv = make_invoice(self.w, lines=[(self.w.product, 3, D('33.3333'), 14)])
+        self.assertEqual(inv.tax_amount, D('14.00'))
+        log = EInvoiceLog.objects.get(invoice=inv)
+        login(self.client, self.w.admin)
+        self.client.post(reverse('einvoicing:approve_invoice', args=[log.id]))
+        log.refresh_from_db()
+        self.assertEqual(log.status, 'PENDING')
+        self.assertEqual(log.eta_tax_total, D('13.99999'))
+        self.assertEqual(log.rounding_diff, D('0.00001'))
+        self.assertEqual(log.eta_total, D(str(build_invoice_json(inv.id)['totalAmount'])))
+
+    def test_document_formulas_unchanged(self):
+        inv = make_invoice(self.w, lines=[(self.w.product, 3, D('33.3333'), 14)])
+        doc = build_invoice_json(inv.id)
+        self.assertEqual(doc['invoiceLines'][0]['taxableItems'][0]['amount'], 13.99999)   # 5 places, official
+        self.check_identities(doc)

@@ -104,9 +104,32 @@ class EInvoiceLog(models.Model):
     public_url = models.URLField(max_length=500, blank=True, default='', verbose_name="رابط الفاتورة لدى الضرائب")
     signed_payload = models.JSONField(blank=True, null=True, verbose_name="ملف التوقيع (JSON)")
     eta_response = models.JSONField(blank=True, null=True, verbose_name="رد مصلحة الضرائب")
+    # What the document sent to the ETA says (official formulas, 5 places — einvoicing.services), kept next to
+    # the invoice's own 2-place figures: rounding_diff = the invoice's VAT − the document's VAT (T1).
+    # Recorded when the document is built for signing and again from the signed payload.
+    eta_tax_total = models.DecimalField(max_digits=18, decimal_places=5, null=True, blank=True,
+                                        verbose_name='ضريبة القيمة المضافة في المستند (T1)')
+    eta_total = models.DecimalField(max_digits=18, decimal_places=5, null=True, blank=True,
+                                    verbose_name='إجمالي المستند')
+    rounding_diff = models.DecimalField(max_digits=18, decimal_places=5, null=True, blank=True,
+                                        verbose_name='فرق التقريب (ضريبة الفاتورة − ضريبة المستند)')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="تاريخ الإنشاء")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="تاريخ التحديث")
     
+    # documents the ETA holds as valid (a cancel / reject request that was not granted leaves it valid)
+    ACCEPTED_STATES = ('VALID', 'CANCEL_REQUESTED', 'CANCEL_DECLINED', 'REJECT_REQUESTED')
+
+    def record_eta_totals(self, document, save=True):
+        """Keep the document's VAT and total, and the rounding difference against the invoice."""
+        from decimal import Decimal
+        vat = sum((Decimal(str(t.get('amount') or 0)) for t in document.get('taxTotals', [])
+                   if t.get('taxType') == 'T1'), Decimal('0'))
+        self.eta_tax_total = vat
+        self.eta_total = Decimal(str(document.get('totalAmount') or 0))
+        self.rounding_diff = (self.invoice.tax_amount or Decimal('0')) - vat
+        if save:
+            self.save(update_fields=['eta_tax_total', 'eta_total', 'rounding_diff', 'updated_at'])
+
     class Meta:
         verbose_name = "سجل الفاتورة الإلكترونية"
         verbose_name_plural = "سجل الفواتير الإلكترونية"

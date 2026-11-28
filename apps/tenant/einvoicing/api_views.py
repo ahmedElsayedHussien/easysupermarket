@@ -130,7 +130,9 @@ def submit_signed_invoice(request, invoice_id):
             payload['signatures'] = signatures
             log.status = 'SIGNED'
             log.signed_payload = payload
-            log.save(update_fields=['status', 'signed_payload', 'updated_at'])
+            log.record_eta_totals(expected, save=False)          # the very document that goes to the ETA
+            log.save(update_fields=['status', 'signed_payload', 'eta_tax_total', 'eta_total', 'rounding_diff',
+                                    'updated_at'])
     except Exception:
         logger.exception('Failed to store signed invoice %s', invoice_id)
         return JsonResponse({'status': 'error', 'message': 'server error'}, status=500)
