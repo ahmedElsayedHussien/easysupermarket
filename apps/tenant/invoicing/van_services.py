@@ -504,10 +504,15 @@ def _new_invoice(rep, user, kind, partner, cart, notes, **extra):
 
 
 def rep_sale(rep, user, rows, partner=None, payment='CASH', paid_amount=None, discount_pct=ZERO, notes='',
-             due_date=None, discount_type='pct'):
+             due_date=None, discount_type='pct', idempotency_key=None):
     """Sell from the van. payment: CASH | CREDIT | PARTIAL (paid_amount cash, the rest on credit).
     Prices come from the pricing engine (never from the phone); stock must be in the van."""
+    from apps.tenant.core.idempotency import find_by_idempotency_key, parse_idempotency_key, run_idempotent
     from .views import _is_generic_cash_customer
+    parsed_key = parse_idempotency_key(idempotency_key)
+    existing = find_by_idempotency_key(Invoice, parsed_key)
+    if existing is not None:
+        return existing
     if not rep.van_warehouse_id or not rep.treasury_id:
         raise ValidationError('المندوب لازم يكون ليه مخزن عربية وخزنة — كلّم الإدارة.')
     if payment not in ('CASH', 'CREDIT', 'PARTIAL'):
@@ -536,21 +541,32 @@ def rep_sale(rep, user, rows, partner=None, payment='CASH', paid_amount=None, di
         balance = Decimal(str(partner.customer_balance or 0))
         if balance + credit > partner.credit_limit:
             raise ValidationError(f'العميل هيعدّي حد الائتمان ({partner.credit_limit:.2f}) — رصيده الحالي {balance:.2f}.')
-    with transaction.atomic():
-        invoice, confirm = _new_invoice(rep, user, Invoice.SALE, partner, cart, notes, treasury=rep.treasury,
-                                        payment_type='CASH', due_date=due_date if credit > 0 else None)
-        invoice.payment_type = 'CASH' if credit == 0 else ('CREDIT' if cash == 0 else 'SPLIT')
-        invoice.paid_cash, invoice.paid_credit = cash, credit
-        invoice.save(update_fields=['payment_type', 'paid_cash', 'paid_credit', 'updated_at'])
-        return confirm(invoice.id)
+
+    def _create_sale(idem_key):
+        with transaction.atomic():
+            invoice, confirm = _new_invoice(rep, user, Invoice.SALE, partner, cart, notes, treasury=rep.treasury,
+                                            payment_type='CASH', due_date=due_date if credit > 0 else None,
+                                            idempotency_key=idem_key)
+            invoice.payment_type = 'CASH' if credit == 0 else ('CREDIT' if cash == 0 else 'SPLIT')
+            invoice.paid_cash, invoice.paid_credit = cash, credit
+            invoice.save(update_fields=['payment_type', 'paid_cash', 'paid_credit', 'updated_at'])
+            return confirm(invoice.id)
+
+    obj, _ = run_idempotent(Invoice, parsed_key, _create_sale)
+    return obj
 
 
 def rep_return(rep, user, rows, partner, refund='CREDIT', discount_pct=ZERO, notes='', discount_type='pct',
-               without_invoice=False):
+               without_invoice=False, idempotency_key=None):
     """A customer gives goods back to the rep: they go back into the van. Only a registered customer,
     never more than he bought (net of earlier returns), at today's server price; refund in cash from the
     rep's cash box (if it holds enough) or off the customer's balance."""
+    from apps.tenant.core.idempotency import find_by_idempotency_key, parse_idempotency_key, run_idempotent
     from .views import _is_generic_cash_customer
+    parsed_key = parse_idempotency_key(idempotency_key)
+    existing = find_by_idempotency_key(Invoice, parsed_key)
+    if existing is not None:
+        return existing
     if not rep.van_warehouse_id or not rep.treasury_id:
         raise ValidationError('المندوب لازم يكون ليه مخزن عربية وخزنة — كلّم الإدارة.')
     if partner is None or _is_generic_cash_customer(partner):
@@ -583,18 +599,29 @@ def rep_return(rep, user, rows, partner, refund='CREDIT', discount_pct=ZERO, not
     if refund == 'CASH' and cash_balance(rep) < cart['total']:
         raise ValidationError(f'خزنتك فيها {cash_balance(rep):.2f} بس — مش كفاية ترد {cart["total"]:.2f} نقدي. '
                               'اختار «خصم من حساب العميل».')
-    with transaction.atomic():
-        parent = None if without_invoice else (
-            Invoice.objects.filter(partner=partner, sales_rep=rep, invoice_type=Invoice.SALE, status=Invoice.POSTED,
-                                   lines__product__in=list(need)).order_by('-date', '-id').first())
-        invoice, confirm = _new_invoice(rep, user, Invoice.RETURN_SALE, partner, cart, notes, payment_type=refund,
-                                        treasury=rep.treasury if refund == 'CASH' else None, parent_invoice=parent)
-        return confirm(invoice.id)
+
+    def _create_return(idem_key):
+        with transaction.atomic():
+            parent = None if without_invoice else (
+                Invoice.objects.filter(partner=partner, sales_rep=rep, invoice_type=Invoice.SALE, status=Invoice.POSTED,
+                                       lines__product__in=list(need)).order_by('-date', '-id').first())
+            invoice, confirm = _new_invoice(rep, user, Invoice.RETURN_SALE, partner, cart, notes, payment_type=refund,
+                                            treasury=rep.treasury if refund == 'CASH' else None, parent_invoice=parent,
+                                            idempotency_key=idem_key)
+            return confirm(invoice.id)
+
+    obj, _ = run_idempotent(Invoice, parsed_key, _create_return)
+    return obj
 
 
-def rep_collect(rep, user, partner, amount, notes=''):
+def rep_collect(rep, user, partner, amount, notes='', idempotency_key=None):
     """Cash collected from a customer by the rep (receipt voucher into the rep's cash box)."""
     from apps.tenant.accounting.models import Voucher
+    from apps.tenant.core.idempotency import find_by_idempotency_key, parse_idempotency_key, run_idempotent
+    parsed_key = parse_idempotency_key(idempotency_key)
+    existing = find_by_idempotency_key(Voucher, parsed_key)
+    if existing is not None:
+        return existing
     amount = _dec(amount, 'المبلغ').quantize(CENT)
     if amount <= 0:
         raise ValidationError('اكتب المبلغ المحصّل.')
@@ -602,14 +629,19 @@ def rep_collect(rep, user, partner, amount, notes=''):
         raise ValidationError('المندوب مالوش خزنة — كلّم الإدارة.')
     if partner is None or not partner.receivable_account_id:
         raise ValidationError('اختار العميل.')
-    with transaction.atomic():
-        v = Voucher.objects.create(
-            voucher_type=Voucher.RECEIPT, amount=amount, partner=partner, account=partner.receivable_account,
-            payment_method=Voucher.CASH, treasury=rep.treasury, branch=rep.treasury.branch,
-            date=timezone.localdate(),
-            description=(f'تحصيل المندوب {rep_name(rep)} من {partner.name}' + (f' — {notes}' if notes else ''))[:500])
-        v.confirm_voucher()
-    return v
+
+    def _create_voucher(idem_key):
+        with transaction.atomic():
+            v = Voucher.objects.create(
+                voucher_type=Voucher.RECEIPT, amount=amount, partner=partner, account=partner.receivable_account,
+                payment_method=Voucher.CASH, treasury=rep.treasury, branch=rep.treasury.branch,
+                date=timezone.localdate(), idempotency_key=idem_key,
+                description=(f'تحصيل المندوب {rep_name(rep)} من {partner.name}' + (f' — {notes}' if notes else ''))[:500])
+            v.confirm_voucher()
+            return v
+
+    obj, _ = run_idempotent(Voucher, parsed_key, _create_voucher)
+    return obj
 
 
 # ---------------------------------------------------------------------------

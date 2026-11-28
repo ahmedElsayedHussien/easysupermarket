@@ -12,13 +12,34 @@
     <a class="btn" href="{% url 'invoicing:rep_app_sell' %}?customer={{ p.id }}">🛒 بيع له</a>
     <a class="btn ghost" href="{% url 'invoicing:rep_app_sell' %}?customer={{ p.id }}&mode=return">↩️ مرتجع منه</a>
 </div>
-<form method="post" class="card">
+<form method="post" class="card" id="collectForm">
     {% csrf_token %}
+    <input type="hidden" name="idempotency_key" id="collectIdemKey">
     <h2>💰 تحصيل نقدي</h2>
     <div class="field"><label>المبلغ</label><input type="number" name="amount" min="0.01" step="0.01" inputmode="decimal" required></div>
     <div class="field"><label>ملاحظة</label><input name="notes" maxlength="200"></div>
-    <button class="btn ok" onclick="return confirm('تسجيل التحصيل؟ الفلوس هتنزل في خزنتك.');">✔ تسجيل التحصيل</button>
+    <button class="btn ok" id="collectBtn" onclick="return confirm('تسجيل التحصيل؟ الفلوس هتنزل في خزنتك.');">✔ تسجيل التحصيل</button>
 </form>
+<script>
+(function () {
+    var el = document.getElementById('collectIdemKey');
+    if (el && !el.value) {
+        el.value = (window.crypto && typeof window.crypto.randomUUID === 'function')
+            ? window.crypto.randomUUID()
+            : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+                var r = Math.random() * 16 | 0;
+                return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+            });
+    }
+    var form = document.getElementById('collectForm');
+    if (form) {
+        form.addEventListener('submit', function () {
+            var btn = document.getElementById('collectBtn');
+            if (btn) btn.disabled = true;
+        });
+    }
+})();
+</script>
 <div class="card">
     <h2>🧾 فواتيري للعميل</h2>
     <div class="list">{% for i in invoices %}<a class="item" href="{% url 'invoicing:rep_app_invoice' i.id %}"><div class="grow"><div class="t">{{ i.invoice_number }}</div><div class="muted">{{ i.date|date:"j/n/Y" }}{% if i.paid_credit %} — آجل {{ i.paid_credit|floatformat:2 }}{% endif %}</div></div><b class="num">{{ i.total_amount|floatformat:"2g" }}</b></a>{% empty %}<p class="muted">مفيش.</p>{% endfor %}</div>

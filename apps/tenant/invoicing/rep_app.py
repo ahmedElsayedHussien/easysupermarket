@@ -169,16 +169,19 @@ def sell(request):
                 cart = van.price_cart(rep, request.user, rows, partner, disc, dtype, returning=mode == 'return')
                 return JsonResponse({'success': True, **_quote_json(cart)})
             notes = str(data.get('notes') or '')[:300]
+            idem_key = data.get('idempotency_key') or request.headers.get('X-Idempotency-Key')
             if mode == 'return':
                 inv = van.rep_return(rep, request.user, rows, partner, refund=data.get('refund') or 'CREDIT',
                                      discount_pct=disc, notes=notes, discount_type=dtype,
-                                     without_invoice=bool(data.get('no_invoice')))
+                                     without_invoice=bool(data.get('no_invoice')),
+                                     idempotency_key=idem_key)
             else:
                 from django.utils.dateparse import parse_date
                 inv = van.rep_sale(rep, request.user, rows, partner=partner, payment=data.get('payment') or 'CASH',
                                    paid_amount=data.get('paid_amount'), discount_pct=disc, notes=notes,
                                    discount_type=dtype,
-                                   due_date=parse_date(str(data.get('due_date') or '')) or None)
+                                   due_date=parse_date(str(data.get('due_date') or '')) or None,
+                                   idempotency_key=idem_key)
             return JsonResponse({'success': True, 'invoice_id': inv.id, 'number': inv.invoice_number,
                                  'url': reverse('invoicing:rep_app_invoice', args=[inv.id])})
         except ValidationError as e:
@@ -297,7 +300,11 @@ def customer(request, pk):
         return redirect('invoicing:rep_app_customers')
     if request.method == 'POST':
         try:
-            v = van.rep_collect(request.rep, request.user, p, request.POST.get('amount'), request.POST.get('notes', ''))
+            idem_key = request.POST.get('idempotency_key') or request.headers.get('X-Idempotency-Key')
+            v = van.rep_collect(
+                request.rep, request.user, p, request.POST.get('amount'),
+                request.POST.get('notes', ''), idempotency_key=idem_key,
+            )
             messages.success(request, f'اتسجل تحصيل {v.amount:.2f} من {p.name} (سند {v.voucher_number}).')
         except ValidationError as e:
             messages.error(request, _err(e))

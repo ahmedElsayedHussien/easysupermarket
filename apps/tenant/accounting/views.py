@@ -1069,7 +1069,24 @@ class VoucherCreateView(CustomPermissionRequiredMixin, CreateView):
             if not form.instance.branch_id and user_branch is not None:
                 form.instance.branch = user_branch
 
-        response = super().form_valid(form)
+        from apps.tenant.core.idempotency import find_by_idempotency_key, parse_idempotency_key
+        idem_key = parse_idempotency_key(
+            self.request.POST.get('idempotency_key') or self.request.headers.get('X-Idempotency-Key')
+        )
+        existing = find_by_idempotency_key(Voucher, idem_key)
+        if existing is not None:
+            self.object = existing
+            return redirect(self.get_success_url())
+        form.instance.idempotency_key = idem_key
+        try:
+            with transaction.atomic():
+                response = super().form_valid(form)
+        except IntegrityError:
+            existing = find_by_idempotency_key(Voucher, idem_key)
+            if existing is not None:
+                self.object = existing
+                return redirect(self.get_success_url())
+            raise
 
         # SystemSetting.auto_post_journals: confirm and post right away (so it immediately
         # reflects in the shift), or leave a DRAFT to be approved from the detail page.
@@ -1986,11 +2003,28 @@ class InternalTransferCreateView(CustomPermissionRequiredMixin, CreateView):
     def form_valid(self, form):
         form.instance.created_by = self.request.user
         from apps.tenant.invoicing.models import POSSession
+        from apps.tenant.core.idempotency import find_by_idempotency_key, parse_idempotency_key
         open_session = POSSession.objects.filter(user=self.request.user, status=POSSession.OPEN).first()
         if open_session:
             form.instance.pos_session = open_session
 
-        response = super().form_valid(form)
+        idem_key = parse_idempotency_key(
+            self.request.POST.get('idempotency_key') or self.request.headers.get('X-Idempotency-Key')
+        )
+        existing = find_by_idempotency_key(InternalTransfer, idem_key)
+        if existing is not None:
+            self.object = existing
+            return redirect(self.get_success_url())
+        form.instance.idempotency_key = idem_key
+        try:
+            with transaction.atomic():
+                response = super().form_valid(form)
+        except IntegrityError:
+            existing = find_by_idempotency_key(InternalTransfer, idem_key)
+            if existing is not None:
+                self.object = existing
+                return redirect(self.get_success_url())
+            raise
         messages.success(self.request, 'تم حفظ مسودة التحويل بنجاح.')
         return response
 

@@ -173,8 +173,15 @@ var VAN = JSON.parse(document.getElementById('products-data').textContent);
 var CAN_PRICE = {{ can_edit_price|yesno:'true,false' }}, NO_INV_OK = {{ no_invoice_ok|yesno:'true,false' }}, retSource = 'mine';
 var SELL_URL = '{% url "invoicing:rep_app_sell" %}', CUST_URL = '{% url "invoicing:rep_app_customers" %}';
 var mode = '{{ start_mode }}', products = VAN, cart = [], partner = JSON.parse(document.getElementById('customer-data').textContent);
-var discType = 'pct', payment = 'CASH', refund = 'CREDIT', quote = null, qTimer = null, cat = '', custTimer = null, custHits = [];
+var discType = 'pct', payment = 'CASH', refund = 'CREDIT', quote = null, qTimer = null, cat = '', custTimer = null, custHits = [], idemKey = null;
 var $ = function (id) { return document.getElementById(id); };
+function genUuid() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        var r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+}
 
 function byId(id) { return products.find(function (p) { return p.id === id; }); }
 function factor(p, uomId) { return parseFloat((p.uoms.find(function (u) { return String(u.id) === String(uomId); }) || {factor: 1}).factor); }
@@ -191,7 +198,7 @@ function setMode(m) {
     $('prodTitle').textContent = m !== 'return' ? '📦 الأصناف من عربيتك' : (retSource === 'free' ? '📦 كل الأصناف (مرتجع بدون فاتورة)' : '↩️ اللي العميل اشتراه منك ويقدر يرجّعه');
     $('saveBtn').textContent = m === 'return' ? '↩️ حفظ المرتجع' : '✔ حفظ الفاتورة';
     $('cartTitle').textContent = m === 'return' ? '↩️ المرتجع' : '🧾 الفاتورة';
-    cart = []; quote = null;
+    cart = []; quote = null; idemKey = null;
     loadProducts();
 }
 document.querySelectorAll('#modes button').forEach(function (b) { b.addEventListener('click', function () { if (b.dataset.m !== mode) setMode(b.dataset.m); }); });
@@ -246,6 +253,7 @@ $('prodQ').addEventListener('input', function () {
     renderProducts();
 });
 window.addProduct = function (id) {
+    idemKey = null;
     var l = cart.find(function (x) { return x.product_id === id && x.uom_id === ''; });
     if (l) l.qty = (parseFloat(l.qty) || 0) + 1; else cart.push({product_id: id, uom_id: '', qty: 1, disc: '', disc_type: 'pct', price: ''});
     if (navigator.vibrate) navigator.vibrate(30);
@@ -253,15 +261,15 @@ window.addProduct = function (id) {
 };
 
 // ---------- cart ----------
-window.setQty = function (i, v) { cart[i].qty = Math.max(0, parseFloat(v) || 0); if (!cart[i].qty) cart.splice(i, 1); render(); renderProducts(); requote(); };
+window.setQty = function (i, v) { idemKey = null; cart[i].qty = Math.max(0, parseFloat(v) || 0); if (!cart[i].qty) cart.splice(i, 1); render(); renderProducts(); requote(); };
 window.step = function (i, d) { setQty(i, (parseFloat(cart[i].qty) || 0) + d); };
-window.setUom = function (i, v) { cart[i].uom_id = v; cart[i].price = ''; render(); requote(); };
-window.setDisc = function (i, v) { cart[i].disc = v; requote(); };
-window.setPrice = function (i, v) { cart[i].price = v; requote(); };
-window.resetPrice = function (i) { cart[i].price = ''; render(); requote(); };
-window.setDiscType = function (i, t) { cart[i].disc_type = t; render(); requote(); };
-window.removeLine = function (i) { cart.splice(i, 1); render(); renderProducts(); requote(); };
-window.clearCart = function () { if (confirm('مسح كل الأصناف؟')) { cart = []; quote = null; render(); renderProducts(); } };
+window.setUom = function (i, v) { idemKey = null; cart[i].uom_id = v; cart[i].price = ''; render(); requote(); };
+window.setDisc = function (i, v) { idemKey = null; cart[i].disc = v; requote(); };
+window.setPrice = function (i, v) { idemKey = null; cart[i].price = v; requote(); };
+window.resetPrice = function (i) { idemKey = null; cart[i].price = ''; render(); requote(); };
+window.setDiscType = function (i, t) { idemKey = null; cart[i].disc_type = t; render(); requote(); };
+window.removeLine = function (i) { idemKey = null; cart.splice(i, 1); render(); renderProducts(); requote(); };
+window.clearCart = function () { if (confirm('مسح كل الأصناف؟')) { idemKey = null; cart = []; quote = null; render(); renderProducts(); } };
 
 function render() {
     var has = cart.length > 0;
@@ -353,9 +361,10 @@ window.save = function () {
     if (navigator.onLine === false) return fail('مفيش نت دلوقتي — استنى لحد ما يرجع.');
     var what = mode === 'return' ? 'حفظ المرتجع (' + (refund === 'CASH' ? 'رد نقدي' : 'خصم من حسابه') + ')' : 'حفظ الفاتورة';
     if (!confirm(what + ' بإجمالي ' + $('barTotal').textContent + '؟')) return;
+    if (!idemKey) idemKey = genUuid();
     btn.disabled = true; btn.textContent = '⏳ لحظة…';
     post(payload({payment: payment, refund: refund, paid_amount: $('paid').value || '0', due_date: $('due').value, notes: $('notes').value,
-                  no_invoice: mode === 'return' && retSource === 'free'}))
+                  no_invoice: mode === 'return' && retSource === 'free', idempotency_key: idemKey}))
         .then(function (d) {
             if (d.success) { window.location = d.url; return; }
             fail(d.error); btn.disabled = false; btn.textContent = mode === 'return' ? '↩️ حفظ المرتجع' : '✔ حفظ الفاتورة';

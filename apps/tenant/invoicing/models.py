@@ -325,6 +325,7 @@ class Invoice(models.Model):
         verbose_name='القيد المحاسبي'
     )
     notes = models.TextField(blank=True, verbose_name='ملاحظات')
+    idempotency_key = models.UUIDField(null=True, blank=True, editable=False, verbose_name='مفتاح منع التكرار')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -345,6 +346,13 @@ class Invoice(models.Model):
             models.Index(fields=['payment_type', '-date'], name='inv_pay_date_idx'),
             models.Index(fields=['branch', '-date'], name='inv_branch_date_idx'),
             models.Index(fields=['pos_session', 'status'], name='inv_pos_session_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='uniq_invoice_idempotency_key',
+            ),
         ]
 
     def __str__(self):

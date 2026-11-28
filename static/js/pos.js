@@ -12,6 +12,23 @@ const POS = {
     // Max total discount % per line / invoice for this user (set by the
     // template from SystemSetting.max_pos_discount_percentage; 100 for admins).
     maxDiscountPercent: 100,
+    pendingIdempotencyKey: null,
+
+    _generateIdempotencyKey() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+    },
+
+    _setPaymentButtonsDisabled(disabled) {
+        document.querySelectorAll('.pay-quick-btn, #cashModal .btn-confirm, #splitModal .btn-confirm').forEach(btn => {
+            btn.disabled = !!disabled;
+        });
+    },
 
     get cart() {
         const session = this.sessions.find(s => s.id === this.activeSessionId);
@@ -928,6 +945,7 @@ const POS = {
             });
         }
 
+        this.pendingIdempotencyKey = null;
         this.saveSessions();
         this.updateCartDisplay();
         this.updateSalePriceDisplay(product);
@@ -942,6 +960,7 @@ const POS = {
     removeFromCart(keyOrId) {
         const strKey = String(keyOrId);
         this.cart = this.cart.filter(item => (item._cartKey ? String(item._cartKey) !== strKey : item.id !== parseInt(keyOrId)));
+        this.pendingIdempotencyKey = null;
         this.saveSessions();
         this.updateCartDisplay();
         this.clearSalePriceDisplay();
@@ -968,6 +987,7 @@ const POS = {
             return;
         }
         item.quantity = qty;
+        this.pendingIdempotencyKey = null;
         this.saveSessions();
         this.updateCartDisplay();
     },
@@ -2048,10 +2068,12 @@ const POS = {
             return;
         }
         this.saleInFlight = true;
+        this._setPaymentButtonsDisabled(true);
         try {
             return await this._completeSale(paymentType, cashReceived, ewalletId, bankAccountId, splitPayments);
         } finally {
             this.saleInFlight = false;
+            this._setPaymentButtonsDisabled(false);
         }
     },
 
@@ -2082,7 +2104,13 @@ const POS = {
         const notesEl = document.getElementById('posInvoiceNotes');
         const invoiceNotes = notesEl ? notesEl.value.trim() : '';
 
+        if (!this.pendingIdempotencyKey) {
+            this.pendingIdempotencyKey = this._generateIdempotencyKey();
+        }
+        const idemKey = this.pendingIdempotencyKey;
+
         const payload = {
+            idempotency_key: idemKey,
             cart: this.cart.map(item => {
                 const lineGross = item.price * item.quantity;
                 const itemDiscAmt = lineGross * ((item.discount || 0) / 100);
@@ -2126,7 +2154,8 @@ const POS = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRFToken': getCsrfToken()
+                    'X-CSRFToken': getCsrfToken(),
+                    'X-Idempotency-Key': idemKey
                 },
                 body: JSON.stringify(payload)
             });
@@ -2138,6 +2167,7 @@ const POS = {
 
             const data = await resp.json();
             if (data.success) {
+                this.pendingIdempotencyKey = null;
                 this.lastInvoiceData = data;
                 if (notesEl) notesEl.value = '';
 
@@ -2360,6 +2390,7 @@ const POS = {
     // ============================================================
     clearCart() {
         this.cart = [];
+        this.pendingIdempotencyKey = null;
         this.discountMode = 'pct';
         const valInput = document.getElementById('globalDiscountVal');
         if (valInput) valInput.value = '0';

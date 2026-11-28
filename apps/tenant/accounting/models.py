@@ -1120,6 +1120,7 @@ class Voucher(models.Model):
         JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='voucher', verbose_name='قيد اليومية'
     )
+    idempotency_key = models.UUIDField(null=True, blank=True, editable=False, verbose_name='مفتاح منع التكرار')
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1128,6 +1129,13 @@ class Voucher(models.Model):
         verbose_name = 'سند'
         verbose_name_plural = 'السندات'
         ordering = ['-date', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='uniq_voucher_idempotency_key',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.get_voucher_type_display()} #{self.voucher_number} - {self.amount}"
@@ -2101,6 +2109,7 @@ class InternalTransfer(models.Model):
         User, on_delete=models.PROTECT, null=True, blank=True,
         related_name='internal_transfers', verbose_name='المحرر'
     )
+    idempotency_key = models.UUIDField(null=True, blank=True, editable=False, verbose_name='مفتاح منع التكرار')
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -2109,6 +2118,13 @@ class InternalTransfer(models.Model):
         verbose_name = 'تحويل مالي بين الحسابات'
         verbose_name_plural = 'تحويلات الأموال بين الحسابات'
         ordering = ['-date', '-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='uniq_internal_transfer_idempotency_key',
+            ),
+        ]
 
     def __str__(self):
         return f"تحويل #{self.transfer_number} - {self.amount} ج.م"

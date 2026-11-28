@@ -1284,6 +1284,20 @@ def _is_generic_cash_customer(partner):
     return not name or name in GENERIC_CASH_CUSTOMER_NAMES or 'عميل نقدي' in name
 
 
+def _sale_json_response(confirmed_invoice, deduplicated=False):
+    return JsonResponse({
+        'success': True,
+        'deduplicated': deduplicated,
+        'invoice_number': confirmed_invoice.invoice_number,
+        'invoice_id': confirmed_invoice.id,
+        'total_amount': str(Decimal(str(confirmed_invoice.total_amount)).quantize(Decimal('0.01'))),
+        'rounding_amount': str(confirmed_invoice.rounding_amount or Decimal('0')),
+        'paid_cash': str(confirmed_invoice.paid_cash or Decimal('0')),
+        'partner_id': confirmed_invoice.partner_id if confirmed_invoice.partner else None,
+        'partner_name': confirmed_invoice.partner.name if confirmed_invoice.partner else 'عميل نقدي',
+    })
+
+
 @login_required
 @custom_permission_required('invoicing.add_invoice', redirect_url='core:main_screen')
 def complete_sale(request):
@@ -1298,6 +1312,7 @@ def complete_sale(request):
         return JsonResponse({'success': False})
 
     from django.db import transaction
+    from apps.tenant.core.idempotency import run_idempotent
     from apps.tenant.services.invoice_service import confirm_invoice
     from apps.tenant.inventory.models import ProductUoM, SerialItem
 
@@ -1309,6 +1324,7 @@ def complete_sale(request):
         if not isinstance(data, dict):
             raise _SaleAbort('بيانات الطلب غير صالحة.')
 
+        raw_idem_key = data.get('idempotency_key') or request.headers.get('X-Idempotency-Key')
         cart = data.get('cart', []) or []
         payment_type = data.get('payment_type', 'CASH')
         warehouse_id = data.get('warehouse_id')
@@ -1358,318 +1374,315 @@ def complete_sale(request):
         # Float rounding from the browser (values sent with 4 decimals).
         discount_tolerance = DISCOUNT_CAP_TOLERANCE
 
-        with transaction.atomic():
-            branch = Branch.objects.filter(id=branch_id).first() if branch_id else None
-            if not branch:
-                raise _SaleAbort('الفرع المحدد غير موجود.')
-            user_branch = get_working_branch(request)
-            if not is_admin and is_branch_unassigned(request):
-                raise _SaleAbort(BRANCH_UNASSIGNED_MESSAGE, status=403)
-            if not is_admin and user_branch and branch.id != user_branch.id:
-                raise _SaleAbort('لا يمكنك البيع على فرع غير الفرع المرتبط بحسابك.', status=403)
+        def _execute_sale(idem_key):
+            with transaction.atomic():
+                branch = Branch.objects.filter(id=branch_id).first() if branch_id else None
+                if not branch:
+                    raise _SaleAbort('الفرع المحدد غير موجود.')
+                user_branch = get_working_branch(request)
+                if not is_admin and is_branch_unassigned(request):
+                    raise _SaleAbort(BRANCH_UNASSIGNED_MESSAGE, status=403)
+                if not is_admin and user_branch and branch.id != user_branch.id:
+                    raise _SaleAbort('لا يمكنك البيع على فرع غير الفرع المرتبط بحسابك.', status=403)
 
-            warehouse = Warehouse.objects.filter(id=warehouse_id, is_active=True).first()
-            if not warehouse:
-                raise _SaleAbort('المستودع المحدد غير صالح أو غير نشط', status=200)
-            if warehouse.branch_id and warehouse.branch_id != branch.id:
-                raise _SaleAbort('المستودع المختار لا يتبع الفرع الحالي', status=200)
+                warehouse = Warehouse.objects.filter(id=warehouse_id, is_active=True).first()
+                if not warehouse:
+                    raise _SaleAbort('المستودع المحدد غير صالح أو غير نشط', status=200)
+                if warehouse.branch_id and warehouse.branch_id != branch.id:
+                    raise _SaleAbort('المستودع المختار لا يتبع الفرع الحالي', status=200)
 
-            if partner_id:
-                partner = Partner.objects.filter(id=partner_id).first()
-                if not partner:
-                    raise _SaleAbort('العميل المحدد غير موجود.')
-            else:
-                partner, _ = Partner.objects.get_or_create(
-                    name="عميل نقدي",
-                    defaults={'partner_type': 'CUSTOMER', 'is_active': True}
-                )
-
-            open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
-            if not open_session:
-                raise _SaleAbort('يجب فتح وردية أولاً قبل الدخول لنقطة البيع أو إجراء أي عملية بيع.')
-            # A sale always belongs to the open shift's branch (cash → that branch's treasury).
-            if open_session.branch_id and branch.id != open_session.branch_id:
-                raise _SaleAbort('الفرع المرسل لا يطابق فرع الوردية المفتوحة. أعد تحميل نقطة البيع.', status=409)
-
-            # Cash of a shift sale always lands in the shift's drawer (one drawer = one
-            # cashier; the closing count reconciles exactly that treasury).
-            if open_session.treasury_id:
-                treasury_id = open_session.treasury_id
-            # Payment defaults of the sale's branch (= the open shift's branch).
-            branch_defaults = get_pos_defaults(branch)
-            if not treasury_id and branch_defaults['treasury'] is not None:
-                treasury_id = branch_defaults['treasury'].id
-
-            payments = data.get('payments', {}) or {}
-            if not isinstance(payments, dict):
-                payments = {}
-
-            # Client-declared split amounts (validated against the server total later)
-            if payment_type == 'SPLIT':
-                cl_cash = _to_decimal(payments.get('cash', 0), 'نقدي')
-                cl_card = _to_decimal(payments.get('card', 0), 'بطاقة')
-                cl_ewallet = _to_decimal(payments.get('ewallet', 0), 'محفظة')
-                cl_bank = _to_decimal(payments.get('bank', 0), 'تحويل بنكي')
-                cl_credit = _to_decimal(payments.get('credit', 0), 'آجل')
-                if min(cl_cash, cl_card, cl_ewallet, cl_bank, cl_credit) < 0:
-                    raise _SaleAbort('مبالغ الدفع لا يمكن أن تكون سالبة.')
-            else:
-                cl_cash = cl_card = cl_ewallet = cl_bank = cl_credit = Decimal('0')
-
-            has_credit = payment_type == 'CREDIT' or cl_credit > 0
-            if has_credit:
-                if not partner_id:
-                    raise _SaleAbort('يجب اختيار عميل لتسجيل بيع آجل.')
-                if partner and ('عميل نقدي' in partner.name or partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']):
-                    raise _SaleAbort('لا يمكن تسجيل بيع آجل لـ (عميل نقدي). يرجى اختيار أو إضافة حساب العميل أولاً.')
-
-            visa_bank_account_id = payments.get('visa_bank_id') if payment_type == 'SPLIT' else None
-            insta_bank_account_id = payments.get('insta_bank_id') if payment_type == 'SPLIT' else None
-
-            if payment_type == 'CARD' or cl_card > 0:
-                if visa_bank_account_id:
-                    bank_account_id = visa_bank_account_id
-                elif not bank_account_id:
-                    default_visa = branch_defaults['bank_account']
-                    if default_visa:
-                        bank_account_id = default_visa.id
-                if not bank_account_id:
-                    raise _SaleAbort('يجب اختيار ماكينة الفيزا من القائمة العلوية أو تحديدها في الإعدادات.')
-
-            if payment_type == 'BANK_TRANSFER' or cl_bank > 0:
-                if not insta_bank_account_id:
-                    default_insta = branch_defaults['instapay_account'] or branch_defaults['bank_account']
-                    if default_insta:
-                        insta_bank_account_id = default_insta.id
-                if not insta_bank_account_id and payment_type == 'BANK_TRANSFER':
-                    insta_bank_account_id = bank_account_id
-                if not insta_bank_account_id and cl_bank > 0:
-                    raise _SaleAbort('يجب اختيار حساب إنستاباي / التحويل البنكي من القائمة العلوية أو تحديده في الإعدادات.')
-
-            notes = str(data.get('notes', '') or '')
-
-            discount_percentage = _to_decimal(data.get('discount_percentage', 0), 'نسبة الخصم')
-            if discount_percentage < 0 or discount_percentage > 100:
-                raise _SaleAbort('نسبة الخصم يجب أن تكون بين 0 و 100.')
-            if max_discount_pct is not None and discount_percentage > max_discount_pct + discount_tolerance:
-                raise _SaleAbort(
-                    f'نسبة خصم الفاتورة ({discount_percentage:.2f}%) تتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
-                    'يتطلب ذلك صلاحية مدير.', status=403
-                )
-
-            # Totals are recomputed from lines by recalculate_totals(); start from zero.
-            invoice = Invoice.objects.create(
-                invoice_type=Invoice.SALE,
-                branch=branch,
-                warehouse=warehouse,
-                partner=partner,
-                date=timezone.now().date(),
-                payment_type=payment_type,
-                treasury_id=treasury_id if treasury_id else None,
-                ewallet_id=ewallet_id if ewallet_id else None,
-                bank_account_id=bank_account_id if bank_account_id else None,
-                insta_bank_account_id=insta_bank_account_id if insta_bank_account_id else None,
-                status=Invoice.DRAFT,
-                cashier=request.user,
-                pos_session=open_session,
-                discount_percentage=discount_percentage,
-                notes=notes,
-                sales_rep=_rep_for_user(request.user),   # a sales rep's sales count for his commission
-            )
-
-            used_serial_ids = set()
-            line_count = 0
-            # every product of the cart in ONE query (was one query per cart line)
-            cart_products = Product.objects.in_bulk(
-                [int(i.get('product_id')) for i in cart
-                 if isinstance(i, dict) and str(i.get('product_id') or '').isdigit()])
-            for item in cart:
-                if not isinstance(item, dict):
-                    continue
-                pid = item.get('product_id')
-                if not pid:
-                    continue
-                try:
-                    product = cart_products[int(pid)]
-                except (KeyError, ValueError, TypeError):
-                    raise _SaleAbort(
-                        f'الصنف برقم ({pid}) غير موجود في قاعدة البيانات أو تم حذفه. يرجى مراجعة الأصناف بالسلة.',
-                        status=200,
-                    )
-                if not product.is_active:
-                    raise _SaleAbort(f'الصنف "{product.name}" غير نشط.')
-
-                quantity = _to_decimal(item.get('quantity'), f'الكمية - {product.name}')
-                if quantity <= 0:
-                    raise _SaleAbort(f'الكمية للصنف "{product.name}" يجب أن تكون أكبر من صفر.')
-
-                uom_id = item.get('uom_id')
-                puom = None
-                if uom_id not in (None, '', 'base'):
-                    try:
-                        puom = ProductUoM.objects.select_related('uom').get(id=int(uom_id), product=product)
-                    except (ProductUoM.DoesNotExist, ValueError, TypeError):
-                        raise _SaleAbort(f'وحدة القياس المحددة غير صالحة للصنف "{product.name}".')
-                    if puom.is_base:
-                        puom = None
-
-                # --- Server-side pricing ---
-                server_price, min_price = _pos_unit_price(product, puom, partner, branch, quantity)
-                unit_price = server_price
-                client_price_raw = item.get('unit_price')
-                can_edit_price = (
-                    product.is_open_price
-                    or product.product_type == 'SERVICE'
-                    or allow_price_edit_setting
-                    or is_admin
-                )
-                if client_price_raw not in (None, ''):
-                    client_price = _to_decimal(client_price_raw, f'السعر - {product.name}')
-                    if client_price < 0:
-                        raise _SaleAbort(f'سعر الصنف "{product.name}" لا يمكن أن يكون سالباً.')
-                    if can_edit_price:
-                        price_is_free = product.is_open_price or product.product_type == 'SERVICE'
-                        if (not is_admin and not price_is_free and price_margin_pct > 0
-                                and server_price > 0 and client_price != server_price):
-                            deviation_pct = (abs(client_price - server_price) / server_price) * Decimal('100')
-                            if deviation_pct > price_margin_pct + Decimal('0.01'):
-                                low = server_price * (Decimal('1') - price_margin_pct / Decimal('100'))
-                                high = server_price * (Decimal('1') + price_margin_pct / Decimal('100'))
-                                raise _SaleAbort(
-                                    f'سعر الصنف "{product.name}" ({client_price:.2f}) خارج هامش التعديل المسموح '
-                                    f'(±{price_margin_pct:.2f}% من {server_price:.2f}: بين {low:.2f} و {high:.2f}). '
-                                    'يتطلب ذلك صلاحية مدير.', status=403
-                                )
-                        unit_price = client_price
-                below_min_ok = request.user.has_perm('inventory.sell_below_min_price')
-                if min_price > 0 and unit_price < min_price and not below_min_ok:
-                    raise _SaleAbort(
-                        f'سعر الصنف "{product.name}" ({unit_price:.2f}) أقل من أدنى سعر بيع مسموح ({min_price:.2f}).'
+                if partner_id:
+                    partner = Partner.objects.filter(id=partner_id).first()
+                    if not partner:
+                        raise _SaleAbort('العميل المحدد غير موجود.')
+                else:
+                    partner, _ = Partner.objects.get_or_create(
+                        name="عميل نقدي",
+                        defaults={'partner_type': 'CUSTOMER', 'is_active': True}
                     )
 
-                discount_pct = _to_decimal(item.get('discount_percent', 0), f'الخصم - {product.name}')
-                if discount_pct < 0 or discount_pct > 100:
-                    raise _SaleAbort(f'نسبة الخصم للصنف "{product.name}" يجب أن تكون بين 0 و 100.')
-                if max_discount_pct is not None and discount_pct > max_discount_pct + discount_tolerance:
+                open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
+                if not open_session:
+                    raise _SaleAbort('يجب فتح وردية أولاً قبل الدخول لنقطة البيع أو إجراء أي عملية بيع.')
+                # A sale always belongs to the open shift's branch (cash → that branch's treasury).
+                if open_session.branch_id and branch.id != open_session.branch_id:
+                    raise _SaleAbort('الفرع المرسل لا يطابق فرع الوردية المفتوحة. أعد تحميل نقطة البيع.', status=409)
+
+                # Cash of a shift sale always lands in the shift's drawer (one drawer = one
+                # cashier; the closing count reconciles exactly that treasury).
+                nonlocal treasury_id, bank_account_id, ewallet_id
+                if open_session.treasury_id:
+                    treasury_id = open_session.treasury_id
+                # Payment defaults of the sale's branch (= the open shift's branch).
+                branch_defaults = get_pos_defaults(branch)
+                if not treasury_id and branch_defaults['treasury'] is not None:
+                    treasury_id = branch_defaults['treasury'].id
+
+                payments = data.get('payments', {}) or {}
+                if not isinstance(payments, dict):
+                    payments = {}
+
+                # Client-declared split amounts (validated against the server total later)
+                if payment_type == 'SPLIT':
+                    cl_cash = _to_decimal(payments.get('cash', 0), 'نقدي')
+                    cl_card = _to_decimal(payments.get('card', 0), 'بطاقة')
+                    cl_ewallet = _to_decimal(payments.get('ewallet', 0), 'محفظة')
+                    cl_bank = _to_decimal(payments.get('bank', 0), 'تحويل بنكي')
+                    cl_credit = _to_decimal(payments.get('credit', 0), 'آجل')
+                    if min(cl_cash, cl_card, cl_ewallet, cl_bank, cl_credit) < 0:
+                        raise _SaleAbort('مبالغ الدفع لا يمكن أن تكون سالبة.')
+                else:
+                    cl_cash = cl_card = cl_ewallet = cl_bank = cl_credit = Decimal('0')
+
+                has_credit = payment_type == 'CREDIT' or cl_credit > 0
+                if has_credit:
+                    if not partner_id:
+                        raise _SaleAbort('يجب اختيار عميل لتسجيل بيع آجل.')
+                    if partner and ('عميل نقدي' in partner.name or partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']):
+                        raise _SaleAbort('لا يمكن تسجيل بيع آجل لـ (عميل نقدي). يرجى اختيار أو إضافة حساب العميل أولاً.')
+
+                visa_bank_account_id = payments.get('visa_bank_id') if payment_type == 'SPLIT' else None
+                insta_bank_account_id = payments.get('insta_bank_id') if payment_type == 'SPLIT' else None
+
+                if payment_type == 'CARD' or cl_card > 0:
+                    if visa_bank_account_id:
+                        bank_account_id = visa_bank_account_id
+                    elif not bank_account_id:
+                        default_visa = branch_defaults['bank_account']
+                        if default_visa:
+                            bank_account_id = default_visa.id
+                    if not bank_account_id:
+                        raise _SaleAbort('يجب اختيار ماكينة الفيزا من القائمة العلوية أو تحديدها في الإعدادات.')
+
+                if payment_type == 'BANK_TRANSFER' or cl_bank > 0:
+                    if not insta_bank_account_id:
+                        default_insta = branch_defaults['instapay_account'] or branch_defaults['bank_account']
+                        if default_insta:
+                            insta_bank_account_id = default_insta.id
+                    if not insta_bank_account_id and payment_type == 'BANK_TRANSFER':
+                        insta_bank_account_id = bank_account_id
+                    if not insta_bank_account_id and cl_bank > 0:
+                        raise _SaleAbort('يجب اختيار حساب إنستاباي / التحويل البنكي من القائمة العلوية أو تحديده في الإعدادات.')
+
+                notes = str(data.get('notes', '') or '')
+
+                discount_percentage = _to_decimal(data.get('discount_percentage', 0), 'نسبة الخصم')
+                if discount_percentage < 0 or discount_percentage > 100:
+                    raise _SaleAbort('نسبة الخصم يجب أن تكون بين 0 و 100.')
+                if max_discount_pct is not None and discount_percentage > max_discount_pct + discount_tolerance:
                     raise _SaleAbort(
-                        f'الخصم على الصنف "{product.name}" ({discount_pct:.2f}%) يتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
+                        f'نسبة خصم الفاتورة ({discount_percentage:.2f}%) تتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
                         'يتطلب ذلك صلاحية مدير.', status=403
                     )
-                if discount_pct > 0 and not can_override_discount and min_price > 0 and not below_min_ok:
-                    net_unit = unit_price * (Decimal('1') - discount_pct / Decimal('100'))
-                    if net_unit < min_price:
-                        raise _SaleAbort(
-                            f'الخصم على الصنف "{product.name}" ينزل بالسعر ({net_unit:.2f}) عن أدنى سعر بيع ({min_price:.2f}). '
-                            'يتطلب ذلك صلاحية مدير.'
-                        )
 
-                # Taxes: client may only toggle them on/off; the rate comes from the product.
-                client_tax = _to_decimal(item.get('tax_rate', 0), 'الضريبة')
-                client_wht = _to_decimal(item.get('wht_rate', 0), 'الخصم والإضافة')
-                tax_rate = (product.tax_rate or Decimal('0')) if client_tax > 0 else Decimal('0')
-                wht_rate = (product.withholding_tax_rate or Decimal('0')) if client_wht > 0 else Decimal('0')
+                # Totals are recomputed from lines by recalculate_totals(); start from zero.
+                invoice = Invoice.objects.create(
+                    invoice_type=Invoice.SALE,
+                    branch=branch,
+                    warehouse=warehouse,
+                    partner=partner,
+                    date=timezone.now().date(),
+                    payment_type=payment_type,
+                    treasury_id=treasury_id if treasury_id else None,
+                    ewallet_id=ewallet_id if ewallet_id else None,
+                    bank_account_id=bank_account_id if bank_account_id else None,
+                    insta_bank_account_id=insta_bank_account_id if insta_bank_account_id else None,
+                    status=Invoice.DRAFT,
+                    cashier=request.user,
+                    pos_session=open_session,
+                    discount_percentage=discount_percentage,
+                    notes=notes,
+                    sales_rep=_rep_for_user(request.user),   # a sales rep's sales count for his commission
+                    idempotency_key=idem_key,
+                )
 
-                # --- Serial validation ---
-                serial_item = None
-                if product.product_type == 'SERIALIZED':
-                    serial_item_id = item.get('serial_item_id')
-                    if not serial_item_id:
-                        raise _SaleAbort(f'يجب تحديد السيريال/IMEI للصنف "{product.name}".')
-                    if quantity != 1:
-                        raise _SaleAbort(f'الصنف "{product.name}" مسلسل؛ الكمية لكل سطر يجب أن تكون 1.')
+                used_serial_ids = set()
+                line_count = 0
+                # every product of the cart in ONE query (was one query per cart line)
+                cart_products = Product.objects.in_bulk(
+                    [int(i.get('product_id')) for i in cart
+                     if isinstance(i, dict) and str(i.get('product_id') or '').isdigit()])
+                for item in cart:
+                    if not isinstance(item, dict):
+                        continue
+                    pid = item.get('product_id')
+                    if not pid:
+                        continue
                     try:
-                        serial_item = SerialItem.objects.select_for_update(of=('self',)).get(
-                            id=int(serial_item_id), product=product, is_sold=False, warehouse=warehouse,
-                        )
-                    except (SerialItem.DoesNotExist, ValueError, TypeError):
+                        product = cart_products[int(pid)]
+                    except (KeyError, ValueError, TypeError):
                         raise _SaleAbort(
-                            f'السيريال المحدد للصنف "{product.name}" غير متاح أو تم بيعه مسبقاً.', status=200
+                            f'الصنف برقم ({pid}) غير موجود في قاعدة البيانات أو تم حذفه. يرجى مراجعة الأصناف بالسلة.',
+                            status=200,
                         )
-                    if serial_item.id in used_serial_ids:
-                        raise _SaleAbort(f'السيريال نفسه مكرر في السلة للصنف "{product.name}".')
-                    used_serial_ids.add(serial_item.id)
+                    if not product.is_active:
+                        raise _SaleAbort(f'الصنف "{product.name}" غير نشط.')
 
-                InvoiceLine.objects.create(
-                    invoice=invoice,
-                    product=product,
-                    serial_item=serial_item,
-                    quantity=quantity,
-                    unit_price=unit_price,
-                    discount_pct=discount_pct,
-                    uom=puom,
-                    tax_rate=tax_rate,
-                    wht_rate=wht_rate,
-                )
-                line_count += 1
+                    quantity = _to_decimal(item.get('quantity'), f'الكمية - {product.name}')
+                    if quantity <= 0:
+                        raise _SaleAbort(f'الكمية للصنف "{product.name}" يجب أن تكون أكبر من صفر.')
 
-            if line_count == 0:
-                raise _SaleAbort('السلة فارغة. يرجى إضافة منتجات أولاً.')
+                    uom_id = item.get('uom_id')
+                    puom = None
+                    if uom_id not in (None, '', 'base'):
+                        try:
+                            puom = ProductUoM.objects.select_related('uom').get(id=int(uom_id), product=product)
+                        except (ProductUoM.DoesNotExist, ValueError, TypeError):
+                            raise _SaleAbort(f'وحدة القياس المحددة غير صالحة للصنف "{product.name}".')
+                        if puom.is_base:
+                            puom = None
 
-            # --- Server-side totals and payment reconciliation ---
-            invoice.recalculate_totals()
-            total = Decimal(str(invoice.total_amount)).quantize(Decimal('0.01'))
-            tolerance = Decimal('0.05')
-
-            if large_amount_threshold > 0 and total >= large_amount_threshold and _is_generic_cash_customer(partner):
-                raise _SaleAbort(
-                    f'إجمالي الفاتورة ({total:.2f}) يساوي أو يتجاوز {large_amount_threshold:.2f}: '
-                    'يجب اختيار عميل مسجل (غير العميل النقدي) لإتمام هذه العملية.'
-                )
-
-            # Cash rounding (SystemSetting.pos_cash_rounding): only the cash part is rounded.
-            # The invoice total stays exact; the difference is posted to 5115.
-            rounding_amount = Decimal('0')
-            paid = {'paid_cash': Decimal('0'), 'paid_card': Decimal('0'), 'paid_ewallet': Decimal('0'),
-                    'paid_bank': Decimal('0'), 'paid_credit': Decimal('0')}
-            if payment_type == 'SPLIT':
-                non_cash = cl_card + cl_ewallet + cl_bank + cl_credit
-                if non_cash > total + tolerance:
-                    raise _SaleAbort(
-                        f'مجموع المبالغ غير النقدية ({non_cash:.2f}) يتجاوز إجمالي الفاتورة ({total:.2f}).'
+                    # --- Server-side pricing ---
+                    server_price, min_price = _pos_unit_price(product, puom, partner, branch, quantity)
+                    unit_price = server_price
+                    client_price_raw = item.get('unit_price')
+                    can_edit_price = (
+                        product.is_open_price
+                        or product.product_type == 'SERVICE'
+                        or allow_price_edit_setting
+                        or is_admin
                     )
-                exact_cash_due = max(Decimal('0'), total - non_cash)
-                cash_due = round_cash(exact_cash_due) if exact_cash_due > 0 else exact_cash_due
-                rounding_amount = cash_due - exact_cash_due
-                if cl_cash + tolerance < cash_due:
-                    raise _SaleAbort(
-                        f'المبالغ المدفوعة ({(cl_cash + non_cash):.2f}) أقل من إجمالي الفاتورة ({total:.2f}).'
-                    )
-                # Cash overpayment is change returned to the customer: only the due part is recorded.
-                paid.update(paid_cash=cash_due, paid_card=cl_card, paid_ewallet=cl_ewallet,
-                            paid_bank=cl_bank, paid_credit=cl_credit)
-            else:
-                field = {
-                    'CASH': 'paid_cash', 'CARD': 'paid_card', 'EWALLET': 'paid_ewallet',
-                    'BANK_TRANSFER': 'paid_bank', 'CREDIT': 'paid_credit',
-                }[payment_type]
-                amount_due = total
-                if payment_type == 'CASH':
-                    amount_due = round_cash(total)
-                    rounding_amount = amount_due - total
-                if payment_type == 'CASH' and data.get('cash_received') not in (None, ''):
-                    cash_received = _to_decimal(data.get('cash_received'), 'المبلغ المستلم')
-                    if cash_received + tolerance < amount_due:
+                    if client_price_raw not in (None, ''):
+                        client_price = _to_decimal(client_price_raw, f'السعر - {product.name}')
+                        if client_price < 0:
+                            raise _SaleAbort(f'سعر الصنف "{product.name}" لا يمكن أن يكون سالباً.')
+                        if can_edit_price:
+                            price_is_free = product.is_open_price or product.product_type == 'SERVICE'
+                            if (not is_admin and not price_is_free and price_margin_pct > 0
+                                    and server_price > 0 and client_price != server_price):
+                                deviation_pct = (abs(client_price - server_price) / server_price) * Decimal('100')
+                                if deviation_pct > price_margin_pct + Decimal('0.01'):
+                                    low = server_price * (Decimal('1') - price_margin_pct / Decimal('100'))
+                                    high = server_price * (Decimal('1') + price_margin_pct / Decimal('100'))
+                                    raise _SaleAbort(
+                                        f'سعر الصنف "{product.name}" ({client_price:.2f}) خارج هامش التعديل المسموح '
+                                        f'(±{price_margin_pct:.2f}% من {server_price:.2f}: بين {low:.2f} و {high:.2f}). '
+                                        'يتطلب ذلك صلاحية مدير.', status=403
+                                    )
+                            unit_price = client_price
+                    below_min_ok = request.user.has_perm('inventory.sell_below_min_price')
+                    if min_price > 0 and unit_price < min_price and not below_min_ok:
                         raise _SaleAbort(
-                            f'المبلغ المستلم ({cash_received:.2f}) أقل من المبلغ المطلوب ({amount_due:.2f}).'
+                            f'سعر الصنف "{product.name}" ({unit_price:.2f}) أقل من أدنى سعر بيع مسموح ({min_price:.2f}).'
                         )
-                paid[field] = amount_due
-            for k, v in paid.items():
-                setattr(invoice, k, v)
-            invoice.rounding_amount = rounding_amount.quantize(Decimal('0.01'))
-            invoice.save(update_fields=list(paid.keys()) + ['rounding_amount', 'updated_at'])
 
-            confirmed_invoice = confirm_invoice(invoice.id)
+                    discount_pct = _to_decimal(item.get('discount_percent', 0), f'الخصم - {product.name}')
+                    if discount_pct < 0 or discount_pct > 100:
+                        raise _SaleAbort(f'نسبة الخصم للصنف "{product.name}" يجب أن تكون بين 0 و 100.')
+                    if max_discount_pct is not None and discount_pct > max_discount_pct + discount_tolerance:
+                        raise _SaleAbort(
+                            f'الخصم على الصنف "{product.name}" ({discount_pct:.2f}%) يتجاوز الحد الأقصى المسموح ({max_discount_pct:.2f}%). '
+                            'يتطلب ذلك صلاحية مدير.', status=403
+                        )
+                    if discount_pct > 0 and not can_override_discount and min_price > 0 and not below_min_ok:
+                        net_unit = unit_price * (Decimal('1') - discount_pct / Decimal('100'))
+                        if net_unit < min_price:
+                            raise _SaleAbort(
+                                f'الخصم على الصنف "{product.name}" ينزل بالسعر ({net_unit:.2f}) عن أدنى سعر بيع ({min_price:.2f}). '
+                                'يتطلب ذلك صلاحية مدير.'
+                            )
 
-        return JsonResponse({
-            'success': True,
-            'invoice_number': confirmed_invoice.invoice_number,
-            'invoice_id': confirmed_invoice.id,
-            'total_amount': str(Decimal(str(confirmed_invoice.total_amount)).quantize(Decimal('0.01'))),
-            'rounding_amount': str(confirmed_invoice.rounding_amount or Decimal('0')),
-            'paid_cash': str(confirmed_invoice.paid_cash or Decimal('0')),
-            'partner_id': confirmed_invoice.partner_id if confirmed_invoice.partner else None,
-            'partner_name': confirmed_invoice.partner.name if confirmed_invoice.partner else 'عميل نقدي',
-        })
+                    # Taxes: client may only toggle them on/off; the rate comes from the product.
+                    client_tax = _to_decimal(item.get('tax_rate', 0), 'الضريبة')
+                    client_wht = _to_decimal(item.get('wht_rate', 0), 'الخصم والإضافة')
+                    tax_rate = (product.tax_rate or Decimal('0')) if client_tax > 0 else Decimal('0')
+                    wht_rate = (product.withholding_tax_rate or Decimal('0')) if client_wht > 0 else Decimal('0')
+
+                    # --- Serial validation ---
+                    serial_item = None
+                    if product.product_type == 'SERIALIZED':
+                        serial_item_id = item.get('serial_item_id')
+                        if not serial_item_id:
+                            raise _SaleAbort(f'يجب تحديد السيريال/IMEI للصنف "{product.name}".')
+                        if quantity != 1:
+                            raise _SaleAbort(f'الصنف "{product.name}" مسلسل؛ الكمية لكل سطر يجب أن تكون 1.')
+                        try:
+                            serial_item = SerialItem.objects.select_for_update(of=('self',)).get(
+                                id=int(serial_item_id), product=product, is_sold=False, warehouse=warehouse,
+                            )
+                        except (SerialItem.DoesNotExist, ValueError, TypeError):
+                            raise _SaleAbort(
+                                f'السيريال المحدد للصنف "{product.name}" غير متاح أو تم بيعه مسبقاً.', status=200
+                            )
+                        if serial_item.id in used_serial_ids:
+                            raise _SaleAbort(f'السيريال نفسه مكرر في السلة للصنف "{product.name}".')
+                        used_serial_ids.add(serial_item.id)
+
+                    InvoiceLine.objects.create(
+                        invoice=invoice,
+                        product=product,
+                        serial_item=serial_item,
+                        quantity=quantity,
+                        unit_price=unit_price,
+                        discount_pct=discount_pct,
+                        uom=puom,
+                        tax_rate=tax_rate,
+                        wht_rate=wht_rate,
+                    )
+                    line_count += 1
+
+                if line_count == 0:
+                    raise _SaleAbort('السلة فارغة. يرجى إضافة منتجات أولاً.')
+
+                # --- Server-side totals and payment reconciliation ---
+                invoice.recalculate_totals()
+                total = Decimal(str(invoice.total_amount)).quantize(Decimal('0.01'))
+                tolerance = Decimal('0.05')
+
+                if large_amount_threshold > 0 and total >= large_amount_threshold and _is_generic_cash_customer(partner):
+                    raise _SaleAbort(
+                        f'إجمالي الفاتورة ({total:.2f}) يساوي أو يتجاوز {large_amount_threshold:.2f}: '
+                        'يجب اختيار عميل مسجل (غير العميل النقدي) لإتمام هذه العملية.'
+                    )
+
+                # Cash rounding (SystemSetting.pos_cash_rounding): only the cash part is rounded.
+                # The invoice total stays exact; the difference is posted to 5115.
+                rounding_amount = Decimal('0')
+                paid = {'paid_cash': Decimal('0'), 'paid_card': Decimal('0'), 'paid_ewallet': Decimal('0'),
+                        'paid_bank': Decimal('0'), 'paid_credit': Decimal('0')}
+                if payment_type == 'SPLIT':
+                    non_cash = cl_card + cl_ewallet + cl_bank + cl_credit
+                    if non_cash > total + tolerance:
+                        raise _SaleAbort(
+                            f'مجموع المبالغ غير النقدية ({non_cash:.2f}) يتجاوز إجمالي الفاتورة ({total:.2f}).'
+                        )
+                    exact_cash_due = max(Decimal('0'), total - non_cash)
+                    cash_due = round_cash(exact_cash_due) if exact_cash_due > 0 else exact_cash_due
+                    rounding_amount = cash_due - exact_cash_due
+                    if cl_cash + tolerance < cash_due:
+                        raise _SaleAbort(
+                            f'المبالغ المدفوعة ({(cl_cash + non_cash):.2f}) أقل من إجمالي الفاتورة ({total:.2f}).'
+                        )
+                    # Cash overpayment is change returned to the customer: only the due part is recorded.
+                    paid.update(paid_cash=cash_due, paid_card=cl_card, paid_ewallet=cl_ewallet,
+                                paid_bank=cl_bank, paid_credit=cl_credit)
+                else:
+                    field = {
+                        'CASH': 'paid_cash', 'CARD': 'paid_card', 'EWALLET': 'paid_ewallet',
+                        'BANK_TRANSFER': 'paid_bank', 'CREDIT': 'paid_credit',
+                    }[payment_type]
+                    amount_due = total
+                    if payment_type == 'CASH':
+                        amount_due = round_cash(total)
+                        rounding_amount = amount_due - total
+                    if payment_type == 'CASH' and data.get('cash_received') not in (None, ''):
+                        cash_received = _to_decimal(data.get('cash_received'), 'المبلغ المستلم')
+                        if cash_received + tolerance < amount_due:
+                            raise _SaleAbort(
+                                f'المبلغ المستلم ({cash_received:.2f}) أقل من المبلغ المطلوب ({amount_due:.2f}).'
+                            )
+                    paid[field] = amount_due
+                for k, v in paid.items():
+                    setattr(invoice, k, v)
+                invoice.rounding_amount = rounding_amount.quantize(Decimal('0.01'))
+                invoice.save(update_fields=list(paid.keys()) + ['rounding_amount', 'updated_at'])
+
+                return confirm_invoice(invoice.id)
+
+        confirmed_invoice, deduplicated = run_idempotent(
+            Invoice, raw_idem_key, _execute_sale, select_related=('partner',)
+        )
+        return _sale_json_response(confirmed_invoice, deduplicated=deduplicated)
     except _SaleAbort as e:
         return JsonResponse({'success': False, 'error': str(e)}, status=e.status)
     except Exception as e:
