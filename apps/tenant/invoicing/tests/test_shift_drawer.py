@@ -278,10 +278,10 @@ class ShiftFiguresAgreeTests(TestCase):
         cashier_session = POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.cashier)
         session_b = POSSession.objects.create(branch=branch_b, treasury=treasury_b, user=cashier_b)
 
-        # 1. Anonymous request is redirected by @login_required
+        # 1. Anonymous request: JSON 401 (polled by pos.js, which then goes to the login page)
         self.client.logout()
         anon_resp = self.client.get(url)
-        self.assertEqual(anon_resp.status_code, 302)
+        self.assertEqual(anon_resp.status_code, 401)
 
         # 2. Admin with NO open shift of their own must NOT silently see .first() open shift without session_id
         login(self.client, self.w.admin)
