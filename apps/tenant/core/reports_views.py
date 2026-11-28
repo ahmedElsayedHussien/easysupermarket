@@ -2979,6 +2979,27 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
             messages.warning(self.request, f'{label} غير صالح، تم استخدام القيمة الافتراضية.')
             return None
 
+    @staticmethod
+    def _period_methods(scoped_sessions, date_from, date_to):
+        """Sales per payment method for the period, to match the bank / card-machine statements:
+        the shifts OPENED in the period as recorded, plus the closed-shift corrections whose ENTRY is dated in
+        the period — whatever the shift's date, since that entry is where the books show the money.
+        Rows: (label, recorded, corrections, total)."""
+        from apps.tenant.invoicing.closed_shift_correction import correction_adjustments
+        from apps.tenant.invoicing.models import ClosedShiftPaymentCorrection, Invoice
+        from apps.tenant.invoicing.shift_services import invoice_figure_expressions
+        period_ids = scoped_sessions.filter(start_time__date__gte=date_from, start_time__date__lte=date_to).values('id')
+        f = Invoice.objects.filter(pos_session__in=period_ids, status=Invoice.POSTED).order_by().aggregate(
+            **invoice_figure_expressions())
+        adj = correction_adjustments(ClosedShiftPaymentCorrection.objects.filter(
+            session__in=scoped_sessions.values('id'),
+            journal_entry__date__gte=date_from, journal_entry__date__lte=date_to))
+        recorded = (('كاش', f['total_cash_sales'] - f['total_cash_refunds'], 'cash'),
+                    ('فيزا / كارت', f['total_card_sales'], 'card'),
+                    ('محفظة إلكترونية', f['total_ewallet_sales'], 'ewallet'),
+                    ('تحويل بنكي', f['total_bank_sales'], 'bank'))
+        return [(label, value, adj[key], value + adj[key]) for label, value, key in recorded]
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         from apps.tenant.invoicing.models import POSSession
@@ -3019,15 +3040,14 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
         date_from = date_from_obj.strftime('%Y-%m-%d')
         date_to = date_to_obj.strftime('%Y-%m-%d')
 
-        sessions_qs = POSSession.objects.filter(
+        scoped_sessions = filter_by_branch(POSSession.objects.all(), self.request)
+        if selected_user_id:
+            scoped_sessions = scoped_sessions.filter(user_id=selected_user_id)
+        sessions_qs = scoped_sessions.filter(
             Q(start_time__date__gte=date_from_obj, start_time__date__lte=date_to_obj) |
             Q(end_time__date__gte=date_from_obj, end_time__date__lte=date_to_obj) |
             Q(status=POSSession.OPEN)
         ).select_related('user', 'branch', 'treasury').order_by('-start_time').distinct()
-        sessions_qs = filter_by_branch(sessions_qs, self.request)
-
-        if selected_user_id:
-            sessions_qs = sessions_qs.filter(user_id=selected_user_id)
 
         exporting = self.request.GET.get('export') == 'excel'
         if exporting:
@@ -3068,6 +3088,7 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
             total_actual += dt['actual_balance']
             total_diff += dt['difference']
 
+        context['period_methods'] = self._period_methods(scoped_sessions, date_from_obj, date_to_obj)
         context.update({
             'date_from': date_from,
             'date_to': date_to,
@@ -3189,6 +3210,21 @@ class ShiftReportView(CustomPermissionRequiredMixin, TemplateView):
                         cell.alignment = align_right
                     else:
                         cell.alignment = align_center
+
+            # period totals per payment method — corrections counted by the date of their entry
+            ws.append([])
+            ws.append(['إجمالي الفترة حسب طريقة الدفع', 'كما اتسجّل في الورديات', 'تصحيحات بعد القفل',
+                       'الإجمالي (زي الدفاتر)'])
+            for col_idx in range(1, 5):
+                cell = ws.cell(row=ws.max_row, column=col_idx)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = align_center
+            for label, recorded, adj, total in context.get('period_methods', []):
+                ws.append([label, to_dec(recorded), to_dec(adj), to_dec(total)])
+                for col_idx in range(2, 5):
+                    ws.cell(row=ws.max_row, column=col_idx).number_format = '#,##0.00'
+            ws.append(['التصحيحات محسوبة بتاريخ قيد التصحيح، مش بتاريخ ورديتها.'])
 
             for col in ws.columns:
                 max_len = 0

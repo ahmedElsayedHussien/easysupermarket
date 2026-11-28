@@ -79,6 +79,28 @@
     </div>
 </div>
 
+<!-- Period totals per payment method (to match the bank / card-machine statements) -->
+<div class="card p-3 mb-4" style="background:#0f1929; border-radius: 10px;">
+    <div style="font-weight: bold; color: #ff7300; margin-bottom: .5rem;">💳 إجمالي الفترة حسب طريقة الدفع</div>
+    <table class="table table-sm mb-1" style="color: #e2e8f0; max-width: 680px;">
+        <thead><tr>
+            <th>الطريقة</th><th>كما اتسجّل في الورديات</th><th>تصحيحات بعد القفل</th><th>الإجمالي (زي الدفاتر)</th>
+        </tr></thead>
+        <tbody>
+        {% for label, recorded, adj, total in period_methods %}
+        <tr>
+            <td>{{ label }}</td>
+            <td>{{ recorded|floatformat:2 }}</td>
+            <td style="color: #ff7300;">{% if adj > 0 %}+{% endif %}{{ adj|floatformat:2 }}</td>
+            <td class="fw-bold">{{ total|floatformat:2 }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <small class="text-muted">الورديات محسوبة بتاريخ فتحها. التصحيحات محسوبة بتاريخ قيد التصحيح، مش بتاريخ ورديتها —
+        زي ما الدفاتر وكشف البنك بيبيّنوها. عمود «تسوية تصحيحات» في كل وردية تحت بيبيّن تصحيحات الوردية نفسها أيًا كان تاريخها.</small>
+</div>
+
 
 <!-- Details Table -->
 <div class="card p-4" style="background:#0f1929;">

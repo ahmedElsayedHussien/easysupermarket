@@ -75,3 +75,58 @@ class ShiftReportCorrectionTests(TestCase):
         r = self.client.get(reverse('core:report_shifts'))
         row = next(i for i in r.context['sessions_data'] if i['session'].id == other.id)
         self.assertIsNone(row['correction'])
+
+
+class PeriodTotalsByEntryDateTests(TestCase):
+    """Period totals per method count a correction by the date of ITS entry, not its shift's: a 30/11 shift
+    corrected on 3/12 shows in December — exactly where the bank account moves."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+        cls.bank = make_bank_account('ماكينة فيزا الفرع')
+
+    def test_november_shift_corrected_in_december(self):
+        import datetime
+        from types import SimpleNamespace
+        from unittest import mock
+        from django.utils import timezone
+        stock_in(self.w.product, self.w.warehouse, 50, D('4'))
+        nov30 = datetime.date(2026, 11, 30)
+        session = POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.admin)
+        POSSession.objects.filter(pk=session.pk).update(
+            start_time=timezone.make_aware(datetime.datetime(2026, 11, 30, 10, 0)))
+        sale = make_invoice(self.w, lines=[(self.w.product, 10, 10)], pos_session=session, date=nov30)  # cash 100
+        POSSession.objects.filter(pk=session.pk).update(status=POSSession.CLOSED, difference=D('-100'))
+        session.refresh_from_db()
+        post_shift_variance(session, 'EXPENSE', self.w.admin)
+
+        class Dec3(datetime.date):
+            @classmethod
+            def today(cls):
+                return datetime.date(2026, 12, 3)
+        with mock.patch('apps.tenant.accounting.posting.datetime', SimpleNamespace(date=Dec3)):
+            c = correct_payment(sale, ClosedShiftPaymentCorrection.CARD, self.w.admin, 'فيزا',
+                                bank_account=self.bank)
+        self.assertEqual(c.journal_entry.date, datetime.date(2026, 12, 3))
+
+        login(self.client, self.w.admin)
+
+        def card_total(date_from, date_to):
+            r = self.client.get(reverse('core:report_shifts'), {'date_from': date_from, 'date_to': date_to})
+            return {label: total for label, _rec, _adj, total in r.context['period_methods']}['فيزا / كارت']
+
+        def bank_movement(date_from, date_to):
+            items = self.bank.account.journal_items.filter(entry__status='POSTED', entry__date__gte=date_from,
+                                                           entry__date__lte=date_to)
+            return sum((i.debit - i.credit for i in items), D('0'))
+
+        self.assertEqual(card_total('2026-11-01', '2026-11-30'), D('0'))
+        self.assertEqual(card_total('2026-12-01', '2026-12-31'), D('100'))
+        self.assertEqual(card_total('2026-11-01', '2026-11-30'), bank_movement('2026-11-01', '2026-11-30'))
+        self.assertEqual(card_total('2026-12-01', '2026-12-31'), bank_movement('2026-12-01', '2026-12-31'))
+        # the shift's own row still carries its correction, whatever the correction's date
+        r = self.client.get(reverse('core:report_shifts'), {'date_from': '2026-11-01', 'date_to': '2026-11-30'})
+        row = next(i for i in r.context['sessions_data'] if i['session'].id == session.id)
+        self.assertEqual(row['correction']['card'], D('100'))
+        self.assertContains(r, 'محسوبة بتاريخ قيد التصحيح')
