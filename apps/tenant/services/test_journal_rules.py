@@ -1,4 +1,4 @@
-"""journal_service: حسابات النظام بتتعمل لما تنقص، مفيش ترحيل صامت على حساب رئيسي، ترقيم المرتجع من سلسلته،
+"""journal_service: حسابات النظام جاية من الشجرة الافتراضية، مفيش ترحيل صامت على حساب رئيسي، ترقيم المرتجع من سلسلته،
 مرتجع المشتريات بيخرج المخزون بتكلفته والفرق على 5110، والقيد باسم الكاشير."""
 from decimal import Decimal as D
 
@@ -15,10 +15,19 @@ class JournalServiceRuleTests(TestCase):
     def setUpTestData(cls):
         cls.w = build_world()
 
-    def test_lazy_system_account_created_when_missing(self):
-        Account.objects.filter(code='1155').delete()
-        acc = _get_system_account('1155')
-        self.assertEqual((acc.code, acc.parent.code), ('1155', '1100'))
+    def test_system_accounts_come_from_the_chart(self):
+        """1155 / 1190 / 5305 / 5115 are seeded by setup_chart_of_accounts (no lazy creation any more)."""
+        from apps.tenant.core.management.commands.setup_chart_of_accounts import setup_chart_of_accounts_data
+        from apps.tenant.services import journal_service
+        self.assertFalse(hasattr(journal_service, '_LAZY_ACCOUNTS'))
+        Account.objects.filter(code__in=['1155', '1190', '5305', '5115']).delete()
+        with self.assertRaises(ValueError):
+            _get_system_account('1155')                       # missing = a clear error, never made up on the fly
+        setup_chart_of_accounts_data()
+        got = {a.code: a for a in Account.objects.filter(code__in=['1155', '1190', '5305', '5115'])}
+        self.assertEqual(set(got), {'1155', '1190', '5305', '5115'})
+        self.assertEqual((got['1155'].parent.code, got['5305'].parent.code), ('1100', '5300'))
+        self.assertTrue(got['1155'].allow_reconcile)
 
     def test_no_silent_posting_on_a_group_account(self):
         self.w.treasury.ensure_account()                       # 1110 now has a sub-account

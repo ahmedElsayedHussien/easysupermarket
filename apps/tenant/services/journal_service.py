@@ -34,7 +34,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ضريبة الخصم من المنبع لنا (مدينة) — المخصومة من مبيعاتنا بمعرفة العملاء.
-# 1150 في الشجرة الافتراضية هو "عهد نقدية ومصروفات مقدمة"، لذلك نستخدم كوداً مستقلاً يُنشأ عند الحاجة.
+# 1150 في الشجرة الافتراضية هو "عهد نقدية"، لذلك كود مستقل — موجود في setup_chart_of_accounts.
 WHT_RECEIVABLE_CODE = '1155'
 # ضريبة القيمة المضافة - مدخلات (مشتريات ومصروفات) — أصل. المخرجات (مبيعات) تبقى على 2130.
 INPUT_VAT_CODE = '1190'
@@ -43,14 +43,6 @@ OUTPUT_VAT_CODE = '2130'
 PAYMENT_FEES_CODE = '5305'
 # فروق تقريب النقدية في نقطة البيع (Invoice.rounding_amount): دائن = مكسب، مدين = خسارة
 POS_ROUNDING_CODE = '5115'
-
-# Lazily created system accounts: code -> (name, account_type, parent codes in preference order, extra)
-_LAZY_ACCOUNTS = {
-    WHT_RECEIVABLE_CODE: ('ضريبة خصم من المنبع لنا (مدينة)', 'ASSET', ('1100', '1000'), {'allow_reconcile': True}),
-    INPUT_VAT_CODE: ('ضريبة القيمة المضافة - مدخلات (مشتريات)', 'ASSET', ('1100', '1000'), {}),
-    PAYMENT_FEES_CODE: ('عمولات ماكينات الدفع والمحافظ والبنوك', 'EXPENSE', ('5300', '5000'), {'allow_direct_payment': False}),
-    POS_ROUNDING_CODE: ('فروق تقريب نقطة البيع', 'EXPENSE', ('5000',), {'allow_direct_payment': False}),
-}
 
 
 def _get_system_account(code: str):
@@ -73,13 +65,6 @@ def _get_system_account(code: str):
         return acc
     acc = Account.objects.filter(code=code, is_active=True).first()
     if acc:
-        return acc
-    if code in _LAZY_ACCOUNTS and not Account.objects.filter(code=code).exists():
-        name, acc_type, parent_codes, extra = _LAZY_ACCOUNTS[code]
-        parents = {a.code: a for a in Account.objects.filter(code__in=parent_codes)}
-        parent = next((parents[c] for c in parent_codes if c in parents), None)   # in preference order
-        acc, _ = Account.objects.get_or_create(code=code, defaults={'name': name, 'account_type': acc_type,
-                                                                   'parent': parent, 'is_active': True, **extra})
         return acc
 
     raise ValueError(
