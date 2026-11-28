@@ -1,7 +1,6 @@
 """P1-6: إنشاء خزينة / بنك برصيد أول مدة في فترة مقفولة = رسالة في الفورم (مش 500)، ensure_account ما بتبلعش
-الأخطاء، والـ migration بتكمّل الحسابات الناقصة."""
+الأخطاء، وأمر fill_money_accounts بيكمّل الحسابات الناقصة."""
 import datetime
-import importlib
 from decimal import Decimal as D
 from unittest import mock
 
@@ -50,14 +49,30 @@ class MoneyBoxSetupTests(TestCase):
             with self.assertRaisesMessage(ValueError, 'مفيش 1110'):
                 t.ensure_account()
 
-    def test_migration_fills_missing_accounts(self):
+    def test_command_fills_missing_accounts(self):
+        from io import StringIO
+        from django.core.management import call_command
         t = Treasury.objects.create(name='خزنة بلا حساب', branch=self.w.branch)
         Treasury.objects.filter(pk=t.pk).update(account=None)
-        mig = importlib.import_module('apps.tenant.accounting.migrations.0044_fill_missing_money_accounts')
-        mig.fill(None, None)
+        out = StringIO()
+        call_command('fill_money_accounts', stdout=out)
         t.refresh_from_db()
         self.assertIsNotNone(t.account_id)
         self.assertEqual(t.account.code, f'1110-{t.pk}')
+
+    def test_command_warns_when_parent_account_missing(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from apps.tenant.accounting.models import Account
+        t = Treasury.objects.create(name='خزنة يتيمة', branch=self.w.branch)
+        Treasury.objects.filter(pk=t.pk).update(account=None)
+        Account.objects.filter(code='1110').update(code='1110-OLD')          # the parent is gone
+        out = StringIO()
+        call_command('fill_money_accounts', stdout=out)                       # warns, does not raise
+        self.assertIn('1110', out.getvalue())
+        self.assertIn('مش موجود', out.getvalue())
+        t.refresh_from_db()
+        self.assertIsNone(t.account_id)
 
 
 class RepCashBoxVisibilityTests(TestCase):

@@ -13,6 +13,16 @@ def auto_populate_chart_of_accounts(sender, **kwargs):
         setup_chart_of_accounts_data()
     except Exception:
         pass
+    # then every cash box / bank / wallet gets its sub-account (warns, never stops the migrate)
+    try:
+        import logging
+        from apps.tenant.accounting.management.commands.fill_money_accounts import fill_money_accounts
+        _, warnings = fill_money_accounts()
+        for w in warnings:
+            logging.getLogger(__name__).warning(w)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('fill_money_accounts skipped after migrate', exc_info=True)
 
 
 class AccountingConfig(AppConfig):

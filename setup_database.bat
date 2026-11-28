@@ -36,6 +36,7 @@ if %errorlevel% equ 0 (
 echo.
 echo [2/3] Setting up the chart of accounts...
 "%PY%" manage.py setup_chart_of_accounts
+"%PY%" manage.py fill_money_accounts
 
 echo.
 echo [3/3] Checking for a superuser...
