@@ -47,7 +47,14 @@ class AutoBackupCommandTests(TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.folder = os.path.join(self.tmp, 'default')
+        # the same tests on both engines: SQLite copies the .db file into 'default/', PostgreSQL pg_dumps
+        # the tenant schema into '<schema>/' as .sql
+        self.pg = backup_service.is_postgres()
+        if self.pg and not backup_service.find_pg_tool('pg_dump'):
+            self.skipTest('pg_dump is not installed')
+        self.folder = os.path.join(self.tmp, backup_service.current_schema_name())
+        self.ext = '.sql' if self.pg else '.db'
+        self.engine = backup_service.current_schema_name() if self.pg else 'sqlite'
 
     def _run(self, *args):
         out = io.StringIO()
@@ -76,27 +83,27 @@ class AutoBackupCommandTests(TestCase):
         system_settings(auto_backup_enabled=True, auto_backup_retention=3)
         self.assertIn('created', self._run())
         files = self._files()
-        dumps = [f for f in files if f.endswith('.db')]
+        dumps = [f for f in files if f.endswith(self.ext)]
         self.assertEqual(len(dumps), 1)
-        self.assertTrue(dumps[0].startswith('auto_backup_sqlite_'))
+        self.assertTrue(dumps[0].startswith(f'auto_backup_{self.engine}_'))
         self.assertIn(dumps[0] + '.sig', files)
         self.assertTrue(backup_service.verify_signature(os.path.join(self.folder, dumps[0])))
         # a second run within 23h does not create another one
         self.assertIn('skipped', self._run())
-        self.assertEqual(len([f for f in self._files() if f.endswith('.db')]), 1)
+        self.assertEqual(len([f for f in self._files() if f.endswith(self.ext)]), 1)
 
     def test_prunes_old_auto_backups_but_keeps_manual(self):
         system_settings(auto_backup_enabled=True, auto_backup_retention=2)
         for i, age in enumerate((30, 50, 70, 90)):
-            self._fake_auto(f'auto_backup_sqlite_old{i}.db', age)
-        self._fake_auto('backup_sqlite_manual.db', 200)       # manual: never pruned
+            self._fake_auto(f'auto_backup_{self.engine}_old{i}{self.ext}', age)
+        self._fake_auto(f'backup_{self.engine}_manual{self.ext}', 200)       # manual: never pruned
         out = self._run()
         self.assertIn('created', out)
         self.assertIn('pruned 3 old', out)
         files = self._files()
-        autos = [f for f in files if f.startswith('auto_') and f.endswith('.db')]
+        autos = [f for f in files if f.startswith('auto_') and f.endswith(self.ext)]
         self.assertEqual(len(autos), 2)
-        self.assertIn('auto_backup_sqlite_old0.db', autos)       # newest old one kept
-        self.assertNotIn('auto_backup_sqlite_old3.db.sig', files)
-        self.assertIn('backup_sqlite_manual.db', files)
-        self.assertIn('backup_sqlite_manual.db.sig', files)
+        self.assertIn(f'auto_backup_{self.engine}_old0{self.ext}', autos)       # newest old one kept
+        self.assertNotIn(f'auto_backup_{self.engine}_old3{self.ext}.sig', files)
+        self.assertIn(f'backup_{self.engine}_manual{self.ext}', files)
+        self.assertIn(f'backup_{self.engine}_manual{self.ext}.sig', files)
