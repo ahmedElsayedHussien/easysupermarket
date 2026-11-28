@@ -9,6 +9,7 @@ Lifecycle:
   DRAFT → CANCELLED (no financial effects)
 """
 from django.db import models
+from apps.tenant.core.money import MoneyField, line_amounts
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from decimal import Decimal
@@ -282,20 +283,20 @@ class Invoice(models.Model):
     )
 
     # Financial totals (auto-calculated from lines)
-    subtotal = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    subtotal = MoneyField(
+        default=Decimal('0'),
         verbose_name='إجمالي قبل الضريبة'
     )
     discount_percentage = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة الخصم الإجمالي (%)'
     )
-    discount_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    discount_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
-    tax_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    tax_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='ضريبة القيمة المضافة'
     )
     vat_percentage = models.DecimalField(
@@ -306,12 +307,12 @@ class Invoice(models.Model):
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة ضريبة الخصم والإضافة (%)'
     )
-    wht_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    wht_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة الخصم والإضافة'
     )
-    total_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    total_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='الإجمالي النهائي'
     )
 
@@ -431,6 +432,7 @@ class Invoice(models.Model):
             tax_sum=Sum('tax_amount'),
             wht_sum=Sum('wht_amount')
         )
+        # the header is the sum of the lines, each already money (2 places): exact, nothing to round
         self.subtotal = agg['gross_sum'] or Decimal('0')
         self.discount_amount = agg['discount_sum'] or Decimal('0')
         self.tax_amount = agg['tax_sum'] or Decimal('0')
@@ -535,33 +537,33 @@ class InvoiceLine(models.Model):
     # Optional expiry date entered on the purchase screen (SystemSetting.enable_expiry_tracking);
     # copied onto the InventoryBatch created when the purchase is confirmed.
     expiry_date = models.DateField(null=True, blank=True, verbose_name='تاريخ الصلاحية')
-    discount_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    discount_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
 
-    subtotal = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    subtotal = MoneyField(
+        default=Decimal('0'),
         verbose_name='الإجمالي (بعد خصم، قبل ضريبة)'
     )
     tax_rate = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة الضريبة %'
     )
-    tax_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    tax_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة الضريبة'
     )
     wht_rate = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة ضريبة الخصم والإضافة %'
     )
-    wht_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    wht_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة الخصم والإضافة'
     )
-    total_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    total_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='الإجمالي النهائي'
     )
 
@@ -644,23 +646,12 @@ class InvoiceLine(models.Model):
             return super().save(*args, **kwargs)
         self.conversion_factor = (self.uom.conversion_factor or Decimal('1')) if self.uom_id and self.uom \
             else Decimal('1')
-        qty = self.quantity or Decimal('0')
-        price = self.unit_price or Decimal('0')
-        disc_pct = self.discount_pct or Decimal('0')
-
-        gross = qty * price
-        if self.discount_fixed is not None:      # an exact amount (e.g. 50 EGP) — the % is display only
-            self.discount_amount = min(max(self.discount_fixed, Decimal('0')), gross).quantize(Decimal('0.0001'))
-        else:
-            self.discount_amount = (gross * disc_pct / Decimal('100')).quantize(Decimal('0.0001'))
-        self.subtotal = (gross - self.discount_amount).quantize(Decimal('0.0001'))
-        
-        # Calculate taxes
-        self.tax_amount = (self.subtotal * (self.tax_rate / Decimal('100.0'))).quantize(Decimal('0.0001'))
-        self.wht_amount = (self.subtotal * (self.wht_rate / Decimal('100.0'))).quantize(Decimal('0.0001'))
-        
-        self.total_amount = self.subtotal + self.tax_amount - self.wht_amount
-
+        # money to 2 places, once, from exact inputs (core.money.line_amounts - the van cart uses the same);
+        # a fixed discount (e.g. 50 EGP) wins over the %, which is then display only
+        a = line_amounts(self.quantity, self.unit_price, discount_pct=self.discount_pct,
+                         discount_fixed=self.discount_fixed, tax_rate=self.tax_rate, wht_rate=self.wht_rate)
+        self.discount_amount, self.subtotal = a['discount'], a['subtotal']
+        self.tax_amount, self.wht_amount, self.total_amount = a['tax'], a['wht'], a['total']
         super().save(*args, **kwargs)
 
     def clean(self):
@@ -782,20 +773,20 @@ class Quotation(models.Model):
     )
 
     # Financial and Tax Totals
-    subtotal = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    subtotal = MoneyField(
+        default=Decimal('0'),
         verbose_name='إجمالي قبل الضريبة'
     )
     discount_percentage = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة الخصم الإجمالي (%)'
     )
-    discount_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    discount_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
-    tax_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    tax_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='ضريبة القيمة المضافة'
     )
     vat_percentage = models.DecimalField(
@@ -806,12 +797,12 @@ class Quotation(models.Model):
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة ضريبة الخصم والإضافة (%)'
     )
-    wht_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    wht_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة الخصم والإضافة'
     )
-    total_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    total_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='الإجمالي النهائي'
     )
 
@@ -845,6 +836,7 @@ class Quotation(models.Model):
             tax_sum=Sum('tax_amount'),
             wht_sum=Sum('wht_amount')
         )
+        # the header is the sum of the lines, each already money (2 places): exact, nothing to round
         self.subtotal = agg['gross_sum'] or Decimal('0')
         self.discount_amount = agg['discount_sum'] or Decimal('0')
         self.tax_amount = agg['tax_sum'] or Decimal('0')
@@ -1025,32 +1017,32 @@ class QuotationLine(models.Model):
         on_delete=models.SET_NULL,
         verbose_name='وحدة القياس'
     )
-    discount_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    discount_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
-    subtotal = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    subtotal = MoneyField(
+        default=Decimal('0'),
         verbose_name='الإجمالي (بعد الخصم، قبل الضريبة)'
     )
     tax_rate = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة ضريبة القيمة المضافة %'
     )
-    tax_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    tax_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة ضريبة القيمة المضافة'
     )
     wht_rate = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('0'),
         verbose_name='نسبة ضريبة الخصم والإضافة %'
     )
-    wht_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    wht_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='قيمة ضريبة الخصم والإضافة'
     )
-    total_amount = models.DecimalField(
-        max_digits=18, decimal_places=4, default=Decimal('0'),
+    total_amount = MoneyField(
+        default=Decimal('0'),
         verbose_name='الإجمالي النهائي'
     )
 
@@ -1080,19 +1072,10 @@ class QuotationLine(models.Model):
         return (self.quantity or Decimal('0')) * self.conversion_factor
 
     def save(self, *args, **kwargs):
-        qty = self.quantity or Decimal('0')
-        price = self.unit_price or Decimal('0')
-        disc_pct = self.discount_pct or Decimal('0')
-
-        gross = qty * price
-        self.discount_amount = (gross * disc_pct / Decimal('100')).quantize(Decimal('0.0001'))
-        self.subtotal = (gross - self.discount_amount).quantize(Decimal('0.0001'))
-
-        # Taxes calculations
-        self.tax_amount = (self.subtotal * (self.tax_rate / Decimal('100.0'))).quantize(Decimal('0.0001'))
-        self.wht_amount = (self.subtotal * (self.wht_rate / Decimal('100.0'))).quantize(Decimal('0.0001'))
-
-        self.total_amount = self.subtotal + self.tax_amount - self.wht_amount
+        a = line_amounts(self.quantity, self.unit_price, discount_pct=self.discount_pct,
+                         tax_rate=self.tax_rate, wht_rate=self.wht_rate)          # same rule as InvoiceLine
+        self.discount_amount, self.subtotal = a['discount'], a['subtotal']
+        self.tax_amount, self.wht_amount, self.total_amount = a['tax'], a['wht'], a['total']
         super().save(*args, **kwargs)
 
 

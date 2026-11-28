@@ -23,6 +23,8 @@ from django.utils import timezone
 from .models import (Invoice, InvoiceLine, LoadingOrder, LoadingOrderLine, RepCashHandover, SalesRep,
                      UnloadingOrder, UnloadingOrderLine)
 
+from apps.tenant.core.money import line_amounts, money
+
 ZERO = Decimal('0')
 CENT = Decimal('0.01')
 EMPLOYEES_ACCOUNT_CODE = '1135'
@@ -416,46 +418,47 @@ def price_cart(rep, user, rows, partner=None, invoice_disc=ZERO, invoice_disc_ty
                 raise ValidationError(f'"{p.name}": السعر ({asked:.2f}) خارج الهامش المسموح '
                                       f'(±{margin.normalize():f}% من {i["price"]:.2f}).')
             i['price'] = asked
-        i['gross'] = (i['qty'] * i['price']).quantize(Q4)
+        i['gross'] = i['qty'] * i['price']                 # exact: money is rounded once, per figure (below)
         val = i.get('disc') or ZERO
         if i.get('disc_type') == 'amt':
             if val > i['gross']:
                 raise ValidationError(f'"{p.name}": الخصم ({val:.2f}) أكبر من قيمة الصنف ({i["gross"]:.2f}).')
-            i['line_disc'] = val.quantize(Q4)
+            i['line_disc'] = money(val)
         else:
             if val > HUNDRED:
                 raise ValidationError(f'"{p.name}": الخصم لازم يكون بين 0 و 100%.')
-            i['line_disc'] = (i['gross'] * val / HUNDRED).quantize(Q4)
+            i['line_disc'] = money(i['gross'] * val / HUNDRED)
     # 2) the invoice discount on what is left of each line
     rest = [i['gross'] - i['line_disc'] for i in items]
     base = sum(rest, ZERO)
     if invoice_disc_type == 'amt':
         if invoice_disc > base:
             raise ValidationError(f'خصم الفاتورة ({invoice_disc:.2f}) أكبر من قيمتها ({base:.2f}).')
+        invoice_disc = money(invoice_disc)
         shares, left = [], invoice_disc
         for n, r in enumerate(rest):
-            s = left if n == len(rest) - 1 else (invoice_disc * r / base).quantize(Q4) if base else ZERO
+            s = left if n == len(rest) - 1 else money(invoice_disc * r / base) if base else ZERO
             shares.append(s)
             left -= s
     else:
-        shares = [(r * invoice_disc / HUNDRED).quantize(Q4) for r in rest]
+        shares = [money(r * invoice_disc / HUNDRED) for r in rest]
 
     lines, t = [], {k: ZERO for k in ('gross', 'discount', 'subtotal', 'tax', 'wht')}
     taxes = {}
     for i, share in zip(items, shares):
         p = i['product']
-        disc = i['line_disc'] + share
+        disc = min(i['line_disc'] + share, money(i['gross']))
         eff = (disc * HUNDRED / i['gross']).quantize(Q4) if i['gross'] else ZERO
         if cap is not None and eff > cap + Decimal('0.01'):
             raise ValidationError(f'"{p.name}": الخصم ({eff:.2f}%) أكبر من المسموح لك ({cap.normalize():f}%).')
-        sub = (i['gross'] - disc).quantize(Q4)
+        rate = vat_rate if (p.tax_rate or ZERO) > 0 else ZERO
+        wht_rate = cust_wht_rate
+        # the very computation InvoiceLine.save() does with discount_fixed=disc: the rep sees the saved figures
+        a = line_amounts(i['qty'], i['price'], discount_fixed=disc, tax_rate=rate, wht_rate=wht_rate)
+        disc, sub, tax, wht = a['discount'], a['subtotal'], a['tax'], a['wht']
         if (i['min_price'] > 0 and i['qty'] and sub / i['qty'] < i['min_price'] - Decimal('0.005')
                 and not user.has_perm('inventory.sell_below_min_price')):
             raise ValidationError(f'"{p.name}": السعر بعد الخصم أقل من أدنى سعر بيع ({i["min_price"]:.2f}).')
-        rate = vat_rate if (p.tax_rate or ZERO) > 0 else ZERO
-        wht_rate = cust_wht_rate
-        tax = (sub * rate / HUNDRED).quantize(Q4)
-        wht = (sub * wht_rate / HUNDRED).quantize(Q4)
         lines.append({**i, 'disc_amount': disc, 'disc_pct': eff, 'discount': disc, 'subtotal': sub, 'tax_rate': rate,
                       'tax': tax, 'wht_rate': wht_rate, 'wht': wht, 'total': sub + tax - wht})
         for k, v in (('gross', i['gross']), ('discount', disc), ('subtotal', sub), ('tax', tax), ('wht', wht)):
@@ -463,7 +466,7 @@ def price_cart(rep, user, rows, partner=None, invoice_disc=ZERO, invoice_disc_ty
         if rate:
             taxes[rate] = taxes.get(rate, ZERO) + tax
     return {'lines': lines, **t, 'taxes': sorted(taxes.items()), 'with_wht': with_wht,
-            'total': (t['subtotal'] + t['tax'] - t['wht']).quantize(CENT),
+            'total': t['subtotal'] + t['tax'] - t['wht'],             # sums of 2-place figures: exact
             'invoice_disc': invoice_disc if invoice_disc_type == 'pct' else ZERO}
 
 
