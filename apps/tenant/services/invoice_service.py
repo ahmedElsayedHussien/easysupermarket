@@ -124,6 +124,25 @@ def _confirm_invoice_core(invoice_id: int):
     return invoice
 
 
+def _ensure_shift_open(invoice, action_label):
+    """A posted invoice of a CLOSED cashier shift is not cancelled / re-paid: the drawer was counted
+    against it (same rule as vouchers and transfers)."""
+    if invoice.status == 'POSTED' and invoice.pos_session_id:
+        from apps.tenant.accounting.models import _ensure_pos_session_open
+        _ensure_pos_session_open(invoice.pos_session, action_label)
+
+
+def _serial_movement(serial, warehouse, movement_type, reference, notes=''):
+    """One unit of a serial-tracked product moving: the stock card sees it like any other item."""
+    from apps.tenant.inventory.models import StockMovement
+    if warehouse is None:
+        return
+    StockMovement.objects.create(product_id=serial.product_id, warehouse=warehouse, batch=None,
+                                 movement_type=movement_type, quantity=Decimal('1'),
+                                 unit_cost=serial.actual_cost or Decimal('0'), reference=(reference or '')[:100],
+                                 notes=notes or f'سيريال {serial.serial_number}')
+
+
 def _stock_map(products, warehouse):
     """{product_id: stock in ``warehouse``} like Product.get_stock(), for many products in
     2 queries (batches summed for normal items, unsold serials counted for serialized)."""
@@ -215,6 +234,9 @@ def _process_sale_invoice(invoice, lines):
                 serial.warehouse = None
 
             serial.save()
+            _serial_movement(serial, invoice.warehouse,
+                             'RETURN_OUT' if invoice.invoice_type == Invoice.RETURN_PURCHASE else 'OUT',
+                             invoice.invoice_number)
             line.serial_item = serial
             line.cogs_amount = serial.actual_cost
             line.save(update_fields=['cogs_amount'])
@@ -330,6 +352,9 @@ def _process_purchase_invoice(invoice, lines):
                 line.serial_item.warehouse = invoice.warehouse
                 line.serial_item.is_sold = False
                 line.serial_item.save()
+                _serial_movement(line.serial_item, invoice.warehouse,
+                                 'RETURN_IN' if invoice.invoice_type == Invoice.RETURN_SALE else 'IN',
+                                 invoice.invoice_number)
             continue
 
         conversion_factor = line.factor
@@ -402,6 +427,7 @@ def update_invoice_payment_method(
     paid_bank: Decimal = Decimal('0'),
     insta_bank_account_id: Optional[int] = None,
     user=None,
+    paid_credit: Optional[Decimal] = None,
 ):
     """
     Updates payment_type and payment destination fields of an existing invoice.
@@ -413,7 +439,8 @@ def update_invoice_payment_method(
     from apps.tenant.partners.models import Partner
     from apps.tenant.services.journal_service import reverse_document_entries
 
-    invoice = Invoice.objects.select_for_update(of=('self',)).get(id=invoice_id)
+    invoice = Invoice.objects.select_for_update(of=('self',)).select_related('pos_session').get(id=invoice_id)
+    _ensure_shift_open(invoice, 'تعديل طريقة سداد')
 
     # Protection Guard: Cannot modify payment method of an invoice that has returns
     if invoice.return_invoices.exclude(status=Invoice.CANCELLED).exists() or any(line.returned_quantity > 0 for line in invoice.lines.all()):
@@ -426,8 +453,27 @@ def update_invoice_payment_method(
         new_partner = Partner.objects.get(id=partner_id)
         invoice.partner = new_partner
 
+    total = invoice.total_amount or Decimal('0')
+    paid_cash, paid_card = Decimal(paid_cash or 0), Decimal(paid_card or 0)
+    paid_ewallet, paid_bank = Decimal(paid_ewallet or 0), Decimal(paid_bank or 0)
+    if min(paid_cash, paid_card, paid_ewallet, paid_bank) < 0:
+        raise ValueError('مبالغ السداد مينفعش تكون بالسالب.')
+    if payment_type == 'SPLIT':
+        # an on-account part only when it is given explicitly: the legs must still add up to the total
+        # (a shortfall is never turned into credit silently)
+        paid_credit = Decimal(paid_credit or 0)
+        if paid_credit < 0:
+            raise ValueError('الجزء الآجل مينفعش يكون بالسالب.')
+    else:
+        # one method carries the whole invoice
+        paid_cash = total if payment_type == 'CASH' else Decimal('0')
+        paid_card = total if payment_type == 'CARD' else Decimal('0')
+        paid_ewallet = total if payment_type == 'EWALLET' else Decimal('0')
+        paid_bank = total if payment_type == 'BANK_TRANSFER' else Decimal('0')
+        paid_credit = total if payment_type == 'CREDIT' else Decimal('0')
+
     # Protection Guard: Credit Payment requires an explicit, non-cash partner
-    if payment_type == 'CREDIT':
+    if payment_type == 'CREDIT' or (payment_type == 'SPLIT' and paid_credit > 0):
         curr_partner = invoice.partner
         if not curr_partner or 'عميل نقدي' in curr_partner.name or curr_partner.name.strip() in ['عميل نقدي', 'نقدي', 'طياري', 'مورد نقدي']:
             raise ValueError('لا يمكن تغيير طريقة السداد إلى (آجل) لـ "عميل نقدي". يرجى اختيار عميل/مورد آخر مخصص للآجل.')
@@ -435,8 +481,7 @@ def update_invoice_payment_method(
     # Split payment: the legs must add up to the invoice total (the screen checks this in the
     # browser, but the server never trusts it). 0.05 covers piastre rounding.
     if payment_type == 'SPLIT':
-        legs = (Decimal(paid_cash or 0) + Decimal(paid_card or 0) + Decimal(paid_ewallet or 0)
-                + Decimal(paid_bank or 0) + (invoice.paid_credit or Decimal('0')))
+        legs = paid_cash + paid_card + paid_ewallet + paid_bank + paid_credit
         if abs(legs - invoice.total_amount) > Decimal('0.05'):
             raise ValueError(f'مجموع مبالغ الدفع المقسّم ({legs:.2f}) لا يساوي إجمالي الفاتورة '
                              f'({invoice.total_amount:.2f}).')
@@ -464,12 +509,13 @@ def update_invoice_payment_method(
     invoice.paid_card = paid_card
     invoice.paid_ewallet = paid_ewallet
     invoice.paid_bank = paid_bank
+    invoice.paid_credit = paid_credit
     # The amounts are re-entered manually here: the POS cash rounding no longer applies.
     invoice.rounding_amount = Decimal('0')
 
     invoice.save(update_fields=[
         'partner', 'payment_type', 'treasury_id', 'bank_account_id', 'insta_bank_account_id', 'ewallet_id',
-        'paid_cash', 'paid_card', 'paid_ewallet', 'paid_bank', 'rounding_amount', 'updated_at'
+        'paid_cash', 'paid_card', 'paid_ewallet', 'paid_bank', 'paid_credit', 'rounding_amount', 'updated_at'
     ])
 
     # 3. If POSTED, post a fresh unified journal entry matching the updated payment method
@@ -510,10 +556,11 @@ def _cancel_invoice_core(invoice_id: int, user=None):
     from apps.tenant.services.fifo_engine import add_inventory_batch, consume_fifo_batches
     from apps.tenant.services.journal_service import reverse_document_entries
 
-    invoice = Invoice.objects.select_for_update(of=('self',)).get(id=invoice_id)
+    invoice = Invoice.objects.select_for_update(of=('self',)).select_related('pos_session').get(id=invoice_id)
 
     if invoice.status == Invoice.CANCELLED:
         raise ValueError(f'الفاتورة رقم "{invoice.invoice_number}" ملغاة بالفعل.')
+    _ensure_shift_open(invoice, 'إلغاء')
 
     # Protection Guard: Cannot cancel an invoice that has returns
     if invoice.return_invoices.exclude(status=Invoice.CANCELLED).exists() or any(line.returned_quantity > 0 for line in invoice.lines.all()):
@@ -546,6 +593,8 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                     line.serial_item.is_sold = False
                     line.serial_item.warehouse = invoice.warehouse
                     line.serial_item.save(update_fields=['is_sold', 'warehouse', 'updated_at'])
+                    _serial_movement(line.serial_item, invoice.warehouse, 'CANCEL_IN',
+                                     f'إلغاء {invoice.invoice_number}')
                     continue
 
                 net_unreturned_qty = line.quantity - line.returned_quantity
@@ -601,8 +650,16 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                 if line.product.product_type == 'SERVICE':
                     continue
 
-                if line.product.product_type == 'SERIALIZED' and line.serial_item:
-                    line.serial_item.delete()
+                if line.product.product_type == 'SERIALIZED' and line.serial_item_id:
+                    from apps.tenant.inventory.models import SerialItem
+                    from apps.tenant.invoicing.models import InvoiceLine as _Line
+                    serial = SerialItem.objects.select_for_update(of=('self',)).get(pk=line.serial_item_id)
+                    if serial.is_sold or serial.warehouse_id != invoice.warehouse_id:
+                        raise ValueError(f'مينفعش إلغاء الشراء: السيريال ({serial.serial_number}) اتباع أو اتنقل '
+                                         'من المخزن.')
+                    _serial_movement(serial, invoice.warehouse, 'OUT', f'إلغاء فاتورة شراء {invoice.invoice_number}')
+                    _Line.objects.filter(pk=line.pk).update(serial_item=None)
+                    serial.delete()
                     continue
 
                 conv = line.factor
@@ -676,6 +733,7 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                     serial.is_sold = True
                     serial.warehouse = None
                     serial.save(update_fields=['is_sold', 'warehouse', 'updated_at'])
+                    _serial_movement(serial, invoice.warehouse, 'CANCEL_OUT', f'إلغاء مرتجع {invoice.invoice_number}')
                     continue
 
                 conv = line.factor
@@ -711,6 +769,8 @@ def _cancel_invoice_core(invoice_id: int, user=None):
                     line.serial_item.is_sold = False
                     line.serial_item.warehouse = invoice.warehouse
                     line.serial_item.save(update_fields=['is_returned', 'is_sold', 'warehouse', 'updated_at'])
+                    _serial_movement(line.serial_item, invoice.warehouse, 'CANCEL_IN',
+                                     f'إلغاء مرتجع مشتريات {invoice.invoice_number}')
                     continue
 
                 conv = line.factor

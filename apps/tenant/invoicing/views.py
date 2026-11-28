@@ -1046,6 +1046,7 @@ def update_invoice_payment_method_view(request, invoice_id):
         paid_card = Decimal(request.POST.get('paid_card', '0') or '0')
         paid_ewallet = Decimal(request.POST.get('paid_ewallet', '0') or '0')
         paid_bank = Decimal(request.POST.get('paid_bank', '0') or '0')
+        raw_credit = (request.POST.get('paid_credit') or '').strip()
 
         invoice = update_invoice_payment_method(
             invoice_id=invoice_id,
@@ -1059,6 +1060,7 @@ def update_invoice_payment_method_view(request, invoice_id):
             paid_ewallet=paid_ewallet,
             paid_bank=paid_bank,
             user=request.user,
+            paid_credit=Decimal(raw_credit) if raw_credit else None,
         )
         return JsonResponse({
             'success': True,

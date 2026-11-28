@@ -759,7 +759,8 @@ function calculateSplitTotals() {
         const card = parseFloat((document.querySelector('[name="paid_card"]').value || '0').replace(/,/g, '')) || 0;
         const ewallet = parseFloat((document.querySelector('[name="paid_ewallet"]').value || '0').replace(/,/g, '')) || 0;
         const bank = parseFloat((document.querySelector('[name="paid_bank"]').value || '0').replace(/,/g, '')) || 0;
-        totalPaid = cash + card + ewallet + bank;
+        const credit = parseFloat((document.querySelector('[name="paid_credit"]').value || '0').replace(/,/g, '')) || 0;
+        totalPaid = cash + card + ewallet + bank + credit;     // the on-account part counts too: must reach the total
     } else if (ptype === 'CREDIT') {
         totalPaid = 0;
     } else {
@@ -938,6 +939,10 @@ function submitEditPayment() {
         <div class="col-6 mb-2" style="padding:5px;">
           <label style="display:block; color:#cbd5e1; font-size:0.8rem;">تحويل بنكي:</label>
           <input type="number" step="any" name="paid_bank" oninput="calculateSplitTotals()" value="{{ invoice.paid_bank|floatformat:2 }}" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:8px; border-radius:6px;">
+        </div>
+        <div class="col-12 mb-2" style="padding:5px;">
+          <label style="display:block; color:#cbd5e1; font-size:0.8rem;">آجل على حساب {% if invoice.invoice_type == 'PURCHASE' or invoice.invoice_type == 'RETURN_PURCHASE' %}المورد{% else %}العميل{% endif %}:</label>
+          <input type="number" step="any" min="0" name="paid_credit" oninput="calculateSplitTotals()" value="{{ invoice.paid_credit|floatformat:2 }}" style="width:100%; background:#0f172a; border:1px solid rgba(255,255,255,0.15); color:#fff; padding:8px; border-radius:6px;">
         </div>
       </div>
     </form>
