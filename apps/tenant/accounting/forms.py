@@ -126,11 +126,6 @@ class AccountForm(BaseGlassForm):
         parents = self.fields['parent'].queryset.values('id', 'account_type')
         return json.dumps({str(p['id']): p['account_type'] for p in parents})
 
-class EWalletForm(BaseGlassForm):
-    class Meta:
-        model = EWallet
-        fields = ['name', 'opening_balance']
-
 class ExpenseItemForm(BaseGlassForm):
     class Meta:
         model = ExpenseItem
@@ -267,7 +262,22 @@ class ExpenseForm(OpenPeriodDateMixin, BaseGlassForm):
                 self.add_error('payment_account', 'لا يمكن الصرف من خزينة تابعة لفرع آخر.')
         return cleaned_data
 
-class TreasuryForm(BaseGlassForm):
+class OpeningBalanceDateMixin:
+    """A new cash box / bank / wallet with an opening balance: its entry date (the date given, else today)
+    must be in the open period — said on the form instead of failing at save."""
+
+    def clean(self):
+        data = super().clean()
+        if not self.instance.pk and (data.get('opening_balance') or 0) > 0:
+            import datetime
+            from apps.tenant.core.settings_helpers import is_date_locked, lock_error_message
+            day = data.get('opening_balance_date') or datetime.date.today()
+            if is_date_locked(day):
+                self.add_error('opening_balance_date', lock_error_message(day))
+        return data
+
+
+class TreasuryForm(OpeningBalanceDateMixin, BaseGlassForm):
     class Meta:
         model = Treasury
         fields = ['name', 'branch', 'treasury_type', 'opening_balance', 'opening_balance_date']
@@ -275,7 +285,7 @@ class TreasuryForm(BaseGlassForm):
             'opening_balance_date': forms.DateInput(attrs={'type': 'date'}),
         }
 
-class BankAccountForm(BaseGlassForm):
+class BankAccountForm(OpeningBalanceDateMixin, BaseGlassForm):
     class Meta:
         model = BankAccount
         fields = ['name', 'opening_balance', 'opening_balance_date']
@@ -283,7 +293,7 @@ class BankAccountForm(BaseGlassForm):
             'opening_balance_date': forms.DateInput(attrs={'type': 'date'}),
         }
 
-class EWalletForm(BaseGlassForm):
+class EWalletForm(OpeningBalanceDateMixin, BaseGlassForm):
     class Meta:
         model = EWallet
         fields = ['name', 'opening_balance', 'opening_balance_date']

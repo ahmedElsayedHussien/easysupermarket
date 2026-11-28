@@ -673,27 +673,24 @@ class Treasury(models.Model):
         if self.account_id and self.account and getattr(self.account, 'code', None) not in ['1100', '1110', '1120']:
             return self.account
         from apps.tenant.services.journal_service import _get_system_account
-        try:
-            with transaction.atomic():
-                parent_code = '1120' if self.treasury_type == self.BANK else '1110'
-                parent_acc = _get_system_account(parent_code)
-                if parent_acc:
-                    acc, _ = Account.objects.get_or_create(
-                        code=f"{parent_acc.code}-{self.id}",
-                        defaults={
-                            'name': self.name,
-                            'account_type': parent_acc.account_type,
-                            'parent': parent_acc,
-                            'allow_reconcile': True
-                        }
-                    )
-                    if self.account_id != acc.id:
-                        self.account = acc
-                        Treasury.objects.filter(id=self.id).update(account=acc)
-                    return acc
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Error ensuring treasury account: {e}")
+        # no try/except: a failure stops the save (atomic) — never a box saved without its account
+        with transaction.atomic():
+            parent_code = '1120' if self.treasury_type == self.BANK else '1110'
+            parent_acc = _get_system_account(parent_code)
+            if parent_acc:
+                acc, _ = Account.objects.get_or_create(
+                    code=f"{parent_acc.code}-{self.id}",
+                    defaults={
+                        'name': self.name,
+                        'account_type': parent_acc.account_type,
+                        'parent': parent_acc,
+                        'allow_reconcile': True
+                    }
+                )
+                if self.account_id != acc.id:
+                    self.account = acc
+                    Treasury.objects.filter(id=self.id).update(account=acc)
+                return acc
         return self.account
 
     def save(self, *args, **kwargs):
@@ -730,26 +727,23 @@ class BankAccount(models.Model):
         if self.account_id and self.account and getattr(self.account, 'code', None) not in ['1100', '1120']:
             return self.account
         from apps.tenant.services.journal_service import _get_system_account
-        try:
-            with transaction.atomic():
-                parent_acc = _get_system_account('1120')
-                if parent_acc:
-                    acc, _ = Account.objects.get_or_create(
-                        code=f"{parent_acc.code}-{self.id}",
-                        defaults={
-                            'name': self.name,
-                            'account_type': parent_acc.account_type,
-                            'parent': parent_acc,
-                            'allow_reconcile': True
-                        }
-                    )
-                    if self.account_id != acc.id:
-                        self.account = acc
-                        BankAccount.objects.filter(id=self.id).update(account=acc)
-                    return acc
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Error ensuring bank account: {e}")
+        # no try/except: a failure stops the save (atomic) — never a box saved without its account
+        with transaction.atomic():
+            parent_acc = _get_system_account('1120')
+            if parent_acc:
+                acc, _ = Account.objects.get_or_create(
+                    code=f"{parent_acc.code}-{self.id}",
+                    defaults={
+                        'name': self.name,
+                        'account_type': parent_acc.account_type,
+                        'parent': parent_acc,
+                        'allow_reconcile': True
+                    }
+                )
+                if self.account_id != acc.id:
+                    self.account = acc
+                    BankAccount.objects.filter(id=self.id).update(account=acc)
+                return acc
         return self.account
 
     def save(self, *args, **kwargs):
@@ -785,26 +779,23 @@ class EWallet(models.Model):
         if self.account_id and self.account and getattr(self.account, 'code', None) not in ['1100', '1160']:
             return self.account
         from apps.tenant.services.journal_service import _get_system_account
-        try:
-            with transaction.atomic():
-                parent_acc = _get_system_account('1160')
-                if parent_acc:
-                    acc, _ = Account.objects.get_or_create(
-                        code=f"{parent_acc.code}-{self.id}",
-                        defaults={
-                            'name': self.name,
-                            'account_type': parent_acc.account_type,
-                            'parent': parent_acc,
-                            'allow_reconcile': True
-                        }
-                    )
-                    if self.account_id != acc.id:
-                        self.account = acc
-                        EWallet.objects.filter(id=self.id).update(account=acc)
-                    return acc
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Error ensuring ewallet account: {e}")
+        # no try/except: a failure stops the save (atomic) — never a box saved without its account
+        with transaction.atomic():
+            parent_acc = _get_system_account('1160')
+            if parent_acc:
+                acc, _ = Account.objects.get_or_create(
+                    code=f"{parent_acc.code}-{self.id}",
+                    defaults={
+                        'name': self.name,
+                        'account_type': parent_acc.account_type,
+                        'parent': parent_acc,
+                        'allow_reconcile': True
+                    }
+                )
+                if self.account_id != acc.id:
+                    self.account = acc
+                    EWallet.objects.filter(id=self.id).update(account=acc)
+                return acc
         return self.account
 
     def save(self, *args, **kwargs):

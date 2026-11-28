@@ -273,7 +273,21 @@ class TreasuryListView(CustomPermissionRequiredMixin, ListView):
         context['title'] = 'الخزائن'
         return context
 
-class TreasuryCreateView(CustomPermissionRequiredMixin, CreateView):
+class LedgerSaveErrorsMixin:
+    """A ledger error while saving (opening-balance entry refused, missing chart account…) is shown on the form
+    — never a server error page. The model save is atomic, so nothing half-saved stays."""
+
+    def form_valid(self, form):
+        from django.core.exceptions import ValidationError as _VE
+        try:
+            return super().form_valid(form)
+        except (_VE, ValueError) as e:
+            form.add_error(None, ' '.join(getattr(e, 'messages', None) or [str(e)]))
+            self.object = None
+            return self.form_invalid(form)
+
+
+class TreasuryCreateView(LedgerSaveErrorsMixin, CustomPermissionRequiredMixin, CreateView):
     permission_required = 'accounting.add_treasury'
 
     model = Treasury
@@ -345,7 +359,7 @@ class BankAccountListView(CustomPermissionRequiredMixin, ListView):
         context['title'] = 'حسابات البنوك'
         return context
 
-class BankAccountCreateView(CustomPermissionRequiredMixin, CreateView):
+class BankAccountCreateView(LedgerSaveErrorsMixin, CustomPermissionRequiredMixin, CreateView):
     permission_required = 'accounting.add_bankaccount'
 
     model = BankAccount
@@ -417,7 +431,7 @@ class EWalletListView(CustomPermissionRequiredMixin, ListView):
         context['title'] = 'المحافظ الإلكترونية'
         return context
 
-class EWalletCreateView(CustomPermissionRequiredMixin, CreateView):
+class EWalletCreateView(LedgerSaveErrorsMixin, CustomPermissionRequiredMixin, CreateView):
     permission_required = 'accounting.add_ewallet'
 
     model = EWallet

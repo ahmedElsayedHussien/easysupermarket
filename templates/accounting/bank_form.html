@@ -7,6 +7,9 @@
         <h2 class="text-neon-cyan mb-4 text-center">{{ title }}</h2>
         <form method="post" enctype="multipart/form-data">
             {% csrf_token %}
+            {% if form.non_field_errors %}
+            <div class="alert alert-danger" style="border-radius: 8px;">{% for error in form.non_field_errors %}{{ error }} {% endfor %}</div>
+            {% endif %}
             {% for field in form %}
             <div class="mb-3">
                 <label for="{{ field.id_for_label }}" class="form-label text-neon-blue">{{ field.label }}</label>
