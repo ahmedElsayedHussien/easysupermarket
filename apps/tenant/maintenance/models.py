@@ -75,11 +75,11 @@ class MaintenanceTicket(models.Model):
         verbose_name=_('حالة التذكرة')
     )
     estimated_cost = models.DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True,
+        max_digits=18, decimal_places=2, null=True, blank=True,
         verbose_name=_('التكلفة التقديرية')
     )
     labor_cost = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0'),
+        max_digits=18, decimal_places=2, default=Decimal('0'),
         verbose_name=_('المصنعية (أجر العمل)')
     )
     warranty_days = models.IntegerField(default=0, verbose_name=_('أيام الضمان بعد الصيانة'))
@@ -137,11 +137,11 @@ class MaintenanceTicket(models.Model):
         verbose_name=_('المحفظة الإلكترونية (لتحصيل المبلغ)')
     )
     paid_amount = models.DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True,
+        max_digits=18, decimal_places=2, null=True, blank=True,
         verbose_name=_('المبلغ المدفوع فوراً')
     )
     remaining_amount = models.DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True,
+        max_digits=18, decimal_places=2, null=True, blank=True,
         verbose_name=_('المبلغ الآجل المتبقي')
     )
 
@@ -288,15 +288,15 @@ class TicketPart(models.Model):
     )
 
     quantity = models.DecimalField(
-        max_digits=12, decimal_places=4, default=Decimal('1'),
+        max_digits=18, decimal_places=4, default=Decimal('1'),
         verbose_name=_('الكمية')
     )
     selling_price = models.DecimalField(
-        max_digits=12, decimal_places=2, verbose_name=_('سعر البيع للعميل')
+        max_digits=18, decimal_places=2, verbose_name=_('سعر البيع للعميل')
     )
     # Filled automatically from FIFO on save
     actual_cost = models.DecimalField(
-        max_digits=12, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name=_('التكلفة الفعلية (من المخزون)')
     )
     # Flag to ensure stock is only deducted once

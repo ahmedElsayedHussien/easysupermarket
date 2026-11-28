@@ -30,3 +30,16 @@ class MoneyTests(SimpleTestCase):
         self.assertEqual((QtyField().max_digits, QtyField().decimal_places), (18, 4))
         name, path, args, kwargs = MoneyField(default=D('0')).deconstruct()
         self.assertEqual((kwargs['max_digits'], kwargs['decimal_places']), (18, 2))
+
+
+class FieldDigitsTests(SimpleTestCase):
+    """Phase 2: every amount is (18, 2), every quantity / unit price (18, 4) — only max_digits was widened."""
+
+    def test_no_narrow_amount_or_unit_field_left(self):
+        from django.apps import apps
+        from django.db import models
+        narrow = {(10, 2), (12, 2), (14, 2), (15, 2), (16, 2), (12, 4), (14, 4), (15, 4)}
+        left = [f'{m._meta.label}.{f.name} ({f.max_digits},{f.decimal_places})'
+                for m in apps.get_models() for f in m._meta.get_fields()
+                if isinstance(f, models.DecimalField) and f.model is m and (f.max_digits, f.decimal_places) in narrow]
+        self.assertEqual(left, [])

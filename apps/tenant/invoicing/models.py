@@ -77,16 +77,16 @@ class POSSession(models.Model):
     end_time = models.DateTimeField(null=True, blank=True, verbose_name='وقت الإغلاق')
     
     opening_balance = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name='رصيد الافتتاح (العهدة)'
+        max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name='رصيد الافتتاح (العهدة)'
     )
     closing_balance_expected = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name='الرصيد المتوقع'
+        max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name='الرصيد المتوقع'
     )
     closing_balance_actual = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name='الرصيد الفعلي'
+        max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name='الرصيد الفعلي'
     )
     difference = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name='العجز / الزيادة'
+        max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name='العجز / الزيادة'
     )
     status = models.CharField(
         max_length=10, choices=STATUS_CHOICES, default=OPEN, verbose_name='الحالة'
@@ -231,15 +231,15 @@ class Invoice(models.Model):
         max_length=20, choices=PAYMENT_TYPE_CHOICES, default=CASH,
         verbose_name='طريقة الدفع'
     )
-    paid_cash = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ النقدي')
-    paid_card = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ البطاقة')
-    paid_ewallet = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ المحفظة/إنستا باي')
-    paid_bank = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ التحويل البنكي')
-    paid_credit = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ الآجل')
+    paid_cash = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ النقدي')
+    paid_card = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ البطاقة')
+    paid_ewallet = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ المحفظة/إنستا باي')
+    paid_bank = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ التحويل البنكي')
+    paid_credit = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ الآجل')
     # POS cash rounding (SystemSetting.pos_cash_rounding): rounded cash due - exact cash due
     # (+ = collected more than due, - = less). total_amount stays exact; paid_cash is what
     # was actually collected; the difference is posted to account 5115.
-    rounding_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'),
+    rounding_amount = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'),
                                           verbose_name='فرق تقريب النقدية')
 
     status = models.CharField(
@@ -283,7 +283,7 @@ class Invoice(models.Model):
 
     # Financial totals (auto-calculated from lines)
     subtotal = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='إجمالي قبل الضريبة'
     )
     discount_percentage = models.DecimalField(
@@ -291,11 +291,11 @@ class Invoice(models.Model):
         verbose_name='نسبة الخصم الإجمالي (%)'
     )
     discount_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
     tax_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='ضريبة القيمة المضافة'
     )
     vat_percentage = models.DecimalField(
@@ -307,11 +307,11 @@ class Invoice(models.Model):
         verbose_name='نسبة ضريبة الخصم والإضافة (%)'
     )
     wht_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم والإضافة'
     )
     total_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='الإجمالي النهائي'
     )
 
@@ -497,10 +497,10 @@ class InvoiceLine(models.Model):
         verbose_name='السيريال (للمنتجات المسروِلة)'
     )
     quantity = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name='الكمية'
+        max_digits=18, decimal_places=4, verbose_name='الكمية'
     )
     returned_quantity = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='الكمية المرتجعة مسبقاً'
     )
     original_line = models.ForeignKey(
@@ -512,7 +512,7 @@ class InvoiceLine(models.Model):
         verbose_name='سطر الفاتورة الأصلية (للمرتجعات)'
     )
     unit_price = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name='سعر الوحدة'
+        max_digits=18, decimal_places=4, verbose_name='سعر الوحدة'
     )
     discount_fixed = models.DecimalField(
         max_digits=18, decimal_places=4, null=True, blank=True,
@@ -530,18 +530,18 @@ class InvoiceLine(models.Model):
     )
     # the unit's factor when the line was written: returns / cancellations / reports use THIS one even if
     # the product's unit is changed or deleted later (null = old line, falls back to the unit)
-    conversion_factor = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True,
+    conversion_factor = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True,
                                             verbose_name='معامل التحويل وقت البيع')
     # Optional expiry date entered on the purchase screen (SystemSetting.enable_expiry_tracking);
     # copied onto the InventoryBatch created when the purchase is confirmed.
     expiry_date = models.DateField(null=True, blank=True, verbose_name='تاريخ الصلاحية')
     discount_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
 
     subtotal = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='الإجمالي (بعد خصم، قبل ضريبة)'
     )
     tax_rate = models.DecimalField(
@@ -549,7 +549,7 @@ class InvoiceLine(models.Model):
         verbose_name='نسبة الضريبة %'
     )
     tax_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الضريبة'
     )
     wht_rate = models.DecimalField(
@@ -557,17 +557,17 @@ class InvoiceLine(models.Model):
         verbose_name='نسبة ضريبة الخصم والإضافة %'
     )
     wht_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم والإضافة'
     )
     total_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='الإجمالي النهائي'
     )
 
     # Filled by FIFO engine during invoice confirmation
     cogs_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='تكلفة البضاعة المباعة'
     )
 
@@ -783,7 +783,7 @@ class Quotation(models.Model):
 
     # Financial and Tax Totals
     subtotal = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='إجمالي قبل الضريبة'
     )
     discount_percentage = models.DecimalField(
@@ -791,11 +791,11 @@ class Quotation(models.Model):
         verbose_name='نسبة الخصم الإجمالي (%)'
     )
     discount_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
     tax_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='ضريبة القيمة المضافة'
     )
     vat_percentage = models.DecimalField(
@@ -807,11 +807,11 @@ class Quotation(models.Model):
         verbose_name='نسبة ضريبة الخصم والإضافة (%)'
     )
     wht_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم والإضافة'
     )
     total_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='الإجمالي النهائي'
     )
 
@@ -1010,10 +1010,10 @@ class QuotationLine(models.Model):
         verbose_name='المنتج/الخدمة'
     )
     quantity = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name='الكمية'
+        max_digits=18, decimal_places=4, verbose_name='الكمية'
     )
     unit_price = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name='سعر الوحدة'
+        max_digits=18, decimal_places=4, verbose_name='سعر الوحدة'
     )
     discount_pct = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('0'),
@@ -1026,11 +1026,11 @@ class QuotationLine(models.Model):
         verbose_name='وحدة القياس'
     )
     discount_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة الخصم'
     )
     subtotal = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='الإجمالي (بعد الخصم، قبل الضريبة)'
     )
     tax_rate = models.DecimalField(
@@ -1038,7 +1038,7 @@ class QuotationLine(models.Model):
         verbose_name='نسبة ضريبة القيمة المضافة %'
     )
     tax_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة ضريبة القيمة المضافة'
     )
     wht_rate = models.DecimalField(
@@ -1046,11 +1046,11 @@ class QuotationLine(models.Model):
         verbose_name='نسبة ضريبة الخصم والإضافة %'
     )
     wht_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='قيمة ضريبة الخصم والإضافة'
     )
     total_amount = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='الإجمالي النهائي'
     )
 
@@ -1150,7 +1150,7 @@ class PurchaseOrderLine(models.Model):
     uom = models.ForeignKey('inventory.ProductUoM', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
                             verbose_name='الوحدة')
     quantity = models.DecimalField(max_digits=14, decimal_places=3, verbose_name='الكمية المطلوبة')
-    unit_price = models.DecimalField(max_digits=14, decimal_places=4, default=Decimal('0'), verbose_name='السعر المتوقع')
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name='السعر المتوقع')
     received_quantity = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal('0'), verbose_name='المستلم')
 
     class Meta:
@@ -1171,7 +1171,7 @@ class SalesRep(models.Model):
                                       related_name='sales_reps', verbose_name='مخزن العربية')
     commission_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0'),
                                           verbose_name='نسبة العمولة %')
-    monthly_target = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0'),
+    monthly_target = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'),
                                          verbose_name='التارجت الشهري')
     treasury = models.ForeignKey('accounting.Treasury', on_delete=models.SET_NULL, null=True, blank=True,
                                  related_name='sales_reps', verbose_name='خزنة المندوب')
@@ -1193,9 +1193,9 @@ class RepCommission(models.Model):
     rep = models.ForeignKey(SalesRep, on_delete=models.CASCADE, related_name='commissions', verbose_name='المندوب')
     year = models.PositiveIntegerField(verbose_name='السنة')
     month = models.PositiveSmallIntegerField(verbose_name='الشهر')
-    net_sales = models.DecimalField(max_digits=16, decimal_places=2, verbose_name='صافي المبيعات')
+    net_sales = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='صافي المبيعات')
     rate = models.DecimalField(max_digits=5, decimal_places=2, verbose_name='النسبة %')
-    amount = models.DecimalField(max_digits=14, decimal_places=2, verbose_name='العمولة')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='العمولة')
     approved_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
                                     verbose_name='اعتمدها')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1273,10 +1273,10 @@ class LoadingOrderLine(models.Model):
     product = models.ForeignKey('inventory.Product', on_delete=models.PROTECT, related_name='+', verbose_name='الصنف')
     uom = models.ForeignKey('inventory.ProductUoM', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
                             verbose_name='الوحدة')
-    conversion_factor = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('1'),
+    conversion_factor = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('1'),
                                             verbose_name='معامل التحويل')
-    requested_qty = models.DecimalField(max_digits=15, decimal_places=4, verbose_name='الكمية المطلوبة')
-    approved_qty = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True,
+    requested_qty = models.DecimalField(max_digits=18, decimal_places=4, verbose_name='الكمية المطلوبة')
+    approved_qty = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True,
                                        verbose_name='الكمية المعتمدة')
 
     class Meta:
@@ -1339,14 +1339,14 @@ class UnloadingOrder(models.Model):
 class UnloadingOrderLine(models.Model):
     order = models.ForeignKey(UnloadingOrder, on_delete=models.CASCADE, related_name='lines', verbose_name='الطلب')
     product = models.ForeignKey('inventory.Product', on_delete=models.PROTECT, related_name='+', verbose_name='الصنف')
-    sound_qty = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'),
+    sound_qty = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'),
                                     verbose_name='سليم (بالوحدة الأساسية)')
-    damaged_qty = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'),
+    damaged_qty = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'),
                                       verbose_name='تالف (بالوحدة الأساسية)')
     # what the rep asked for (sound/damaged above become the counted quantities on receipt)
-    requested_sound = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True,
+    requested_sound = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True,
                                           verbose_name='سليم — طلب المندوب')
-    requested_damaged = models.DecimalField(max_digits=15, decimal_places=4, null=True, blank=True,
+    requested_damaged = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True,
                                             verbose_name='تالف — طلب المندوب')
 
     class Meta:
@@ -1363,10 +1363,10 @@ class RepCashHandover(models.Model):
     date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
     rep = models.ForeignKey('invoicing.SalesRep', on_delete=models.PROTECT, related_name='handovers',
                             verbose_name='المندوب')
-    expected = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'),
+    expected = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'),
                                    verbose_name='رصيد خزنة المندوب وقت التوريد')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ المورّد')
-    shortage_charged = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'),
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ المورّد')
+    shortage_charged = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'),
                                            verbose_name='عجز اتحمّل على المندوب')
     treasury = models.ForeignKey('accounting.Treasury', on_delete=models.PROTECT, null=True, blank=True,
                                  related_name='+', verbose_name='الخزنة المستلمة')
@@ -1418,7 +1418,7 @@ class ClosedShiftPaymentCorrection(models.Model):
                                      related_name='+', verbose_name='الحساب البنكي / ماكينة الفيزا')
     ewallet = models.ForeignKey('accounting.EWallet', on_delete=models.PROTECT, null=True, blank=True,
                                 related_name='+', verbose_name='المحفظة')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ')
     variance_account = models.ForeignKey('accounting.Account', on_delete=models.PROTECT, related_name='+',
                                          verbose_name='حساب العجز / الزيادة (من قيد قفل الوردية)')
     reason = models.CharField(max_length=255, verbose_name='السبب')

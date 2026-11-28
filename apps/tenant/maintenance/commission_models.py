@@ -29,7 +29,7 @@ class CommissionRule(models.Model):
         verbose_name=_('الفئة الرئيسية')
     )
     sales_milestone = models.DecimalField(
-        max_digits=12, decimal_places=2,
+        max_digits=18, decimal_places=2,
         verbose_name=_('شريحة المبيعات (ج.م)'),
         help_text=_('مثال: 1000 — أي عمولة لكل 1000 جنيه مبيعات في هذه الفئة')
     )
@@ -84,8 +84,8 @@ class CommissionRecord(models.Model):
     period_start = models.DateField(verbose_name=_('بداية الفترة'))
     period_end   = models.DateField(verbose_name=_('نهاية الفترة'))
 
-    total_sales      = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('إجمالي المبيعات'))
-    commission_earned = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'), verbose_name=_('العمولة المستحقة'))
+    total_sales      = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name=_('إجمالي المبيعات'))
+    commission_earned = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name=_('العمولة المستحقة'))
     is_paid          = models.BooleanField(default=False, verbose_name=_('تم الصرف'))
     paid_at          = models.DateTimeField(null=True, blank=True, verbose_name=_('تاريخ الصرف'))
     journal_entry    = models.ForeignKey(

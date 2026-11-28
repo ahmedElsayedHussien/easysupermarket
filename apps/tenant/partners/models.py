@@ -93,7 +93,7 @@ class Partner(models.Model):
     )
 
     credit_limit = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='حد الائتمان'
     )
     payment_terms_days = models.IntegerField(
@@ -111,7 +111,7 @@ class Partner(models.Model):
     ]
 
     opening_balance = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name='رصيد أول مدة'
     )
     opening_balance_type = models.CharField(
@@ -364,7 +364,7 @@ class Payment(models.Model):
         verbose_name='الفرع'
     )
     amount = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name='المبلغ'
+        max_digits=18, decimal_places=4, verbose_name='المبلغ'
     )
     date = models.DateField(verbose_name='التاريخ')
     method = models.CharField(

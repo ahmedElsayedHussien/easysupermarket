@@ -177,15 +177,15 @@ class Product(models.Model):
         default=False, verbose_name=_('سعر مفتوح في نقطة البيع')
     )
     sale_price = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name=_('سعر البيع')
     )
     min_sale_price = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name=_('أدنى سعر بيع')
     )
     last_purchase_price = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name=_('آخر سعر شراء')
     )
     tax_rate = models.DecimalField(
@@ -197,11 +197,11 @@ class Product(models.Model):
         verbose_name=_('نسبة ضريبة الخصم والإضافة %')
     )
     min_stock_level = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name=_('حد أدنى للمخزون')
     )
     max_stock_level = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name=_('حد أقصى للمخزون')
     )
     is_active = models.BooleanField(default=True, verbose_name=_('نشط'))
@@ -386,8 +386,8 @@ class ProductUoM(models.Model):
 class ProductBranch(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='branch_prices')
     branch = models.ForeignKey('core.Branch', on_delete=models.CASCADE, related_name='product_prices')
-    sale_price = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('سعر البيع بالفرع'))
-    min_sale_price = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('أقل سعر بيع بالفرع'))
+    sale_price = models.DecimalField(max_digits=18, decimal_places=4, verbose_name=_('سعر البيع بالفرع'))
+    min_sale_price = models.DecimalField(max_digits=18, decimal_places=4, verbose_name=_('أقل سعر بيع بالفرع'))
     
     class Meta:
         unique_together = ('product', 'branch')
@@ -419,13 +419,13 @@ class InventoryBatch(models.Model):
         verbose_name=_('المستودع')
     )
     quantity_original = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name=_('الكمية الأصلية')
+        max_digits=18, decimal_places=4, verbose_name=_('الكمية الأصلية')
     )
     quantity_remaining = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name=_('الكمية المتبقية')
+        max_digits=18, decimal_places=4, verbose_name=_('الكمية المتبقية')
     )
     unit_cost = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name=_('تكلفة الوحدة')
+        max_digits=18, decimal_places=4, verbose_name=_('تكلفة الوحدة')
     )
     expiry_date = models.DateField(
         null=True, blank=True, verbose_name=_('تاريخ انتهاء الصلاحية')
@@ -566,10 +566,10 @@ class StockMovement(models.Model):
         max_length=20, choices=MOVEMENT_TYPES, verbose_name=_('نوع الحركة')
     )
     quantity = models.DecimalField(
-        max_digits=15, decimal_places=4, verbose_name=_('الكمية')
+        max_digits=18, decimal_places=4, verbose_name=_('الكمية')
     )
     unit_cost = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'),
+        max_digits=18, decimal_places=4, default=Decimal('0'),
         verbose_name=_('تكلفة الوحدة')
     )
     reference = models.CharField(
@@ -676,14 +676,14 @@ class StockAdjustmentLine(models.Model):
         blank=True,
         verbose_name=_('معامل التحويل')
     )
-    quantity = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('كمية التسوية / الفارق'))
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, verbose_name=_('كمية التسوية / الفارق'))
     system_quantity = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('الرصيد الدفتري')
+        max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name=_('الرصيد الدفتري')
     )
     physical_quantity = models.DecimalField(
-        max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('الرصيد الفعلي (على الرف)')
+        max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name=_('الرصيد الفعلي (على الرف)')
     )
-    unit_cost = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('تكلفة الوحدة (تقديرية)'))
+    unit_cost = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name=_('تكلفة الوحدة (تقديرية)'))
 
     class Meta:
         verbose_name = _('بند تسوية')
@@ -754,7 +754,7 @@ class SerialItem(models.Model):
     is_returned = models.BooleanField(default=False, verbose_name=_('مرتجع للمورد'))
     
     # التكلفة الخاصة بهذه القطعة تحديداً
-    actual_cost = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('التكلفة الفعلية لهذه القطعة'))
+    actual_cost = models.DecimalField(max_digits=18, decimal_places=4, verbose_name=_('التكلفة الفعلية لهذه القطعة'))
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -827,10 +827,10 @@ class StockTransferLine(models.Model):
     transfer = models.ForeignKey(StockTransfer, on_delete=models.CASCADE, related_name='lines', verbose_name=_('التحويل'))
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name='stock_transfer_lines', verbose_name=_('الصنف'))
     uom = models.ForeignKey(ProductUoM, on_delete=models.SET_NULL, null=True, blank=True, verbose_name=_('الوحدة'))
-    quantity = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('الكمية (بالوحدة المختارة)'))
-    conversion_factor = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('1'), verbose_name=_('معامل التحويل'))
-    base_quantity = models.DecimalField(max_digits=15, decimal_places=4, verbose_name=_('الكمية بالوحدة الأساسية'))
-    unit_cost = models.DecimalField(max_digits=15, decimal_places=4, default=Decimal('0'), verbose_name=_('متوسط تكلفة الوحدة الأساسية'))
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, verbose_name=_('الكمية (بالوحدة المختارة)'))
+    conversion_factor = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('1'), verbose_name=_('معامل التحويل'))
+    base_quantity = models.DecimalField(max_digits=18, decimal_places=4, verbose_name=_('الكمية بالوحدة الأساسية'))
+    unit_cost = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal('0'), verbose_name=_('متوسط تكلفة الوحدة الأساسية'))
 
     class Meta:
         verbose_name = _('بند تحويل مخزني')

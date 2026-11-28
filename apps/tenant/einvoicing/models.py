@@ -40,7 +40,7 @@ class TaxIntegrationSettings(models.Model):
         max_length=10, blank=True, default="W010", verbose_name="كود نوع الخصم والإضافة (T4)",
         help_text="كود نوع ضريبة الخصم والإضافة من دليل أكواد الضرائب حسب طبيعة التعامل (يُستخدم فقط إذا كانت الفاتورة عليها خصم وإضافة).")
     receiver_id_threshold = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('50000'), verbose_name="حد إلزام الرقم القومي للعميل الفرد",
+        max_digits=18, decimal_places=2, default=Decimal('50000'), verbose_name="حد إلزام الرقم القومي للعميل الفرد",
         help_text="فاتورة لعميل فرد بقيمة تساوي أو تزيد عن هذا المبلغ لا تُرسل إلا ومعها الرقم القومي للعميل.")
     # Shared secret used by the Local Signer: "Authorization: Bearer <api_token>".
     api_token = EncryptedCharField(max_length=300, blank=True, default='', editable=False,

@@ -536,13 +536,13 @@ class JournalItem(models.Model):
         verbose_name='الحساب'
     )
     debit = models.DecimalField(
-        max_digits=15,
+        max_digits=18,
         decimal_places=4,
         default=Decimal('0'),
         verbose_name='مدين'
     )
     credit = models.DecimalField(
-        max_digits=15,
+        max_digits=18,
         decimal_places=4,
         default=Decimal('0'),
         verbose_name='دائن'
@@ -651,7 +651,7 @@ class Treasury(models.Model):
     name = models.CharField(max_length=100, verbose_name='اسم الخزينة')
     branch = models.ForeignKey('core.Branch', on_delete=models.PROTECT, verbose_name='الفرع')
     treasury_type = models.CharField(max_length=20, choices=TREASURY_TYPE_CHOICES, default=CASH, verbose_name='نوع الخزينة')
-    opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
+    opening_balance = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
     opening_balance_date = models.DateField(null=True, blank=True, verbose_name='تاريخ رصيد أول المدة')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, verbose_name='حساب الخزينة')
 
@@ -705,7 +705,7 @@ class Treasury(models.Model):
 
 class BankAccount(models.Model):
     name = models.CharField(max_length=100, verbose_name='اسم الحساب البنكي')
-    opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
+    opening_balance = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
     opening_balance_date = models.DateField(null=True, blank=True, verbose_name='تاريخ رصيد أول المدة')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, verbose_name='حساب الدليل')
 
@@ -757,7 +757,7 @@ class BankAccount(models.Model):
 
 class EWallet(models.Model):
     name = models.CharField(max_length=100, verbose_name='اسم المحفظة')
-    opening_balance = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
+    opening_balance = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='رصيد أول المدة')
     opening_balance_date = models.DateField(null=True, blank=True, verbose_name='تاريخ رصيد أول المدة')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, null=True, blank=True, verbose_name='حساب الدليل')
 
@@ -897,14 +897,14 @@ class Expense(models.Model):
     expense_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='expenses_debited', limit_choices_to={'account_type': Account.EXPENSE}, verbose_name='حساب المصروف')
     payment_account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='expenses_credited', limit_choices_to={'account_type': Account.ASSET}, verbose_name='حساب الدفع (الخزينة/البنك)')
     
-    amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name='المبلغ (قبل الضريبة)')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='المبلغ (قبل الضريبة)')
     vat_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name='نسبة القيمة المضافة (%)')
-    vat_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name='قيمة الضريبة المضافة')
+    vat_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='قيمة الضريبة المضافة')
     
     withholding_tax_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name='نسبة الخصم والإضافة (%)')
-    withholding_tax_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name='قيمة الخصم والإضافة')
+    withholding_tax_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='قيمة الخصم والإضافة')
     
-    total_amount = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name='الإجمالي الصافي')
+    total_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='الإجمالي الصافي')
     
     description = models.TextField(blank=True, verbose_name='البيان / ملاحظات')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=DRAFT, verbose_name='الحالة')
@@ -1023,7 +1023,7 @@ class Expense(models.Model):
 class ExpenseItem(models.Model):
     expense = models.ForeignKey(Expense, on_delete=models.CASCADE, related_name='items', verbose_name='المصروف')
     description = models.CharField(max_length=255, verbose_name='بيان البند')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ')
 
     class Meta:
         verbose_name = 'بند المصروف'
@@ -1069,7 +1069,7 @@ class Voucher(models.Model):
     voucher_type = models.CharField(max_length=15, choices=VOUCHER_TYPE_CHOICES, verbose_name='نوع السند')
     voucher_number = models.CharField(max_length=20, unique=True, editable=False, verbose_name='رقم السند')
     date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ')
     
     partner = models.ForeignKey(
         'partners.Partner', on_delete=models.PROTECT, null=True, blank=True,
@@ -1090,10 +1090,10 @@ class Voucher(models.Model):
     )
 
     # حقول تفاصيل السداد المقسم / المتنوع
-    paid_cash = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ النقدي')
-    paid_card = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ البطاقة / فيزا')
-    paid_ewallet = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ المحفظة الإلكترونية')
-    paid_bank = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ التحويل البنكي / إنستاباي')
+    paid_cash = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='المبلغ النقدي')
+    paid_card = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ البطاقة / فيزا')
+    paid_ewallet = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ المحفظة الإلكترونية')
+    paid_bank = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='مبلغ التحويل البنكي / إنستاباي')
 
     pos_session = models.ForeignKey(
         'invoicing.POSSession', on_delete=models.SET_NULL, null=True, blank=True,
@@ -1448,7 +1448,7 @@ class POSMachine(models.Model):
         related_name='pos_machines', verbose_name='الفرع'
     )
     opening_balance = models.DecimalField(
-        max_digits=15, decimal_places=2, default=0,
+        max_digits=18, decimal_places=2, default=0,
         verbose_name='رصيد أول المدة'
     )
     account = models.ForeignKey(
@@ -1457,7 +1457,7 @@ class POSMachine(models.Model):
     )
     is_active = models.BooleanField(default=True, verbose_name='نشطة')
     min_balance_alert = models.DecimalField(
-        max_digits=15, decimal_places=2, default=0,
+        max_digits=18, decimal_places=2, default=0,
         verbose_name='تنبيه عند انخفاض الرصيد عن',
         help_text='0 = بدون تنبيه. يظهر تنبيه في لوحة خدمات الدفع عند نزول رصيد الماكينة عن هذا المبلغ.'
     )
@@ -1598,13 +1598,13 @@ class EServiceTransaction(models.Model):
     )
 
     principal_amount = models.DecimalField(
-        max_digits=15, decimal_places=2, verbose_name='المبلغ الأصلي'
+        max_digits=18, decimal_places=2, verbose_name='المبلغ الأصلي'
     )
     commission_revenue = models.DecimalField(
-        max_digits=15, decimal_places=2, default=0, verbose_name='عمولة المحل (الربح)'
+        max_digits=18, decimal_places=2, default=0, verbose_name='عمولة المحل (الربح)'
     )
     commission_expense = models.DecimalField(
-        max_digits=15, decimal_places=2, default=0, verbose_name='رسوم المندوب (المصروف)'
+        max_digits=18, decimal_places=2, default=0, verbose_name='رسوم المندوب (المصروف)'
     )
 
     description = models.TextField(blank=True, verbose_name='البيان')
@@ -1971,10 +1971,10 @@ class EServiceCommissionRule(models.Model):
     machine_type = models.CharField(
         max_length=20, choices=POSMachine.MACHINE_TYPE_CHOICES, blank=True, default='',
         verbose_name='نوع الماكينة (اختياري)')
-    fixed_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='مبلغ ثابت')
+    fixed_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='مبلغ ثابت')
     percent = models.DecimalField(max_digits=6, decimal_places=3, default=0, verbose_name='نسبة (%)')
-    min_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='حد أدنى')
-    max_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='حد أقصى (0 = بدون)')
+    min_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='حد أدنى')
+    max_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='حد أقصى (0 = بدون)')
     is_active = models.BooleanField(default=True, verbose_name='نشطة')
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -2056,7 +2056,7 @@ class InternalTransfer(models.Model):
 
     transfer_number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم سند التحويل')
     date = models.DateField(default=datetime.date.today, verbose_name='تاريخ التحويل')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ المحول')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ المحول')
 
     # Source Account
     from_account_type = models.CharField(max_length=20, choices=ACCOUNT_TYPE_CHOICES, default=TREASURY, verbose_name='نوع الجهة المحول منها')
@@ -2087,7 +2087,7 @@ class InternalTransfer(models.Model):
         related_name='internal_transfers_sent', verbose_name='أرسله'
     )
     sent_at = models.DateTimeField(null=True, blank=True, verbose_name='وقت الإرسال')
-    received_amount = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True, verbose_name='المبلغ المستلم فعلياً')
+    received_amount = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True, verbose_name='المبلغ المستلم فعلياً')
     received_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='internal_transfers_received', verbose_name='استلمه / رفضه'
@@ -2445,7 +2445,7 @@ class Cheque(models.Model):
         max_length=20, choices=ChequeType.choices, verbose_name='نوع الشيك', db_index=True
     )
     cheque_number = models.CharField(max_length=50, verbose_name='رقم الشيك', db_index=True)
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ (ج.م)')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ (ج.م)')
     
     received_date = models.DateField(default=datetime.date.today, verbose_name='تاريخ الاستلام / التحرير')
     due_date = models.DateField(verbose_name='تاريخ الاستحقاق', db_index=True)
@@ -2479,7 +2479,7 @@ class Cheque(models.Model):
         related_name='collecting_cheques', verbose_name='بنك الإيداع والتحصيل'
     )
     bank_fee = models.DecimalField(
-        max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name='عمولة ومصاريف التحصيل البنكية'
+        max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name='عمولة ومصاريف التحصيل البنكية'
     )
     endorsed_to_partner = models.ForeignKey(
         'partners.Partner', on_delete=models.SET_NULL, null=True, blank=True,
@@ -3032,9 +3032,9 @@ class FixedAsset(models.Model):
 
     # Purchase Details
     purchase_date = models.DateField(verbose_name='تاريخ الشراء / بدء الاستخدام')
-    purchase_cost = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='تكلفة الشراء الأصلية')
+    purchase_cost = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='تكلفة الشراء الأصلية')
     salvage_value = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='القيمة التخريدية (الخردة)'
+        max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name='القيمة التخريدية (الخردة)'
     )
 
     # Opening Balance Handling (for assets purchased before system launch)
@@ -3042,7 +3042,7 @@ class FixedAsset(models.Model):
         default=False, verbose_name='أصل قائم (رصيد افتتاحي سابق)'
     )
     opening_accumulated_depreciation = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0.00'),
+        max_digits=18, decimal_places=2, default=Decimal('0.00'),
         verbose_name='مجمع الإهلاك السابق (رصيد افتتاحي)'
     )
 
@@ -3082,7 +3082,7 @@ class FixedAsset(models.Model):
     )
     disposal_date = models.DateField(null=True, blank=True, verbose_name='تاريخ الاستبعاد / البيع')
     disposal_amount = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='سعر البيع / الاستبعاد'
+        max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name='سعر البيع / الاستبعاد'
     )
     disposal_entry = models.ForeignKey(
         JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
@@ -3196,8 +3196,8 @@ class AssetDepreciationLog(models.Model):
     year = models.IntegerField(verbose_name='السنة')
     month = models.IntegerField(verbose_name='الشهر')
     date = models.DateField(verbose_name='تاريخ احتساب الإهلاك')
-    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='قسط الإهلاك')
-    book_value_after = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='القيمة الدفترية بعد الإهلاك')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='قسط الإهلاك')
+    book_value_after = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='القيمة الدفترية بعد الإهلاك')
     entry = models.ForeignKey(
         JournalEntry, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='fixed_asset_depreciation_entries', verbose_name='قيد اليومية'
@@ -3249,12 +3249,12 @@ class Loan(models.Model):
     branch = models.ForeignKey('core.Branch', on_delete=models.SET_NULL, null=True, blank=True, verbose_name='الفرع')
 
     # Financial details
-    principal_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='أصل مبلغ القرض المقترض')
+    principal_amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='أصل مبلغ القرض المقترض')
     total_interest_amount = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='إجمالي الفوائد / أرباح التمويل'
+        max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name='إجمالي الفوائد / أرباح التمويل'
     )
     total_amount = models.DecimalField(
-        max_digits=12, decimal_places=2, verbose_name='إجمالي التزام القرض (أصل + فوائد)'
+        max_digits=18, decimal_places=2, verbose_name='إجمالي التزام القرض (أصل + فوائد)'
     )
 
     start_date = models.DateField(verbose_name='تاريخ بدء / استلام القرض')
@@ -3453,9 +3453,9 @@ class LoanInstallment(models.Model):
     installment_number = models.PositiveIntegerField(verbose_name='رقم القسط')
     due_date = models.DateField(verbose_name='تاريخ الاستحقاق')
 
-    principal_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='أصل القرض في القسط')
-    interest_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'), verbose_name='فائدة القسط')
-    total_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='إجمالي مبلغ القسط')
+    principal_amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='أصل القرض في القسط')
+    interest_amount = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name='فائدة القسط')
+    total_amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='إجمالي مبلغ القسط')
 
     # Payment details
     is_paid = models.BooleanField(default=False, verbose_name='تم السداد')
@@ -3506,7 +3506,7 @@ class Custody(models.Model):
     number = models.CharField(max_length=30, unique=True, editable=False, verbose_name='رقم العهدة')
     date = models.DateField(default=datetime.date.today, verbose_name='تاريخ الصرف')
     employee = models.ForeignKey('core.Employee', on_delete=models.PROTECT, related_name='custodies', verbose_name='الموظف')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ')
     purpose = models.CharField(max_length=255, verbose_name='الغرض')
     treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, related_name='+', verbose_name='خزينة الصرف')
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=OPEN, db_index=True, verbose_name='الحالة')
@@ -3514,7 +3514,7 @@ class Custody(models.Model):
                                      verbose_name='قيد الصرف')
     # settlement
     settled_at = models.DateField(null=True, blank=True, verbose_name='تاريخ التسوية')
-    returned_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='المرتجع للخزينة')
+    returned_amount = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='المرتجع للخزينة')
     return_treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
                                         verbose_name='خزينة المرتجع')
     settlement_entry = models.ForeignKey(JournalEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
@@ -3546,7 +3546,7 @@ class CustodyExpense(models.Model):
     """بند مصروف في تسوية عهدة."""
     custody = models.ForeignKey(Custody, on_delete=models.CASCADE, related_name='expenses', verbose_name='العهدة')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='+', verbose_name='حساب المصروف')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ')
     description = models.CharField(max_length=255, blank=True, default='', verbose_name='البيان')
 
     class Meta:
@@ -3560,7 +3560,7 @@ class VoucherAllocation(models.Model):
     voucher = models.ForeignKey(Voucher, on_delete=models.CASCADE, related_name='allocations', verbose_name='السند')
     invoice = models.ForeignKey('invoicing.Invoice', on_delete=models.PROTECT, related_name='voucher_allocations',
                                 verbose_name='الفاتورة')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ')
 
     class Meta:
         verbose_name = 'ربط سند بفاتورة'
@@ -3627,9 +3627,9 @@ class TaxSettlement(models.Model):
     kind = models.CharField(max_length=10, choices=KIND_CHOICES, verbose_name='النوع')
     date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
     period_end = models.DateField(verbose_name='حتى تاريخ')
-    output_vat = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='ضريبة المبيعات')
-    input_vat = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='ضريبة المشتريات')
-    amount = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ')
+    output_vat = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='ضريبة المبيعات')
+    input_vat = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='ضريبة المشتريات')
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ')
     treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
                                  verbose_name='الخزينة')
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
@@ -3708,9 +3708,9 @@ class IntermediarySettlement(models.Model):
     company = models.ForeignKey(IntermediaryCompany, on_delete=models.PROTECT, related_name='settlements',
                                 verbose_name='الشركة')
     date = models.DateField(default=datetime.date.today, verbose_name='التاريخ')
-    gross = models.DecimalField(max_digits=15, decimal_places=2, verbose_name='المبلغ المسدد من مستحقاتها')
-    fee = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'), verbose_name='عمولة التحصيل')
-    vat = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0'),
+    gross = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='المبلغ المسدد من مستحقاتها')
+    fee = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name='عمولة التحصيل')
+    vat = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'),
                               verbose_name='ضريبة القيمة المضافة على العمولة')
     vat_recoverable = models.BooleanField(default=True, verbose_name='الضريبة مدخلات (الشركة مسجلة في القيمة المضافة)')
     bank_account = models.ForeignKey(BankAccount, on_delete=models.PROTECT, related_name='+', verbose_name='البنك')

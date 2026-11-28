@@ -67,8 +67,8 @@ class Equipment(models.Model):
 
     name = models.CharField(max_length=200, verbose_name='اسم المعدة')
     code = models.CharField(max_length=50, unique=True, verbose_name='كود المعدة')
-    purchase_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='تكلفة المعدة (رصيد افتتاحي)')
-    daily_rate = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='سعر الإيجار اليومي')
+    purchase_cost = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='تكلفة المعدة (رصيد افتتاحي)')
+    daily_rate = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='سعر الإيجار اليومي')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_AVAILABLE, verbose_name='حالة المعدة')
     is_active = models.BooleanField(default=True, verbose_name='نشط')
 
@@ -144,10 +144,10 @@ class Rental(models.Model):
     days_rented = models.PositiveIntegerField(verbose_name='عدد أيام الإيجار', default=1)
     end_date = models.DateField(verbose_name='تاريخ العودة المتوقع', blank=True, null=True)
 
-    daily_rate = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='سعر اليوم (وقت الإيجار)')
-    total_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='إجمالي المبلغ', blank=True, null=True)
-    refund_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='المبلغ المسترد')
-    penalty_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name='غرامة تأخير / تلف')
+    daily_rate = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='سعر اليوم (وقت الإيجار)')
+    total_amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name='إجمالي المبلغ', blank=True, null=True)
+    refund_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='المبلغ المسترد')
+    penalty_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0, verbose_name='غرامة تأخير / تلف')
 
     payment_method = models.CharField(max_length=10, choices=PAYMENT_CHOICES, default=PAYMENT_CASH, verbose_name='طريقة الدفع')
     treasury = models.ForeignKey(Treasury, on_delete=models.PROTECT, blank=True, null=True, verbose_name='الخزينة (للكاش)')

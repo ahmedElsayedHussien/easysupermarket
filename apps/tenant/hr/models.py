@@ -53,22 +53,22 @@ class Payroll(models.Model):
     total_worked_hours = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'), verbose_name=_('إجمالي ساعات العمل'))
     total_delay_hours = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), verbose_name=_('إجمالي ساعات التأخير'))
     total_overtime_hours = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'), verbose_name=_('إجمالي الساعات الإضافية'))
-    base_pay = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('المستحق الأساسي'))
-    overtime_pay = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('مكافأة الإضافي'))
-    deductions = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('إجمالي الخصومات'))
-    net_salary = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('الراتب الصافي'))
+    base_pay = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('المستحق الأساسي'))
+    overtime_pay = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('مكافأة الإضافي'))
+    deductions = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('إجمالي الخصومات'))
+    net_salary = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('الراتب الصافي'))
     # Attendance behind the figures (filled when the payroll is processed)
     working_days = models.PositiveIntegerField(default=0, verbose_name=_('أيام العمل'))
     present_days = models.PositiveIntegerField(default=0, verbose_name=_('أيام الحضور'))
     leave_days = models.PositiveIntegerField(default=0, verbose_name=_('أيام الإجازة'))
     absent_days = models.PositiveIntegerField(default=0, verbose_name=_('أيام الغياب'))
-    absence_deduction = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('خصم الغياب'))
-    delay_deduction = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('خصم التأخير'))
-    loan_deduction = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('أقساط السلف'))
-    social_insurance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('تأمينات (حصة الموظف)'))
-    employer_insurance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('تأمينات (حصة صاحب العمل)'))
-    income_tax = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('ضريبة كسب العمل'))
-    commission_pay = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('عمولة مبيعات'))
+    absence_deduction = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('خصم الغياب'))
+    delay_deduction = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('خصم التأخير'))
+    loan_deduction = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('أقساط السلف'))
+    social_insurance = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('تأمينات (حصة الموظف)'))
+    employer_insurance = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('تأمينات (حصة صاحب العمل)'))
+    income_tax = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('ضريبة كسب العمل'))
+    commission_pay = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('عمولة مبيعات'))
     is_paid = models.BooleanField(default=False, verbose_name=_('تم الصرف'))
     paid_at = models.DateTimeField(null=True, blank=True, verbose_name=_('تاريخ الصرف'))
     
@@ -128,9 +128,9 @@ class EmployeeLoan(models.Model):
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name='loans', verbose_name=_('الموظف'))
     date = models.DateField(default=timezone.localdate, verbose_name=_('التاريخ'))
     source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default=CASH, verbose_name=_('النوع'))
-    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name=_('المبلغ'))
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name=_('المبلغ'))
     installments_count = models.PositiveIntegerField(default=1, verbose_name=_('عدد الأقساط'))
-    monthly_installment = models.DecimalField(max_digits=12, decimal_places=2, verbose_name=_('القسط الشهري'))
+    monthly_installment = models.DecimalField(max_digits=18, decimal_places=2, verbose_name=_('القسط الشهري'))
     start_year = models.PositiveIntegerField(verbose_name=_('سنة أول قسط'))
     start_month = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(12)],
                                                    verbose_name=_('شهر أول قسط'))
@@ -171,7 +171,7 @@ class PayrollLoanDeduction(models.Model):
     payroll is recalculated)."""
     payroll = models.ForeignKey(Payroll, on_delete=models.CASCADE, related_name='loan_deductions', verbose_name=_('المسير'))
     loan = models.ForeignKey(EmployeeLoan, on_delete=models.PROTECT, related_name='deductions', verbose_name=_('السلفة'))
-    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name=_('القسط المخصوم'))
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name=_('القسط المخصوم'))
 
     class Meta:
         verbose_name = _('قسط سلفة مخصوم')
@@ -259,7 +259,7 @@ class PayrollTaxSettings(models.Model):
     """إعدادات ضريبة كسب العمل والتأمينات الاجتماعية في المسير (صف واحد).
     مقفولة افتراضياً؛ النسب والشرايح بتتغير بالقوانين فلازم تتراجع مع المحاسب."""
     tax_enabled = models.BooleanField(default=False, verbose_name=_('حساب ضريبة كسب العمل'))
-    personal_exemption = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('20000'),
+    personal_exemption = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('20000'),
                                              verbose_name=_('الإعفاء الشخصي السنوي'))
     brackets = models.JSONField(default=_default_brackets, verbose_name=_('الشرائح السنوية'))
     insurance_enabled = models.BooleanField(default=False, verbose_name=_('حساب التأمينات الاجتماعية'))
@@ -267,9 +267,9 @@ class PayrollTaxSettings(models.Model):
                                                   verbose_name=_('حصة الموظف %'))
     employer_insurance_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('18.75'),
                                                   verbose_name=_('حصة صاحب العمل %'))
-    insurance_min_wage = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('2300'),
+    insurance_min_wage = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('2300'),
                                              verbose_name=_('الحد الأدنى للأجر التأميني الشهري'))
-    insurance_max_wage = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('14500'),
+    insurance_max_wage = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('14500'),
                                              verbose_name=_('الحد الأقصى للأجر التأميني الشهري'))
 
     class Meta:
@@ -299,9 +299,9 @@ class PayrollPayment(models.Model):
     year = models.PositiveIntegerField(verbose_name=_('السنة'))
     month = models.PositiveSmallIntegerField(verbose_name=_('الشهر'))
     date = models.DateField(default=timezone.localdate, verbose_name=_('التاريخ'))
-    amount = models.DecimalField(max_digits=14, decimal_places=2, verbose_name=_('المبلغ'))
-    insurance_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0'), verbose_name=_('منها تأمينات'))
-    tax_amount = models.DecimalField(max_digits=14, decimal_places=2, default=Decimal('0'), verbose_name=_('منها ضريبة'))
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name=_('المبلغ'))
+    insurance_amount = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name=_('منها تأمينات'))
+    tax_amount = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name=_('منها ضريبة'))
     treasury = models.ForeignKey('accounting.Treasury', on_delete=models.PROTECT, null=True, blank=True, related_name='+',
                                  verbose_name=_('الخزينة'))
     bank_account = models.ForeignKey('accounting.BankAccount', on_delete=models.PROTECT, null=True, blank=True,
@@ -393,7 +393,7 @@ class EmployeeAsset(models.Model):
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='assets', verbose_name=_('الموظف'))
     item = models.CharField(max_length=150, verbose_name=_('الصنف'))
     serial = models.CharField(max_length=80, blank=True, default="", verbose_name=_('السيريال / الكود'))
-    value = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'), verbose_name=_('القيمة'))
+    value = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name=_('القيمة'))
     issued_on = models.DateField(default=timezone.localdate, verbose_name=_('تاريخ التسليم'))
     returned_on = models.DateField(null=True, blank=True, verbose_name=_('تاريخ الرجوع'))
     notes = models.CharField(max_length=255, blank=True, default="", verbose_name=_('ملاحظات'))
@@ -412,7 +412,7 @@ class LoanRequest(models.Model):
     PENDING, APPROVED, REJECTED = 'PENDING', 'APPROVED', 'REJECTED'
     STATUS_CHOICES = ((PENDING, _('مستني الاعتماد')), (APPROVED, _('اتصرفت')), (REJECTED, _('مرفوضة')))
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='loan_requests', verbose_name=_('الموظف'))
-    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name=_('المبلغ'))
+    amount = models.DecimalField(max_digits=18, decimal_places=2, verbose_name=_('المبلغ'))
     installments_count = models.PositiveIntegerField(default=1, verbose_name=_('عدد الأقساط'))
     reason = models.CharField(max_length=255, blank=True, default="", verbose_name=_('السبب'))
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING, db_index=True, verbose_name=_('الحالة'))
@@ -435,13 +435,13 @@ class EndOfService(models.Model):
     termination_date = models.DateField(verbose_name=_('تاريخ انتهاء الخدمة'))
     reason = models.CharField(max_length=150, verbose_name=_('السبب'))
     years_of_service = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0'), verbose_name=_('سنين الخدمة'))
-    severance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'), verbose_name=_('مكافأة نهاية الخدمة'))
+    severance = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name=_('مكافأة نهاية الخدمة'))
     leave_days = models.DecimalField(max_digits=6, decimal_places=1, default=Decimal('0'), verbose_name=_('أيام إجازة متبقية'))
-    leave_encashment = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'), verbose_name=_('بدل الإجازات'))
-    loans_deducted = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'), verbose_name=_('سلف مخصومة'))
-    loans_collected = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'),
+    leave_encashment = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name=_('بدل الإجازات'))
+    loans_deducted = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name=_('سلف مخصومة'))
+    loans_collected = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'),
                                           verbose_name=_('سلف ورّدها الموظف (أكبر من مستحقاته)'))
-    net_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'), verbose_name=_('الصافي'))
+    net_amount = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), verbose_name=_('الصافي'))
     assets_returned = models.BooleanField(default=False, verbose_name=_('العهد العينية رجعت'))
     treasury = models.ForeignKey('accounting.Treasury', on_delete=models.PROTECT, null=True, blank=True, related_name='+',
                                  verbose_name=_('الخزينة'))

@@ -173,7 +173,7 @@ class PriceListItem(models.Model):
         verbose_name='طريقة التسعير'
     )
     custom_price = models.DecimalField(
-        max_digits=15,
+        max_digits=18,
         decimal_places=4,
         null=True,
         blank=True,

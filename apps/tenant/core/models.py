@@ -30,9 +30,9 @@ class Employee(models.Model):
     shift_end_time = models.TimeField(null=True, blank=True, verbose_name=_('ميعاد الانصراف'))
     deduction_per_hour = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'), verbose_name=_('قيمة الخصم للساعة'))
     overtime_per_hour = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'), verbose_name=_('قيمة الإضافي للساعة'))
-    base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'), verbose_name=_('الراتب الأساسي (اختياري)'))
+    base_salary = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0.00'), verbose_name=_('الراتب الأساسي (اختياري)'))
     is_insured = models.BooleanField(default=True, verbose_name=_('مؤمَّن عليه'))
-    insurance_wage = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True,
+    insurance_wage = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True,
                                          verbose_name=_('الأجر التأميني (فاضي = الأساسي)'))
     tax_exempt = models.BooleanField(default=False, verbose_name=_('معفى من ضريبة كسب العمل'))
 
@@ -144,7 +144,7 @@ class SystemSetting(models.Model):
         help_text=_('فواتيره هو بس، بتاعة النهارده، بسبب مكتوب. بيرجّع المخزون لنفس الدفعات ويعكس القيود. '
                     'الفاتورة اللي اتبعتت للضرايب أو عليها مرتجع إلغاؤها من الإدارة.'))
     rep_return_without_invoice_max = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0'),
+        max_digits=18, decimal_places=2, default=Decimal('0'),
         verbose_name=_('أقصى قيمة لمرتجع المندوب بدون فاتورة — 0 = من غير حد'))
     max_pos_discount_percentage = models.DecimalField(
         max_digits=5, decimal_places=2, default=Decimal('100'),
@@ -153,7 +153,7 @@ class SystemSetting(models.Model):
         help_text=_('أقصى نسبة خصم إجمالية مسموحة لكل صنف وللفاتورة لغير المديرين (0 - 100). المديرون مستثنون.'),
     )
     apply_vat_by_default = models.BooleanField(default=True, verbose_name=_('تطبيق الضريبة الافتراضي'))
-    large_amount_requires_customer = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'), help_text=_('0 تعني غير مفعل'), verbose_name=_('إلزام اختيار عميل للمبالغ الأكبر من'))
+    large_amount_requires_customer = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal('0'), help_text=_('0 تعني غير مفعل'), verbose_name=_('إلزام اختيار عميل للمبالغ الأكبر من'))
     
     # POS Payment Accounts Defaults & Security
     default_pos_treasury = models.ForeignKey('accounting.Treasury', on_delete=models.SET_NULL, null=True, blank=True, related_name='default_for_pos', verbose_name=_('الخزينة الافتراضية لنقطة البيع'))
