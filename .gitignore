@@ -35,3 +35,6 @@ staticfiles/
 # Local Signer run log
 local_signer/signer.log
 local_signer/dist/signer.log
+
+# third-party documentation, not part of the project
+eta-readthedocs-io-en-latest.pdf
