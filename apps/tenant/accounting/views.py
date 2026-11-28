@@ -73,6 +73,12 @@ def scope_treasuries(qs, user):
     return qs.filter(pk__in=scoped_treasuries(user).values('pk'))
 
 
+def scope_treasuries_for_admin(qs, user):
+    """Treasuries shown on the treasury screens (list / edit / delete): the branch's, reps' boxes included."""
+    from .forms import branch_treasuries
+    return qs.filter(pk__in=branch_treasuries(user).values('pk'))
+
+
 def scope_company_accounts(qs, request):
     """Company-wide accounts (banks/wallets): visible/editable only for unrestricted (admin) users."""
     from apps.tenant.core.access import is_branch_restricted
@@ -266,7 +272,7 @@ class TreasuryListView(CustomPermissionRequiredMixin, ListView):
     context_object_name = 'treasuries'
 
     def get_queryset(self):
-        return scope_treasuries(super().get_queryset(), self.request.user)
+        return scope_treasuries_for_admin(super().get_queryset(), self.request.user)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -310,7 +316,7 @@ class TreasuryUpdateView(CustomPermissionRequiredMixin, UpdateView):
     success_url = reverse_lazy('accounting:liquidity_dashboard')
 
     def get_queryset(self):
-        return scope_treasuries(super().get_queryset(), self.request.user)
+        return scope_treasuries_for_admin(super().get_queryset(), self.request.user)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -322,7 +328,7 @@ class TreasuryDeleteView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.delete_treasury'
 
     def post(self, request, pk):
-        treasury = get_object_or_404(scope_treasuries(Treasury.objects.all(), request.user), pk=pk)
+        treasury = get_object_or_404(scope_treasuries_for_admin(Treasury.objects.all(), request.user), pk=pk)
         
         has_transactions = False
         if treasury.account and treasury.account.journal_items.exists():

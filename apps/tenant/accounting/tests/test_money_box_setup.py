@@ -58,3 +58,26 @@ class MoneyBoxSetupTests(TestCase):
         t.refresh_from_db()
         self.assertIsNotNone(t.account_id)
         self.assertEqual(t.account.code, f'1110-{t.pk}')
+
+
+class RepCashBoxVisibilityTests(TestCase):
+    """P2-1 regression: a sales rep's cash box is managed on the treasury screens, never picked for money."""
+    @classmethod
+    def setUpTestData(cls):
+        from apps.tenant.core.tests.factories import make_user
+        from apps.tenant.invoicing import van_services as van
+        from apps.tenant.invoicing.models import SalesRep
+        cls.w = build_world()
+        u = make_user('box_rep', role='SALES_REP', branch=cls.w.branch)
+        cls.rep = SalesRep.objects.create(employee=u.employee_profile, source_warehouse=cls.w.warehouse)
+        van.ensure_rep_setup(cls.rep, create_van=True, create_treasury=True)
+        cls.rep.refresh_from_db()
+
+    def test_admin_sees_rep_box_on_list_not_in_receipt_choices(self):
+        login(self.client, self.w.admin)
+        r = self.client.get(reverse('accounting:treasury_list'))
+        self.assertIn(self.rep.treasury, list(r.context['treasuries']))
+        self.assertEqual(self.client.get(reverse('accounting:treasury_update', args=[self.rep.treasury.pk])).status_code,
+                         200)
+        r = self.client.get(reverse('accounting:receipt_create'))
+        self.assertNotIn(self.rep.treasury, list(r.context['form'].fields['treasury'].queryset))

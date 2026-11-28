@@ -54,13 +54,20 @@ def pos_defaults_for(user):
     return get_pos_defaults(working_branch_of(user))
 
 
-def scoped_treasuries(user):
-    """Treasuries the user may move money from/into: the current branch's business treasuries only."""
+def branch_treasuries(user):
+    """ALL the treasuries of the user's branch scope — sales reps' cash boxes included. For managing the
+    treasuries themselves (list / edit / delete), never for choosing one in a money operation."""
     restricted, branch = _branch_scope(user)
-    qs = Treasury.objects.business()
+    qs = Treasury.objects.all()
     if restricted:
         qs = qs.filter(branch=branch) if branch else qs.none()
     return qs
+
+
+def scoped_treasuries(user):
+    """Treasuries the user may move money from/into: the current branch's business treasuries only
+    (a sales rep's cash box moves only through his own sales, collections and hand-overs)."""
+    return branch_treasuries(user).filter(pk__in=Treasury.objects.business().values('pk'))
 
 
 def destination_treasuries(user):
