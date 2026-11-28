@@ -1,10 +1,13 @@
 """ثوابت دفتر الأستاذ: الترحيل من باب واحد (post) بفحص كامل، والقيد المرحّل ثابت — التصحيح بقيد عكسي."""
 from decimal import Decimal as D
+from unittest.mock import MagicMock
 
 from django.core.exceptions import ValidationError
+from django.db import DatabaseError, connection
 from django.test import TestCase
 
 from apps.tenant.accounting.models import JournalEntry, JournalItem
+from apps.tenant.core.models import AuditLog
 from apps.tenant.core.tests.factories import account, build_world, make_partner
 
 
@@ -148,3 +151,121 @@ class SplitVoucherExactTests(TestCase):
         v.refresh_from_db()
         v.confirm_voucher()
         self.assertEqual(v.status, Voucher.POSTED)
+
+
+class DatabaseImmutabilityTriggerTests(TestCase):
+    """P2-4: Database-level triggers enforce immutability on POSTED JournalItems and AuditLog."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = build_world()
+        cls.cash = cls.w.treasury.ensure_account()
+
+    def test_pg_journalitem_immutability_trigger_migration_and_db_enforcement(self):
+        import datetime
+        from apps.tenant.accounting.db_triggers import (
+            drop_posted_journalitem_trigger,
+            drop_sqlite_posted_journalitem_trigger,
+            install_posted_journalitem_trigger,
+            install_sqlite_posted_journalitem_trigger,
+        )
+
+        # 1. PostgreSQL migration hooks execute DDL only on postgresql vendor
+        pg_editor = MagicMock()
+        pg_editor.connection.vendor = 'postgresql'
+        install_posted_journalitem_trigger(None, pg_editor)
+        executed_pg_sql = '\n'.join(call.args[0] for call in pg_editor.execute.call_args_list)
+        self.assertIn('prevent_posted_journalitem_mutation', executed_pg_sql)
+        self.assertIn('trg_prevent_posted_journalitem_mutation', executed_pg_sql)
+        self.assertIn('BEFORE UPDATE OR DELETE ON accounting_journalitem', executed_pg_sql)
+
+        pg_editor.execute.reset_mock()
+        drop_posted_journalitem_trigger(None, pg_editor)
+        dropped_pg_sql = '\n'.join(call.args[0] for call in pg_editor.execute.call_args_list)
+        self.assertIn('DROP TRIGGER IF EXISTS trg_prevent_posted_journalitem_mutation', dropped_pg_sql)
+        self.assertIn('DROP FUNCTION IF EXISTS prevent_posted_journalitem_mutation()', dropped_pg_sql)
+
+        sqlite_editor = MagicMock()
+        sqlite_editor.connection.vendor = 'sqlite'
+        install_posted_journalitem_trigger(None, sqlite_editor)
+        drop_posted_journalitem_trigger(None, sqlite_editor)
+        sqlite_editor.execute.assert_not_called()
+
+        # 2. Verify SQL trigger logic at the DB level on raw SQL UPDATE/DELETE
+        posted_entry = JournalEntry.objects.create(
+            date=datetime.date.today(), reference='TRIG-POSTED', description='t'
+        )
+        item = JournalItem.objects.create(entry=posted_entry, account=self.cash, debit=D('50'), credit=0)
+        JournalItem.objects.create(entry=posted_entry, account=account('3100'), debit=0, credit=D('50'))
+        posted_entry.post(self.w.admin)
+
+        draft_entry = JournalEntry.objects.create(
+            date=datetime.date.today(), reference='TRIG-DRAFT', description='t'
+        )
+        draft_item = JournalItem.objects.create(entry=draft_entry, account=self.cash, debit=D('20'), credit=0)
+        JournalItem.objects.create(entry=draft_entry, account=account('3100'), debit=0, credit=D('20'))
+
+        install_sqlite_posted_journalitem_trigger(connection)
+        try:
+            with connection.cursor() as cur:
+                with self.assertRaises(DatabaseError):
+                    cur.execute("UPDATE accounting_journalitem SET debit = '999.0000' WHERE id = %s", [item.pk])
+                with self.assertRaises(DatabaseError):
+                    cur.execute("DELETE FROM accounting_journalitem WHERE id = %s", [item.pk])
+                # Moving a draft item into a POSTED entry must also be blocked
+                with self.assertRaises(DatabaseError):
+                    cur.execute(
+                        "UPDATE accounting_journalitem SET entry_id = %s WHERE id = %s",
+                        [posted_entry.pk, draft_item.pk],
+                    )
+                # Raw SQL mutation on a still-DRAFT entry remains permitted
+                cur.execute("UPDATE accounting_journalitem SET debit = '25.0000' WHERE id = %s", [draft_item.pk])
+                cur.execute("DELETE FROM accounting_journalitem WHERE id = %s", [draft_item.pk])
+        finally:
+            drop_sqlite_posted_journalitem_trigger(connection)
+
+    def test_pg_auditlog_immutability_trigger_migration_and_db_enforcement(self):
+        from apps.tenant.core.db_triggers import (
+            drop_auditlog_immutability_trigger,
+            drop_sqlite_auditlog_trigger,
+            install_auditlog_immutability_trigger,
+            install_sqlite_auditlog_trigger,
+        )
+
+        # 1. PostgreSQL migration hooks execute DDL only on postgresql vendor
+        pg_editor = MagicMock()
+        pg_editor.connection.vendor = 'postgresql'
+        install_auditlog_immutability_trigger(None, pg_editor)
+        executed_pg_sql = '\n'.join(call.args[0] for call in pg_editor.execute.call_args_list)
+        self.assertIn('prevent_auditlog_mutation', executed_pg_sql)
+        self.assertIn('trg_prevent_auditlog_mutation', executed_pg_sql)
+        self.assertIn('BEFORE UPDATE OR DELETE ON core_auditlog', executed_pg_sql)
+
+        pg_editor.execute.reset_mock()
+        drop_auditlog_immutability_trigger(None, pg_editor)
+        dropped_pg_sql = '\n'.join(call.args[0] for call in pg_editor.execute.call_args_list)
+        self.assertIn('DROP TRIGGER IF EXISTS trg_prevent_auditlog_mutation', dropped_pg_sql)
+        self.assertIn('DROP FUNCTION IF EXISTS prevent_auditlog_mutation()', dropped_pg_sql)
+
+        sqlite_editor = MagicMock()
+        sqlite_editor.connection.vendor = 'sqlite'
+        install_auditlog_immutability_trigger(None, sqlite_editor)
+        drop_auditlog_immutability_trigger(None, sqlite_editor)
+        sqlite_editor.execute.assert_not_called()
+
+        # 2. Verify Python ORM QuerySet update/delete are blocked and DB trigger blocks raw SQL UPDATE/DELETE
+        log = AuditLog.objects.create(user=self.w.admin, action=AuditLog.CREATE, object_repr='TestItem#1')
+        with self.assertRaises(ValueError):
+            AuditLog.objects.filter(pk=log.pk).update(action=AuditLog.DELETE)
+        with self.assertRaises(ValueError):
+            AuditLog.objects.filter(pk=log.pk).delete()
+
+        install_sqlite_auditlog_trigger(connection)
+        try:
+            with connection.cursor() as cur:
+                with self.assertRaises(DatabaseError):
+                    cur.execute("UPDATE core_auditlog SET action = 'DELETE' WHERE id = %s", [log.pk])
+                with self.assertRaises(DatabaseError):
+                    cur.execute("DELETE FROM core_auditlog WHERE id = %s", [log.pk])
+        finally:
+            drop_sqlite_auditlog_trigger(connection)

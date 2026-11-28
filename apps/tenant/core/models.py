@@ -345,9 +345,19 @@ class DocumentSequence(models.Model):
         return f'{self.key}{self.last_value}'
 
 
+class AuditLogQuerySet(models.QuerySet):
+    """منع التعديل والحذف الجماعي على سجل التعديلات (Append-Only)."""
+    def update(self, **kwargs):
+        raise ValueError('سجل التعديلات مينفعش يتعدّل بعد ما اتكتب.')
+
+    def delete(self, *args, **kwargs):
+        raise ValueError('سجل التعديلات مينفعش يتمسح.')
+
+
 class AuditLog(models.Model):
     """سجل التعديلات: مين عمل إيه وإمتى، وإيه اللي اتغير (قبل ← بعد).
     Written by core.audit (signals on the tracked models + logins); never edited."""
+    objects = AuditLogQuerySet.as_manager()
     CREATE = 'CREATE'
     UPDATE = 'UPDATE'
     DELETE = 'DELETE'

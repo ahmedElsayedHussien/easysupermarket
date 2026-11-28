@@ -2732,13 +2732,19 @@ def get_shift_stats_data(open_session):
     }
 
 
+@login_required
 def pos_shift_stats_api(request):
     """API endpoint returning live cashier shift stats and recent invoices."""
-    if not request.user.is_authenticated:
-        return JsonResponse({'has_open_shift': False, 'error': 'Unauthorized'}, status=401)
-    open_session = POSSession.objects.filter(user=request.user, status=POSSession.OPEN).first()
-    if not open_session and (request.user.is_superuser or (hasattr(request.user, 'employee_profile') and request.user.employee_profile.is_admin())):
-        open_session = POSSession.objects.filter(status=POSSession.OPEN).first()
+    scoped_qs = filter_by_branch(POSSession.objects.filter(status=POSSession.OPEN), request)
+    requested_session_id = (request.GET.get('session_id') or '').strip()
+    open_session = None
+    if requested_session_id:
+        if requested_session_id.isdigit():
+            candidate = scoped_qs.filter(id=int(requested_session_id)).first()
+            if candidate and (candidate.user_id == request.user.id or is_admin_user(request.user)):
+                open_session = candidate
+    else:
+        open_session = scoped_qs.filter(user=request.user).first()
     data = get_shift_stats_data(open_session)
     return JsonResponse(data)
 

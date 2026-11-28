@@ -26,7 +26,7 @@ class IdempotencyTests(TestCase):
         cls.w = build_world()
 
     def test_pos_complete_sale_duplicate_payload_creates_single_invoice_and_single_stock_movement(self):
-        stock_in(self.w.product, self.w.warehouse, 10, D('5'))
+        make_invoice(self.w, invoice_type='PURCHASE', lines=[(self.w.product, 10, D('5'))], payment_type='CREDIT')
         POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.admin)
         login(self.client, self.w.admin)
 
@@ -55,7 +55,7 @@ class IdempotencyTests(TestCase):
 
         self.assertEqual(d1['invoice_id'], d2['invoice_id'])
         self.assertEqual(d1['invoice_number'], d2['invoice_number'])
-        self.assertEqual(Invoice.objects.count(), 1)
+        self.assertEqual(Invoice.objects.filter(invoice_type=Invoice.SALE).count(), 1)
         self.assertEqual(
             StockMovement.objects.filter(product=self.w.product, movement_type='OUT').count(),
             1,

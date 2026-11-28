@@ -267,3 +267,40 @@ class ShiftFiguresAgreeTests(TestCase):
         r = login(self.client, self.w.admin).get(reverse('core:report_shift_detail', args=[s.pk]))
         self.assertContains(r, 'بعد إغلاقها')
         self.assertContains(r, 'تحويلات أموال من/إلى الدرج')
+
+    def test_pos_shift_stats_api_requires_login_explicit_session_id_and_branch_scope(self):
+        url = reverse('invoicing:pos_shift_stats_api')
+        branch_b = make_branch('فرع 2 إحصائيات', code='BR2-STATS')
+        treasury_b = make_treasury(branch_b, 'خزينة فرع 2')
+        put_cash(treasury_b, D('500'))
+        cashier_b = make_user('cashier_b_stats', role='CASHIER', branch=branch_b, perms=('invoicing.view_invoice',))
+
+        cashier_session = POSSession.objects.create(branch=self.w.branch, treasury=self.w.treasury, user=self.w.cashier)
+        session_b = POSSession.objects.create(branch=branch_b, treasury=treasury_b, user=cashier_b)
+
+        # 1. Anonymous request is redirected by @login_required
+        self.client.logout()
+        anon_resp = self.client.get(url)
+        self.assertEqual(anon_resp.status_code, 302)
+
+        # 2. Admin with NO open shift of their own must NOT silently see .first() open shift without session_id
+        login(self.client, self.w.admin)
+        self.client.get(f'/?branch={self.w.branch.id}')
+        r_no_id = self.client.get(url)
+        self.assertEqual(r_no_id.status_code, 200)
+        self.assertFalse(r_no_id.json()['has_open_shift'])
+
+        # 3. Admin with explicit ?session_id= sees a shift in the active branch, NOT in another branch
+        r_own_branch = self.client.get(f'{url}?session_id={cashier_session.id}')
+        self.assertEqual(r_own_branch.status_code, 200)
+        self.assertTrue(r_own_branch.json()['has_open_shift'])
+
+        r_other_branch = self.client.get(f'{url}?session_id={session_b.id}')
+        self.assertEqual(r_other_branch.status_code, 200)
+        self.assertFalse(r_other_branch.json()['has_open_shift'])
+
+        # 4. Cashier cannot view someone else's shift even with session_id, only their own
+        login(self.client, self.w.cashier)
+        self.assertFalse(self.client.get(f'{url}?session_id={session_b.id}').json()['has_open_shift'])
+        self.assertTrue(self.client.get(url).json()['has_open_shift'])
+        self.assertTrue(self.client.get(f'{url}?session_id={cashier_session.id}').json()['has_open_shift'])

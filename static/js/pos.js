@@ -2946,7 +2946,10 @@ const POS = {
 
     async refreshShiftStats() {
         try {
-            const resp = await fetch('/invoicing/pos/api/shift-stats/');
+            const url = this.currentShiftId
+                ? `/invoicing/pos/api/shift-stats/?session_id=${encodeURIComponent(this.currentShiftId)}`
+                : '/invoicing/pos/api/shift-stats/';
+            const resp = await fetch(url);
             if (!resp.ok) return;
             const data = await resp.json();
             if (!data.has_open_shift) return;

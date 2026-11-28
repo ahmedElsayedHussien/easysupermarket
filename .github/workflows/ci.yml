@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-postgres:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: easysupermarket
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify migrations are up to date
+        run: python manage.py makemigrations --check --dry-run --settings=config.settings.test
+
+      - name: Run Django deployment checks
+        env:
+          SECRET_KEY: ci-deploy-check-key-at-least-50-characters-long-with-entropy-9a8b7c6d5e
+          ALLOWED_HOSTS: example.com,localhost,127.0.0.1
+          DB_NAME: easysupermarket
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+        run: python manage.py check --deploy --settings=config.settings.production
+
+      - name: Run full test suite on PostgreSQL (django-tenants)
+        env:
+          PG_TEST_DB_NAME: easysupermarket
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+        run: python manage.py test --settings=config.settings.test_pg --verbosity=2
