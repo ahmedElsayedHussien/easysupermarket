@@ -369,11 +369,15 @@ class AuditLog(models.Model):
     )
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name=_('الوقت'))
-    user = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
-                             verbose_name=_('المستخدم'))
+    # DO_NOTHING + no DB constraint: the log is append-only (the PostgreSQL trigger refuses any UPDATE), so a
+    # SET_NULL on delete would make deleting a user / content type fail. The line keeps the old id, and the
+    # name below keeps it readable after the user is gone.
+    user = models.ForeignKey('auth.User', on_delete=models.DO_NOTHING, db_constraint=False, null=True, blank=True,
+                             related_name='+', verbose_name=_('المستخدم'))
+    username = models.CharField(max_length=150, blank=True, default='', verbose_name=_('اسم المستخدم وقت التسجيل'))
     action = models.CharField(max_length=10, choices=ACTION_CHOICES, db_index=True, verbose_name=_('العملية'))
-    content_type = models.ForeignKey('contenttypes.ContentType', on_delete=models.SET_NULL, null=True, blank=True,
-                                     related_name='+', verbose_name=_('القسم'))
+    content_type = models.ForeignKey('contenttypes.ContentType', on_delete=models.DO_NOTHING, db_constraint=False,
+                                     null=True, blank=True, related_name='+', verbose_name=_('القسم'))
     object_id = models.CharField(max_length=64, blank=True, default='', db_index=True, verbose_name=_('رقم السجل'))
     object_repr = models.CharField(max_length=255, blank=True, default='', verbose_name=_('السجل'))
     changes = models.JSONField(default=dict, blank=True, verbose_name=_('التغييرات'))
@@ -389,7 +393,18 @@ class AuditLog(models.Model):
         # append-only: a log line is written once (core.audit) and never changed
         if not self._state.adding:
             raise ValueError('سجل التعديلات مينفعش يتعدّل بعد ما اتكتب.')
+        if self.user_id and not self.username:
+            self.username = getattr(self.user, 'username', '') or ''
         return super().save(*args, **kwargs)
+
+    @property
+    def user_label(self):
+        """Who did it — the name kept on the line when the user was deleted since."""
+        from django.contrib.auth.models import User
+        try:
+            return self.user if self.user_id and self.user is not None else None
+        except User.DoesNotExist:
+            return None
 
     def delete(self, *args, **kwargs):
         raise ValueError('سجل التعديلات مينفعش يتمسح.')

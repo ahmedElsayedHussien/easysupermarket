@@ -65,7 +65,7 @@
                 {% for log in logs %}
                 <tr>
                     <td class="when">{{ log.created_at|date:"Y-m-d" }}<span class="sub">{{ log.created_at|date:"H:i:s" }}</span></td>
-                    <td>{% if log.user %}{{ log.user|display_name }}{% else %}<span class="sub">النظام</span>{% endif %}{% if log.ip %}<span class="sub">{{ log.ip }}</span>{% endif %}</td>
+                    <td>{% if log.user_label %}{{ log.user_label|display_name }}{% elif log.username %}{{ log.username }} <span class="sub">(مستخدم محذوف)</span>{% else %}<span class="sub">النظام</span>{% endif %}{% if log.ip %}<span class="sub">{{ log.ip }}</span>{% endif %}</td>
                     <td><span class="act {{ log.action }}">{{ log.get_action_display }}</span></td>
                     <td><span class="sub">{{ log.section_name }}</span>{{ log.object_repr }}</td>
                     <td>
