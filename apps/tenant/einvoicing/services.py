@@ -234,7 +234,7 @@ def build_invoice_json(invoice_id):
         raise ETAValidationError(['نوع المستند لا يُرسل لمنظومة الفاتورة الإلكترونية.'])
 
     lines, sums = [], {'sales': ZERO, 'discount': ZERO, 'net': ZERO, 'total': ZERO, 't1': ZERO, 't4': ZERO}
-    for line in invoice.lines.select_related('product', 'uom__uom').all():
+    for line in invoice.lines.select_related('product', 'uom__uom').order_by('id'):  # stable: the document is signed
         product = line.product
         code = item_code(product)
         if code is None:
