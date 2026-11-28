@@ -4,10 +4,13 @@ from decimal import Decimal as D
 from django.test import TestCase
 from django.urls import reverse
 
-from apps.tenant.accounting.models import Expense, Voucher
+from apps.tenant.accounting.models import BankAccount, EWallet, Expense, Treasury, Voucher
 from apps.tenant.core.tests.factories import (
-    account, build_world, login, make_branch, make_treasury, make_user,
+    account, add_perms, build_world, login, make_bank_account, make_branch,
+    make_ewallet, make_treasury, make_user, make_warehouse,
 )
+from apps.tenant.inventory.models import Warehouse
+from apps.tenant.maintenance.models import MaintenanceTicket
 
 VIEW_PERMS = ('accounting.view_expense', 'accounting.view_voucher')
 
@@ -80,3 +83,106 @@ class BranchScopingTests(TestCase):
         self.client.get(f'/?branch={self.w.branch.id}')
         resp = self.client.get(reverse('accounting:expense_detail', args=[self.expense_b.pk]))
         self.assertEqual(resp.status_code, 404)
+
+    def test_deliver_ticket_rejects_other_branch_treasury_and_rep_cash_box(self):
+        from apps.tenant.invoicing import van_services as van
+        from apps.tenant.invoicing.models import SalesRep
+
+        rep_user = make_user('rep_branch_a', role='SALES_REP', branch=self.w.branch)
+        rep = SalesRep.objects.create(employee=rep_user.employee_profile, source_warehouse=self.w.warehouse)
+        van.ensure_rep_setup(rep, create_van=True, create_treasury=True)
+        rep.refresh_from_db()
+
+        ticket = MaintenanceTicket.objects.create(
+            branch=self.w.branch, customer=self.w.customer,
+            device_model='Laptop A', issue_description='power', labor_cost=D('100'),
+        )
+        add_perms(self.user_a, 'maintenance.change_maintenanceticket')
+        login(self.client, self.user_a)
+
+        # Other branch's treasury must be rejected
+        resp = self.client.post(
+            reverse('maintenance:deliver_ticket', args=[ticket.pk]),
+            {'payment_method': 'CASH', 'treasury_id': self.treasury_b.pk},
+        )
+        self.assertIn(resp.status_code, (400, 404))
+        ticket.refresh_from_db()
+        self.assertNotEqual(ticket.status, MaintenanceTicket.STATUS_DELIVERED)
+
+        # Same branch sales rep cash box must also be rejected
+        resp = self.client.post(
+            reverse('maintenance:deliver_ticket', args=[ticket.pk]),
+            {'payment_method': 'CASH', 'treasury_id': rep.treasury_id},
+        )
+        self.assertIn(resp.status_code, (400, 404))
+        ticket.refresh_from_db()
+        self.assertNotEqual(ticket.status, MaintenanceTicket.STATUS_DELIVERED)
+
+        # Own branch business treasury succeeds
+        resp = self.client.post(
+            reverse('maintenance:deliver_ticket', args=[ticket.pk]),
+            {'payment_method': 'CASH', 'treasury_id': self.w.treasury.pk},
+        )
+        self.assertEqual(resp.status_code, 200)
+        ticket.refresh_from_db()
+        self.assertEqual(ticket.status, MaintenanceTicket.STATUS_DELIVERED)
+
+    def test_get_warehouse_products_requires_permission_and_branch_scope(self):
+        warehouse_b = make_warehouse(self.branch_b, 'مخزن ب', code='WH-B')
+        no_perm_user = make_user('branch_a_noperms', role='CASHIER', branch=self.w.branch)
+        login(self.client, no_perm_user)
+
+        resp = self.client.get(reverse('maintenance:get_warehouse_products', args=[self.w.warehouse.pk]))
+        self.assertNotEqual(resp.status_code, 200)
+
+        add_perms(self.user_a, 'maintenance.view_maintenanceticket')
+        login(self.client, self.user_a)
+
+        resp_b = self.client.get(reverse('maintenance:get_warehouse_products', args=[warehouse_b.pk]))
+        self.assertEqual(resp_b.status_code, 404)
+
+        resp_a = self.client.get(reverse('maintenance:get_warehouse_products', args=[self.w.warehouse.pk]))
+        self.assertEqual(resp_a.status_code, 200)
+
+    def test_unscoped_get_object_or_404_endpoints_enforce_branch_scope(self):
+        warehouse_b = make_warehouse(self.branch_b, 'مخزن حذف ب', code='WH-DEL-B')
+        bank = make_bank_account('بنك الشركة')
+        wallet = make_ewallet('محفظة الشركة')
+        add_perms(
+            self.user_a,
+            'accounting.delete_treasury',
+            'accounting.delete_bankaccount',
+            'accounting.delete_ewallet',
+            'inventory.delete_warehouse',
+            'inventory.add_stockadjustment',
+        )
+        login(self.client, self.user_a)
+
+        resp_tr = self.client.post(reverse('accounting:treasury_delete', args=[self.treasury_b.pk]))
+        self.assertEqual(resp_tr.status_code, 404)
+        self.assertTrue(Treasury.objects.filter(pk=self.treasury_b.pk).exists())
+
+        resp_bk = self.client.post(reverse('accounting:bank_delete', args=[bank.pk]))
+        self.assertEqual(resp_bk.status_code, 404)
+        self.assertTrue(BankAccount.objects.filter(pk=bank.pk).exists())
+
+        resp_ew = self.client.post(reverse('accounting:ewallet_delete', args=[wallet.pk]))
+        self.assertEqual(resp_ew.status_code, 404)
+        self.assertTrue(EWallet.objects.filter(pk=wallet.pk).exists())
+
+        resp_wh = self.client.post(reverse('inventory:warehouse_delete', args=[warehouse_b.pk]))
+        self.assertEqual(resp_wh.status_code, 404)
+        self.assertTrue(Warehouse.objects.get(pk=warehouse_b.pk).is_active)
+
+        resp_adj = self.client.post(
+            reverse('inventory:adjustment_create'),
+            {
+                'warehouse': warehouse_b.pk,
+                'adjustment_type': 'IN',
+                'date': '2026-11-28',
+                'product_id[]': [self.w.product.pk],
+                'quantity[]': ['1'],
+                'unit_cost[]': ['5'],
+            },
+        )
+        self.assertEqual(resp_adj.status_code, 404)

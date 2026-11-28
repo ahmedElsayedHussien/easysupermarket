@@ -73,6 +73,12 @@ def scope_treasuries(qs, user):
     return qs.filter(pk__in=scoped_treasuries(user).values('pk'))
 
 
+def scope_company_accounts(qs, request):
+    """Company-wide accounts (banks/wallets): visible/editable only for unrestricted (admin) users."""
+    from apps.tenant.core.access import is_branch_restricted
+    return qs.none() if is_branch_restricted(request) else qs
+
+
 TREASURY_BRANCH_ERROR = 'لا يمكن استخدام خزينة خارج الفرع الحالي. اختر خزينة من خزائن الفرع المفتوح.'
 
 
@@ -258,6 +264,9 @@ class TreasuryListView(CustomPermissionRequiredMixin, ListView):
     queryset = Treasury.objects.select_related('branch', 'account')
     template_name = 'accounting/treasury_list.html'
     context_object_name = 'treasuries'
+
+    def get_queryset(self):
+        return scope_treasuries(super().get_queryset(), self.request.user)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -285,6 +294,9 @@ class TreasuryUpdateView(CustomPermissionRequiredMixin, UpdateView):
     form_class = TreasuryForm
     template_name = 'accounting/treasury_form.html'
     success_url = reverse_lazy('accounting:liquidity_dashboard')
+
+    def get_queryset(self):
+        return scope_treasuries(super().get_queryset(), self.request.user)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -296,7 +308,7 @@ class TreasuryDeleteView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.delete_treasury'
 
     def post(self, request, pk):
-        treasury = get_object_or_404(Treasury, pk=pk)
+        treasury = get_object_or_404(scope_treasuries(Treasury.objects.all(), request.user), pk=pk)
         
         has_transactions = False
         if treasury.account and treasury.account.journal_items.exists():
@@ -354,6 +366,9 @@ class BankAccountUpdateView(CustomPermissionRequiredMixin, UpdateView):
     form_class = BankAccountForm
     template_name = 'accounting/bank_form.html'
     success_url = reverse_lazy('accounting:liquidity_dashboard')
+
+    def get_queryset(self):
+        return scope_company_accounts(super().get_queryset(), self.request)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -365,7 +380,7 @@ class BankAccountDeleteView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.delete_bankaccount'
 
     def post(self, request, pk):
-        bank_account = get_object_or_404(BankAccount, pk=pk)
+        bank_account = get_object_or_404(scope_company_accounts(BankAccount.objects.all(), request), pk=pk)
         
         has_transactions = False
         if bank_account.account and bank_account.account.journal_items.exists():
@@ -423,6 +438,9 @@ class EWalletUpdateView(CustomPermissionRequiredMixin, UpdateView):
     form_class = EWalletForm
     template_name = 'accounting/ewallet_form.html'
     success_url = reverse_lazy('accounting:liquidity_dashboard')
+
+    def get_queryset(self):
+        return scope_company_accounts(super().get_queryset(), self.request)
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -434,7 +452,7 @@ class EWalletDeleteView(CustomPermissionRequiredMixin, View):
     permission_required = 'accounting.delete_ewallet'
 
     def post(self, request, pk):
-        ewallet = get_object_or_404(EWallet, pk=pk)
+        ewallet = get_object_or_404(scope_company_accounts(EWallet.objects.all(), request), pk=pk)
         
         has_transactions = False
         if ewallet.account and ewallet.account.journal_items.exists():

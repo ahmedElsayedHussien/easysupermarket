@@ -55,9 +55,9 @@ def pos_defaults_for(user):
 
 
 def scoped_treasuries(user):
-    """Treasuries the user may move money from/into: the current branch's only."""
+    """Treasuries the user may move money from/into: the current branch's business treasuries only."""
     restricted, branch = _branch_scope(user)
-    qs = Treasury.objects.all()
+    qs = Treasury.objects.business()
     if restricted:
         qs = qs.filter(branch=branch) if branch else qs.none()
     return qs

@@ -337,6 +337,13 @@ def deliver_ticket(request, pk):
         ewallet_id = request.POST.get('ewallet_id')
         paid_amount_str = request.POST.get('paid_amount', '')
 
+        from apps.tenant.accounting.forms import scoped_treasuries
+        treasury_qs = scoped_treasuries(request.user).business()
+        if ticket.branch_id:
+            treasury_qs = treasury_qs.filter(branch=ticket.branch)
+        bank_qs = BankAccount.objects.none() if is_branch_unassigned(request) else BankAccount.objects.all()
+        ewallet_qs = EWallet.objects.none() if is_branch_unassigned(request) else EWallet.objects.all()
+
         treasury = None
         bank_account = None
         ewallet = None
@@ -345,17 +352,17 @@ def deliver_ticket(request, pk):
         if payment_method == MaintenanceTicket.PAYMENT_CASH:
             if not treasury_id:
                 return JsonResponse({'error': 'يجب تحديد الخزينة عند الدفع النقدي.'}, status=400)
-            treasury = get_object_or_404(Treasury, id=treasury_id)
+            treasury = get_object_or_404(treasury_qs, id=treasury_id)
 
         elif payment_method == MaintenanceTicket.PAYMENT_BANK_TRANSFER:
             if not bank_account_id:
                 return JsonResponse({'error': 'يجب تحديد الحساب البنكي عند السداد بالتحويل/انستا باي.'}, status=400)
-            bank_account = get_object_or_404(BankAccount, id=bank_account_id)
+            bank_account = get_object_or_404(bank_qs, id=bank_account_id)
 
         elif payment_method == MaintenanceTicket.PAYMENT_EWALLET:
             if not ewallet_id:
                 return JsonResponse({'error': 'يجب تحديد المحفظة الإلكترونية عند السداد بالمحفظة.'}, status=400)
-            ewallet = get_object_or_404(EWallet, id=ewallet_id)
+            ewallet = get_object_or_404(ewallet_qs, id=ewallet_id)
 
         elif payment_method == MaintenanceTicket.PAYMENT_CREDIT:
             pass  # Full amount goes on customer account
@@ -368,11 +375,11 @@ def deliver_ticket(request, pk):
 
             if paid_amount > 0:
                 if treasury_id:
-                    treasury = get_object_or_404(Treasury, id=treasury_id)
+                    treasury = get_object_or_404(treasury_qs, id=treasury_id)
                 elif bank_account_id:
-                    bank_account = get_object_or_404(BankAccount, id=bank_account_id)
+                    bank_account = get_object_or_404(bank_qs, id=bank_account_id)
                 elif ewallet_id:
-                    ewallet = get_object_or_404(EWallet, id=ewallet_id)
+                    ewallet = get_object_or_404(ewallet_qs, id=ewallet_id)
                 else:
                     return JsonResponse({'error': 'يجب تحديد الحساب المالي (خزينة/بنك/محفظة) للدفعة الفورية.'}, status=400)
         else:
@@ -416,7 +423,7 @@ def cancel_ticket(request, pk):
 # ---------------------------------------------------------------------------
 # API: Get Warehouse Products
 # ---------------------------------------------------------------------------
-@login_required
+@custom_permission_required('maintenance.view_maintenanceticket', redirect_url='core:main_screen')
 def get_warehouse_products(request, warehouse_id):
     """
     Returns a list of products that have stock in the given warehouse.
@@ -426,16 +433,18 @@ def get_warehouse_products(request, warehouse_id):
     from apps.tenant.inventory.models import InventoryBatch, SerialItem, Product
     from django.db.models import Sum
 
+    warehouse = get_object_or_404(filter_by_branch(Warehouse.objects.all(), request), id=warehouse_id)
+
     # 1. Normal products with stock
     normal_batches = InventoryBatch.objects.filter(
-        warehouse_id=warehouse_id,
+        warehouse=warehouse,
         quantity_remaining__gt=0
     ).values('product_id').annotate(total_qty=Sum('quantity_remaining'))
     normal_product_ids = [b['product_id'] for b in normal_batches]
 
     # 2. Serialized products with stock
     serialized_items = SerialItem.objects.filter(
-        warehouse_id=warehouse_id,
+        warehouse=warehouse,
         is_sold=False
     ).values('product_id').distinct()
     serialized_product_ids = [s['product_id'] for s in serialized_items]

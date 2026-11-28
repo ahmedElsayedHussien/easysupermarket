@@ -218,7 +218,13 @@ class MaintenanceTicket(models.Model):
         Mark ticket as DELIVERED, set payment details, deduct inventory for parts,
         and post the accounting journal entry — all in one atomic block.
         """
+        from apps.tenant.accounting.models import is_rep_cash_box
         from apps.tenant.maintenance.services import post_maintenance_journal
+        if treasury is not None:
+            if is_rep_cash_box(treasury.pk):
+                raise ValueError('خزنة مندوب المبيعات مخصصة لمبيعات المندوب وتحصيلاته فقط.')
+            if self.branch_id and treasury.branch_id != self.branch_id:
+                raise ValueError('الخزينة المختارة لا تتبع فرع تذكرة الصيانة.')
         with transaction.atomic():
             # Lock the row and re-check: a double submit must not post twice.
             locked = type(self).objects.select_for_update(of=('self',)).get(pk=self.pk)

@@ -168,6 +168,11 @@ class WarehouseListView(CustomPermissionRequiredMixin, ListView):
     template_name = 'core/generic_list.html'
     context_object_name = 'objects'
     permission_required = 'inventory.view_warehouse'
+
+    def get_queryset(self):
+        from apps.tenant.core.access import filter_by_branch
+        return filter_by_branch(super().get_queryset(), self.request)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = 'إدارة المستودعات'
@@ -196,6 +201,10 @@ class WarehouseUpdateView(CustomPermissionRequiredMixin, UpdateView):
     success_url = reverse_lazy('inventory:warehouse_list')
     permission_required = 'inventory.change_warehouse'
 
+    def get_queryset(self):
+        from apps.tenant.core.access import filter_by_branch
+        return filter_by_branch(super().get_queryset(), self.request)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['title'] = 'تعديل مستودع'
@@ -210,8 +219,9 @@ from django.db.models import ProtectedError
 @custom_permission_required('inventory.delete_warehouse', redirect_url='core:main_screen')
 def warehouse_delete(request, pk):
     from .models import Warehouse
+    from apps.tenant.core.access import filter_by_branch
     if request.method == 'POST':
-        warehouse = get_object_or_404(Warehouse, pk=pk)
+        warehouse = get_object_or_404(filter_by_branch(Warehouse.objects.all(), request), pk=pk)
         try:
             name = warehouse.name
             warehouse.delete()
@@ -1148,7 +1158,8 @@ def adjustment_detail(request, pk):
 @login_required
 @custom_permission_required('inventory.delete_stockadjustment', redirect_url='core:main_screen')
 def adjustment_delete(request, pk):
-    adj = get_object_or_404(StockAdjustment, pk=pk)
+    from apps.tenant.core.access import filter_by_branch
+    adj = get_object_or_404(filter_by_branch(StockAdjustment.objects.all(), request, 'warehouse__branch'), pk=pk)
     if adj.status != 'DRAFT':
         messages.error(request, 'لا يمكن حذف تسوية تم ترحيلها بالفعل.')
         return redirect('inventory:adjustment_list')
@@ -1198,7 +1209,8 @@ def adjustment_create(request):
             messages.error(request, 'لا يمكن إنشاء تسوية مخزنية بدون إضافة أصناف وتحديد كميات صالحة!')
             return redirect('inventory:adjustment_create')
 
-        warehouse = get_object_or_404(Warehouse, id=warehouse_id)
+        from apps.tenant.core.access import filter_by_branch
+        warehouse = get_object_or_404(filter_by_branch(Warehouse.objects.all(), request), id=warehouse_id)
         
         adj = StockAdjustment.objects.create(
             warehouse=warehouse,
@@ -1239,7 +1251,8 @@ def adjustment_create(request):
         messages.success(request, 'تم إنشاء التسوية بنجاح كمسودة.')
         return redirect('inventory:adjustment_list')
         
-    warehouses = Warehouse.objects.filter(is_active=True)
+    from apps.tenant.core.access import filter_by_branch
+    warehouses = filter_by_branch(Warehouse.objects.filter(is_active=True), request)
     products = Product.objects.filter(is_active=True).prefetch_related('uoms__uom', 'extra_barcodes')
     return render(request, 'inventory/adjustment_form.html', {
         'warehouses': warehouses,
